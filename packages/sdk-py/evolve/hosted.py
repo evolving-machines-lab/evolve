@@ -371,9 +371,10 @@ class DatasetVersionGateFailedTask:
 class DatasetVersionGateUnproven:
     """The UNPROVEN stamp on a version's activation gate.
 
-    ``reason`` is the server's own sentence for why no proof ran (today: "no
-    reference solutions to run"), ``at`` is when the stamp was written
-    (``None`` when the server omits it).
+    ``reason`` is the server's own sentence for why no full proof ran ("no
+    reference solutions to run", or the partial flavor naming how many tasks
+    shipped none), ``at`` is when the stamp was written (``None`` when the
+    server omits it).
     """
     reason: str
     at: Optional[str] = None
@@ -385,8 +386,10 @@ class DatasetVersionGate:
 
     ``status`` is the gate's own lifecycle as wire values: ``PENDING`` →
     ``RUNNING`` → ``PASSED``/``FAILED``, plus ``UNPROVEN`` — the third terminal
-    word, for a version activated with nothing to prove. ``code`` and
-    ``message`` are set on
+    word, for a version activated without a full proof: nothing to prove at
+    all (no reference solutions archived), or a PARTIAL archive whose
+    provable tasks all passed while the solution-less ones were labeled
+    ``UNPROVEN`` per task. ``code`` and ``message`` are set on
     failure — one machine word and one human sentence — and are ``None`` while
     the gate is healthy. ``attempts`` counts gate runs so far.
     ``failed_tasks`` names each ineligible task with the gate's own reasons
@@ -405,10 +408,12 @@ class DatasetVersionGate:
     message: Optional[str] = None
     failed_tasks: List[DatasetVersionGateFailedTask] = field(default_factory=list)
     failed_task_count: int = 0
-    #: Present only when ``status`` is ``UNPROVEN``: the version activated with
-    #: no oracle-conformance proof because the gate had no reference solutions
-    #: to run. The server's own stamp — the honest reason sentence and when it
-    #: was stamped. ``None`` on every other status and on servers that predate
+    #: Present only when ``status`` is ``UNPROVEN``: the version activated
+    #: without a full oracle-conformance proof because the gate had no
+    #: reference solutions to run — for any task, or (partial archive) for
+    #: some tasks, every task WITH a solution having proved eligible. The
+    #: server's own stamp — the honest reason sentence and when it was
+    #: stamped. ``None`` on every other status and on servers that predate
     #: the field: absence is "nothing to report", never a crash. It is
     #: deliberately not the same field as ``code``/``message``: an absent proof
     #: is not a failed one, and the two details are mutually exclusive.
@@ -525,8 +530,11 @@ class TaskGate:
     The per-task half of the version's ``gate``: while the gate is RUNNING,
     verdicts appear on tasks as they land. ``outcome`` is PASS; FLAKY (gold
     passed only on a retry — still eligible under the operator default); FAIL
-    (definitive: gold never scored 1.0, or a do-nothing agent did); or ERROR
-    (inconclusive — no usable score, e.g. no archived solution to run).
+    (definitive: gold never scored 1.0, or a do-nothing agent did); ERROR
+    (inconclusive — no usable score, e.g. an archived solution that could not
+    be read); or UNPROVEN (the task shipped no reference solution, so the
+    gate had nothing to run — a labeled gap, never counted as proof and never
+    counted as a failure).
     ``reasons`` are human-readable and empty on PASS. The full stored verdict
     carries oracle diagnostics that stay internal, like the environment specs
     beside it.

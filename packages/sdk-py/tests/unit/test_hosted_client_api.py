@@ -789,8 +789,9 @@ class TestDatasets:
         assert job.version == '1.2'
         assert job.task_count == 113
         assert job.failure is None
-        # WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions can
-        # never be activated — dropping the field made it look runnable.
+        # WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions still
+        # activates, but with its gate stamped UNPROVEN — this warning is the
+        # early notice that no proof will run. Dropping the field hid that.
         assert job.warnings[0].code == 'no_solutions_archived'
         assert job.warnings[0].message == 'no reference solutions were archived'
 

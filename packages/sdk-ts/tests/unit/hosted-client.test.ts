@@ -957,8 +957,9 @@ async function testGetImport() {
       },
       "self-describing job: id/status/name/version/failure/warnings/task_count"
     );
-    // WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions can
-    // never be activated — dropping the field made it look runnable.
+    // WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions still
+    // activates, but with its gate stamped UNPROVEN — this warning is the
+    // early notice that no proof will run. Dropping the field hid that.
     assertEqual(imported.warnings[0].code, "no_solutions_archived", "warnings surface, never dropped");
   } finally {
     restoreFetch();

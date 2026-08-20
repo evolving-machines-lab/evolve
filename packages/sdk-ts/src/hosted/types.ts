@@ -1406,10 +1406,13 @@ export type DatasetVersionState =
  * The activation gate's progress for one dataset version — the gold-run check
  * a version must pass before it can be activated. `status` is the gate's own
  * lifecycle as wire values: PENDING → RUNNING → PASSED/FAILED, plus UNPROVEN —
- * the third terminal word, for a version activated with nothing to prove
- * (render unknown values as-is). `code` and `message` are populated on failure
- * and explain it in one machine word and one human sentence; both are null
- * while the gate is healthy. `attempts` counts gate runs so far.
+ * the third terminal word, for a version activated without a full proof:
+ * nothing to prove at all (no reference solutions archived), or a PARTIAL
+ * archive whose provable tasks all passed while the solution-less ones were
+ * labeled UNPROVEN per task (render unknown values as-is). `code` and
+ * `message` are populated on failure and explain it in one machine word and
+ * one human sentence; both are null while the gate is healthy. `attempts`
+ * counts gate runs so far.
  */
 export interface DatasetVersionGate {
   status: string;
@@ -1432,19 +1435,22 @@ export interface DatasetVersionGate {
    */
   failed_task_count: number;
   /**
-   * Present only when `status` is UNPROVEN: the version activated with no
-   * oracle-conformance proof because the gate had no reference solutions to
-   * run. The server's own stamp — the honest reason sentence and when it was
-   * stamped. Null on every other status and on servers that predate the
-   * field: absence is "nothing to report", never a crash.
+   * Present only when `status` is UNPROVEN: the version activated without a
+   * full oracle-conformance proof because the gate had no reference
+   * solutions to run — for any task, or (partial archive) for some tasks,
+   * every task WITH a solution having proved eligible. The server's own
+   * stamp — the honest reason sentence and when it was stamped. Null on
+   * every other status and on servers that predate the field: absence is
+   * "nothing to report", never a crash.
    */
   unproven: DatasetVersionGateUnproven | null;
 }
 
 /**
  * The UNPROVEN stamp on a version's activation gate: `reason` is the server's
- * own sentence for why no proof ran (today: "no reference solutions to run"),
- * `at` is when the stamp was written (null when the server omits it).
+ * own sentence for why no full proof ran ("no reference solutions to run",
+ * or the partial flavor naming how many tasks shipped none), `at` is when
+ * the stamp was written (null when the server omits it).
  */
 export interface DatasetVersionGateUnproven {
   reason: string;
@@ -1564,8 +1570,10 @@ export interface TaskGate {
   /**
    * PASS; FLAKY (gold passed only on a retry — still eligible under the
    * operator default); FAIL (definitive: gold never scored 1.0, or a
-   * do-nothing agent did); ERROR (inconclusive — no usable score, e.g. no
-   * archived solution to run).
+   * do-nothing agent did); ERROR (inconclusive — no usable score, e.g. an
+   * archived solution that could not be read); or UNPROVEN (the task
+   * shipped no reference solution, so the gate had nothing to run — a
+   * labeled gap, never counted as proof and never counted as a failure).
    */
   outcome: string;
   flaky: boolean;
