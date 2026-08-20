@@ -1080,6 +1080,73 @@ async function testDefaultImageNameIsVersioned(): Promise<void> {
   );
 }
 
+/**
+ * THE NAME IS WHAT MAKES A MODAL IMAGE RECLAIMABLE. Modal's delete verb takes
+ * an opaque server-side id that exists only after a build and is returned by no
+ * later lookup, so an image built for a dataset could never be deleted when
+ * that dataset was. publishImageAs binds OUR content-addressed alias to the
+ * built image; `images.fromName(alias)` resolves it back to that id without
+ * rebuilding, which is what the reclaimer uses.
+ *
+ * The test that matters is not "publish was called" — it is that publish names
+ * the image the SAME resolution create() would launch. A publish that bound our
+ * alias to a different image would delete the wrong thing later, silently.
+ */
+async function testPublishImageAsNamesTheImageCreateUses(): Promise<void> {
+  console.log("\n[10d] publishImageAs() - our alias is bound to the image create() resolves");
+
+  const fromRegistry: string[] = [];
+  const published: string[] = [];
+  let builds = 0;
+  const image = {
+    build: async () => { builds++; return image; },
+    publish: async (name: string) => { published.push(name); },
+  };
+  const client = {
+    apps: { fromName: async () => ({ appId: "ap-mock" }) },
+    images: { fromRegistry: async (tag: string) => { fromRegistry.push(tag); return image; } },
+    sandboxes: {
+      create: async () => ({ sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) }),
+    },
+  };
+
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = client;
+
+  await (provider as any).publishImageAs("eval-env-cafebabe", "evolve-all");
+  assertEqual(fromRegistry, ["evolvingmachines/evolve-all"], "publish resolves through IMAGE_MAP, like create");
+  assertEqual(builds, 1, "the image is built before it can be published");
+  assertEqual(published, ["eval-env-cafebabe"], "and published under OUR alias");
+
+  // The identity law: create() must ask for the same reference we just named.
+  await provider.create({ image: "evolve-all", user: "root" });
+  assertEqual(
+    fromRegistry,
+    ["evolvingmachines/evolve-all", "evolvingmachines/evolve-all"],
+    "create() launches the identical reference the alias was bound to"
+  );
+
+  // No image argument means the provider's configured default — create()'s own
+  // choice, so the alias still names what a trial would run.
+  await (provider as any).publishImageAs("eval-env-d00d");
+  assertEqual(
+    fromRegistry[2],
+    `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
+    "publishImageAs() with no image names the versioned default"
+  );
+
+  // An empty alias would publish under Modal's ":latest" default and bind a
+  // name we never minted — refused before any build.
+  let refused = false;
+  try {
+    await (provider as any).publishImageAs("   ", "evolve-all");
+  } catch {
+    refused = true;
+  }
+  assert(refused, "an empty alias is refused rather than published as something else");
+  assertEqual(builds, 3, "and the refusal costs no extra build");
+}
+
 async function testPrepareImageSharesCreatesResolution(): Promise<void> {
   console.log("\n[10c] prepareImage() - prewarm and create resolve the SAME image identity");
 
@@ -1570,6 +1637,7 @@ const tests = [
   testImageMapUsesVersionedTag,
   testDefaultImageNameIsVersioned,
   testPrepareImageSharesCreatesResolution,
+  testPublishImageAsNamesTheImageCreateUses,
   // [11] ModalFiles upload message size (round trips, not correctness)
   testFilesWriteFromPathUsesChunkSizedMessages,
   testFilesWriteFromPathAvoidsNativeCopy,

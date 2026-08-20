@@ -1626,6 +1626,50 @@ export class ModalProvider implements SandboxProvider {
    * exists — prewarm the versioned name unless you specifically want the
    * account's already-pulled copy.
    */
+  /**
+   * Give a built image OUR name on Modal, so it can be found — and deleted —
+   * later by a name this platform minted rather than an id Modal minted.
+   *
+   * WHY THIS EXISTS. Every other provider hands back a named artifact: an e2b
+   * template alias, a daytona snapshot name. Modal's image identity is the
+   * registry reference plus an opaque server-side id, and its delete verb
+   * (`client.images.delete`) takes the ID — which only exists after a build and
+   * is never returned by any lookup we could do later from a reference alone.
+   * So a Modal image built for a dataset could never be reclaimed when that
+   * dataset was deleted; the platform recorded the honest refusal
+   * `store_unsupported` and the images accumulated.
+   *
+   * `Image.publish(name)` closes that: it binds a stable name to the built
+   * image, and `images.fromName(name)` resolves that name back to the id
+   * WITHOUT rebuilding (it is a plain `imageGetByTag` lookup). Named, findable,
+   * deletable — the same shape the other two providers already have.
+   *
+   * IDEMPOTENT BY CONSTRUCTION for our use: the alias is a content address, so
+   * re-publishing the same alias re-binds it to the image that same content
+   * built. A caller that publishes twice names the same bytes twice.
+   *
+   * The build goes through resolveAndBuildImage, the ONE pair every other path
+   * uses, so a published image and the image a trial creates against cannot be
+   * different images — the same law prepareImage keeps.
+   *
+   * MODAL-ONLY, deliberately not on the shared provider interface: e2b and
+   * daytona name their artifacts at creation and have nothing to publish. The
+   * platform feature-detects this method rather than every provider carrying a
+   * verb only one of them can honor.
+   */
+  async publishImageAs(alias: string, imageName?: string): Promise<string> {
+    if (!alias.trim()) {
+      throw new Error("publishImageAs requires a non-empty alias to publish under");
+    }
+    const { image } = await this.resolveAndBuildImage(imageName || this.imageName);
+    await image.publish(alias);
+    // RETURNS the name it bound, so a caller can assert the name it asked for
+    // is the name that now exists. A void return would let a build that
+    // published nothing look identical to one that published correctly, and
+    // the only symptom would be an image nobody can reclaim months later.
+    return alias;
+  }
+
   async prepareImage(imageName?: string): Promise<void> {
     // `||`, not `??`, so an empty string falls back to the default exactly as
     // create()'s `options.image || this.imageName` does. Two different
