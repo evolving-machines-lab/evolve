@@ -2562,6 +2562,7 @@ export const HOSTED_ERROR_CODES = [
   "invalid_input",
   "invalid_limit",
   "invalid_status",
+  "invalid_visibility",
   "invalid_cursor",
   "invalid_after",
   "invalid_format",
