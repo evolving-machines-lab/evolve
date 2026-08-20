@@ -946,8 +946,12 @@ function withInBoxTimeout(wrapped: string, timeoutSec?: number): string {
  *   echo:   `...OK\n` + token -> records `...OK\n` `<token>\n`   -> `...OK\n`
  *
  * One suffix removal serves both. A command that never reaches the token —
- * killed by the in-box timeout, or calling exit or exec itself — leaves none
- * to remove, and its output comes back exactly as it did before.
+ * killed by the in-box timeout, or calling exit, or replacing the shell with
+ * `exec <command>` — leaves none to remove, and its output comes back exactly
+ * as it did before. A command that merely REDIRECTS the shell's stdout
+ * (`exec > file`) still reaches it: the token is printed through a saved copy
+ * of the original stdout, so it lands on the transport rather than in the
+ * command's file (see withEndOfOutputSentinel).
  *
  * STDOUT ONLY, and that is a choice. A token on stderr too would make stderr
  * byte-exact as well, but a daemon build that returns UNFRAMED logs (measured
@@ -1009,8 +1013,55 @@ function withEndOfOutputSentinel(command: string, token: string): string {
   // shell ends the session, after which Daytona never records the command as
   // finished (see withInBoxTimeout). A subshell sets $? for the record without
   // touching the shell that has to keep reading.
+  //
+  // THE SENTINEL WRITES TO A SAVED COPY OF THE ORIGINAL STDOUT, never to fd 1.
+  // A command is free to point the shell's own stdout somewhere else — the
+  // hosted verifier does exactly that, `exec > /verifier.log 2>&1` so the run
+  // explains itself even when the box dies mid-command — and fd 1 at the
+  // printf is then the command's FILE, not the transport. Measured in
+  // production 2026-08-20 (trial 4f103397): the token landed as the last
+  // bytes of the verifier log and was served to the user inside
+  // verifier/test-stdout.txt, where no filter here can ever reach it. Saving
+  // fd 1 BEFORE the group and printing through the copy puts the token back
+  // on the stream the follow reads, whatever the command did to fd 1.
+  //
+  // The copy is CLOSED, never restored onto fd 1: `exec 1>&9` is a redirection
+  // on a special built-in, and a redirection error there ENDS a non-interactive
+  // POSIX shell — measured, with 9 closed: /bin/sh exits 1, /bin/dash exits 2,
+  // `bash --posix` exits 1, while default-mode bash merely fails the exec and
+  // carries on. The box's shell is not ours to choose, so the design assumes
+  // the three that die, and the session shell is the one that would. Closing
+  // cannot fail that way:
+  // `exec 9>&-` on an fd that was never opened (the failed-cd path, or a
+  // command that closed it first) is silent and exits 0 in /bin/bash, /bin/sh
+  // and /bin/dash, so a command hostile enough to close fd 9 itself only loses
+  // its own sentinel instead of taking the session down with it.
+  //
+  // THE CLOSE CARRIES NO REDIRECTION OF ITS OWN. A redirection written on
+  // `exec` with no command is PERMANENT — `exec 9>&- 2>/dev/null` would repoint
+  // the shell's fd 2 at /dev/null for good, and every later command in a reused
+  // session would lose its stderr silently. Measured in all three shells. The
+  // per-command `2>/dev/null` on the printf above is a different thing: a
+  // redirection on a simple command, scoped to that command, and there it earns
+  // its place by keeping a bad-fd diagnostic out of the caller's stderr.
+  //
+  // WHAT THIS STILL DOES NOT COVER: a command that REPOINTS fd 9 rather than
+  // closing it — `exec 9>lockfile`, the idiom flock's own man page prints —
+  // captures the token into its own file exactly as fd 1 used to. POSIX
+  // guarantees only fds 0-9 (XCU 2.7), so every fixed choice collides with
+  // someone and fd 9 collides with a real convention. What is bounded is the
+  // DAMAGE: that one command's sentinel, while its output, its status and the
+  // session shell are untouched. Chosen, not overlooked, and pinned by [4q].
+  //
+  // `&& {` rather than a newline before the group, because wrapCommand may
+  // prepend `cd '<cwd>' && ` to this whole string: a NEWLINE there would end
+  // the `&&` list at the save, leaving the group a separate command that runs
+  // even when the cd failed — the caller's command executed in the wrong
+  // directory instead of skipped. The `&&` keeps the chain one list.
   return (
-    `{ :\n${command}\n\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`
+    `exec 9>&1 && { :\n${command}\n\n}; __evolve_eos=$?; ` +
+    `printf '%s' '${token}' 2>/dev/null >&9; exec 9>&-; ` +
+    `(exit $__evolve_eos)`
   );
 }
 

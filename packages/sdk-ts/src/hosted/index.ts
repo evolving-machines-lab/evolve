@@ -277,6 +277,17 @@ export {
   type TrialTreeParts,
 } from "./trial-tree";
 
+// THE MONEY LANE RULE — how a trial's agent spend may be stated to a reader.
+// Exported because every surface that shows the number without the lane beside
+// it has to make the same decision, and the wrong one prints "$0.00" for a
+// trial nobody measured.
+export {
+  jobSpend,
+  trialAgentCost,
+  trialJudgeCost,
+  type SpendStatement,
+} from "./money";
+
 /**
  * A typed failure from the hosted evals API.
  *

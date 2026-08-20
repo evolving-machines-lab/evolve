@@ -20,6 +20,7 @@
 
 import {
   _testActivateSnapshot,
+  _testWithEndOfOutputSentinel,
   _testWaitForSnapshotConflictWinner,
   _testIsSnapshotNameConflict,
   _testProviderCanRebuildSnapshot,
@@ -86,11 +87,16 @@ function decodeSudoPayload(wrapped: string): string {
  * What the box is asked to run: the caller's command, then the end-of-output
  * sentinel every command carries so the log's line terminator can be told from
  * the command's own last byte (see the src header).
+ *
+ * Spelled by the REAL wrapper rather than a copy of it: the shape has fd
+ * bookkeeping around the token now (the sentinel prints through a saved copy of
+ * the original stdout — src withEndOfOutputSentinel), and a second spelling
+ * here would only be one more place for it to drift out of.
  */
 function withSentinel(command: string, sentAs: string): string {
   const token = /EVOLVE-EOS-[a-z0-9-]+/.exec(sentAs)?.[0];
   if (!token) throw new Error(`no end-of-output sentinel in: ${sentAs}`);
-  return `{ :\n${command}\n\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
+  return _testWithEndOfOutputSentinel(command, token);
 }
 
 /** Run fn with console.warn captured (silenced), returning the warnings. */

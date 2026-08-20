@@ -206,12 +206,27 @@ function testSentinelCommandShape(): void {
   // newline, an `&`, a comment or a heredoc terminator still composes (the
   // shell semantics are run for real in the commands suite, [4l] and [4m]).
   assert(
-    wrapped.startsWith("{ :\necho hi\n\n};"),
+    wrapped.startsWith("exec 9>&1 && { :\necho hi\n\n};"),
     `the caller's command runs inside a guarded brace group (got ${JSON.stringify(wrapped)})`,
   );
   assert(
     wrapped.includes(`printf '%s' '${TOKEN}'`) && !wrapped.includes(">&2"),
     "the token is printed to STDOUT only, with no newline of its own",
+  );
+  // ...and through a SAVED COPY of that stdout, so a command that repoints the
+  // shell's own fd 1 (`exec > file`, which the hosted verifier does) cannot
+  // capture the token into its file. Run for real in the commands suite, [4o].
+  assert(
+    wrapped.includes(`'${TOKEN}' 2>/dev/null >&9`) && wrapped.includes("exec 9>&-"),
+    `the token prints through the saved stdout, which is then closed (got ${JSON.stringify(wrapped)})`,
+  );
+  // ...and the close carries NO redirection of its own. A redirection on `exec`
+  // with no command is PERMANENT: `exec 9>&- 2>/dev/null` would repoint the
+  // session shell's stderr at /dev/null for every later command. Run for real
+  // in the commands suite, [4r].
+  assert(
+    !/exec 9>&-\s*[0-9]*[<>]/.test(wrapped),
+    `the close is bare — no permanent redirection rides it (got ${JSON.stringify(wrapped)})`,
   );
   // An `exit` evaluated by the session shell ends the session, and Daytona
   // then never records the command as finished — the subshell sets $? for the

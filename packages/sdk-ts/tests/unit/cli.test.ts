@@ -147,6 +147,7 @@ import {
   CliUsageError,
   eventLine,
   importStatusLine,
+  TRIAL_COLUMNS,
   parseAgentKwargs,
   parseArgs,
   parseEnvPairs,
@@ -1849,6 +1850,77 @@ function testTrialDetailLiveSpend() {
 }
 
 /**
+ * THE SETTLED MONEY ROW CARRIES ITS LANE. `agent_result.cost_usd` is half of
+ * the API's statement; `spend_source` is the half that says how final it is,
+ * and the row is one cell wide. Printing the number bare turned "nobody
+ * measured this trial" into "spent $0.00" — measured in production
+ * 2026-08-20 on an `assumed_cap` trial the platform later read at $0.057.
+ * That lane is the ORDINARY state of a freshly settled trial.
+ */
+function testTrialDetailSpendLane() {
+  console.log("\n--- trialDetailLines: the settled spend row states its lane ---");
+
+  const scored = (over: Record<string, unknown>) =>
+    trialDetailLines(trialFixture({ status: "SCORED", reward: 1, ...over })).join("\n");
+
+  const capped = scored({ agent_result: { cost_usd: 0 }, spend_source: "assumed_cap" });
+  assert(/spent\s+-/.test(capped), "assumed_cap states no figure");
+  assert(!capped.includes("$0.00"), "and the zero the column holds never reaches the screen");
+
+  const floor = scored({ agent_result: { cost_usd: 0.06 }, spend_source: "measured_provisional" });
+  assert(floor.includes("at least $0.06"), "a provisional reading is named a lower bound");
+
+  const measured = scored({ agent_result: { cost_usd: 0.06 }, spend_source: "measured" });
+  assert(/spent\s+\$0\.06/.test(measured), "a measured reading is stated plainly");
+  assert(!measured.includes("at least"), "and never hedged");
+
+  // The unevidenced measured zero: money and tokens come from the same gateway
+  // read, so a real measured zero carries its token trace. Without one the
+  // stamp is not authoritative, whatever wrote it.
+  const unevidenced = scored({
+    agent_result: {
+      cost_usd: 0,
+      n_input_tokens: null,
+      n_cache_tokens: null,
+      n_output_tokens: null,
+    },
+    spend_source: "measured",
+  });
+  assert(/spent\s+-/.test(unevidenced), "a 'measured' $0 with no token evidence states no figure");
+
+  // ...and one that DOES carry its tokens is a real reading, which must survive.
+  const provenZero = scored({
+    agent_result: { cost_usd: 0, n_input_tokens: 12, n_cache_tokens: 0, n_output_tokens: 0 },
+    spend_source: "measured",
+  });
+  assert(provenZero.includes("$0.00"), "an evidenced measured zero is still a figure");
+
+  // THE LIST COLUMN IS THE SAME CELL. A page of freshly settled trials is where
+  // a wall of "$0.00" would read as a free job, so the SPENT column obeys the
+  // identical rule — the detail row and the list must never disagree about the
+  // same trial.
+  const spentCell = TRIAL_COLUMNS.find((column) => column.key === "spent");
+  assert(spentCell !== undefined, "the trial list has a SPENT column");
+  const cellFor = (over: Record<string, unknown>) =>
+    spentCell!.cell(trialFixture({ status: "SCORED", reward: 1, ...over }));
+  assertEqual(
+    cellFor({ agent_result: { cost_usd: 0 }, spend_source: "assumed_cap" }),
+    "-",
+    "the column states no figure for an unmeasured trial",
+  );
+  assertEqual(
+    cellFor({ agent_result: { cost_usd: 0.06 }, spend_source: "measured_provisional" }),
+    "at least $0.06",
+    "the column names a provisional reading a lower bound",
+  );
+  assertEqual(
+    cellFor({ agent_result: { cost_usd: 0.06 }, spend_source: "measured" }),
+    "$0.06",
+    "the column states a measured reading plainly",
+  );
+}
+
+/**
  * GPU COST (Wave-3 lane 5): the trial detail renders the compute estimate as
  * its own labeled row — the audit sentence for a priced trial, the server's
  * own reason for an unpriced one, and NOTHING for a non-GPU trial. Never
@@ -1926,6 +1998,42 @@ function testTrialDetailJudgeSplit() {
   assert(judged.includes("spent (judge)"), "a judge trial shows the judge row");
   assert(judged.includes("$0.04"), "the judge row carries the judge figure");
   assert(judged.includes("$0.31"), "the agent figure stays the agent's alone");
+
+  // THE JUDGE ROW HAS ITS OWN LANE and obeys the same law as the row above it.
+  // The judge key seals through the platform's identical settle, so it reaches
+  // `assumed_cap` for the identical reason and at the identical moment — and a
+  // bare figure here would be the same lie, one row lower down.
+  const judgeUnmeasured = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      judge_result: { cost_usd: 0 },
+      judge_spend_source: "assumed_cap",
+    }),
+  ).join("\n");
+  assert(
+    /spent \(judge\)\s+-/.test(judgeUnmeasured),
+    "an unmeasured judge states no figure",
+  );
+  assert(!judgeUnmeasured.includes("$0.00"), "and its zero never reaches the screen");
+  assert(judgeUnmeasured.includes("$0.31"), "while the measured agent figure is untouched");
+
+  const judgeFloor = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      judge_result: { cost_usd: 0.04 },
+      judge_spend_source: "measured_provisional",
+    }),
+  ).join("\n");
+  assert(
+    judgeFloor.includes("spent (judge)") && judgeFloor.includes("at least $0.04"),
+    "a provisional judge reading is named a lower bound",
+  );
 
   const plain = trialDetailLines(
     trialFixture({
@@ -2336,6 +2444,99 @@ async function testJobShowMultiId() {
  * labeled row beside — never inside — the spent row, and a job without one
  * (no GPU trials, or an older server) shows no row at all.
  */
+/**
+ * A JOB TOTAL IS A FLOOR WHEN TRIALS WENT UNMEASURED. `stats.cost_usd` is the
+ * sum of its trials, and a trial nobody measured folds a ZERO in — the wire
+ * counts them for exactly this reason ("cost_usd comes out LOWER than what was
+ * really spent"). A freshly finished job is normally in that state for its
+ * first few minutes, which is when someone is most likely to be watching it.
+ *
+ * One-way by construction: a positive count proves the total cannot ACCOUNT for
+ * every trial, which is exactly what "at least" claims — the sum may still be
+ * exact if an unmeasured trial really did spend nothing. A plain figure means
+ * "no shortfall we can prove": trials still in the provisional lane fold floors
+ * in too and the wire carries no count of those.
+ */
+async function testJobShowUnmeasuredTotal() {
+  console.log("\n--- runCli: a job total that cannot account for every trial says so ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, n_unmeasured_trials: 3 } }),
+    });
+    const short = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], short.io), 0, "exit 0");
+    const text = short.out.join("\n");
+    assert(text.includes("at least $1.50"), "the total is named a floor");
+
+    // The production shape: every trial seals unmeasured first, so the sum is
+    // zero and the job reads as free unless the count is honored.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 0, n_unmeasured_trials: 3 } }),
+    });
+    const fresh = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], fresh.io), 0, "exit 0");
+    const freshText = fresh.out.join("\n");
+    assert(freshText.includes("at least $0.00"), "a freshly settled job is not reported as free");
+
+    // Absent counters (a server predating the field) are not evidence of zero,
+    // so nothing is claimed either way — the same plain figure as before.
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ stats: { cost_usd: 1.5 } }) });
+    const older = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], older.io), 0, "exit 0");
+    assert(
+      !older.out.join("\n").includes("at least"),
+      "an absent counter claims no shortfall it cannot prove",
+    );
+
+    // THE JUDGE SHARE FOLDS ITS OWN ZEROS IN, and its row exists when judging
+    // HAPPENED, not when the figure is positive. A job whose judges all sealed
+    // unmeasured holds a judge share of 0 — suppressing the row there says "no
+    // judging happened", which is false.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        stats: { cost_usd: 1.5, judge_cost_usd: 0, n_unmeasured_judge_trials: 2 },
+      }),
+    });
+    const judgeUnmeasured = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], judgeUnmeasured.io), 0, "exit 0");
+    const judgeText = judgeUnmeasured.out.join("\n");
+    assert(judgeText.includes("spent (judge)"), "judging that happened is reported");
+    assert(judgeText.includes("at least $0.00"), "and its unmeasured share is named a floor");
+
+    // A short-but-positive judge share is hedged too.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        stats: { cost_usd: 1.5, judge_cost_usd: 0.2, n_unmeasured_judge_trials: 1 },
+      }),
+    });
+    const judgeShort = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], judgeShort.io), 0, "exit 0");
+    assert(
+      judgeShort.out.join("\n").includes("at least $0.20"),
+      "a judge share that cannot account for every judge is a floor",
+    );
+
+    // And a job with no judging at all still shows no row — the original rule.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, judge_cost_usd: 0 } }),
+    });
+    const noJudge = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], noJudge.io), 0, "exit 0");
+    assert(
+      !noJudge.out.join("\n").includes("spent (judge)"),
+      "a job that never judged says nothing about judging",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobShowGpuCost() {
   console.log("\n--- runCli: job show renders the GPU compute estimate separately ---");
   installMockFetch();
@@ -2351,6 +2552,10 @@ async function testJobShowGpuCost() {
     assert(text.includes("$0.2500"), "the summed estimate renders at 4 decimals");
     assert(text.includes("$1.50"), "the spent row keeps the model-spend figure untouched");
     assert(!text.includes("$1.75"), "the two figures are never summed into one");
+    assert(
+      !text.includes("at least"),
+      "a job with nothing unmeasured states its total plainly",
+    );
 
     setMockResponse("/api/jobs/eval-2", {
       status: 200,
@@ -5073,6 +5278,7 @@ async function main() {
   testImportStatusLine();
   testEventLine();
   testTrialDetailLiveSpend();
+  testTrialDetailSpendLane();
   testTrialDetailGpuCost();
   testTrialDetailJudgeSplit();
   testBuildInputsDirect();
@@ -5083,6 +5289,7 @@ async function main() {
   await testJsonErrorObject();
   await testJobListOutputModes();
   await testJobShowMultiId();
+  await testJobShowUnmeasuredTotal();
   await testJobShowGpuCost();
   await testJobShowPassAtK();
   await testJobShowJudgeSplit();

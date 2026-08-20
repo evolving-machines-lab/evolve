@@ -37,8 +37,12 @@ import {
   jobEvolveRecord,
   jobs,
   passAtK,
+  jobSpend,
   skills,
+  type SpendStatement,
+  trialAgentCost,
   trialEvolveRecord,
+  trialJudgeCost,
   trials,
 } from "../hosted/index";
 import type {
@@ -2166,6 +2170,32 @@ function fmtUsd(value: number | undefined | null): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "-";
 }
 
+/**
+ * A MONEY CELL IS ONE CELL WIDE, so it has to carry the lane inside it.
+ *
+ * `cost_usd` is only half of the API's statement — the lane beside it
+ * (`spend_source`, `judge_spend_source`, or a job's count of trials its total
+ * cannot account for) is what says how final the figure is. Printing the number
+ * bare turned "nobody ever measured this" into "spent $0.00": measured in
+ * production 2026-08-20, where an `assumed_cap` trial carried a literal 0 and
+ * the platform read $0.057 for it minutes later. That lane is the ORDINARY
+ * state of a freshly settled trial, so every one of these cells was wrong at
+ * exactly the moment a user is most likely to look at it.
+ *
+ * Three lanes, three sentences (the rule itself is hosted/money.ts):
+ *
+ *   measured   $0.06                  the reading, final
+ *   floor      at least $0.06         a total still being written — the same
+ *                                     words the live row already uses, so one
+ *                                     idiom covers every kind of lower bound
+ *   unmeasured -                      no figure, because none exists
+ */
+function fmtSpend(spend: SpendStatement): string {
+  if (spend.lane === "measured") return fmtUsd(spend.usd);
+  if (spend.lane === "floor") return `at least ${fmtUsd(spend.usd)}`;
+  return "-";
+}
+
 function fmtAgent(agent: AgentArm | AgentArmInput): string {
   const base = `${agent.name}:${agent.model_name}`;
   return agent.version ? `${base}:${agent.version}` : base;
@@ -2328,7 +2358,11 @@ function jobLines(e: Job): string[] {
     }
   }
   rows.push(["provider", e.sandbox_provider]);
-  rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
+  // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
+  // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
+  // _usd comes out LOWER than what was really spent"). A freshly finished job
+  // is normally in that state for its first few minutes.
+  rows.push(["spent", fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials))]);
   // GPU compute is a SEPARATE labeled estimate (lane 5) — never summed into
   // the spent row above, and absent entirely for a job with no GPU trials.
   if (e.stats.gpu_cost_usd != null) {
@@ -2337,8 +2371,23 @@ function jobLines(e: Job): string[] {
   // The judge share of the bill, itemized only when one exists: `spent` above
   // is the WHOLE bill (agent + judge), and a job with no judge tasks holds a
   // judge share of 0 — a row saying "$0.00 of judging" would be noise.
-  if (e.stats.judge_cost_usd != null && e.stats.judge_cost_usd > 0) {
-    rows.push(["spent (judge)", fmtUsd(e.stats.judge_cost_usd)]);
+  //
+  // "EXISTS" IS NOT "IS POSITIVE". Judge trials fold their zeros into
+  // judge_cost_usd exactly as agent trials do into the total, so a job whose
+  // judges all sealed unmeasured holds a judge share of 0 with a positive
+  // n_unmeasured_judge_trials — and suppressing the row there says "no judging
+  // happened", which is false. The count is what decides whether there is
+  // anything to report; the lane rule then decides how to say it, the same way
+  // the whole-bill row above does.
+  const judgeUnmeasured = e.stats.n_unmeasured_judge_trials;
+  const judged =
+    (e.stats.judge_cost_usd != null && e.stats.judge_cost_usd > 0) ||
+    (typeof judgeUnmeasured === "number" && judgeUnmeasured > 0);
+  if (judged) {
+    rows.push([
+      "spent (judge)",
+      fmtSpend(jobSpend(e.stats.judge_cost_usd, judgeUnmeasured)),
+    ]);
   }
   // Only the statuses actually present: the response names all of them (so a
   // client never hardcodes the enum), but a row of eight zeros helps nobody.
@@ -2392,12 +2441,17 @@ const JOB_COLUMNS: ListColumn<Job>[] = [
   { key: "datasets", header: "DATASETS", cell: (e) => fmtDatasets(e.datasets) },
   { key: "agents", header: "AGENTS", cell: (e) => e.agents.map(fmtAgent).join(", ") },
   { key: "trials", header: "TRIALS", cell: (e) => String(e.trials.total) },
-  { key: "spent", header: "SPENT", cell: (e) => fmtUsd(e.stats.cost_usd) },
+  {
+    key: "spent",
+    header: "SPENT",
+    cell: (e) => fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+  },
   { key: "started", header: "STARTED", cell: (e) => e.started_at },
 ];
 const JOB_DEFAULT_COLUMNS = ["id", "status", "datasets", "trials", "spent", "started"];
 
-const TRIAL_COLUMNS: ListColumn<Trial>[] = [
+/** Exported for its test, like trialDetailLines above it. */
+export const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   { key: "task", header: "TASK", cell: (r) => r.task_name },
   {
     key: "agent",
@@ -2413,7 +2467,11 @@ const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   { key: "attempt", header: "ATTEMPT", cell: (r) => String(r.attempt) },
   { key: "status", header: "STATUS", cell: (r) => r.status },
   { key: "reward", header: "REWARD", cell: (r) => (r.reward !== null ? String(r.reward) : "-") },
-  { key: "spent", header: "SPENT", cell: (r) => fmtUsd(r.agent_result?.cost_usd) },
+  // Same lane law as the detail row (fmtTrialSpend): a column is one cell wide
+  // too, so an unmeasured trial shows "-" rather than the zero its column
+  // happens to hold. A list of freshly settled trials is exactly where a wall
+  // of "$0.00" would read as a free job.
+  { key: "spent", header: "SPENT", cell: (r) => fmtSpend(trialAgentCost(r)) },
   {
     // GPU compute estimate — its own column, never folded into SPENT (lane-5
     // law). Opt-in via --columns; "-" for non-GPU trials and unpriced ones.
@@ -2524,12 +2582,16 @@ export function trialDetailLines(run: Trial): string[] {
         .join(" · "),
     ]);
   }
-  rows.push(["spent", fmtUsd(run.agent_result?.cost_usd)]);
+  rows.push(["spent", fmtSpend(trialAgentCost(run))]);
   // THE JUDGE'S SHARE, itemized beside the agent's when this task's verifier
   // ran an LLM judge on its own gateway key (judge_result present). The agent
   // figure above stays the agent's alone; the trial's whole bill is the sum.
+  // Its own lane, read the same way: the judge key seals through the identical
+  // settle, so it reaches `assumed_cap` for the identical reason and at the
+  // identical moment, and a bare figure here would be the same lie one row
+  // lower down.
   if (run.judge_result) {
-    rows.push(["spent (judge)", fmtUsd(run.judge_result.cost_usd)]);
+    rows.push(["spent (judge)", fmtSpend(trialJudgeCost(run))]);
   }
   // WHILE THE TRIAL RUNS, show the live sample beside the (still empty) settled
   // figure. It is a lagging lower bound, and the row says so with "at least";

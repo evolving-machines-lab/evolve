@@ -453,6 +453,14 @@ evolve.json               the platform's own record: gateway cost and tokens per
 
 An artifact the trial never recorded is an **absent file**, never an empty placeholder — Harbor's own law, so listing the directory is an honest inventory of what the run produced.
 
+The **job archive** writes three more files per trial that a single-trial download cannot: `lock.json` (the resolved trial inputs), `trial.log` (the lifecycle summary) and `artifacts/` with its `manifest.json`. They are built from records outside the trial's own tree — dataset and arm state, and a separate artifact store — so download the job when you need the complete tree.
+
+`result.json` states `agent_result.cost_usd` **only when the gateway measured one** — the same law the job archive follows. A trial whose spend is still a floor, or was never measured at all, states `null` there rather than a figure no meter produced; `evolve.json` carries the raw number next to the `spend_source` lane that qualifies it. Tokens are always stated: they were counted either way.
+
+The CLI states the same thing in one cell, because it has only one. A measured reading prints plainly (`$0.06`), a provisional one prints as the lower bound it is (`at least $0.06`), and a trial nobody measured prints `-`. It applies everywhere a figure appears without its lane: the `spent` and `spent (judge)` rows of `evolve trial show`, and the `SPENT` column of every trial listing.
+
+A freshly settled trial is normally unmeasured for its first few minutes while the gateway's spend log catches up, so `-` there means "not read yet", not "free". A **job** total is different in kind — it is real metered money, but every unmeasured trial folded a zero into the sum, so it prints as `at least $X` whenever the job reports trials its total cannot account for. A plain job figure means "no shortfall we can prove", which is not the same as final.
+
 This tree is assembled on your machine out of the trial's own artifacts, which is why it is not identical to the per-trial directories inside [the job archive](#download-the-archive): the server builds those, so they also carry `lock.json`, `trial.log` and `artifacts/`, and they have no `agent/trace-parsed.jsonl`. `evolve job download` adds an `evolve.json` of its own — one at the job root, one in every trial directory.
 
 The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.

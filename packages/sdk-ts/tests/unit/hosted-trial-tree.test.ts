@@ -226,6 +226,103 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
+// The money law of Harbor's result.json: a figure only when one was measured
+// -----------------------------------------------------------------------------
+{
+  // The API serves cost_usd and spend_source as a pair. evolve.json keeps both
+  // halves; Harbor's result.json has no slot for the lane, so an unmeasured
+  // number there would read as "this trial cost $0.00" to the one reader who
+  // cannot see the qualifier. Production 2026-08-20, trial 4f103397: settled
+  // at assumed_cap with cost 0, measured $0.057 by the platform minutes later.
+  for (const lane of ["assumed_cap", "measured_provisional"] as const) {
+    const files = assembleTrialTree(
+      fullParts({
+        trial: fixtureTrial({
+          spend_source: lane,
+          agent_result: {
+            n_input_tokens: 18219,
+            n_cache_tokens: 9014,
+            n_output_tokens: 166,
+            cost_usd: 0,
+            rollout_details: null,
+            metadata: null,
+          },
+        }),
+      })
+    );
+    const result = JSON.parse(files["result.json"]);
+    assertEqual(result.agent_result.cost_usd, null, `${lane}: result.json states no cost figure`);
+    assertEqual(
+      result.agent_result.n_input_tokens,
+      18219,
+      `${lane}: the tokens are still stated — they were counted`
+    );
+
+    // The platform record keeps the number AND the lane that qualifies it.
+    const evolve = JSON.parse(files["evolve.json"]);
+    assertEqual(evolve.gateway.cost_usd, 0, `${lane}: evolve.json keeps the raw figure`);
+    assertEqual(evolve.gateway.spend_source, lane, `${lane}: beside the lane that qualifies it`);
+  }
+
+  // A measured trial is untouched — the whole point is that only the
+  // unmeasured lanes lose the figure.
+  const measured = JSON.parse(
+    assembleTrialTree(fullParts())["result.json"]
+  );
+  assertEqual(measured.agent_result.cost_usd, 0.75, "a measured trial still states its cost");
+
+  // THE UNEVIDENCED MEASURED ZERO. A 'measured' $0 whose token columns are all
+  // null is not an authoritative figure: money and tokens come from the same
+  // gateway read, so a real measured zero carries its token trace. Reachable
+  // today — a pre-run infrastructure failure settles that way with no key ever
+  // minted. The platform's own writer refuses it; this side must too, or the
+  // same trial reads $0.00 downloaded alone and unstated inside a job archive.
+  const unevidenced = JSON.parse(
+    assembleTrialTree(
+      fullParts({
+        trial: fixtureTrial({
+          spend_source: "measured",
+          agent_result: {
+            n_input_tokens: null,
+            n_cache_tokens: null,
+            n_output_tokens: null,
+            cost_usd: 0,
+            rollout_details: null,
+            metadata: null,
+          },
+        }),
+      })
+    )["result.json"]
+  );
+  assertEqual(
+    unevidenced.agent_result.cost_usd,
+    null,
+    "a 'measured' $0 with no token evidence states no figure"
+  );
+
+  // ...and a measured zero that DOES carry its token trace is a real reading,
+  // which must survive. Refusing it would be the opposite lie.
+  const provenZero = JSON.parse(
+    assembleTrialTree(
+      fullParts({
+        trial: fixtureTrial({
+          spend_source: "measured",
+          agent_result: {
+            n_input_tokens: 12,
+            n_cache_tokens: 0,
+            n_output_tokens: 0,
+            cost_usd: 0,
+            rollout_details: null,
+            metadata: null,
+          },
+        }),
+      })
+    )["result.json"]
+  );
+  assertEqual(provenZero.agent_result.cost_usd, 0, "an evidenced measured zero is still a figure");
+}
+
+// -----------------------------------------------------------------------------
 // Absence law: absent artifacts are absent files
 // -----------------------------------------------------------------------------
 {
