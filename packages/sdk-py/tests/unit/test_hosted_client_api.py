@@ -12,7 +12,7 @@ Coverage:
   COMPLETED | FAILED), warnings surfaced, and the watch's SETTLE phase:
   past import COMPLETED the version is followed on the dataset detail to
   READY/ARCHIVED/FAILED (gate PASSED/UNPROVEN/FAILED), with the typed
-  ImportSettleError refusals (gate_unschedulable, settle_timeout)
+  ImportSettleError refusals (settle_timeout)
 - datasets().download() — owner-only corpus retrieval by name[@version] ref,
   with the full integrity dance (digest, truncation, safe filename)
 - agents().create()/list()/get()/delete() — ONE registration body grammar
@@ -58,8 +58,6 @@ from evolve import (
     EvolveAPIError,
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
-    GateRunningError,
-    GateRunningProgress,
     HostedClientConfig,
     JobCounts,
     JobFailure,
@@ -1023,14 +1021,13 @@ class TestDatasets:
 
     @pytest.mark.asyncio
     async def test_watch_import_settles_past_completed(self):
-        """THE DEFECT THIS GUARDS AGAINST: watch_import used to return at
-        import COMPLETED — but COMPLETED only means the corpus landed as a
-        version. The version then sits VALIDATING while the activation gate
-        proves it, so a caller who chained a job start off the resolved watch
-        was answered no_active_version / version_not_ready — and on a
-        RE-publish, the bare name still resolved to the OLD active version,
-        silently running stale content. The watch must keep polling the
-        dataset detail until the VERSION settles."""
+        """THE SKEW THIS GUARDS AGAINST: under build-then-READY the server
+        completes an import only when the version is READY, so the settle
+        phase is normally one confirming read — but a MID-DEPLOY OLDER
+        server can answer COMPLETED while its version is still short of
+        READY. The watch must keep polling the dataset detail until the
+        VERSION itself settles, never resolving a publish whose version a
+        chained job start would refuse."""
         job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2',
                'failure': None, 'warnings': []}
         fake, calls, seen_urls = _settle_urlopen(
@@ -1059,7 +1056,7 @@ class TestDatasets:
                 'imp-1',
                 poll_interval_s=0.001,
                 on_version=lambda v, d: (
-                    transitions.append(f'{v.state}:{v.gate.status if v.gate else "none"}'),
+                    transitions.append(v.state),
                     active_after_settle.append(
                         d.active_version.version if d.active_version else None
                     ),
@@ -1073,17 +1070,18 @@ class TestDatasets:
         assert detail_urls, 'no dataset-detail poll happened after COMPLETED'
         assert 'version=1.2' in detail_urls[0]
         assert calls['detail'] == 4
-        assert transitions == [
-            'VALIDATING:none', 'VALIDATING:PENDING', 'VALIDATING:RUNNING', 'READY:PASSED',
-        ]
+        # on_version fires on every observed STATE change — the gate is not
+        # consulted any more.
+        assert transitions == ['VALIDATING', 'READY']
         assert active_after_settle[-1] == '1.2'
 
     @pytest.mark.asyncio
     async def test_watch_import_surfaces_gate_failure(self):
-        """A gate that FAILS the version fails the WATCH: the version moves
-        VALIDATING -> FAILED with the gate's structured cause on the same row
-        the import surface reads, so the watch re-reads the import and
-        returns it FAILED — never a silent success."""
+        """A version that settles FAILED fails the WATCH: the structured
+        cause lands on the same row the import surface reads, so the watch
+        re-reads the import and returns it FAILED — never a silent success.
+        (The fixture wears a legacy gate failure — a mid-deploy older
+        server's shape; the watch reads only the STATE.)"""
         job = {'id': 'imp-9', 'name': 'my-set', 'version': '2.0', 'warnings': []}
         gate_failure = {
             'code': 'gate_failed',
@@ -1114,15 +1112,13 @@ class TestDatasets:
             done = await datasets_factory(CONFIG).watch_import(
                 'imp-9',
                 poll_interval_s=0.001,
-                on_version=lambda v, d: transitions.append(
-                    f'{v.state}:{v.gate.status if v.gate else "none"}'
-                ),
+                on_version=lambda v, d: transitions.append(v.state),
             )
 
         assert done.status == 'FAILED'
         assert done.failure is not None
         assert done.failure.code == 'gate_failed'
-        assert transitions == ['VALIDATING:RUNNING', 'FAILED:FAILED']
+        assert transitions == ['VALIDATING', 'FAILED']
 
     @pytest.mark.asyncio
     async def test_watch_import_unproven_settles_as_success(self):
@@ -1161,41 +1157,32 @@ class TestDatasets:
         assert settled[-1].gate.unproven.reason == 'no reference solutions to run'
 
     @pytest.mark.asyncio
-    async def test_watch_import_refuses_unschedulable_gate(self):
-        """THE KNOWN TRAP, refused by name: with solutions archiving disabled
-        the import lands VALIDATING with no archived solutions — the gate
-        sweep can NEVER select the row, so no gate will ever be scheduled and
-        the version sits VALIDATING forever. A settle loop that only exits on
-        READY/FAILED polls forever on that configuration; the watch instead
-        refuses immediately with the named cause after ONE detail probe."""
-        # Resolved dynamically (like the TS tests' dynamic import) so this
-        # file still collects — and the settle tests still prove the BEHAVIOR
-        # red — on a build that predates the class.
-        import evolve as evolve_pkg
-        settle_error = getattr(evolve_pkg, 'ImportSettleError', None)
-
+    async def test_watch_import_archiving_disabled_settles_normally(self):
+        """The old trap is gone with the gate: solutions archiving disabled
+        is a warning about the missing reference-solution record, not a
+        settling dead end — the same import settles READY like any other,
+        in one confirming read."""
         job = {'id': 'imp-3', 'name': 'my-set', 'version': '1.4', 'failure': None,
                'warnings': [{'code': 'solutions_archiving_disabled',
                              'message': 'solutions archiving is disabled'}]}
+        # The first detail read shows the old dead-end shape (VALIDATING,
+        # no gate) — the OLD client refused right here with
+        # 'gate_unschedulable'; the new one keeps polling to READY.
         fake, calls, seen_urls = _settle_urlopen(
             [{**job, 'status': 'COMPLETED', 'task_count': 4}],
-            [_settle_detail_body(version='1.4', state='VALIDATING', gate=None)],
+            [
+                _settle_detail_body(version='1.4', state='VALIDATING', gate=None),
+                _settle_detail_body(version='1.4', state='READY', active=True),
+            ],
         )
 
         with patch('evolve._http.urlopen', fake):
-            with pytest.raises(Exception) as exc:
-                await datasets_factory(CONFIG).watch_import(
-                    'imp-3', poll_interval_s=0.001
-                )
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-3', poll_interval_s=0.001
+            )
 
-        assert settle_error is not None and isinstance(exc.value, settle_error)
-        assert exc.value.code == 'gate_unschedulable'
-        assert exc.value.dataset == 'my-set'
-        assert exc.value.version == '1.4'
-        assert exc.value.state == 'VALIDATING'
-        assert 'solutions_archiving_disabled' in str(exc.value)
-        # ONE detail probe — the dead end is known, waiting cannot change it.
-        assert calls['detail'] == 1
+        assert done.status == 'COMPLETED'
+        assert calls['detail'] == 2
 
     @pytest.mark.asyncio
     async def test_watch_import_settle_timeout_backstop(self):
@@ -1224,8 +1211,6 @@ class TestDatasets:
         assert settle_error is not None and isinstance(exc.value, settle_error)
         assert exc.value.code == 'settle_timeout'
         assert exc.value.state == 'VALIDATING'
-        assert exc.value.gate is not None
-        assert exc.value.gate.status == 'PENDING'
 
     @pytest.mark.asyncio
     async def test_watch_import_settle_timeout_bounds_rate_limited_polls(self):
@@ -1378,9 +1363,6 @@ class TestDatasets:
         assert settle_error is not None and isinstance(exc.value, settle_error)
         assert exc.value.code == 'settle_timeout'
         assert exc.value.state == 'FAILED'
-        assert exc.value.gate is not None
-        assert exc.value.gate.status == 'FAILED'
-        assert exc.value.gate.code == 'gate_failed'
         assert 'settled FAILED' in str(exc.value)
         assert 'get_import("imp-7")' in str(exc.value)
 
@@ -1480,47 +1462,31 @@ class TestDatasets:
         assert dataset.versions[0].task_count == 12
 
     @pytest.mark.asyncio
-    async def test_activate_202_raises_typed_gate_running(self):
-        """A 202 gate_running is a healthy "not yet", never a garbage Dataset.
+    async def test_activate_still_building_is_typed_409(self):
+        """Build-then-READY: activate never answers 202 — a version still
+        building refuses with the ordinary typed 409 ``version_not_ready``,
+        and the publish lands READY (and active) on its own."""
+        import io
+        import urllib.error
 
-        The body is a GateRunning progress report, deliberately not the error
-        envelope — so it surfaces as its own typed error (like
-        NoActiveVersionError), not as an EvolveAPIError.
-        """
-        fake = FakeUrlopen([
-            ('/api/datasets/my-swe/versions/1.0/activate', {
-                'code': 'gate_running',
-                'message': 'The activation gate is still proving version 1.0',
-                'gate': {'status': 'RUNNING', 'tasks': 12, 'unverified': 3, 'ineligible': 1},
-            }, {}, 202),
-        ])
-        with patch('evolve._http.urlopen', fake):
-            with pytest.raises(GateRunningError) as exc:
+        def refuse(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 409, 'Conflict', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'version_not_ready',
+                    'message': ('Dataset version my-swe@1.0 is in state BUILDING; '
+                                'a publish lands READY (and active) on its own '
+                                'when it finishes building'),
+                    'details': {'state': 'BUILDING'},
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', refuse):
+            with pytest.raises(EvolveAPIError) as exc:
                 await datasets_factory(CONFIG).activate('my-swe', '1.0')
 
-        assert not isinstance(exc.value, EvolveAPIError)
-        assert exc.value.code == 'gate_running'
-        assert exc.value.dataset == 'my-swe'
-        assert exc.value.version == '1.0'
-        assert str(exc.value) == 'The activation gate is still proving version 1.0'
-        assert exc.value.gate == GateRunningProgress(
-            status='RUNNING', tasks=12, unverified=3, ineligible=1
-        )
-
-    @pytest.mark.asyncio
-    async def test_activate_202_with_malformed_body_still_typed(self):
-        """A bodyless 202 still raises the typed refusal — defensively."""
-        fake = FakeUrlopen([
-            ('/api/datasets/my-swe/versions/2.0/activate', {}, {}, 202),
-        ])
-        with patch('evolve._http.urlopen', fake):
-            with pytest.raises(GateRunningError) as exc:
-                await datasets_factory(CONFIG).activate('my-swe', '2.0')
-
-        # Missing progress reads as PENDING with zero counts — never a crash.
-        assert exc.value.gate == GateRunningProgress(
-            status='PENDING', tasks=0, unverified=0, ineligible=0
-        )
+        assert exc.value.code == 'version_not_ready'
+        assert exc.value.details == {'state': 'BUILDING'}
 
     @pytest.mark.asyncio
     async def test_gate_failed_task_count_carries_the_true_total(self):

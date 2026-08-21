@@ -27,7 +27,6 @@ import { parse as parseToml } from "smol-toml";
 import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
-  GateRunningError,
   ImportSettleError,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
@@ -601,7 +600,7 @@ const GROUPS: Record<string, GroupSpec> = {
           dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
           version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
-          watch: { kind: "boolean", help: "Poll until the published version settles: READY (gate PASSED/UNPROVEN) or FAILED" },
+          watch: { kind: "boolean", help: "Poll until the publish settles: the version READY (built and active) or FAILED" },
         },
         minPositionals: 0,
         maxPositionals: 0,
@@ -2753,45 +2752,21 @@ export function importStatusLine(job: DatasetImport): string {
 }
 
 /**
- * Compact one-line rendering of one version {state, gate} change for
- * --watch's settle phase — the half of a publish the import status cannot
- * show: VALIDATING while the activation gate proves the version, then
- * READY/ARCHIVED/FAILED.
+ * Compact one-line rendering of one version state change for --watch's
+ * settle phase: the version's own walk (BUILDING, then READY/ARCHIVED or
+ * FAILED). No gate rides here — the publish path has none.
  */
 export function versionStatusLine(version: DatasetVersion): string {
-  const gate = version.gate ? `gate=${version.gate.status}` : "gate not scheduled yet";
-  return `state  ${version.state.padEnd(12)} ${gate}`.trimEnd();
+  return `state  ${version.state}`;
 }
 
 /**
- * The settled version's facts for the final --watch block: state, the gate's
- * verdict (with the UNPROVEN reason printed, never disguised), the failing
- * tasks on a FAILED gate (the message itself already rides the import's
- * failure row), and whether the dataset's ACTIVE version is now this publish
- * — the fact a re-publisher needs, because a bare name resolves to the
- * active version.
+ * The settled version's facts for the final --watch block: state, and
+ * whether the dataset's ACTIVE version is now this publish — the fact a
+ * re-publisher needs, because a bare name resolves to the active version.
  */
 function versionSettleLines(version: DatasetVersion, detail: Dataset | null): string[] {
   const rows: string[][] = [["state", version.state]];
-  const gate = version.gate;
-  if (gate === null) {
-    rows.push(["gate", "not scheduled"]);
-  } else if (gate.status === "UNPROVEN") {
-    rows.push([
-      "gate",
-      `UNPROVEN — activated without proof (${gate.unproven?.reason ?? "no reference solutions to run"})`,
-    ]);
-  } else if (gate.status === "FAILED") {
-    rows.push(["gate", `FAILED — ${gate.failed_task_count} task(s) not activation-eligible`]);
-    for (const task of gate.failed_tasks) {
-      rows.push([`  ${task.task_name}`, `${task.outcome ?? ""} ${task.reasons.join("; ")}`.trim()]);
-    }
-    if (gate.failed_task_count > gate.failed_tasks.length) {
-      rows.push(["", `… and ${gate.failed_task_count - gate.failed_tasks.length} more`]);
-    }
-  } else {
-    rows.push(["gate", gate.status]);
-  }
   if (detail) {
     const active = detail.active_version?.version ?? null;
     rows.push([
@@ -3904,7 +3879,7 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     } else {
       for (const line of importLines(created)) io.out(line);
       io.out("");
-      // Version state (VALIDATING → READY/FAILED) lives on the dataset body.
+      // Version state (IMPORTING → BUILDING → READY/FAILED) lives on the dataset body.
       // `created.name`, not the flag: a manifest-derived publish had no --name,
       // and the 202 echoes the name the server actually chose.
       io.out(`Follow it with: evolve dataset show ${created.name}`);
@@ -3918,11 +3893,11 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     io.out(`Publish ${created.id} (${created.name}) ${created.status} — watching…`);
   }
 
-  // The watch follows the publish to a SETTLED end: import COMPLETED only
-  // means the corpus landed as a VALIDATING version, and exiting 0 there let
-  // a chained `evolve run` hit no_active_version — or, on a re-publish,
-  // silently run the OLD active version. So the version's own settle
-  // (activation gate included) is part of the watch, and of the exit code.
+  // The watch follows the publish to its SETTLED end: the version READY
+  // (fully built — images and sandbox templates — and, on an owner dataset,
+  // already ACTIVE) or FAILED. COMPLETED means READY under build-then-READY;
+  // the SDK's settle phase adds one confirming read (and covers a mid-deploy
+  // older server), and the exit code is the settled outcome.
   let lastVersion: DatasetVersion | null = null;
   let lastDetail: Dataset | null = null;
   let final: DatasetImport;
@@ -3986,36 +3961,10 @@ async function cmdDatasetDownload(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdDatasetActivate(inv: Invocation, io: CliIO): Promise<number> {
   const client = datasets(clientConfig(inv));
   const [name, version] = inv.positionals;
-  let dataset: Dataset;
-  try {
-    dataset = await client.activate(name, version);
-  } catch (error) {
-    // 202 gate_running: a healthy "not yet", not a failure — say so instead
-    // of the generic Error: line, but exit 1 because nothing was activated.
-    if (error instanceof GateRunningError) {
-      if (inv.flags.json === true) {
-        io.out(
-          JSON.stringify({
-            kind: "gate.running",
-            code: error.code,
-            message: error.message,
-            dataset: error.dataset,
-            version: error.version,
-            gate: error.gate,
-          })
-        );
-      } else {
-        io.out(`Not yet: ${error.message}`);
-        io.out(
-          `Gate ${error.gate.status}: ${error.gate.tasks} task(s), ` +
-            `${error.gate.unverified} unverified, ${error.gate.ineligible} ineligible so far.`
-        );
-        io.out(`Follow it with: evolve dataset show ${name} — a gate that passes activates the version itself.`);
-      }
-      return 1;
-    }
-    throw error;
-  }
+  // A version still building refuses with 409 version_not_ready (the
+  // generic typed-error path prints it): the publish lands READY and active
+  // on its own, so this verb only re-points the default at a built version.
+  const dataset: Dataset = await client.activate(name, version);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(dataset));
   } else {
@@ -4379,7 +4328,7 @@ function jsonErrorBody(error: unknown): Record<string, unknown> {
     };
   }
   // A settle refusal carries its own named cause — not an invented code, the
-  // SDK's typed one (gate_unschedulable / settle_timeout).
+  // SDK's typed one (settle_timeout).
   if (error instanceof ImportSettleError) {
     return { code: error.code, message: error.message };
   }

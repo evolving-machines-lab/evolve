@@ -1614,20 +1614,6 @@ export interface Task {
 }
 
 /**
- * Gate progress at the moment of an activate() call that answered 202 —
- * carried on GateRunningError. `status` is the gate's own lifecycle
- * (PENDING or RUNNING here), `tasks` the version's task count, `unverified`
- * the tasks the gate has not yet produced a verdict for, and `ineligible`
- * the tasks whose verdict so far is not activation-eligible.
- */
-export interface GateRunningProgress {
-  status: string;
-  tasks: number;
-  unverified: number;
-  ineligible: number;
-}
-
-/**
  * The active version's git PROVENANCE — git_url + the requested ref + the
  * resolved commit + the repository subfolder — plus, for a ref that can move,
  * the WATCH: where the ref points now versus what the version was built from,
@@ -2115,11 +2101,11 @@ export interface WatchImportOptions {
   /** Called on every observed import status change (including the first status seen) */
   onStatus?: (datasetImport: DatasetImport) => void;
   /**
-   * Called on every observed change of the imported VERSION's {state, gate
-   * status} while the watch waits for the version to settle after the import
-   * itself COMPLETED — VALIDATING with the gate PENDING/RUNNING, then
-   * READY/ARCHIVED/FAILED (or gate UNPROVEN, the activated-without-proof
-   * fact). `dataset` is the detail read the observation came from: its
+   * Called on every observed change of the imported VERSION's state during
+   * the watch's settle phase — normally the single confirming READY read
+   * (COMPLETED means the version is READY under build-then-READY), or the
+   * walk to READY/ARCHIVED/FAILED against a mid-deploy older server.
+   * `dataset` is the detail read the observation came from: its
    * `active_version` says whether the settled version is now the one a bare
    * dataset name resolves to.
    */
@@ -2131,9 +2117,9 @@ export interface WatchImportOptions {
   /**
    * Backstop bound on the settle phase — how long past import COMPLETED the
    * watch may wait for the version to settle before refusing with
-   * ImportSettleError("settle_timeout") (default: 30 minutes). A bound on
-   * the WAIT, never a verdict on the gate: the gate keeps running
-   * server-side, and the error carries the last observed state.
+   * ImportSettleError("settle_timeout") (default: 30 minutes). Normally
+   * unused (COMPLETED means READY); it bounds the wait against a mid-deploy
+   * older server, and the error carries the last observed state.
    */
   settleTimeoutMs?: number;
 }
