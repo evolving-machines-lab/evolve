@@ -146,7 +146,6 @@ import {
   EvolveApiError,
   EvolveDigestMismatchError,
   EvolveIncompleteDownloadError,
-  GateRunningError,
   isHostedErrorCode,
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
@@ -581,49 +580,34 @@ async function testVersionSourceMapping() {
   }
 }
 
-async function testActivateGateRunning202() {
-  console.log("\n--- datasets().activate() surfaces a 202 gate_running as the typed GateRunningError ---");
+async function testActivateNotReady409() {
+  console.log("\n--- datasets().activate() surfaces a still-building version as the typed 409 version_not_ready ---");
   installMockFetch();
   try {
+    // Build-then-READY: activate never answers 202 — a version still building
+    // refuses 409 version_not_ready, and the publish lands READY on its own.
     setMockResponse("/api/datasets/my-swe/versions/1.0/activate", {
-      status: 202,
+      status: 409,
       body: {
-        code: "gate_running",
-        message: "The activation gate is still proving version 1.0",
-        gate: { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
+        error: {
+          code: "version_not_ready",
+          message: "Dataset version my-swe@1.0 is in state BUILDING; a publish lands READY (and active) on its own when it finishes building",
+          details: { state: "BUILDING" },
+        },
       },
     });
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
     try {
       await d.activate("my-swe", "1.0");
-      assert(false, "a 202 must not resolve to a Dataset");
+      assert(false, "a 409 must not resolve to a Dataset");
     } catch (error) {
-      assert(error instanceof GateRunningError, "202 gate_running throws GateRunningError, never a garbage Dataset");
-      const gateRunning = error as GateRunningError;
-      assert(!(gateRunning instanceof EvolveApiError), "healthy in-progress state is NOT an EvolveApiError");
-      assertEqual(gateRunning.code, "gate_running", "carries the stable machine word");
-      assertEqual(gateRunning.dataset, "my-swe", "names the dataset");
-      assertEqual(gateRunning.version, "1.0", "names the version");
-      assertEqual(gateRunning.message, "The activation gate is still proving version 1.0", "keeps the server's own sentence");
+      assert(error instanceof EvolveApiError, "the refusal is the ordinary typed EvolveApiError");
+      assertEqual((error as EvolveApiError).code, "version_not_ready", "carries the stable machine word");
       assertEqual(
-        gateRunning.gate,
-        { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
-        "carries the gate progress block"
-      );
-    }
-
-    // A malformed 202 body still yields the typed refusal, defensively.
-    setMockResponse("/api/datasets/my-swe/versions/2.0/activate", { status: 202, body: {} });
-    try {
-      await d.activate("my-swe", "2.0");
-      assert(false, "a malformed 202 must not resolve to a Dataset");
-    } catch (error) {
-      assert(error instanceof GateRunningError, "a bodyless 202 still throws GateRunningError");
-      assertEqual(
-        (error as GateRunningError).gate,
-        { status: "PENDING", tasks: 0, unverified: 0, ineligible: 0 },
-        "missing progress reads as PENDING with zero counts — never a crash"
+        ((error as EvolveApiError).details as { state?: string } | undefined)?.state,
+        "BUILDING",
+        "details name the version's actual state"
       );
     }
 
@@ -1206,13 +1190,12 @@ function installSettleFetch(
 }
 
 /**
- * THE DEFECT THIS GUARDS AGAINST: watchImport used to return at import
- * COMPLETED — but COMPLETED only means the corpus landed as a version. The
- * version then sits VALIDATING while the activation gate proves it, so a
- * caller who chained a job start off the resolved watch was answered
- * no_active_version / version_not_ready — and on a RE-publish, the bare name
- * still resolved to the OLD active version, silently running stale content.
- * The watch must keep polling the dataset detail until the VERSION settles.
+ * THE SKEW THIS GUARDS AGAINST: under build-then-READY the server completes
+ * an import only when the version is READY, so the settle phase is normally
+ * one confirming read — but a MID-DEPLOY OLDER server can answer COMPLETED
+ * while its version is still short of READY. The watch must keep polling the
+ * dataset detail until the VERSION itself settles (READY/ARCHIVED/FAILED),
+ * never resolving a publish whose version a chained job start would refuse.
  */
 async function testWatchImportSettlesToReady() {
   console.log("\n--- datasets().watchImport() keeps watching past COMPLETED until the version is READY ---");
@@ -1238,7 +1221,7 @@ async function testWatchImportSettlesToReady() {
     const final = await d.watchImport("imp-1", {
       pollIntervalMs: 1,
       onVersion: (version, dataset) => {
-        transitions.push(`${version.state}:${version.gate?.status ?? "none"}`);
+        transitions.push(version.state);
         activeAfterSettle = dataset.active_version?.version ?? null;
       },
     });
@@ -1256,8 +1239,8 @@ async function testWatchImportSettlesToReady() {
     assertEqual(counters.detailCalls(), 4, "keeps polling until the version state settles to READY");
     assertEqual(
       transitions,
-      ["VALIDATING:none", "VALIDATING:PENDING", "VALIDATING:RUNNING", "READY:PASSED"],
-      "onVersion fires on every observed {state, gate} change"
+      ["VALIDATING", "READY"],
+      "onVersion fires on every observed STATE change (the gate is not consulted)"
     );
     assertEqual(activeAfterSettle, "1.2", "the settled detail names the new version as the active one");
   } finally {
@@ -1266,14 +1249,14 @@ async function testWatchImportSettlesToReady() {
 }
 
 /**
- * A gate that FAILS the version fails the WATCH: the version moves
- * VALIDATING -> FAILED with the gate's structured cause on the same row the
- * import surface reads, so the watch re-reads the import and returns it
- * FAILED — the one import shape, exactly like an import that failed before
- * the gate ever ran. Never a silent success.
+ * A version that settles FAILED fails the WATCH: the failure's structured
+ * cause lands on the same row the import surface reads, so the watch
+ * re-reads the import and returns it FAILED — the one import shape. Never a
+ * silent success. (The fixture wears a legacy gate failure — an older
+ * mid-deploy server's shape; the watch reads only the STATE.)
  */
 async function testWatchImportSurfacesGateFailure() {
-  console.log("\n--- datasets().watchImport() ends FAILED when the activation gate fails the version ---");
+  console.log("\n--- datasets().watchImport() ends FAILED when the version settles FAILED ---");
   installMockFetch();
   try {
     const job = { id: "imp-9", name: "deep-swe", version: "2.0", warnings: [] };
@@ -1297,15 +1280,15 @@ async function testWatchImportSurfacesGateFailure() {
     const transitions: string[] = [];
     const final = await d.watchImport("imp-9", {
       pollIntervalMs: 1,
-      onVersion: (version) => transitions.push(`${version.state}:${version.gate?.status ?? "none"}`),
+      onVersion: (version) => transitions.push(version.state),
     });
 
-    assertEqual(final.status, "FAILED", "a gate-failed version fails the watch — never exit-0 on stale content");
-    assertEqual(final.failure?.code, "gate_failed", "the gate's structured cause rides the import's own failure field");
+    assertEqual(final.status, "FAILED", "a failed version fails the watch — never exit-0 on stale content");
+    assertEqual(final.failure?.code, "gate_failed", "the structured cause rides the import's own failure field");
     assertEqual(
       transitions,
-      ["VALIDATING:RUNNING", "FAILED:FAILED"],
-      "the failing gate is observed on the version before the import re-read"
+      ["VALIDATING", "FAILED"],
+      "the failing version is observed before the import re-read"
     );
   } finally {
     restoreFetch();
@@ -1372,15 +1355,15 @@ async function testWatchImportUnprovenSettlesAsSuccess() {
 }
 
 /**
- * THE KNOWN TRAP, refused by name: with solutions archiving disabled the
- * import lands VALIDATING with solutions_archive_ref NULL — the gate sweep
- * can NEVER select the row, so no gate will ever be scheduled and the version
- * sits VALIDATING forever. A settle loop that only exits on READY/FAILED
- * polls forever on that configuration; the watch instead refuses immediately
- * with the named cause after ONE detail probe.
+ * THE OLD TRAP, gone with the gate: solutions archiving disabled used to
+ * mean no activation gate could ever be scheduled, so the watch refused
+ * typed ("gate_unschedulable") instead of hanging. Under build-then-READY
+ * there is no gate — the warning is a statement about the missing
+ * reference-solution record, not about settling — so the same import now
+ * settles like any other, in one confirming READY read.
  */
-async function testWatchImportRefusesUnschedulableGate() {
-  console.log("\n--- datasets().watchImport() refuses (typed, at once) when no gate can ever be scheduled ---");
+async function testWatchImportArchivingDisabledSettlesNormally() {
+  console.log("\n--- datasets().watchImport() settles normally when solutions archiving was disabled ---");
   installMockFetch();
   try {
     const job = {
@@ -1390,33 +1373,22 @@ async function testWatchImportRefusesUnschedulableGate() {
       failure: null,
       warnings: [{ code: "solutions_archiving_disabled", message: "solutions archiving is disabled" }],
     };
+    // The first detail read shows the old dead-end shape (VALIDATING, no
+    // gate) — the OLD client refused right here with "gate_unschedulable";
+    // the new one keeps polling to READY.
     const counters = installSettleFetch(
       [{ ...job, status: "COMPLETED", task_count: 4 }],
-      [settleDetailBody({ version: "1.4", state: "VALIDATING", gate: null })]
+      [
+        settleDetailBody({ version: "1.4", state: "VALIDATING", gate: null }),
+        settleDetailBody({ version: "1.4", state: "READY", active: true }),
+      ]
     );
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
-    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
-    let thrown: unknown = null;
-    try {
-      await d.watchImport("imp-3", { pollIntervalMs: 1 });
-    } catch (error) {
-      thrown = error;
-    }
+    const final = await d.watchImport("imp-3", { pollIntervalMs: 1 });
 
-    assert(
-      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
-      "throws the typed ImportSettleError, never a hang and never a fake success"
-    );
-    assertEqual((thrown as any)?.code, "gate_unschedulable", "the cause is named: gate_unschedulable");
-    assertEqual((thrown as any)?.dataset, "deep-swe", "the error names the dataset");
-    assertEqual((thrown as any)?.version, "1.4", "the error names the version");
-    assertEqual((thrown as any)?.state, "VALIDATING", "the error carries the observed state");
-    assertEqual(counters.detailCalls(), 1, "ONE detail probe — the dead end is known, waiting cannot change it");
-    assert(
-      String((thrown as Error)?.message ?? "").includes("solutions_archiving_disabled"),
-      "the message names the import warning that proves the dead end"
-    );
+    assertEqual(final.status, "COMPLETED", "the warning gates nothing — the publish settles as a success");
+    assertEqual(counters.detailCalls(), 2, "the watch polls through the legacy VALIDATING read to READY");
   } finally {
     restoreFetch();
   }
@@ -1453,7 +1425,6 @@ async function testWatchImportSettleTimeoutBackstop() {
     );
     assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
     assertEqual((thrown as any)?.state, "VALIDATING", "the error carries the last observed version state");
-    assertEqual((thrown as any)?.gate?.status, "PENDING", "the error carries the last observed gate");
   } finally {
     restoreFetch();
   }
@@ -1640,8 +1611,6 @@ async function testWatchImportGateFailureReReadIsBounded() {
     );
     assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
     assertEqual((thrown as any)?.state, "FAILED", "the error carries the settled FAILED state — the fact survives");
-    assertEqual((thrown as any)?.gate?.status, "FAILED", "and the observed gate");
-    assertEqual((thrown as any)?.gate?.code, "gate_failed", "with the gate's structured cause riding the error");
     const message = String((thrown as Error)?.message ?? "");
     assert(message.includes("settled FAILED"), "the message states the version DID settle FAILED");
     assert(message.includes('getImport("imp-7")'), "and names the read that fetches the failed import");
@@ -4599,7 +4568,7 @@ async function main() {
   await testDatasetGateMapping();
   await testGateFailedTaskCountTruncation();
   await testVersionSourceMapping();
-  await testActivateGateRunning202();
+  await testActivateNotReady409();
   await testGetActive();
   await testGetActiveNoActiveVersion();
   await testDatasetUpdate();
@@ -4616,7 +4585,7 @@ async function main() {
   await testWatchImportSettlesToReady();
   await testWatchImportSurfacesGateFailure();
   await testWatchImportUnprovenSettlesAsSuccess();
-  await testWatchImportRefusesUnschedulableGate();
+  await testWatchImportArchivingDisabledSettlesNormally();
   await testWatchImportSettleTimeoutBackstop();
   await testWatchImportSettleTimeoutBoundsRateLimitedPolls();
   await testWatchImportGateFailureReReadSurvivesRateLimit();

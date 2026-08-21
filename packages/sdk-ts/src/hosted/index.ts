@@ -45,7 +45,6 @@ import type {
   DownloadJobOptions,
   EvalSandboxProvider,
   ExceptionInfo,
-  GateRunningProgress,
   GetDatasetOptions,
   GrepJobOptions,
   HostedClientConfig,
@@ -177,7 +176,6 @@ export type {
   DownloadJobOptions,
   EvalSandboxProvider,
   ExceptionInfo,
-  GateRunningProgress,
   GetDatasetOptions,
   GrepJobOptions,
   HostedClientConfig,
@@ -446,62 +444,28 @@ export class NoActiveVersionError extends Error {
   }
 }
 
-/**
- * Thrown by datasets().activate() when the version's activation gate is
- * still scheduled or running — the API's 202 `gate_running` answer.
- *
- * NOT an EvolveApiError: the wire body is deliberately not the error
- * envelope, because an in-progress gate is a healthy state — nothing is
- * wrong and nothing is asked of the caller. Poll the dataset (each version
- * carries `gate`); a gate that PASSES activates the version itself, so
- * there is normally nothing left to call. Its own type, like
- * NoActiveVersionError, because activate() promised a Dataset it cannot
- * return yet.
- */
-export class GateRunningError extends Error {
-  readonly name = "GateRunningError";
-  /** The stable machine word for this state. */
-  readonly code = "gate_running";
-  /** The dataset whose version is still being proven. */
-  readonly dataset: string;
-  /** The version the gate is proving. */
-  readonly version: string;
-  /** Gate progress at the moment of the call. */
-  readonly gate: GateRunningProgress;
-  constructor(dataset: string, version: string, message: string, gate: GateRunningProgress) {
-    super(message);
-    this.dataset = dataset;
-    this.version = version;
-    this.gate = gate;
-  }
-}
-
 /** Why datasets().watchImport() could not watch the version to a settled state. */
-export type ImportSettleErrorCode = "gate_unschedulable" | "settle_timeout";
+export type ImportSettleErrorCode = "settle_timeout";
 
 /**
  * Thrown by datasets().watchImport() when the import itself COMPLETED but the
- * WATCH cannot truthfully report the version settled:
- *
- *  - "gate_unschedulable": the import's warnings say solutions archiving was
- *    disabled for this deployment, so NO activation gate can ever be
- *    scheduled — the version sits VALIDATING until an operator proves and
- *    activates it. Waiting longer can never change that, so the watch refuses
- *    after one confirming read instead of polling forever.
- *  - "settle_timeout": the settleTimeoutMs backstop elapsed first. Usually
- *    the gate is still at work server-side — this bounds the WAIT, not the
- *    gate; keep following with datasets().get("name@version"): every version
- *    carries `gate`. When `state` is "FAILED" the version DID settle and the
- *    budget was spent retrying the final import read through rate limits —
- *    read the failure with datasets().getImport(importId).
+ * WATCH cannot truthfully report the version settled: the settleTimeoutMs
+ * backstop elapsed first ("settle_timeout"). This bounds the WAIT, never the
+ * publish — keep following with datasets().get("name@version"). When `state`
+ * is "FAILED" the version DID settle and the budget was spent retrying the
+ * final import read through rate limits — read the failure with
+ * datasets().getImport(importId). Rare by construction: the server settles a
+ * publish at import COMPLETED (COMPLETED means the version is READY), so the
+ * settle phase normally confirms in one read; the timeout exists for a
+ * mid-deploy older server still finishing a version after COMPLETED.
  *
  * NOT an EvolveApiError: no request failed — the caller's wait could not be
- * honestly satisfied. Carries the last observed version state and gate so a
- * handler can say exactly where the publish stands.
+ * honestly satisfied. Carries the last observed version state so a handler
+ * can say exactly where the publish stands.
  */
 export class ImportSettleError extends Error {
   readonly name = "ImportSettleError";
-  /** The named cause: "gate_unschedulable" or "settle_timeout". */
+  /** The named cause; "settle_timeout" is the only one. */
   readonly code: ImportSettleErrorCode;
   /** The import job whose version did not settle. */
   readonly importId: string;
@@ -509,10 +473,8 @@ export class ImportSettleError extends Error {
   readonly dataset: string;
   /** The version the import created. */
   readonly version: string;
-  /** The last observed version state (e.g. "VALIDATING"); null when the version was never observed. */
+  /** The last observed version state; null when the version was never observed. */
   readonly state: string | null;
-  /** The last observed activation gate; null when none was scheduled. */
-  readonly gate: DatasetVersionGate | null;
   constructor(
     code: ImportSettleErrorCode,
     message: string,
@@ -521,7 +483,6 @@ export class ImportSettleError extends Error {
       dataset: string;
       version: string;
       state: string | null;
-      gate: DatasetVersionGate | null;
     }
   ) {
     super(message);
@@ -530,26 +491,7 @@ export class ImportSettleError extends Error {
     this.dataset = facts.dataset;
     this.version = facts.version;
     this.state = facts.state;
-    this.gate = facts.gate;
   }
-}
-
-/**
- * The 202 body's `gate` progress block, defensively: a count that is not a
- * number reads as 0 and a missing status as PENDING (scheduled is the least
- * a 202 can mean) — a misbehaving server must never crash the refusal path.
- */
-function mapGateRunningProgress(raw: unknown): GateRunningProgress {
-  const value = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<
-    string,
-    unknown
-  >;
-  return {
-    status: typeof value.status === "string" ? value.status : "PENDING",
-    tasks: typeof value.tasks === "number" ? value.tasks : 0,
-    unverified: typeof value.unverified === "number" ? value.unverified : 0,
-    ineligible: typeof value.ineligible === "number" ? value.ineligible : 0,
-  };
 }
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
@@ -573,27 +515,12 @@ const DEFAULT_IMPORT_POLL_INTERVAL_MS = 2_000;
 /**
  * Backstop bound on watchImport's settle phase — how long past import
  * COMPLETED the watch may wait for the version to settle before refusing
- * with ImportSettleError("settle_timeout"). A bound on the WATCH, never a
- * verdict on the gate: the gate keeps running server-side, and the error
- * says where it stood. Generous because a gate run proves gold solutions
- * through the real execution path (minutes to long); overridable per call.
+ * with ImportSettleError("settle_timeout"). Normally one confirming read:
+ * the server settles the publish at import COMPLETED (the version is
+ * already READY), so this bound exists for a mid-deploy older server still
+ * moving a version after COMPLETED; overridable per call.
  */
 const DEFAULT_IMPORT_SETTLE_TIMEOUT_MS = 30 * 60_000;
-
-/**
- * The gate verdicts that settle a watch WITHOUT the version state reaching
- * READY first: on a platform-curated dataset the default moves only by
- * operator action, so a resting PASSED is where the automatic machinery
- * stops. UNPROVEN is belt-and-braces: the gate runner stamps it in the same
- * write that promotes the version, so a version should never REST at
- * VALIDATING+UNPROVEN — treating it as settled is safe if one ever does.
- * (A FAILED gate moves the version state itself to FAILED in the same
- * write, so the state check owns that case.)
- */
-const SETTLED_GATE_STATUSES: ReadonlySet<string> = new Set(["PASSED", "UNPROVEN"]);
-
-/** The import warning that proves NO activation gate can ever be scheduled. */
-const ARCHIVING_DISABLED_WARNING = "solutions_archiving_disabled";
 
 // =============================================================================
 // SHARED HELPERS
@@ -1653,41 +1580,31 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
   }
 
   /**
-   * Phase two of watchImport — the part the import surface cannot see.
+   * Phase two of watchImport — the confirming read behind the import surface.
    *
-   * Import COMPLETED only means the corpus landed as a dataset version; the
-   * version then sits VALIDATING while the activation gate proves it
-   * (VALIDATING -> READY on PASSED/UNPROVEN, -> FAILED on a terminal gate
-   * failure). Returning at COMPLETED reported success while the dataset was
-   * not yet runnable — a chained job start answered no_active_version /
-   * version_not_ready, and a RE-publish silently kept running the OLD active
-   * version. So the watch keeps polling the dataset detail (each version
-   * carries `state` and `gate`) until the version settles:
+   * Under the build-then-READY model the server completes an import only
+   * when the version is READY (fully built — images and sandbox templates —
+   * and, on an owner-stamped dataset, already ACTIVE), so COMPLETED and
+   * "settled" are the same fact and this phase normally confirms it in one
+   * dataset-detail read. It still POLLS rather than assumes, for exactly one
+   * skew: a mid-deploy OLDER server can answer COMPLETED while its version
+   * is still short of READY — the poll then follows the version's own state
+   * until it lands:
    *
    *   - state READY or ARCHIVED       settled success (ARCHIVED = superseded
    *                                   by a newer publish while we watched —
    *                                   it completed all the same)
-   *   - state FAILED                  the gate's terminal failure moved the
-   *                                   version, landing its structured cause
-   *                                   on the same row the import surface
-   *                                   reads — re-read the import and return
-   *                                   it FAILED, the one import shape
-   *   - gate PASSED or UNPROVEN       settled even before READY: on a
-   *                                   platform-curated dataset promotion is
-   *                                   an operator action, and the gate's
-   *                                   verdict is where the machinery stops
+   *   - state FAILED                  the version's terminal failure lands
+   *                                   its structured cause on the same row
+   *                                   the import surface reads — re-read the
+   *                                   import and return it FAILED, the one
+   *                                   import shape
    *
-   * Bounded on purpose (fail closed, never an infinite poll):
-   *   - the solutions_archiving_disabled warning means NO gate can ever be
-   *     scheduled (the sweep requires an archived solution set, and this
-   *     import has none by configuration) — one detail read distinguishes
-   *     "already settled some other way" from that dead end, and the dead
-   *     end is a typed refusal: ImportSettleError("gate_unschedulable").
-   *   - settleTimeoutMs backstops every other stall (a worker fleet that is
-   *     down leaves the gate PENDING indefinitely; a server that answers
-   *     nothing but 429/503 stalls the polling itself):
-   *     ImportSettleError("settle_timeout"), carrying the last observed
-   *     state and gate.
+   * Bounded on purpose (fail closed, never an infinite poll): settleTimeoutMs
+   * backstops every stall (a server that answers nothing but 429/503 stalls
+   * the polling itself): ImportSettleError("settle_timeout"), carrying the
+   * last observed state. No verification gate exists on the publish path any
+   * more, so nothing here consults `gate`.
    */
   async function settleImport(
     imported: DatasetImport,
@@ -1696,9 +1613,6 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
     const settleTimeoutMs = options?.settleTimeoutMs ?? DEFAULT_IMPORT_SETTLE_TIMEOUT_MS;
     const deadline = Date.now() + settleTimeoutMs;
-    const archivingDisabled = imported.warnings.some(
-      (warning) => warning.code === ARCHIVING_DISABLED_WARNING
-    );
     const ref = `${imported.name}@${imported.version}`;
     let lastSeen: string | null = null;
     let lastVersion: DatasetVersion | null = null;
@@ -1712,8 +1626,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         return new ImportSettleError(
           "settle_timeout",
           `Import ${imported.id}'s dataset "${imported.name}" version ` +
-            `"${imported.version}" settled FAILED (gate ` +
-            `${lastVersion.gate?.status ?? "not scheduled"}), but the final import ` +
+            `"${imported.version}" settled FAILED, but the final import ` +
             `read kept answering rate-limited/unavailable past the ` +
             `${settleTimeoutMs}ms settle budget. Read the failure with ` +
             `datasets().getImport("${imported.id}").`,
@@ -1722,7 +1635,6 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             dataset: imported.name,
             version: imported.version,
             state: lastVersion.state,
-            gate: lastVersion.gate,
           }
         );
       }
@@ -1730,16 +1642,13 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         "settle_timeout",
         `Import ${imported.id} completed, but dataset "${imported.name}" version ` +
           `"${imported.version}" did not settle within ${settleTimeoutMs}ms: last ` +
-          `observed state ${lastVersion?.state ?? "never observed"}, gate ` +
-          `${lastVersion?.gate?.status ?? "not scheduled"}. The activation gate may ` +
-          `still be at work server-side — keep following with ` +
-          `datasets().get("${ref}").`,
+          `observed state ${lastVersion?.state ?? "never observed"}. Keep following ` +
+          `with datasets().get("${ref}").`,
         {
           importId: imported.id,
           dataset: imported.name,
           version: imported.version,
           state: lastVersion?.state ?? null,
-          gate: lastVersion?.gate ?? null,
         }
       );
     };
@@ -1776,45 +1685,25 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
 
     for (;;) {
       throwIfAborted(options?.signal);
-      // limit=1: the watch reads the version's state and gate, never the
-      // task list — keep the poll as small as the route allows.
+      // limit=1: the watch reads the version's state, never the task list —
+      // keep the poll as small as the route allows.
       const detail: Dataset = await readThroughRateLimits(() => getDataset(ref, { limit: 1 }));
       const version = detail.selected_version;
       if (version) {
         lastVersion = version;
-        const key = `${version.state}:${version.gate?.status ?? ""}`;
-        if (key !== lastSeen) {
-          lastSeen = key;
+        if (version.state !== lastSeen) {
+          lastSeen = version.state;
           options?.onVersion?.(version, detail);
         }
         if (version.state === "FAILED") {
           // The failed version's row is what the import surface reads, so the
-          // import now answers FAILED with the gate's structured cause on
-          // `failure` — return that, exactly like an import that failed
-          // before the gate ever ran. The read lives under the same
+          // import answers FAILED with the structured cause on `failure` —
+          // return that, the one import shape. The read lives under the same
           // delay-not-outcome law: a transient 429 here must not turn a
-          // settled gate failure into a thrown rate-limit error.
+          // settled failure into a thrown rate-limit error.
           return readThroughRateLimits(() => getImport(imported.id));
         }
         if (version.state === "READY" || version.state === "ARCHIVED") return imported;
-        if (version.gate && SETTLED_GATE_STATUSES.has(version.gate.status)) return imported;
-        if (archivingDisabled && version.gate === null && version.state === "VALIDATING") {
-          throw new ImportSettleError(
-            "gate_unschedulable",
-            `Import ${imported.id} completed, but dataset "${imported.name}" version ` +
-              `"${imported.version}" cannot settle on its own: solutions archiving was ` +
-              `disabled for this import (warning ${ARCHIVING_DISABLED_WARNING}), so no ` +
-              `activation gate will ever be scheduled — the version stays VALIDATING ` +
-              `until an operator proves and activates it.`,
-            {
-              importId: imported.id,
-              dataset: imported.name,
-              version: imported.version,
-              state: version.state,
-              gate: version.gate,
-            }
-          );
-        }
       }
       if (Date.now() >= deadline) throw settleTimeoutError();
       await sleep(pollIntervalMs, options?.signal);
@@ -1989,9 +1878,9 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           options?.onStatus?.(current);
         }
         if (current.status === "FAILED") return current;
-        // COMPLETED is not settled: the corpus landed as a version, but the
-        // version sits VALIDATING while the activation gate proves it. The
-        // watch is only over once the VERSION settles.
+        // COMPLETED means the version is READY (built, and on an owner
+        // dataset active) — the settle phase is one confirming read, plus
+        // the poll that covers a mid-deploy older server (see settleImport).
         if (current.status === "COMPLETED") return settleImport(current, options);
         await sleep(pollIntervalMs, options?.signal);
       }
@@ -2043,26 +1932,15 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     },
 
     async activate(name: string, version: string): Promise<Dataset> {
+      // Promotes a BUILT version (READY, or the legacy VALIDATING rest) to
+      // the dataset's default; a version still building refuses with 409
+      // version_not_ready (EvolveApiError) — the publish lands READY and
+      // active on its own, so this verb is for re-pointing the default.
       const res = await request(
         cfg,
         `/api/datasets/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/activate`,
         { method: "POST" }
       );
-      // 202 is "not yet", not "here is the dataset": the activation gate is
-      // still proving this version, and the body is a GateRunning progress
-      // report — parsing it as a Dataset returned a garbage object. Typed,
-      // like NoActiveVersionError, so a caller can branch and poll.
-      if (res.status === 202) {
-        const body = (await res.json()) as Record<string, unknown>;
-        throw new GateRunningError(
-          name,
-          version,
-          typeof body.message === "string"
-            ? body.message
-            : `Dataset "${name}" version "${version}" is still being proven by its activation gate`,
-          mapGateRunningProgress(body.gate)
-        );
-      }
       return mapDatasetDetail((await res.json()) as Record<string, unknown>);
     },
 
