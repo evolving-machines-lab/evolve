@@ -639,14 +639,15 @@ class Dataset:
     description: Optional[str]
     active_version: Optional[DatasetVersion]
     #: The dataset's NEWEST version row (newest ``created_at`` first, id as
-    #: the tiebreak) -- active or not. This is what makes an import
-    #: observable BEFORE it activates: a first import walks IMPORTING ->
-    #: BUILDING -> VALIDATING here while ``active_version`` is still None,
-    #: because a version is promoted only once it has landed. It can also
-    #: hold a version that will never activate at all (a gate-FAILED one), so
-    #: it is NOT a substitute for ``active_version``: a bare-name job ref
-    #: still resolves the active version and refuses without one. None when
-    #: the dataset has no version rows at all, and on an older server.
+    #: the tiebreak) -- active or not. This is what makes a publish
+    #: observable BEFORE it lands: a first publish walks IMPORTING ->
+    #: BUILDING here while ``active_version`` is still None -- the importer
+    #: itself flips the finished build to READY and, on an owner-stamped
+    #: dataset, promotes it to the active version in the same transaction. It
+    #: can also hold a version that never landed (a FAILED build), so it is
+    #: NOT a substitute for ``active_version``: a bare-name job ref still
+    #: resolves the active version and refuses without one. None when the
+    #: dataset has no version rows at all, and on an older server.
     latest_version: Optional[DatasetVersion] = None
     #: Where this dataset's git source points now versus what its active
     #: version was built from. None when there is nothing to watch (an uploaded

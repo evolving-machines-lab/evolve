@@ -1677,12 +1677,13 @@ export interface Dataset {
    * The dataset's NEWEST version row (newest created_at first, id as the
    * tiebreak) — active or not.
    *
-   * This is what makes an import observable BEFORE it activates: a first
-   * import walks IMPORTING -> BUILDING -> VALIDATING here while
-   * `active_version` is still null, because a version is promoted only once
-   * it has landed. It can also hold a version that will never activate at
-   * all (a gate-FAILED one), so it is NOT a substitute for `active_version`:
-   * a bare-name job ref still resolves the active version and refuses
+   * This is what makes a publish observable BEFORE it lands: a first
+   * publish walks IMPORTING -> BUILDING here while `active_version` is
+   * still null — the importer itself flips the finished build to READY and,
+   * on an owner-stamped dataset, promotes it to the active version in the
+   * same transaction. It can also hold a version that never landed (a
+   * FAILED build), so it is NOT a substitute for `active_version`: a
+   * bare-name job ref still resolves the active version and refuses
    * without one.
    *
    * Null when the dataset has no version rows at all — and also null when
@@ -2185,15 +2186,15 @@ export interface DatasetsClient {
   /** Get an import job's status (failure, warnings, and task_count when available) */
   getImport(id: string): Promise<DatasetImport>;
   /**
-   * Watch a publish to a SETTLED end, not merely a finished upload: poll
-   * getImport() until the import is terminal, then — because COMPLETED only
-   * means the corpus landed as a VALIDATING version — keep polling the
-   * dataset detail until the version settles: READY (gate PASSED, or
-   * UNPROVEN for a solution-less corpus), ARCHIVED, or FAILED (the gate's
-   * failure rides the returned import's `failure`). Throws
-   * ImportSettleError, with the cause named, when no gate can ever be
-   * scheduled ("gate_unschedulable" — solutions archiving disabled) or when
-   * settleTimeoutMs elapses first ("settle_timeout").
+   * Watch a publish to its settled end: poll getImport() until the import is
+   * terminal, then confirm the version against the dataset detail. Under
+   * build-then-READY, COMPLETED means the version is READY — fully built
+   * (task images and sandbox templates) and, on an owner-stamped dataset,
+   * already active — so the settle phase is normally the single confirming
+   * read; against a mid-deploy older server it keeps polling until the
+   * version reaches READY, ARCHIVED, or FAILED. A failed build rides the
+   * returned import's `failure`. Throws ImportSettleError("settle_timeout")
+   * when settleTimeoutMs elapses before the version settles.
    */
   watchImport(id: string, options?: WatchImportOptions): Promise<DatasetImport>;
   /**
@@ -2240,9 +2241,11 @@ export interface DatasetsClient {
   update(name: string, patch: DatasetPatch): Promise<Dataset>;
   /**
    * Activate a READY version you own: bare-name job references resolve to it
-   * from then on. Refused with `version_not_ready` while the import still
-   * runs and `version_not_activatable` for a version that can never be
-   * activated (for example, no reference solutions were archived).
+   * from then on. A publish activates its own version when it lands, so this
+   * verb is for re-pointing the default — a rollback to an older READY
+   * version, or choosing between several. Refused with `version_not_ready`
+   * while the publish is still building and `version_not_activatable` for a
+   * FAILED or ARCHIVED version, which can never be activated.
    */
   activate(name: string, version: string): Promise<Dataset>;
   /**
