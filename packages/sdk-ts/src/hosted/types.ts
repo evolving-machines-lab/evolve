@@ -1687,6 +1687,22 @@ export interface Dataset {
   description: string | null;
   /** The active version, or null when none is active (bare-name job refs refuse). */
   active_version: DatasetVersion | null;
+  /**
+   * The dataset's NEWEST version row (newest created_at first, id as the
+   * tiebreak) — active or not.
+   *
+   * This is what makes an import observable BEFORE it activates: a first
+   * import walks IMPORTING -> BUILDING -> VALIDATING here while
+   * `active_version` is still null, because a version is promoted only once
+   * it has landed. It can also hold a version that will never activate at
+   * all (a gate-FAILED one), so it is NOT a substitute for `active_version`:
+   * a bare-name job ref still resolves the active version and refuses
+   * without one.
+   *
+   * Null when the dataset has no version rows at all — and also null when
+   * talking to a server older than this field.
+   */
+  latest_version: DatasetVersion | null;
   /** All versions, newest first (get() only) */
   versions?: DatasetVersion[];
   /** The version whose tasks are listed below (get() only) */

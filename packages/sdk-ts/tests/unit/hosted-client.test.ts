@@ -199,12 +199,27 @@ async function testDatasetsList() {
             title: "DeepSWE",
             description: "SWE-bench style tasks",
             active_version: { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
+            // The newest version row is a DIFFERENT row from the active one:
+            // a gate-FAILED 1.2 can never activate, so the two pointers
+            // disagree and the mapper must carry the server's own field
+            // rather than echoing active_version.
+            latest_version: { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0 },
           },
           {
             name: "empty-set",
             title: null,
             description: null,
             active_version: null,
+          },
+          {
+            // A FIRST import: nothing is active for the whole
+            // IMPORTING -> BUILDING -> VALIDATING walk, and latest_version is
+            // the only field on the row with anything to say during it.
+            name: "first-import",
+            title: null,
+            description: null,
+            active_version: null,
+            latest_version: { version: "1.0", state: "IMPORTING", created_at: "2026-07-23T00:00:00.000Z", task_count: 0 },
           },
         ],
         nextCursor: null,
@@ -216,7 +231,7 @@ async function testDatasetsList() {
     const catalog = await d.list();
 
     // The one page envelope, the same on every collection this surface returns.
-    assertEqual(catalog.items.length, 2, "returns 2 datasets");
+    assertEqual(catalog.items.length, 3, "returns 3 datasets");
     assertEqual(catalog.nextCursor, null, "nextCursor null = no next page");
     assertEqual(catalog.hasMore, false, "hasMore says the same as a boolean");
     assertEqual(catalog.items[0].name, "deep-swe", "maps name");
@@ -227,6 +242,22 @@ async function testDatasetsList() {
       "maps active_version object (one shape: version/state/created_at/task_count/manifest/source/gate; manifest/source null on older servers)"
     );
     assertEqual(catalog.items[1].active_version, null, "null active_version preserved");
+
+    // latest_version is its OWN pointer, in the same version shape.
+    assertEqual(
+      catalog.items[0].latest_version,
+      { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0, manifest: null, source: null, gate: null },
+      "maps latest_version as its own version object, not a copy of active_version"
+    );
+    assertEqual(
+      catalog.items[2].latest_version?.state,
+      "IMPORTING",
+      "a first import is observable from the list alone: latest_version walks while active_version is still null"
+    );
+    assertEqual(catalog.items[2].active_version, null, "…and that row really has nothing active");
+    // An older server does not send the key at all — that reads as null, the
+    // same absence a dataset with no version rows reports.
+    assertEqual(catalog.items[1].latest_version, null, "a body without latest_version reads as null");
 
     const headers = fetchCalls[0].init?.headers as Record<string, string>;
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
@@ -246,6 +277,9 @@ async function testDatasetsGet() {
         title: "DeepSWE",
         description: "SWE-bench style tasks",
         active_version: { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
+        // The detail route carries the same pointer the list does, and here
+        // too it names a DIFFERENT row than active_version.
+        latest_version: { version: "1.2", state: "VALIDATING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113 },
         versions: [
           { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
           { version: "1.0", state: "ARCHIVED", created_at: "2026-07-01T00:00:00.000Z", task_count: 100 },
@@ -290,6 +324,11 @@ async function testDatasetsGet() {
     assertEqual(detail.title, "DeepSWE", "maps title");
     assertEqual(detail.active_version?.version, "1.1", "active_version is the full version object");
     assertEqual(detail.active_version?.state, "READY", "active_version carries state");
+    assertEqual(
+      detail.latest_version,
+      { version: "1.2", state: "VALIDATING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
+      "detail maps latest_version too — the newest row, which here is NOT the active one"
+    );
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(
       detail.selected_version,
@@ -604,6 +643,9 @@ async function testActivateGateRunning202() {
     });
     const activated = await d.activate("other", "1.0");
     assertEqual(activated.active_version?.version, "1.0", "200 still maps the full Dataset detail");
+    // This body carries no latest_version key — an older server's answer, and
+    // the absence must read as null rather than throw or echo active_version.
+    assertEqual(activated.latest_version, null, "a detail body without latest_version reads as null");
   } finally {
     restoreFetch();
   }

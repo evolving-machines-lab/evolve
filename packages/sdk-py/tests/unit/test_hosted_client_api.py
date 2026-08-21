@@ -337,8 +337,22 @@ class TestDatasets:
                         'title': 'DeepSWE',
                         'description': 'SWE tasks',
                         'active_version': {'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113},
+                        # The newest version row is a DIFFERENT row from the
+                        # active one: a gate-FAILED 1.2 can never activate, so
+                        # the two pointers disagree and the mapper must carry
+                        # the server's own field rather than echo active_version.
+                        'latest_version': {'version': '1.2', 'state': 'FAILED', 'created_at': '2026-07-22', 'task_count': 0},
                     },
                     {'name': 'empty', 'title': None, 'description': None, 'active_version': None},
+                    {
+                        # A FIRST import: nothing is active for the whole
+                        # IMPORTING -> BUILDING -> VALIDATING walk, and
+                        # latest_version is the only field on the row with
+                        # anything to say during it.
+                        'name': 'first-import', 'title': None, 'description': None,
+                        'active_version': None,
+                        'latest_version': {'version': '1.0', 'state': 'IMPORTING', 'created_at': '2026-07-23', 'task_count': 0},
+                    },
                 ],
                 'nextCursor': None,
                 'hasMore': False,
@@ -348,7 +362,7 @@ class TestDatasets:
             catalog = await datasets_factory(CONFIG).list()
 
         # The one page envelope, the same on every collection.
-        assert len(catalog.items) == 2
+        assert len(catalog.items) == 3
         assert catalog.next_cursor is None
         assert catalog.has_more is False
         assert catalog.items[0].name == 'deep-swe'
@@ -357,6 +371,16 @@ class TestDatasets:
         assert catalog.items[0].active_version.created_at == '2026-07-21'
         assert catalog.items[0].active_version.task_count == 113
         assert catalog.items[1].active_version is None
+        # latest_version is its OWN pointer, in the same version shape.
+        assert catalog.items[0].latest_version.version == '1.2'
+        assert catalog.items[0].latest_version.state == 'FAILED'
+        assert catalog.items[0].latest_version.created_at == '2026-07-22'
+        # A first import is observable from the list alone.
+        assert catalog.items[2].active_version is None
+        assert catalog.items[2].latest_version.state == 'IMPORTING'
+        # An older server does not send the key at all — that reads as None,
+        # the same absence a dataset with no version rows reports.
+        assert catalog.items[1].latest_version is None
         assert fake.requests[0].get_header('Authorization') == 'Bearer test-key'
 
     @pytest.mark.asyncio
@@ -374,6 +398,9 @@ class TestDatasets:
                         'keywords': ['swe'], 'task_count': 113,
                     },
                 },
+                # The detail route carries the same pointer the list does, and
+                # here too it names a DIFFERENT row than active_version.
+                'latest_version': {'version': '1.2', 'state': 'VALIDATING', 'created_at': '2026-07-22', 'task_count': 113},
                 'versions': [
                     {'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113},
                 ],
@@ -424,6 +451,10 @@ class TestDatasets:
         assert detail.active_version.version == '1.1'
         assert detail.active_version.state == 'READY'
         assert detail.active_version.task_count == 113
+        # The detail body maps latest_version too — the newest row, which here
+        # is NOT the active one.
+        assert detail.latest_version.version == '1.2'
+        assert detail.latest_version.state == 'VALIDATING'
         # The dataset.toml identity/metadata the version imported under, mapped
         # defensively: a missing author email normalizes to None.
         manifest = detail.active_version.manifest
@@ -1442,6 +1473,10 @@ class TestDatasets:
         # The echo is the same detail shape get() returns.
         assert dataset.active_version.version == '1.0'
         assert dataset.active_version.state == 'READY'
+        # This body carries no latest_version key — an older server's answer,
+        # and the absence must read as None rather than raise or echo
+        # active_version.
+        assert dataset.latest_version is None
         assert dataset.versions[0].task_count == 12
 
     @pytest.mark.asyncio

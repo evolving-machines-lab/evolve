@@ -1623,6 +1623,11 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       active_version: raw.active_version
         ? mapDatasetVersion(raw.active_version as Record<string, unknown>)
         : null,
+      // The newest version row, active or not — served on both routes beside
+      // it. Absent on an older server, which reads as null.
+      latest_version: raw.latest_version
+        ? mapDatasetVersion(raw.latest_version as Record<string, unknown>)
+        : null,
       versions: ((raw.versions as Record<string, unknown>[]) || []).map(mapDatasetVersion),
       selected_version: raw.selected_version
         ? mapDatasetVersion(raw.selected_version as Record<string, unknown>)
@@ -1824,6 +1829,12 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       description: (raw.description as string | null) ?? null,
       active_version: raw.active_version
         ? mapDatasetVersion(raw.active_version as Record<string, unknown>)
+        : null,
+      // The newest version row, active or not — the field that lets a caller
+      // watch a FIRST import from the list alone. Absent on an older server,
+      // which reads as null.
+      latest_version: raw.latest_version
+        ? mapDatasetVersion(raw.latest_version as Record<string, unknown>)
         : null,
       upstream: mapUpstream(raw.upstream),
     };

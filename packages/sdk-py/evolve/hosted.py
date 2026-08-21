@@ -703,6 +703,16 @@ class Dataset:
     title: Optional[str]
     description: Optional[str]
     active_version: Optional[DatasetVersion]
+    #: The dataset's NEWEST version row (newest ``created_at`` first, id as
+    #: the tiebreak) -- active or not. This is what makes an import
+    #: observable BEFORE it activates: a first import walks IMPORTING ->
+    #: BUILDING -> VALIDATING here while ``active_version`` is still None,
+    #: because a version is promoted only once it has landed. It can also
+    #: hold a version that will never activate at all (a gate-FAILED one), so
+    #: it is NOT a substitute for ``active_version``: a bare-name job ref
+    #: still resolves the active version and refuses without one. None when
+    #: the dataset has no version rows at all, and on an older server.
+    latest_version: Optional[DatasetVersion] = None
     #: Where this dataset's git source points now versus what its active
     #: version was built from. None when there is nothing to watch (an uploaded
     #: corpus, a seeded one, or one imported before provenance was recorded);
@@ -2291,6 +2301,14 @@ def _map_dataset_summary(data: Dict[str, Any]) -> Dataset:
             if data.get('active_version')
             else None
         ),
+        # The newest version row, active or not -- the field that lets a
+        # caller watch a FIRST import from the list alone. Absent on an older
+        # server, which reads as None.
+        latest_version=(
+            _map_dataset_version(data['latest_version'])
+            if data.get('latest_version')
+            else None
+        ),
         upstream=_map_upstream(data.get('upstream')),
     )
 
@@ -2368,6 +2386,9 @@ def _map_task(data: Dict[str, Any]) -> Task:
 def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
     """The full detail Dataset shape: get() and activate() echo it."""
     active = raw.get('active_version')
+    # The newest version row, active or not -- served on the detail route
+    # beside active_version. Absent on an older server, which reads as None.
+    latest = raw.get('latest_version')
     selected = raw.get('selected_version')
     task_items, task_cursor, task_more = _page_parts(raw.get('tasks'))
     return Dataset(
@@ -2375,6 +2396,7 @@ def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
         title=raw.get('title'),
         description=raw.get('description'),
         active_version=_map_dataset_version(active) if active else None,
+        latest_version=_map_dataset_version(latest) if latest else None,
         upstream=_map_upstream(raw.get('upstream')),
         versions=[_map_dataset_version(item) for item in raw.get('versions', [])],
         selected_version=_map_dataset_version(selected) if selected else None,
