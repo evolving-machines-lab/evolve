@@ -11,8 +11,8 @@ Coverage:
   (self-describing imports; the shared job vocabulary QUEUED -> RUNNING ->
   COMPLETED | FAILED), warnings surfaced, and the watch's SETTLE phase:
   past import COMPLETED the version is followed on the dataset detail to
-  READY/ARCHIVED/FAILED (gate PASSED/UNPROVEN/FAILED), with the typed
-  ImportSettleError refusals (settle_timeout)
+  READY/ARCHIVED/FAILED, with the typed ImportSettleError refusals
+  (settle_timeout)
 - datasets().download() — owner-only corpus retrieval by name[@version] ref,
   with the full integrity dance (digest, truncation, safe filename)
 - agents().create()/list()/get()/delete() — ONE registration body grammar
@@ -51,9 +51,6 @@ import pytest
 from evolve import (
     AgentArm,
     DatasetSelector,
-    DatasetVersionGate,
-    DatasetVersionGateFailedTask,
-    DatasetVersionGateUnproven,
     DatasetVersionSource,
     EvolveAPIError,
     EvolveDigestMismatchError,
@@ -63,7 +60,6 @@ from evolve import (
     JobFailure,
     NoActiveVersionError,
     SourceJob,
-    TaskGate,
     TaskProviderVerdict,
     agents as agents_factory,
     auth as auth_factory,
@@ -151,11 +147,11 @@ class FakeUrlopen:
 CONFIG = HostedClientConfig(api_key='test-key', base_url='http://localhost:3000')
 
 
-def _settle_detail_body(*, name='my-set', version='1.2', state, gate=None, active=False):
+def _settle_detail_body(*, name='my-set', version='1.2', state, active=False):
     """A wire dataset-detail body holding exactly one version, for the
-    watch_import settle tests: import COMPLETED only means the corpus landed
-    as a VALIDATING version, and the watch follows the version here until it
-    settles."""
+    watch_import settle tests: a mid-deploy older server can answer import
+    COMPLETED while the version is still short of READY, and the watch
+    follows the version here until it settles."""
     version_body = {
         'version': version,
         'state': state,
@@ -163,7 +159,6 @@ def _settle_detail_body(*, name='my-set', version='1.2', state, gate=None, activ
         'task_count': 113,
         'manifest': None,
         'source': None,
-        'gate': gate,
     }
     return {
         'name': name,
@@ -336,7 +331,7 @@ class TestDatasets:
                         'description': 'SWE tasks',
                         'active_version': {'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113},
                         # The newest version row is a DIFFERENT row from the
-                        # active one: a gate-FAILED 1.2 can never activate, so
+                        # active one: a FAILED 1.2 can never activate, so
                         # the two pointers disagree and the mapper must carry
                         # the server's own field rather than echo active_version.
                         'latest_version': {'version': '1.2', 'state': 'FAILED', 'created_at': '2026-07-22', 'task_count': 0},
@@ -344,7 +339,7 @@ class TestDatasets:
                     {'name': 'empty', 'title': None, 'description': None, 'active_version': None},
                     {
                         # A FIRST import: nothing is active for the whole
-                        # IMPORTING -> BUILDING -> VALIDATING walk, and
+                        # IMPORTING -> BUILDING walk, and
                         # latest_version is the only field on the row with
                         # anything to say during it.
                         'name': 'first-import', 'title': None, 'description': None,
@@ -398,7 +393,7 @@ class TestDatasets:
                 },
                 # The detail route carries the same pointer the list does, and
                 # here too it names a DIFFERENT row than active_version.
-                'latest_version': {'version': '1.2', 'state': 'VALIDATING', 'created_at': '2026-07-22', 'task_count': 113},
+                'latest_version': {'version': '1.2', 'state': 'BUILDING', 'created_at': '2026-07-22', 'task_count': 113},
                 'versions': [
                     {'version': '1.1', 'state': 'READY', 'created_at': '2026-07-21', 'task_count': 113},
                 ],
@@ -416,21 +411,12 @@ class TestDatasets:
                                 'daytona': {'ok': True},
                                 'modal': {'ok': False, 'reason': 'multi-container tasks are not supported on modal'},
                             },
-                            # The per-task half of the version's gate: outcome +
-                            # flaky + reasons + ran_at, non-string reasons filtered.
-                            'gate': {
-                                'outcome': 'FLAKY', 'flaky': True,
-                                'reasons': ['gold passed on retry 2', 7],
-                                'ran_at': '2026-07-20T00:00:00.000Z',
-                            },
                         },
                         {
                             'task_name': 'no-verdict-yet',
                             'agent_timeout_sec': 600,
                             'verifier_timeout_sec': 600,
                             'providers': {'e2b': {'ok': True}},
-                            # No outcome word = no verdict at all — never a crash.
-                            'gate': {'flaky': False},
                         },
                     ],
                     'nextCursor': 'task-1',
@@ -452,7 +438,7 @@ class TestDatasets:
         # The detail body maps latest_version too — the newest row, which here
         # is NOT the active one.
         assert detail.latest_version.version == '1.2'
-        assert detail.latest_version.state == 'VALIDATING'
+        assert detail.latest_version.state == 'BUILDING'
         # The dataset.toml identity/metadata the version imported under, mapped
         # defensively: a missing author email normalizes to None.
         manifest = detail.active_version.manifest
@@ -470,9 +456,6 @@ class TestDatasets:
         assert detail.selected_version.created_at == '2026-07-21'
         # No manifest field from the server (older server / no manifest) → None.
         assert detail.selected_version.manifest is None
-        # No gate field from the server (older server / none scheduled) → None,
-        # never a crash and never "passed".
-        assert detail.selected_version.gate is None
         # A nested collection is the same envelope as a top-level one.
         assert detail.tasks.has_more is True
         assert detail.tasks.next_cursor == 'task-1'
@@ -491,97 +474,10 @@ class TestDatasets:
         assert task.providers['modal'] == TaskProviderVerdict(
             ok=False, reason='multi-container tasks are not supported on modal'
         )
-        # The per-task gate verdict maps (non-string reasons filtered); a gate
-        # value without an outcome word is no verdict at all — None, never a
-        # crash.
-        assert task.gate == TaskGate(
-            outcome='FLAKY', flaky=True,
-            reasons=['gold passed on retry 2'],
-            ran_at='2026-07-20T00:00:00.000Z',
-        )
-        assert detail.tasks.items[1].gate is None
-
-    @pytest.mark.asyncio
-    async def test_get_maps_activation_gate_both_wire_forms(self):
-        fake = FakeUrlopen([
-            ('/api/datasets/r1-init', {
-                'name': 'r1-init',
-                'title': None,
-                'description': None,
-                'active_version': None,
-                'versions': [
-                    # The server's nested form: failure carries code + message.
-                    {
-                        'version': '1.0', 'state': 'FAILED',
-                        'created_at': '2026-08-03', 'task_count': 1,
-                        'gate': {
-                            'status': 'FAILED', 'attempts': 1,
-                            'failure': {
-                                'code': 'gate_failed',
-                                'message': '1 of 1 task(s) failed the activation gate',
-                                'failed_tasks': [
-                                    {
-                                        'task_name': 'starter-task',
-                                        'outcome': 'ERROR',
-                                        'reasons': ['gold run produced no usable score', 7, 'last status: INDETERMINATE'],
-                                    },
-                                    {'outcome': 'FAIL'},  # no task name — dropped, never a crash
-                                    'junk',  # not even a dict — dropped
-                                    {'task_name': 'bare-task'},  # name only — outcome None, reasons empty
-                                ],
-                            },
-                        },
-                    },
-                    # The flat form: code + message directly on the gate.
-                    {
-                        'version': '0.9', 'state': 'VALIDATING',
-                        'created_at': '2026-08-01', 'task_count': 1,
-                        'gate': {'status': 'RUNNING', 'attempts': 1, 'code': None, 'message': None},
-                    },
-                    # Garbage gate value: never a crash, always None.
-                    {
-                        'version': '0.8', 'state': 'READY',
-                        'created_at': '2026-07-01', 'task_count': 1,
-                        'gate': 'oops',
-                    },
-                ],
-                'selected_version': None,
-                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
-                'created_at': '2026-08-03',
-                'updated_at': '2026-08-03',
-            }),
-        ])
-        with patch('evolve._http.urlopen', fake):
-            detail = await datasets_factory(CONFIG).get('r1-init')
-
-        failed, running, garbage = detail.versions
-        # Terminal gate failure: the version state says FAILED and the gate says why.
-        assert failed.state == 'FAILED'
-        assert failed.gate == DatasetVersionGate(
-            status='FAILED', attempts=1, code='gate_failed',
-            message='1 of 1 task(s) failed the activation gate',
-            # The per-task causes ride along: nameless/garbage entries are
-            # dropped, non-string reasons filtered — never a crash.
-            failed_tasks=[
-                DatasetVersionGateFailedTask(
-                    task_name='starter-task', outcome='ERROR',
-                    reasons=['gold run produced no usable score', 'last status: INDETERMINATE'],
-                ),
-                DatasetVersionGateFailedTask(task_name='bare-task', outcome=None, reasons=[]),
-            ],
-            # No count from the server → falls back to the mapped list's length.
-            failed_task_count=2,
-        )
-        # Flat form maps unchanged; a healthy gate carries None code/message
-        # and an empty failed-task list.
-        assert running.gate == DatasetVersionGate(
-            status='RUNNING', attempts=1, code=None, message=None, failed_tasks=[]
-        )
-        assert garbage.gate is None
 
     @pytest.mark.asyncio
     async def test_get_maps_per_version_git_provenance(self):
-        # The Q5 shape: an annotated-tag import COMPLETED, the activation gate
+        # The Q5 shape: an annotated-tag import landed its row, the build
         # FAILED, the dataset never gained an active version — the resolved
         # PEELED commit must still be observable on the version object itself.
         peeled = '459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc'
@@ -594,8 +490,6 @@ class TestDatasets:
                 'commit': peeled,
                 'path': 'examples/tasks/network-policy-matrix/extra-allowed-hosts',
             },
-            'gate': {'status': 'FAILED', 'attempts': 1, 'code': 'gate_failed',
-                     'message': '2 of 2 task(s) failed the activation gate'},
         }
         fake = FakeUrlopen([
             ('/api/datasets/q5-tagpeel', {
@@ -623,7 +517,7 @@ class TestDatasets:
             detail = await datasets_factory(CONFIG).get('q5-tagpeel@1.0')
 
         failed, upload, garbage = detail.versions
-        # A gate-FAILED git version serves its full provenance: url, the ref
+        # A FAILED git version serves its full provenance: url, the ref
         # exactly as requested, the PEELED commit, and the subfolder.
         assert failed.source == DatasetVersionSource(
             ref='v0.20.0',
@@ -869,8 +763,8 @@ class TestDatasets:
         assert job.task_count == 113
         assert job.failure is None
         # WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions still
-        # activates, but with its gate stamped UNPROVEN — this warning is the
-        # early notice that no proof will run. Dropping the field hid that.
+        # activates, but permanently lacks its reference-solution record — this
+        # warning is the early notice. Dropping the field hid that.
         assert job.warnings[0].code == 'no_solutions_archived'
         assert job.warnings[0].message == 'no reference solutions were archived'
 
@@ -909,11 +803,7 @@ class TestDatasets:
         ])
         # After COMPLETED the watch follows the VERSION on the dataset detail;
         # an already-settled READY answer ends it on the first settle poll.
-        detail = _settle_detail_body(
-            state='READY',
-            gate={'status': 'PASSED', 'attempts': 1, 'failure': None, 'unproven': None},
-            active=True,
-        )
+        detail = _settle_detail_body(state='READY', active=True)
         seen_urls = []
 
         def sequence_then_detail(request, timeout=None):
@@ -948,11 +838,7 @@ class TestDatasets:
 
         job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2'}
         calls = {'import': 0, 'detail': 0}
-        detail = _settle_detail_body(
-            state='READY',
-            gate={'status': 'PASSED', 'attempts': 1, 'failure': None, 'unproven': None},
-            active=True,
-        )
+        detail = _settle_detail_body(state='READY', active=True)
 
         def rate_limited_then_done(request, timeout=None):
             # The SETTLE phase lives under the same law: its first detail
@@ -1036,16 +922,10 @@ class TestDatasets:
                 {**job, 'status': 'COMPLETED', 'task_count': 113},
             ],
             [
-                _settle_detail_body(state='VALIDATING', gate=None),
-                _settle_detail_body(state='VALIDATING', gate={
-                    'status': 'PENDING', 'attempts': 0, 'failure': None, 'unproven': None,
-                }),
-                _settle_detail_body(state='VALIDATING', gate={
-                    'status': 'RUNNING', 'attempts': 1, 'failure': None, 'unproven': None,
-                }),
-                _settle_detail_body(state='READY', active=True, gate={
-                    'status': 'PASSED', 'attempts': 1, 'failure': None, 'unproven': None,
-                }),
+                _settle_detail_body(state='BUILDING'),
+                _settle_detail_body(state='BUILDING'),
+                _settle_detail_body(state='BUILDING'),
+                _settle_detail_body(state='READY', active=True),
             ],
         )
 
@@ -1070,40 +950,30 @@ class TestDatasets:
         assert detail_urls, 'no dataset-detail poll happened after COMPLETED'
         assert 'version=1.2' in detail_urls[0]
         assert calls['detail'] == 4
-        # on_version fires on every observed STATE change — the gate is not
-        # consulted any more.
-        assert transitions == ['VALIDATING', 'READY']
+        # on_version fires on every observed STATE change.
+        assert transitions == ['BUILDING', 'READY']
         assert active_after_settle[-1] == '1.2'
 
     @pytest.mark.asyncio
-    async def test_watch_import_surfaces_gate_failure(self):
+    async def test_watch_import_surfaces_build_failure(self):
         """A version that settles FAILED fails the WATCH: the structured
         cause lands on the same row the import surface reads, so the watch
         re-reads the import and returns it FAILED — never a silent success.
-        (The fixture wears a legacy gate failure — a mid-deploy older
-        server's shape; the watch reads only the STATE.)"""
+        (The fixture wears a mid-deploy older server's shape: the import
+        answered COMPLETED before the version settled; the watch reads only
+        the STATE.)"""
         job = {'id': 'imp-9', 'name': 'my-set', 'version': '2.0', 'warnings': []}
-        gate_failure = {
-            'code': 'gate_failed',
-            'message': '1/113 task(s) are not activation-eligible',
-            'failed_tasks': [{'task_name': 'task-7', 'outcome': 'FAIL',
-                              'reasons': ['gold solution scored 0.0']}],
-        }
+        build_failure = {'code': 'import_failed',
+                         'message': 'task image build failed for task-7'}
         fake, calls, seen_urls = _settle_urlopen(
             [
                 {**job, 'status': 'COMPLETED', 'failure': None, 'task_count': 113},
                 {**job, 'status': 'FAILED', 'task_count': 113,
-                 'failure': {'code': 'gate_failed',
-                             'message': gate_failure['message']}},
+                 'failure': build_failure},
             ],
             [
-                _settle_detail_body(version='2.0', state='VALIDATING', gate={
-                    'status': 'RUNNING', 'attempts': 1, 'failure': None, 'unproven': None,
-                }),
-                _settle_detail_body(version='2.0', state='FAILED', gate={
-                    'status': 'FAILED', 'attempts': 1, 'failure': gate_failure,
-                    'unproven': None,
-                }),
+                _settle_detail_body(version='2.0', state='BUILDING'),
+                _settle_detail_body(version='2.0', state='FAILED'),
             ],
         )
 
@@ -1117,61 +987,23 @@ class TestDatasets:
 
         assert done.status == 'FAILED'
         assert done.failure is not None
-        assert done.failure.code == 'gate_failed'
-        assert transitions == ['VALIDATING', 'FAILED']
-
-    @pytest.mark.asyncio
-    async def test_watch_import_unproven_settles_as_success(self):
-        """UNPROVEN is a SUCCESS end-state: a solution-less corpus is
-        auto-activated with its gate stamped UNPROVEN (Harbor parity), and
-        the watch resolves with that fact observable on the version — never
-        disguised as PASSED and never a hang."""
-        job = {'id': 'imp-2', 'name': 'my-set', 'version': '1.3', 'failure': None,
-               'warnings': [{'code': 'no_solutions_archived',
-                             'message': 'no reference solutions were archived'}]}
-        fake, calls, seen_urls = _settle_urlopen(
-            [{**job, 'status': 'COMPLETED', 'task_count': 4}],
-            [
-                _settle_detail_body(version='1.3', state='VALIDATING', gate=None),
-                _settle_detail_body(version='1.3', state='READY', active=True, gate={
-                    'status': 'UNPROVEN', 'attempts': 0, 'failure': None,
-                    'unproven': {'reason': 'no reference solutions to run',
-                                 'at': '2026-08-20T00:01:00Z'},
-                }),
-            ],
-        )
-
-        settled = []
-        with patch('evolve._http.urlopen', fake):
-            done = await datasets_factory(CONFIG).watch_import(
-                'imp-2',
-                poll_interval_s=0.001,
-                on_version=lambda v, d: settled.append(v),
-            )
-
-        assert done.status == 'COMPLETED'
-        assert settled[-1].state == 'READY'
-        assert settled[-1].gate is not None
-        assert settled[-1].gate.status == 'UNPROVEN'
-        assert settled[-1].gate.unproven is not None
-        assert settled[-1].gate.unproven.reason == 'no reference solutions to run'
+        assert done.failure.code == 'import_failed'
+        assert transitions == ['BUILDING', 'FAILED']
 
     @pytest.mark.asyncio
     async def test_watch_import_archiving_disabled_settles_normally(self):
-        """The old trap is gone with the gate: solutions archiving disabled
-        is a warning about the missing reference-solution record, not a
-        settling dead end — the same import settles READY like any other,
-        in one confirming read."""
+        """Solutions archiving disabled is a warning about the missing
+        reference-solution record, never a settling dead end — the same
+        import settles READY like any other."""
         job = {'id': 'imp-3', 'name': 'my-set', 'version': '1.4', 'failure': None,
                'warnings': [{'code': 'solutions_archiving_disabled',
                              'message': 'solutions archiving is disabled'}]}
-        # The first detail read shows the old dead-end shape (VALIDATING,
-        # no gate) — the OLD client refused right here with
-        # 'gate_unschedulable'; the new one keeps polling to READY.
+        # The first detail read shows a not-yet-settled version (a mid-deploy
+        # older server's shape); the watch keeps polling to READY.
         fake, calls, seen_urls = _settle_urlopen(
             [{**job, 'status': 'COMPLETED', 'task_count': 4}],
             [
-                _settle_detail_body(version='1.4', state='VALIDATING', gate=None),
+                _settle_detail_body(version='1.4', state='BUILDING'),
                 _settle_detail_body(version='1.4', state='READY', active=True),
             ],
         )
@@ -1186,10 +1018,11 @@ class TestDatasets:
 
     @pytest.mark.asyncio
     async def test_watch_import_settle_timeout_backstop(self):
-        """The bounded backstop: whatever else goes wrong (a worker fleet
-        that is down leaves the gate PENDING indefinitely), the settle wait
-        is a bounded await — it ends with the named settle_timeout cause
-        carrying the last observed state, never an unbounded hang."""
+        """The bounded backstop: whatever else goes wrong (a mid-deploy
+        older server that keeps answering a never-settling state), the
+        settle wait is a bounded await — it ends with the named
+        settle_timeout cause carrying the last observed state, never an
+        unbounded hang."""
         import evolve as evolve_pkg
         settle_error = getattr(evolve_pkg, 'ImportSettleError', None)
 
@@ -1197,9 +1030,7 @@ class TestDatasets:
                'failure': None, 'warnings': []}
         fake, calls, seen_urls = _settle_urlopen(
             [{**job, 'status': 'COMPLETED', 'task_count': 4}],
-            [_settle_detail_body(version='1.5', state='VALIDATING', gate={
-                'status': 'PENDING', 'attempts': 0, 'failure': None, 'unproven': None,
-            })],
+            [_settle_detail_body(version='1.5', state='BUILDING')],
         )
 
         with patch('evolve._http.urlopen', fake):
@@ -1210,7 +1041,7 @@ class TestDatasets:
 
         assert settle_error is not None and isinstance(exc.value, settle_error)
         assert exc.value.code == 'settle_timeout'
-        assert exc.value.state == 'VALIDATING'
+        assert exc.value.state == 'BUILDING'
 
     @pytest.mark.asyncio
     async def test_watch_import_settle_timeout_bounds_rate_limited_polls(self):
@@ -1261,26 +1092,19 @@ class TestDatasets:
         assert calls['detail'] >= 2
 
     @pytest.mark.asyncio
-    async def test_watch_import_gate_failure_reread_survives_rate_limit(self):
+    async def test_watch_import_failure_reread_survives_rate_limit(self):
         """The delay-not-outcome law covers the LAST read too: with the
         version settled FAILED, the final import re-read (the one that
-        fetches the gate's structured cause) can itself be rate-limited — a
-        transient 429 there must not turn a settled gate failure into a
-        thrown rate-limit error."""
+        fetches the failure's structured cause) can itself be rate-limited —
+        a transient 429 there must not turn a settled failure into a thrown
+        rate-limit error."""
         import io
         import urllib.error
 
         job = {'id': 'imp-6', 'name': 'my-set', 'version': '2.1', 'warnings': []}
-        gate_failure = {
-            'code': 'gate_failed',
-            'message': '1/4 task(s) are not activation-eligible',
-            'failed_tasks': [{'task_name': 'task-2', 'outcome': 'FAIL',
-                              'reasons': ['gold solution scored 0.0']}],
-        }
-        detail = _settle_detail_body(version='2.1', state='FAILED', gate={
-            'status': 'FAILED', 'attempts': 1, 'failure': gate_failure,
-            'unproven': None,
-        })
+        build_failure = {'code': 'import_failed',
+                         'message': 'task image build failed for task-2'}
+        detail = _settle_detail_body(version='2.1', state='FAILED')
         calls = {'import': 0}
 
         def rate_limited_reread(request, timeout=None):
@@ -1298,9 +1122,7 @@ class TestDatasets:
                     }}).encode('utf-8')),
                 )
             return FakeResponse({**job, 'status': 'FAILED',
-                                 'failure': {'code': 'gate_failed',
-                                             'message': gate_failure['message']},
-                                 'task_count': 4})
+                                 'failure': build_failure, 'task_count': 4})
 
         with patch('evolve._http.urlopen', rate_limited_reread):
             final = await datasets_factory(CONFIG).watch_import(
@@ -1310,14 +1132,14 @@ class TestDatasets:
         assert calls['import'] == 3
         assert final.status == 'FAILED'
         assert final.failure is not None
-        assert final.failure.code == 'gate_failed'
+        assert final.failure.code == 'import_failed'
 
     @pytest.mark.asyncio
-    async def test_watch_import_gate_failure_reread_is_bounded(self):
+    async def test_watch_import_failure_reread_is_bounded(self):
         """And when the rate limiting never relents, the final re-read is
         bounded by the SAME settle deadline — refusing with facts that stay
-        true: the version settled FAILED (state and gate ride the error),
-        the watch just could not fetch the final import body inside its
+        true: the version settled FAILED (the state rides the error), the
+        watch just could not fetch the final import body inside its
         budget."""
         import io
         import urllib.error
@@ -1325,16 +1147,7 @@ class TestDatasets:
         settle_error = getattr(evolve_pkg, 'ImportSettleError', None)
 
         job = {'id': 'imp-7', 'name': 'my-set', 'version': '2.2', 'warnings': []}
-        gate_failure = {
-            'code': 'gate_failed',
-            'message': '1/4 task(s) are not activation-eligible',
-            'failed_tasks': [{'task_name': 'task-2', 'outcome': 'FAIL',
-                              'reasons': ['gold solution scored 0.0']}],
-        }
-        detail = _settle_detail_body(version='2.2', state='FAILED', gate={
-            'status': 'FAILED', 'attempts': 1, 'failure': gate_failure,
-            'unproven': None,
-        })
+        detail = _settle_detail_body(version='2.2', state='FAILED')
         calls = {'import': 0}
 
         def always_rate_limited_reread(request, timeout=None):
@@ -1487,139 +1300,6 @@ class TestDatasets:
 
         assert exc.value.code == 'version_not_ready'
         assert exc.value.details == {'state': 'BUILDING'}
-
-    @pytest.mark.asyncio
-    async def test_gate_failed_task_count_carries_the_true_total(self):
-        """failed_task_count is the total behind the 25-task cap on the list."""
-        fake = FakeUrlopen([
-            ('/api/datasets/big-fail', {
-                'name': 'big-fail',
-                'title': None,
-                'description': None,
-                'active_version': None,
-                'versions': [
-                    {
-                        'version': '1.0', 'state': 'FAILED',
-                        'created_at': '2026-08-03', 'task_count': 40,
-                        'gate': {
-                            'status': 'FAILED', 'attempts': 1,
-                            'failure': {
-                                'code': 'gate_failed',
-                                'message': '40 of 40 task(s) failed the activation gate',
-                                'failed_tasks': [
-                                    {'task_name': f'task-{i}', 'outcome': 'FAIL',
-                                     'reasons': ['gold never scored 1.0']}
-                                    for i in range(25)
-                                ],
-                                'failed_task_count': 40,
-                            },
-                        },
-                    },
-                ],
-                'selected_version': None,
-                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
-            }),
-        ])
-        with patch('evolve._http.urlopen', fake):
-            detail = await datasets_factory(CONFIG).get('big-fail')
-
-        gate = detail.versions[0].gate
-        # The list stays capped at the server's first 25; the count never is.
-        assert len(gate.failed_tasks) == 25
-        assert gate.failed_task_count == 40
-
-    @pytest.mark.asyncio
-    async def test_unproven_gate_carries_the_stamp(self):
-        """UNPROVEN is the third terminal word, and its stamp reaches the caller.
-
-        A version whose import archived no reference solutions is activated with
-        nothing proved, and the server stamps WHY. The stamp used to be dropped
-        at the mapper, which left the reason readable only off the raw HTTP
-        response — so a Python caller could see the word UNPROVEN and never the
-        sentence behind it.
-        """
-        fake = FakeUrlopen([
-            ('/api/datasets/no-solutions', {
-                'name': 'no-solutions',
-                'title': None,
-                'description': None,
-                # The active-version object is not what this test is about; the
-                # gate rides on the versions list either way.
-                'active_version': None,
-                'versions': [
-                    {
-                        'version': '1.0', 'state': 'READY',
-                        'created_at': '2026-08-03', 'task_count': 12,
-                        'gate': {
-                            'status': 'UNPROVEN',
-                            # No run ever happened, so attempts stays 0.
-                            'attempts': 0,
-                            'failure': None,
-                            'unproven': {
-                                'reason': 'no reference solutions to run',
-                                'at': '2026-08-03T00:00:10.000Z',
-                            },
-                        },
-                    },
-                ],
-                'selected_version': None,
-                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
-            }),
-        ])
-        with patch('evolve._http.urlopen', fake):
-            detail = await datasets_factory(CONFIG).get('no-solutions')
-
-        gate = detail.versions[0].gate
-        assert gate.status == 'UNPROVEN'
-        assert gate.attempts == 0
-        assert gate.unproven == DatasetVersionGateUnproven(
-            reason='no reference solutions to run',
-            at='2026-08-03T00:00:10.000Z',
-        )
-        # An absent proof is not a failed one: the two details never coexist.
-        assert gate.code is None
-        assert gate.message is None
-        assert gate.failed_tasks == []
-
-    @pytest.mark.asyncio
-    async def test_gate_without_a_stamp_reads_none(self):
-        """No stamp is None — the same "nothing to report" every other gate
-        detail answers, and never a fabricated reason."""
-        fake = FakeUrlopen([
-            ('/api/datasets/proven', {
-                'name': 'proven',
-                'title': None,
-                'description': None,
-                # The active-version object is not what this test is about; the
-                # gate rides on the versions list either way.
-                'active_version': None,
-                'versions': [
-                    {
-                        'version': '1.0', 'state': 'READY',
-                        'created_at': '2026-08-03', 'task_count': 12,
-                        # A PASSED gate on a server that predates the stamp:
-                        # no `unproven` key at all.
-                        'gate': {'status': 'PASSED', 'attempts': 1},
-                    },
-                    {
-                        'version': '0.9', 'state': 'READY',
-                        'created_at': '2026-08-02', 'task_count': 12,
-                        # A stamp without its reason is not a stamp.
-                        'gate': {
-                            'status': 'UNPROVEN', 'attempts': 0,
-                            'unproven': {'at': '2026-08-02T00:00:10.000Z'},
-                        },
-                    },
-                ],
-                'selected_version': None,
-                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
-            }),
-        ])
-        with patch('evolve._http.urlopen', fake):
-            detail = await datasets_factory(CONFIG).get('proven')
-
-        assert detail.versions[0].gate.unproven is None
-        assert detail.versions[1].gate.unproven is None
 
 
 REGISTERED_AGENT = {

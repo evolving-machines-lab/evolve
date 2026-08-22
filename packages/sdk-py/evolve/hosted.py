@@ -374,73 +374,6 @@ AttemptPhase = Literal[
 
 
 @dataclass
-class DatasetVersionGateFailedTask:
-    """One task the activation gate found ineligible.
-
-    ``outcome`` is the gate's verdict word (``FAIL``, or ``ERROR`` when the
-    run produced no usable score; ``None`` when the server omits it) and
-    ``reasons`` are the gate's own sentences for this task — empty when the
-    server names none.
-    """
-    task_name: str
-    outcome: Optional[str] = None
-    reasons: List[str] = field(default_factory=list)
-
-
-@dataclass
-class DatasetVersionGateUnproven:
-    """The UNPROVEN stamp on a version's activation gate.
-
-    ``reason`` is the server's own sentence for why no full proof ran ("no
-    reference solutions to run", or the partial flavor naming how many tasks
-    shipped none), ``at`` is when the stamp was written (``None`` when the
-    server omits it).
-    """
-    reason: str
-    at: Optional[str] = None
-
-
-@dataclass
-class DatasetVersionGate:
-    """The activation gate's progress for one dataset version.
-
-    ``status`` is the gate's own lifecycle as wire values: ``PENDING`` →
-    ``RUNNING`` → ``PASSED``/``FAILED``, plus ``UNPROVEN`` — the third terminal
-    word, for a version activated without a full proof: nothing to prove at
-    all (no reference solutions archived), or a PARTIAL archive whose
-    provable tasks all passed while the solution-less ones were labeled
-    ``UNPROVEN`` per task. ``code`` and ``message`` are set on
-    failure — one machine word and one human sentence — and are ``None`` while
-    the gate is healthy. ``attempts`` counts gate runs so far.
-    ``failed_tasks`` names each ineligible task with the gate's own reasons
-    (the server sends the first 25); it is empty while the gate is healthy and
-    empty on servers that predate the field — absence is "nothing to report",
-    never a crash. ``failed_task_count`` is the TRUE total of ineligible
-    tasks: the list is capped at 25, so a gate that failed more tasks than
-    that is under-counted by ``len(failed_tasks)`` — this number never is (it
-    falls back to the length on servers that predate the field, which never
-    truncated without it). ``unproven`` carries the UNPROVEN stamp and is
-    ``None`` on every other status.
-    """
-    status: str
-    attempts: int
-    code: Optional[str] = None
-    message: Optional[str] = None
-    failed_tasks: List[DatasetVersionGateFailedTask] = field(default_factory=list)
-    failed_task_count: int = 0
-    #: Present only when ``status`` is ``UNPROVEN``: the version activated
-    #: without a full oracle-conformance proof because the gate had no
-    #: reference solutions to run — for any task, or (partial archive) for
-    #: some tasks, every task WITH a solution having proved eligible. The
-    #: server's own stamp — the honest reason sentence and when it was
-    #: stamped. ``None`` on every other status and on servers that predate
-    #: the field: absence is "nothing to report", never a crash. It is
-    #: deliberately not the same field as ``code``/``message``: an absent proof
-    #: is not a failed one, and the two details are mutually exclusive.
-    unproven: Optional[DatasetVersionGateUnproven] = None
-
-
-@dataclass
 class DatasetManifestAuthor:
     """One dataset.toml author: a name, and an email when the manifest gives one."""
     name: str
@@ -474,8 +407,8 @@ class DatasetVersionSource:
     The repository, the ref exactly as requested, the RESOLVED commit the
     clone landed on (for an annotated tag, the peeled commit — never the tag
     object), and the repository subfolder the corpus was read from. Served on
-    EVERY git-imported version whatever its state — a version whose activation
-    gate FAILED can never become the active version, so this is where its
+    EVERY git-imported version whatever its state — a version whose build
+    FAILED can never become the active version, so this is where its
     imported bytes stay observable.
     """
     #: The ref the import was asked for, exactly as requested: a sha, a tag,
@@ -508,10 +441,6 @@ class DatasetVersion:
     #: seeded directory, a pre-provenance row), and on servers that predate
     #: the field — never a fabricated value.
     source: Optional[DatasetVersionSource] = None
-    #: Activation-gate progress. ``None`` when no gate was scheduled for this
-    #: version, and also ``None`` when the server predates the gate field — a
-    #: missing gate never means "passed", only "nothing to report".
-    gate: Optional[DatasetVersionGate] = None
 
 
 @dataclass
@@ -528,28 +457,6 @@ class TaskProviderVerdict:
 
 
 @dataclass
-class TaskGate:
-    """One task's activation-gate verdict — the public subset.
-
-    The per-task half of the version's ``gate``: while the gate is RUNNING,
-    verdicts appear on tasks as they land. ``outcome`` is PASS; FLAKY (gold
-    passed only on a retry — still eligible under the operator default); FAIL
-    (definitive: gold never scored 1.0, or a do-nothing agent did); ERROR
-    (inconclusive — no usable score, e.g. an archived solution that could not
-    be read); or UNPROVEN (the task shipped no reference solution, so the
-    gate had nothing to run — a labeled gap, never counted as proof and never
-    counted as a failure).
-    ``reasons`` are human-readable and empty on PASS. The full stored verdict
-    carries oracle diagnostics that stay internal, like the environment specs
-    beside it.
-    """
-    outcome: str
-    flaky: bool = False
-    reasons: List[str] = field(default_factory=list)
-    ran_at: Optional[str] = None
-
-
-@dataclass
 class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
@@ -561,10 +468,6 @@ class Task:
     ``gpus``/``gpu_types`` are the task's declared GPU requirement (Harbor's
     task fields honored verbatim): 0 = a CPU task; ``gpu_types`` None = any
     type is acceptable (always None when ``gpus`` is 0).
-
-    ``gate`` is this task's activation-gate verdict — ``None`` until the gate
-    has run it, and ``None`` on servers that predate the field: absence is
-    "nothing to report", never "passed".
     """
     task_name: str
     agent_timeout_sec: float
@@ -572,7 +475,6 @@ class Task:
     providers: Dict[str, TaskProviderVerdict]
     gpus: int = 0
     gpu_types: Optional[List[str]] = None
-    gate: Optional[TaskGate] = None
 
 
 @dataclass
@@ -2071,88 +1973,6 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
     )
 
 
-def _map_version_gate(data: Any) -> Optional[DatasetVersionGate]:
-    """Map a version's activation-gate field, tolerating every server generation.
-
-    An older server has no ``gate`` field at all; the current server sends the
-    nested form (``{status, attempts, failure: {code, message}}``); the flat
-    form carries ``code``/``message`` directly. Anything unreadable becomes
-    ``None`` — a missing gate is "nothing to report", never a crash and never
-    "passed".
-    """
-    if not isinstance(data, dict) or not isinstance(data.get('status'), str):
-        return None
-    failure = data.get('failure')
-    failure = failure if isinstance(failure, dict) else {}
-    code = data.get('code') if isinstance(data.get('code'), str) else failure.get('code')
-    message = (
-        data.get('message') if isinstance(data.get('message'), str) else failure.get('message')
-    )
-    attempts = data.get('attempts')
-    raw_failed = data.get('failed_tasks')
-    if not isinstance(raw_failed, list):
-        raw_failed = failure.get('failed_tasks')
-    failed_tasks = _map_gate_failed_tasks(raw_failed)
-    raw_count = data.get('failed_task_count')
-    if not isinstance(raw_count, int) or isinstance(raw_count, bool):
-        raw_count = failure.get('failed_task_count')
-    # The UNPROVEN stamp ({reason, at}) — the server's honest sentence for a
-    # version that activated with no oracle-conformance proof. It used to be
-    # dropped here, which left the reason API-only and made the docs' "read it
-    # off the gate" unfollowable. Same tolerance as the gate itself: anything
-    # unreadable, or a stamp without its reason, is None.
-    raw_unproven = data.get('unproven')
-    raw_unproven = raw_unproven if isinstance(raw_unproven, dict) else {}
-    unproven_reason = raw_unproven.get('reason')
-    unproven_at = raw_unproven.get('at')
-    return DatasetVersionGate(
-        status=data['status'],
-        attempts=attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0,
-        code=code if isinstance(code, str) else None,
-        message=message if isinstance(message, str) else None,
-        failed_tasks=failed_tasks,
-        # The TRUE total behind the 25-task cap on failed_tasks. An older
-        # server never truncated without the count, so absence reads as the
-        # length.
-        failed_task_count=(
-            raw_count
-            if isinstance(raw_count, int) and not isinstance(raw_count, bool)
-            else len(failed_tasks)
-        ),
-        unproven=(
-            DatasetVersionGateUnproven(
-                reason=unproven_reason,
-                at=unproven_at if isinstance(unproven_at, str) else None,
-            )
-            if isinstance(unproven_reason, str)
-            else None
-        ),
-    )
-
-
-def _map_gate_failed_tasks(data: Any) -> List[DatasetVersionGateFailedTask]:
-    """The per-task cause list behind a FAILED gate, with the gate's tolerance.
-
-    Absent or unreadable input is an empty list, an entry without a task name
-    is dropped, and non-string reasons are filtered — an older or misbehaving
-    server must never crash the client here.
-    """
-    if not isinstance(data, list):
-        return []
-    tasks: List[DatasetVersionGateFailedTask] = []
-    for item in data:
-        if not isinstance(item, dict) or not isinstance(item.get('task_name'), str):
-            continue
-        outcome = item.get('outcome')
-        reasons = item.get('reasons')
-        tasks.append(DatasetVersionGateFailedTask(
-            task_name=item['task_name'],
-            outcome=outcome if isinstance(outcome, str) else None,
-            reasons=[r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else [],
-        ))
-    return tasks
-
-
 def _map_version_manifest(data: Any) -> Optional[DatasetManifestMetadata]:
     """The dataset.toml metadata a version imported under, defensively.
 
@@ -2195,7 +2015,7 @@ def _map_version_source(data: Any) -> Optional[DatasetVersionSource]:
     Absent (an older server, or a non-git version — an uploaded tarball has
     no git upstream) or unreadable input is ``None`` — "nothing to report",
     never a fabricated value and never a crash. Served on every git-imported
-    version, including one whose activation gate FAILED (it can never
+    version, including one whose build FAILED (it can never
     activate, so it never appears as ``upstream``).
     """
     if not isinstance(data, dict):
@@ -2222,7 +2042,6 @@ def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
         task_count=int(data.get('task_count', 0)),
         manifest=_map_version_manifest(data.get('manifest')),
         source=_map_version_source(data.get('source')),
-        gate=_map_version_gate(data.get('gate')),
     )
 
 
@@ -2246,25 +2065,6 @@ def _map_dataset_summary(data: Dict[str, Any]) -> Dataset:
             else None
         ),
         upstream=_map_upstream(data.get('upstream')),
-    )
-
-
-def _map_task_gate(data: Any) -> Optional[TaskGate]:
-    """A task's own activation-gate verdict, with the gate mappers' tolerance.
-
-    Absent (the gate has not run it, or an older server) or unreadable input
-    is ``None`` — "nothing to report", never "passed" and never a crash. An
-    entry without an outcome word is no verdict at all.
-    """
-    if not isinstance(data, dict) or not isinstance(data.get('outcome'), str):
-        return None
-    reasons = data.get('reasons')
-    ran_at = data.get('ran_at')
-    return TaskGate(
-        outcome=data['outcome'],
-        flaky=data.get('flaky') is True,
-        reasons=[r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else [],
-        ran_at=ran_at if isinstance(ran_at, str) else None,
     )
 
 
@@ -2292,9 +2092,6 @@ def _map_task(data: Dict[str, Any]) -> Task:
             if isinstance(gpu_types_raw, list) and gpu_types_raw
             else None
         ),
-        # The per-task half of the version's gate — verdicts appear here as
-        # they land while the gate runs.
-        gate=_map_task_gate(data.get('gate')),
     )
 
 
@@ -3671,8 +3468,7 @@ class DatasetsClient:
         ``settle_timeout_s`` backstops every stall (a server that answers
         nothing but 429/503 stalls the polling itself):
         ``ImportSettleError('settle_timeout')`` with the last observed
-        state. No verification gate exists on the publish path any more, so
-        nothing here consults ``gate``.
+        state.
         """
         settle_deadline = time.monotonic() + settle_timeout_s
         ref = f'{imported.name}@{imported.version}'
@@ -3860,7 +3656,7 @@ class DatasetsClient:
         Returns the full detail shape, exactly like :meth:`get`. A publish
         lands READY and active on its own (build-then-READY), so this verb
         re-points the default at a version that is already built — an older
-        READY one, or the legacy VALIDATING rest. A version still building
+        READY one. A version still building
         refuses with the typed 409 ``version_not_ready``
         (:class:`EvolveAPIError`).
         """

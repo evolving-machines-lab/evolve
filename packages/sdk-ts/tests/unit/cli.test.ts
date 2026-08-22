@@ -4095,7 +4095,6 @@ async function testDatasetListAndShow() {
     assert(text.includes("VERSION") && text.includes("READY"), "renders the version table");
     assert(text.includes("dataset show deep-swe --cursor task-cur"), "the task paging hint speaks the new grammar");
     assert(text.includes("modal: needs docker"), "provider limitations are named once");
-    assert(!text.includes("GATE"), "no GATE column when the server reports no gate (older server)");
   } finally {
     restoreFetch();
   }
@@ -4218,10 +4217,10 @@ async function testDatasetProvenanceAndPinNotice() {
 }
 
 async function testDatasetShowVersionSource() {
-  console.log("\n--- runCli: dataset show serves a gate-FAILED version's git provenance ---");
+  console.log("\n--- runCli: dataset show serves a FAILED version's git provenance ---");
   installMockFetch();
   try {
-    // The Q5 shape: annotated-tag import COMPLETED, gate FAILED, NO active
+    // The Q5 shape: annotated-tag import COMPLETED, build FAILED, NO active
     // version — so `upstream` is null, and only the per-version `source` can
     // say which bytes were imported. The human page must show the PEELED
     // commit both on the source line (selected version) and in the versions
@@ -4238,7 +4237,6 @@ async function testDatasetShowVersionSource() {
         commit: PEELED,
         path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
       },
-      gate: { status: "FAILED", attempts: 1, code: "gate_failed", message: "2 of 2 task(s) failed the activation gate" },
     };
     setMockResponse("/api/datasets/q5-tagpeel", {
       status: 200,
@@ -4277,211 +4275,17 @@ async function testDatasetShowVersionSource() {
   }
 }
 
-async function testDatasetShowGate() {
-  console.log("\n--- runCli: dataset show surfaces the activation gate ---");
-  installMockFetch();
-  try {
-    const gateMessage = "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)";
-    const goldReason =
-      "gold run produced no usable score in 3 attempt(s) - last status: INDETERMINATE (the verifier produced neither reward.json nor reward.txt)";
-    setMockResponse("/api/datasets/r1-init", {
-      status: 200,
-      body: {
-        name: "r1-init",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T19:15:55.930Z",
-            task_count: 1,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: gateMessage,
-                failed_tasks: [
-                  { task_name: "starter-task", outcome: "ERROR", reasons: [goldReason, "second reason"] },
-                  { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
-                ],
-              },
-            },
-          },
-          {
-            version: "0.9",
-            state: "VALIDATING",
-            created_at: "2026-08-01T00:00:00.000Z",
-            task_count: 1,
-            gate: { status: "RUNNING", attempts: 1 },
-          },
-          // U2: a solution-less version activates READY with gate UNPROVEN and
-          // the server's own {reason, at} stamp — the reason must reach both
-          // the human view and --json, not stay API-only.
-          {
-            version: "0.8",
-            state: "READY",
-            created_at: "2026-07-30T00:00:00.000Z",
-            task_count: 1,
-            gate: {
-              status: "UNPROVEN",
-              attempts: 0,
-              unproven: { reason: "no reference solutions to run", at: "2026-08-15T19:24:02.985Z" },
-            },
-          },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-        created_at: "2026-08-03T19:15:55.921Z",
-        updated_at: "2026-08-03T19:15:55.921Z",
-      },
-    });
 
-    const show = captureIO();
-    assertEqual(await runCli(["dataset", "show", "r1-init", ...AUTH], show.io), 0, "show exits 0");
-    const text = show.out.join("\n");
-    assert(text.includes("FAILED"), "the version state FAILED is visible");
-    assert(text.includes("GATE"), "the versions table grows a GATE column when the server reports gate progress");
-    assert(text.includes("RUNNING"), "a healthy in-progress gate shows its status");
-    assert(
-      text.includes(`version 1.0 activation gate FAILED: ${gateMessage}`),
-      "a failed gate is unmissable: one line naming the version and the server's reason"
-    );
-    assert(
-      text.includes(`  starter-task: ${goldReason}; second reason`),
-      "the cause follows the verdict: one indented line per failed task, every reason joined"
-    );
-    assert(
-      text.includes("  quiet-task: FAIL"),
-      "a task the server names without reasons still gets its line — the outcome word stands in"
-    );
-    assert(
-      !text.includes("… and"),
-      "when the failed-task list is complete (count equals the list length) no truncation line appears"
-    );
-    assert(
-      text.includes("version 0.8 gate UNPROVEN: no reference solutions to run"),
-      "an unproven gate prints its reason line — the stamp is not API-only (U2)"
-    );
-
-    const json = captureIO();
-    assertEqual(await runCli(["dataset", "show", "r1-init", "--json", ...AUTH], json.io), 0, "show --json exits 0");
-    const body = JSON.parse(json.out.join("\n"));
-    assertEqual(body.versions[0].state, "FAILED", "--json carries the version state");
-    assertEqual(
-      body.versions[0].gate,
-      {
-        status: "FAILED",
-        attempts: 1,
-        code: "gate_failed",
-        message: gateMessage,
-        failed_tasks: [
-          { task_name: "starter-task", outcome: "ERROR", reasons: [goldReason, "second reason"] },
-          { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
-        ],
-        failed_task_count: 2,
-        unproven: null,
-      },
-      "--json carries the gate: status, attempts, code, message, the full failed_tasks array, and the true count"
-    );
-    assertEqual(
-      body.versions[1].gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0, unproven: null },
-      "--json carries a healthy gate with null code/message, no failed tasks, count 0"
-    );
-    assertEqual(
-      body.versions[2].gate,
-      {
-        status: "UNPROVEN",
-        attempts: 0,
-        code: null,
-        message: null,
-        failed_tasks: [],
-        failed_task_count: 0,
-        unproven: { reason: "no reference solutions to run", at: "2026-08-15T19:24:02.985Z" },
-      },
-      "--json carries the UNPROVEN stamp verbatim: {reason, at} (U2)"
-    );
-  } finally {
-    restoreFetch();
-  }
-}
-
-async function testDatasetShowGateTruncation() {
-  console.log("\n--- runCli: dataset show truncated gate list names the true total ---");
-  installMockFetch();
-  try {
-    // The server caps failed_tasks at 25 entries but reports the true count
-    // separately. Here it names 2 tasks out of 27 ineligible — the page must
-    // say "… and 25 more" or it under-reports the damage.
-    setMockResponse("/api/datasets/big-fail", {
-      status: 200,
-      body: {
-        name: "big-fail",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T19:15:55.930Z",
-            task_count: 30,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: "27 of 30 task(s) failed the activation gate",
-                failed_tasks: [
-                  { task_name: "task-a", outcome: "FAIL", reasons: ["gold run failed"] },
-                  { task_name: "task-b", outcome: "ERROR", reasons: ["verifier crashed"] },
-                ],
-                failed_task_count: 27,
-              },
-            },
-          },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-        created_at: "2026-08-03T19:15:55.921Z",
-        updated_at: "2026-08-03T19:15:55.921Z",
-      },
-    });
-
-    const show = captureIO();
-    assertEqual(await runCli(["dataset", "show", "big-fail", ...AUTH], show.io), 0, "show exits 0");
-    const text = show.out.join("\n");
-    assert(
-      text.includes("version 1.0 activation gate FAILED: 27 of 30 task(s) failed the activation gate"),
-      "the verdict line still leads with the server's reason"
-    );
-    assert(text.includes("  task-a: gold run failed"), "the named tasks keep their cause lines");
-    assert(text.includes("  task-b: verifier crashed"), "every listed task appears before the truncation notice");
-    assert(
-      text.includes("  … and 25 more (27 ineligible tasks in total)"),
-      "a capped list must confess the true total: 27 ineligible, 2 named, 25 unnamed"
-    );
-  } finally {
-    restoreFetch();
-  }
-}
 
 /**
  * A wire dataset-detail body holding exactly one version, for publish
- * --watch's settle phase: import COMPLETED only means the corpus landed as a
- * VALIDATING version, and the watch follows the version here until it
- * settles.
+ * --watch's settle phase: the watch follows the version here until it
+ * settles at READY or FAILED.
  */
 function publishDetailBody(opts: {
   name: string;
   version: string;
   state: string;
-  gate?: unknown;
   active?: boolean;
 }): Record<string, unknown> {
   const versionBody = {
@@ -4491,7 +4295,6 @@ function publishDetailBody(opts: {
     task_count: 12,
     manifest: null,
     source: null,
-    gate: opts.gate ?? null,
   };
   return {
     name: opts.name,
@@ -4528,7 +4331,6 @@ async function testDatasetPublishWatch() {
         name: "my-bench",
         version: "1.0",
         state: "READY",
-        gate: { status: "PASSED", attempts: 1, failure: null, unproven: null },
         active: true,
       }),
     });
@@ -4575,81 +4377,11 @@ async function testDatasetPublishWatch() {
   }
 }
 
-/**
- * A publish that settles FAILED exits 1 with the failure's cause — never a
- * silent 0. The fixture wears a mid-deploy OLDER server's shape (version
- * still VALIDATING at COMPLETED, a legacy gate failure moving it to FAILED);
- * the watch reads only the STATE and the import's own failure field.
- */
-async function testDatasetPublishWatchGateFailure() {
-  console.log("\n--- runCli: dataset publish --watch exits 1 when the version settles FAILED ---");
-  installMockFetch();
-  try {
-    const job = { id: "imp-7", name: "my-bench", version: "2.0", warnings: [] };
-    const importBodies = [
-      { ...job, status: "COMPLETED", failure: null, task_count: 12 },
-      { ...job, status: "FAILED", failure: { code: "gate_failed", message: "1/12 task(s) are not activation-eligible" }, task_count: 12 },
-    ];
-    const detailBodies = [
-      publishDetailBody({
-        name: "my-bench",
-        version: "2.0",
-        state: "VALIDATING",
-        gate: { status: "RUNNING", attempts: 1, failure: null, unproven: null },
-      }),
-      publishDetailBody({
-        name: "my-bench",
-        version: "2.0",
-        state: "FAILED",
-        gate: {
-          status: "FAILED",
-          attempts: 1,
-          failure: {
-            code: "gate_failed",
-            message: "1/12 task(s) are not activation-eligible",
-            failed_tasks: [{ task_name: "task-3", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
-          },
-          unproven: null,
-        },
-      }),
-    ];
-    let importCalls = 0;
-    let detailCalls = 0;
-    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
-      const urlStr = url.toString();
-      fetchCalls.push({ url: urlStr, init });
-      if (urlStr.endsWith("/api/datasets/publish")) {
-        return buildMockResponse({ status: 202, body: { ...job, status: "QUEUED", failure: null } });
-      }
-      if (urlStr.includes("/api/datasets/imports/")) {
-        return buildMockResponse({ status: 200, body: importBodies[Math.min(importCalls++, importBodies.length - 1)] });
-      }
-      return buildMockResponse({ status: 200, body: detailBodies[Math.min(detailCalls++, detailBodies.length - 1)] });
-    };
-
-    const { io, out } = captureIO();
-    const code = await runCli(
-      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "my-bench", "--version", "2.0", "--watch", ...AUTH],
-      io
-    );
-    assertEqual(code, 1, "exit code 1 — a failed publish is a failed publish, never a silent 0");
-    assert(
-      out.some((l) => l.includes("gate_failed") || l.includes("not activation-eligible")),
-      "the final block carries the failure riding the import's own failure field"
-    );
-    assert(
-      out.some((l) => l.includes("active") && l.includes("none")),
-      "the final block says no version became active"
-    );
-  } finally {
-    restoreFetch();
-  }
-}
 
 /**
- * The old trap is gone with the gate: solutions archiving disabled is now a
- * warning about the missing reference-solution record, not a settling dead
- * end — the same publish settles READY like any other and exits 0.
+ * Solutions archiving disabled is a warning about the missing
+ * reference-solution record, never a settling dead end — the same publish
+ * settles READY like any other and exits 0.
  */
 async function testDatasetPublishWatchArchivingDisabled() {
   console.log("\n--- runCli: dataset publish --watch settles normally when solutions archiving was disabled ---");
@@ -5479,10 +5211,7 @@ async function main() {
   await testDatasetListAndShow();
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowVersionSource();
-  await testDatasetShowGate();
-  await testDatasetShowGateTruncation();
   await testDatasetPublishWatch();
-  await testDatasetPublishWatchGateFailure();
   await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
   await testDatasetDownloadAndActivate();

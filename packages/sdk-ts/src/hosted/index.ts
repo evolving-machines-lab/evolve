@@ -35,9 +35,6 @@ import type {
   DatasetPatch,
   DatasetRef,
   DatasetVersion,
-  DatasetVersionGate,
-  DatasetVersionGateFailedTask,
-  DatasetVersionGateUnproven,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -90,7 +87,6 @@ import type {
   StepResult,
   StopResponse,
   Task,
-  TaskGate,
   TimingInfo,
   TraceEvent,
   TraceEventPage,
@@ -166,9 +162,6 @@ export type {
   DatasetSelector,
   DatasetSource,
   DatasetVersion,
-  DatasetVersionGate,
-  DatasetVersionGateFailedTask,
-  DatasetVersionGateUnproven,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -232,7 +225,6 @@ export type {
   StepResult,
   StopResponse,
   Task,
-  TaskGate,
   TaskProviderVerdict,
   TimingInfo,
   TraceEvent,
@@ -623,78 +615,6 @@ function mapAgentArm(raw: Record<string, unknown>): AgentArm {
 }
 
 /**
- * Map a version's activation-gate field, tolerating every server generation:
- * an older server that has no `gate` field at all, the current server's
- * nested form ({status, attempts, failure: {code, message, failed_tasks}}),
- * and the flat form ({status, attempts, code, message}). Anything unreadable becomes null
- * — a missing gate is "nothing to report", never a crash and never "passed".
- */
-function mapVersionGate(raw: unknown): DatasetVersionGate | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const value = raw as Record<string, unknown>;
-  if (typeof value.status !== "string") return null;
-  const failure =
-    value.failure && typeof value.failure === "object" && !Array.isArray(value.failure)
-      ? (value.failure as Record<string, unknown>)
-      : {};
-  const code = typeof value.code === "string" ? value.code : failure.code;
-  const message = typeof value.message === "string" ? value.message : failure.message;
-  const failedTasks = mapGateFailedTasks(
-    Array.isArray(value.failed_tasks) ? value.failed_tasks : failure.failed_tasks
-  );
-  const rawCount =
-    typeof value.failed_task_count === "number"
-      ? value.failed_task_count
-      : failure.failed_task_count;
-  // The UNPROVEN stamp ({reason, at}) — the server's honest sentence for a
-  // version that activated with no oracle-conformance proof. U2: this used to
-  // be dropped at the map, leaving the reason API-only. Same tolerance as the
-  // gate itself: anything unreadable, or a stamp without its reason, is null.
-  const unproven =
-    value.unproven && typeof value.unproven === "object" && !Array.isArray(value.unproven)
-      ? (value.unproven as Record<string, unknown>)
-      : null;
-  return {
-    status: value.status,
-    attempts: typeof value.attempts === "number" ? value.attempts : 0,
-    code: typeof code === "string" ? code : null,
-    message: typeof message === "string" ? message : null,
-    failed_tasks: failedTasks,
-    // The TRUE total behind the 25-task cap on failed_tasks. An older server
-    // never truncated without the count, so its absence reads as the length.
-    failed_task_count: typeof rawCount === "number" ? rawCount : failedTasks.length,
-    unproven:
-      unproven && typeof unproven.reason === "string"
-        ? { reason: unproven.reason, at: typeof unproven.at === "string" ? unproven.at : null }
-        : null,
-  };
-}
-
-/**
- * The per-task cause list behind a FAILED gate. Same tolerance as the gate
- * itself: absent or unreadable input is an empty list, an entry without a
- * task name is dropped, and non-string reasons are filtered — an older or
- * misbehaving server must never crash the CLI here.
- */
-function mapGateFailedTasks(raw: unknown): DatasetVersionGateFailedTask[] {
-  if (!Array.isArray(raw)) return [];
-  const tasks: DatasetVersionGateFailedTask[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const entry = item as Record<string, unknown>;
-    if (typeof entry.task_name !== "string") continue;
-    tasks.push({
-      task_name: entry.task_name,
-      outcome: typeof entry.outcome === "string" ? entry.outcome : null,
-      reasons: Array.isArray(entry.reasons)
-        ? entry.reasons.filter((r): r is string => typeof r === "string")
-        : [],
-    });
-  }
-  return tasks;
-}
-
-/**
  * The dataset.toml metadata a version imported under. Defensive like every
  * mapper here: an older server (no field) or garbage reads as null, and a
  * present manifest gets its arrays normalized so a caller can iterate without
@@ -726,8 +646,8 @@ function mapVersionManifest(raw: unknown): DatasetVersion["manifest"] {
 
 /**
  * A version's own git provenance ({git_url, ref, commit, path}) — served on
- * every git-imported version, including one whose activation gate FAILED (it
- * can never activate, so it never appears as `upstream`). Absent (an older
+ * every git-imported version, including one whose build FAILED (it can never
+ * activate, so it never appears as `upstream`). Absent (an older
  * server, or a non-git version) or unreadable input is null — "nothing to
  * report", never a fabricated value and never a crash.
  */
@@ -751,27 +671,6 @@ function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
     task_count: (raw.task_count as number) ?? 0,
     manifest: mapVersionManifest(raw.manifest),
     source: mapVersionSource(raw.source),
-    gate: mapVersionGate(raw.gate),
-  };
-}
-
-/**
- * A task's own activation-gate verdict, with the tolerance every gate mapper
- * here keeps: absent (the gate has not run it, or an older server) or
- * unreadable input is null — "nothing to report", never "passed" and never a
- * crash. An entry without an outcome word is no verdict at all.
- */
-function mapTaskGate(raw: unknown): TaskGate | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const value = raw as Record<string, unknown>;
-  if (typeof value.outcome !== "string") return null;
-  return {
-    outcome: value.outcome,
-    flaky: value.flaky === true,
-    reasons: Array.isArray(value.reasons)
-      ? value.reasons.filter((r): r is string => typeof r === "string")
-      : [],
-    ran_at: typeof value.ran_at === "string" ? value.ran_at : null,
   };
 }
 
@@ -790,9 +689,6 @@ function mapTask(raw: Record<string, unknown>): Task {
     // Per-provider capability verdicts — the law: where a task can run is
     // visible before any money is spent.
     providers: raw.providers as Task["providers"],
-    // The per-task half of the version's gate — verdicts appear here as they
-    // land while the gate runs.
-    gate: mapTaskGate(raw.gate),
   };
 }
 
@@ -1603,8 +1499,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
    * Bounded on purpose (fail closed, never an infinite poll): settleTimeoutMs
    * backstops every stall (a server that answers nothing but 429/503 stalls
    * the polling itself): ImportSettleError("settle_timeout"), carrying the
-   * last observed state. No verification gate exists on the publish path any
-   * more, so nothing here consults `gate`.
+   * last observed state.
    */
   async function settleImport(
     imported: DatasetImport,
@@ -1932,7 +1827,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     },
 
     async activate(name: string, version: string): Promise<Dataset> {
-      // Promotes a BUILT version (READY, or the legacy VALIDATING rest) to
+      // Promotes a BUILT version (READY) to
       // the dataset's default; a version still building refuses with 409
       // version_not_ready (EvolveApiError) — the publish lands READY and
       // active on its own, so this verb is for re-pointing the default.
