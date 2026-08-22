@@ -1080,6 +1080,207 @@ async function testDefaultImageNameIsVersioned(): Promise<void> {
   );
 }
 
+/**
+ * THE NAME IS WHAT MAKES A MODAL IMAGE RECLAIMABLE. Modal's delete verb takes
+ * an opaque server-side id that exists only after a build and is returned by no
+ * later lookup, so an image built for a dataset could never be deleted when
+ * that dataset was. publishImageAs binds OUR content-addressed alias to the
+ * built image; `images.fromName(alias)` resolves it back to that id without
+ * rebuilding, which is what the reclaimer uses.
+ *
+ * The test that matters is not "publish was called" — it is that publish names
+ * the image the SAME resolution create() would launch. A publish that bound our
+ * alias to a different image would delete the wrong thing later, silently.
+ */
+async function testPublishImageAsNamesTheImageCreateUses(): Promise<void> {
+  console.log("\n[10d] publishImageAs() - our alias is bound to the image create() resolves");
+
+  const fromRegistry: string[] = [];
+  const published: string[] = [];
+  let builds = 0;
+  const image = {
+    build: async () => { builds++; return image; },
+    publish: async (name: string) => { published.push(name); },
+  };
+  const client = {
+    apps: { fromName: async () => ({ appId: "ap-mock" }) },
+    images: { fromRegistry: async (tag: string) => { fromRegistry.push(tag); return image; } },
+    sandboxes: {
+      create: async () => ({ sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) }),
+    },
+  };
+
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = client;
+
+  await (provider as any).publishImageAs("eval-env-cafebabe", "evolve-all");
+  assertEqual(fromRegistry, ["evolvingmachines/evolve-all"], "publish resolves through IMAGE_MAP, like create");
+  assertEqual(builds, 1, "the image is built before it can be published");
+  assertEqual(published, ["eval-env-cafebabe"], "and published under OUR alias");
+
+  // The identity law: create() must ask for the same reference we just named.
+  await provider.create({ image: "evolve-all", user: "root" });
+  assertEqual(
+    fromRegistry,
+    ["evolvingmachines/evolve-all", "evolvingmachines/evolve-all"],
+    "create() launches the identical reference the alias was bound to"
+  );
+
+  // No image argument means the provider's configured default — create()'s own
+  // choice, so the alias still names what a trial would run.
+  await (provider as any).publishImageAs("eval-env-d00d");
+  assertEqual(
+    fromRegistry[2],
+    `evolvingmachines/evolve-all:${EVOLVE_IMAGE_VERSION}`,
+    "publishImageAs() with no image names the versioned default"
+  );
+
+  // An empty alias would publish under Modal's ":latest" default and bind a
+  // name we never minted — refused before any build.
+  let refused = false;
+  try {
+    await (provider as any).publishImageAs("   ", "evolve-all");
+  } catch {
+    refused = true;
+  }
+  assert(refused, "an empty alias is refused rather than published as something else");
+  assertEqual(builds, 3, "and the refusal costs no extra build");
+}
+
+/**
+ * PUBLISHED-NAME BOOT. A bare image name (no '/', ':' or '@') that is not an
+ * IMAGE_MAP alias may be a name a previous publishImageAs bound — the platform
+ * hands exactly that name back as the create-time `image` once the publish is
+ * known live, so create() must boot it through images.fromName WITHOUT a
+ * registry resolve or a build (Modal's own guidance: named Images with
+ * Sandboxes never block on rebuilds). create() still fetches its app EXACTLY
+ * ONCE — sandboxes.create(app, image) needs one — while prepareImage on a
+ * published name needs no app at all; both counts are asserted below. A bare
+ * name that was never published (NotFound) stays what it always was: a Docker
+ * Hub library ref.
+ */
+async function testCreateBootsPublishedNamesWithoutBuilding(): Promise<void> {
+  console.log("\n[10e] create() - a published name boots via images.fromName, no build");
+
+  const fromName: string[] = [];
+  const fromRegistry: string[] = [];
+  let builds = 0;
+  let appLookups = 0;
+  const namedImage = { imageId: "im-published" };
+  const registryImage = {
+    build: async () => { builds++; return registryImage; },
+  };
+  const created: unknown[] = [];
+  const client = {
+    apps: { fromName: async () => { appLookups++; return { appId: "ap-mock" }; } },
+    images: {
+      fromName: async (name: string) => { fromName.push(name); return namedImage; },
+      fromRegistry: (tag: string) => { fromRegistry.push(tag); return registryImage; },
+    },
+    sandboxes: {
+      create: async (_app: unknown, image: unknown) => {
+        created.push(image);
+        return { sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) };
+      },
+    },
+  };
+
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = client;
+
+  await provider.create({ image: "evolve-eval-cafebabe", user: "root" });
+  assertEqual(fromName, ["evolve-eval-cafebabe"], "a bare non-IMAGE_MAP name is looked up as a published name");
+  assertEqual(builds, 0, "and boots WITHOUT a build");
+  assertEqual(fromRegistry, [], "…or a registry resolve");
+  assertEqual(appLookups, 1, "create() fetches the app once — sandboxes.create(app, image) needs it");
+  assert(created[0] === namedImage, "the sandbox boots the fromName-resolved image itself");
+
+  // prepareImage is the path that truly never touches the app: resolving a
+  // published name returns before getApp, and there is no sandbox to create.
+  await provider.prepareImage("evolve-eval-cafebabe");
+  assertEqual(appLookups, 1, "prepareImage on a published name performs ZERO app lookups");
+  assertEqual(builds, 0, "and still no build");
+}
+
+async function testCreateFallsBackToRegistryWhenNameUnpublished(): Promise<void> {
+  console.log("\n[10f] create() - an UNPUBLISHED bare name stays a Docker Hub library ref");
+
+  const { NotFoundError } = await import("modal");
+  const fromRegistry: string[] = [];
+  let builds = 0;
+  const registryImage = {
+    build: async () => { builds++; return registryImage; },
+  };
+  const client = {
+    apps: { fromName: async () => ({ appId: "ap-mock" }) },
+    images: {
+      fromName: async () => { throw new NotFoundError("no such image"); },
+      fromRegistry: (tag: string) => { fromRegistry.push(tag); return registryImage; },
+    },
+    sandboxes: {
+      create: async () => ({ sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) }),
+    },
+  };
+
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = client;
+
+  await provider.create({ image: "alpine", user: "root" });
+  assertEqual(fromRegistry, ["alpine"], "NotFound falls through to the registry path — 'alpine' still works");
+  assertEqual(builds, 1, "and that path still builds eagerly");
+}
+
+/**
+ * Modal's own ECR reference example names the exact keys the registry secret
+ * must carry (modal.Image reference, from_aws_ecr: required_keys=
+ * ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]). Passing them
+ * to secrets.fromName makes a mis-provisioned secret fail AT THE LOOKUP with
+ * the missing key named, instead of as an opaque registry 403 mid-build.
+ */
+async function testEcrSecretLookupNamesRequiredKeys(): Promise<void> {
+  console.log("\n[10g] resolveImage() - the ECR secret lookup names Modal's documented required keys");
+
+  const secretLookups: Array<{ name: string; params?: { requiredKeys?: string[] } }> = [];
+  let builds = 0;
+  const image = { build: async () => { builds++; return image; } };
+  const client = {
+    apps: { fromName: async () => ({ appId: "ap-mock" }) },
+    secrets: {
+      fromName: async (name: string, params?: { requiredKeys?: string[] }) => {
+        secretLookups.push({ name, params });
+        return { secretId: "st-mock" };
+      },
+    },
+    images: {
+      fromAwsEcr: () => image,
+      fromGcpArtifactRegistry: () => image,
+      fromRegistry: () => image,
+    },
+    sandboxes: {
+      create: async () => ({ sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) }),
+    },
+  };
+
+  const provider = createModalProvider({
+    tokenId: "ak-test",
+    tokenSecret: "as-test",
+    imageSecretName: "eval-ecr-pull",
+  });
+  (provider as any).client = client;
+
+  await provider.create({
+    image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/mirror/python:3.11",
+    user: "root",
+  });
+  assertEqual(secretLookups[0]?.name, "eval-ecr-pull", "the configured secret is looked up");
+  assertEqual(
+    secretLookups[0]?.params?.requiredKeys,
+    ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
+    "…with Modal's documented ECR required keys asserted at the lookup"
+  );
+  assertEqual(builds, 1, "and the ECR image still builds eagerly");
+}
+
 async function testPrepareImageSharesCreatesResolution(): Promise<void> {
   console.log("\n[10c] prepareImage() - prewarm and create resolve the SAME image identity");
 
@@ -1570,6 +1771,10 @@ const tests = [
   testImageMapUsesVersionedTag,
   testDefaultImageNameIsVersioned,
   testPrepareImageSharesCreatesResolution,
+  testPublishImageAsNamesTheImageCreateUses,
+  testCreateBootsPublishedNamesWithoutBuilding,
+  testCreateFallsBackToRegistryWhenNameUnpublished,
+  testEcrSecretLookupNamesRequiredKeys,
   // [11] ModalFiles upload message size (round trips, not correctness)
   testFilesWriteFromPathUsesChunkSizedMessages,
   testFilesWriteFromPathAvoidsNativeCopy,

@@ -76,8 +76,14 @@ PACKAGE_DIGEST_HEADER = 'x-package-sha256'
 
 _TERMINAL_JOB_STATUSES = {'COMPLETED', 'CANCELLED', 'FAILED'}
 
-# Terminal import job statuses.
-_TERMINAL_IMPORT_STATUSES = {'COMPLETED', 'FAILED'}
+#: Backstop bound on watch_import's settle phase — how long past import
+#: COMPLETED the watch may wait for the version to settle before refusing
+#: with ``ImportSettleError('settle_timeout')``. Normally one confirming
+#: read: the server settles a publish at import COMPLETED (COMPLETED means
+#: the version is READY under build-then-READY), so this bound exists for a
+#: mid-deploy older server still moving a version after COMPLETED;
+#: overridable per call.
+_DEFAULT_SETTLE_TIMEOUT_S = 30 * 60.0
 
 # Seeing one of these on the wire is the authoritative end-of-stream signal.
 _TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
@@ -111,6 +117,7 @@ HostedErrorCode = Literal[
     'invalid_input',
     'invalid_limit',
     'invalid_status',
+    'invalid_visibility',
     'invalid_cursor',
     'invalid_after',
     'invalid_format',
@@ -287,34 +294,48 @@ class NoActiveVersionError(Exception):
         self.dataset = name
 
 
-class GateRunningError(Exception):
-    """Raised by ``datasets().activate()`` when the activation gate is still
-    scheduled or running — the API's 202 ``gate_running`` answer.
+class ImportSettleError(Exception):
+    """Raised by ``datasets().watch_import()`` when the import COMPLETED but
+    the WATCH cannot truthfully report the version settled: the
+    ``settle_timeout_s`` backstop elapsed first (``code`` is
+    ``'settle_timeout'``, the only cause).
 
-    NOT an :class:`EvolveAPIError`: the wire body is deliberately not the
-    error envelope, because an in-progress gate is a healthy state — nothing
-    is wrong and nothing is asked of the caller. Poll the dataset (each
-    version carries ``gate``); a gate that PASSES activates the version
-    itself, so there is normally nothing left to call. Its own type, like
-    :class:`NoActiveVersionError`, because ``activate()`` promised a Dataset
-    it cannot return yet.
+    This bounds the WAIT, never the publish — keep following with
+    ``get("name@version")``. When ``state`` is ``'FAILED'`` the version DID
+    settle and the budget was spent retrying the final import read through
+    rate limits — read the failure with ``get_import(import_id)``. Rare by
+    construction: the server settles a publish at import COMPLETED
+    (COMPLETED means the version is READY under build-then-READY), so the
+    settle phase normally confirms in one read; the timeout exists for a
+    mid-deploy older server still finishing a version after COMPLETED.
 
-    ``gate`` is a :class:`GateRunningProgress` — the gate's progress at the
-    moment of the call.
+    NOT an :class:`EvolveAPIError`: no request failed — the caller's wait
+    could not be honestly satisfied. Carries the last observed version
+    ``state`` so a handler can say exactly where the publish stands.
     """
 
     def __init__(
-        self, dataset: str, version: str, message: str, gate: 'GateRunningProgress'
+        self,
+        code: str,
+        message: str,
+        *,
+        import_id: str,
+        dataset: str,
+        version: str,
+        state: Optional[str],
     ):
         super().__init__(message)
-        #: The stable machine word for this state.
-        self.code = 'gate_running'
-        #: The dataset whose version is still being proven.
+        #: The named cause; 'settle_timeout' is the only one.
+        self.code = code
+        #: The import job whose version did not settle.
+        self.import_id = import_id
+        #: The dataset the import published into.
         self.dataset = dataset
-        #: The version the gate is proving.
+        #: The version the import created.
         self.version = version
-        #: Gate progress at the moment of the call.
-        self.gate = gate
+        #: The last observed version state; None when the version was never
+        #: observed.
+        self.state = state
 
 
 # =============================================================================
@@ -353,84 +374,6 @@ AttemptPhase = Literal[
 
 
 @dataclass
-class DatasetVersionGateFailedTask:
-    """One task the activation gate found ineligible.
-
-    ``outcome`` is the gate's verdict word (``FAIL``, or ``ERROR`` when the
-    run produced no usable score; ``None`` when the server omits it) and
-    ``reasons`` are the gate's own sentences for this task — empty when the
-    server names none.
-    """
-    task_name: str
-    outcome: Optional[str] = None
-    reasons: List[str] = field(default_factory=list)
-
-
-@dataclass
-class DatasetVersionGateUnproven:
-    """The UNPROVEN stamp on a version's activation gate.
-
-    ``reason`` is the server's own sentence for why no proof ran (today: "no
-    reference solutions to run"), ``at`` is when the stamp was written
-    (``None`` when the server omits it).
-    """
-    reason: str
-    at: Optional[str] = None
-
-
-@dataclass
-class DatasetVersionGate:
-    """The activation gate's progress for one dataset version.
-
-    ``status`` is the gate's own lifecycle as wire values: ``PENDING`` →
-    ``RUNNING`` → ``PASSED``/``FAILED``, plus ``UNPROVEN`` — the third terminal
-    word, for a version activated with nothing to prove. ``code`` and
-    ``message`` are set on
-    failure — one machine word and one human sentence — and are ``None`` while
-    the gate is healthy. ``attempts`` counts gate runs so far.
-    ``failed_tasks`` names each ineligible task with the gate's own reasons
-    (the server sends the first 25); it is empty while the gate is healthy and
-    empty on servers that predate the field — absence is "nothing to report",
-    never a crash. ``failed_task_count`` is the TRUE total of ineligible
-    tasks: the list is capped at 25, so a gate that failed more tasks than
-    that is under-counted by ``len(failed_tasks)`` — this number never is (it
-    falls back to the length on servers that predate the field, which never
-    truncated without it). ``unproven`` carries the UNPROVEN stamp and is
-    ``None`` on every other status.
-    """
-    status: str
-    attempts: int
-    code: Optional[str] = None
-    message: Optional[str] = None
-    failed_tasks: List[DatasetVersionGateFailedTask] = field(default_factory=list)
-    failed_task_count: int = 0
-    #: Present only when ``status`` is ``UNPROVEN``: the version activated with
-    #: no oracle-conformance proof because the gate had no reference solutions
-    #: to run. The server's own stamp — the honest reason sentence and when it
-    #: was stamped. ``None`` on every other status and on servers that predate
-    #: the field: absence is "nothing to report", never a crash. It is
-    #: deliberately not the same field as ``code``/``message``: an absent proof
-    #: is not a failed one, and the two details are mutually exclusive.
-    unproven: Optional[DatasetVersionGateUnproven] = None
-
-
-@dataclass
-class GateRunningProgress:
-    """Gate progress at the moment of an ``activate()`` call that answered
-    202 — carried on :class:`GateRunningError`.
-
-    ``status`` is the gate's own lifecycle (PENDING or RUNNING here),
-    ``tasks`` the version's task count, ``unverified`` the tasks the gate has
-    not yet produced a verdict for, and ``ineligible`` the tasks whose
-    verdict so far is not activation-eligible.
-    """
-    status: str
-    tasks: int = 0
-    unverified: int = 0
-    ineligible: int = 0
-
-
-@dataclass
 class DatasetManifestAuthor:
     """One dataset.toml author: a name, and an email when the manifest gives one."""
     name: str
@@ -464,8 +407,8 @@ class DatasetVersionSource:
     The repository, the ref exactly as requested, the RESOLVED commit the
     clone landed on (for an annotated tag, the peeled commit — never the tag
     object), and the repository subfolder the corpus was read from. Served on
-    EVERY git-imported version whatever its state — a version whose activation
-    gate FAILED can never become the active version, so this is where its
+    EVERY git-imported version whatever its state — a version whose build
+    FAILED can never become the active version, so this is where its
     imported bytes stay observable.
     """
     #: The ref the import was asked for, exactly as requested: a sha, a tag,
@@ -498,10 +441,6 @@ class DatasetVersion:
     #: seeded directory, a pre-provenance row), and on servers that predate
     #: the field — never a fabricated value.
     source: Optional[DatasetVersionSource] = None
-    #: Activation-gate progress. ``None`` when no gate was scheduled for this
-    #: version, and also ``None`` when the server predates the gate field — a
-    #: missing gate never means "passed", only "nothing to report".
-    gate: Optional[DatasetVersionGate] = None
 
 
 @dataclass
@@ -518,25 +457,6 @@ class TaskProviderVerdict:
 
 
 @dataclass
-class TaskGate:
-    """One task's activation-gate verdict — the public subset.
-
-    The per-task half of the version's ``gate``: while the gate is RUNNING,
-    verdicts appear on tasks as they land. ``outcome`` is PASS; FLAKY (gold
-    passed only on a retry — still eligible under the operator default); FAIL
-    (definitive: gold never scored 1.0, or a do-nothing agent did); or ERROR
-    (inconclusive — no usable score, e.g. no archived solution to run).
-    ``reasons`` are human-readable and empty on PASS. The full stored verdict
-    carries oracle diagnostics that stay internal, like the environment specs
-    beside it.
-    """
-    outcome: str
-    flaky: bool = False
-    reasons: List[str] = field(default_factory=list)
-    ran_at: Optional[str] = None
-
-
-@dataclass
 class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
@@ -548,10 +468,6 @@ class Task:
     ``gpus``/``gpu_types`` are the task's declared GPU requirement (Harbor's
     task fields honored verbatim): 0 = a CPU task; ``gpu_types`` None = any
     type is acceptable (always None when ``gpus`` is 0).
-
-    ``gate`` is this task's activation-gate verdict — ``None`` until the gate
-    has run it, and ``None`` on servers that predate the field: absence is
-    "nothing to report", never "passed".
     """
     task_name: str
     agent_timeout_sec: float
@@ -559,7 +475,6 @@ class Task:
     providers: Dict[str, TaskProviderVerdict]
     gpus: int = 0
     gpu_types: Optional[List[str]] = None
-    gate: Optional[TaskGate] = None
 
 
 @dataclass
@@ -625,6 +540,17 @@ class Dataset:
     title: Optional[str]
     description: Optional[str]
     active_version: Optional[DatasetVersion]
+    #: The dataset's NEWEST version row (newest ``created_at`` first, id as
+    #: the tiebreak) -- active or not. This is what makes a publish
+    #: observable BEFORE it lands: a first publish walks IMPORTING ->
+    #: BUILDING here while ``active_version`` is still None -- the importer
+    #: itself flips the finished build to READY and, on an owner-stamped
+    #: dataset, promotes it to the active version in the same transaction. It
+    #: can also hold a version that never landed (a FAILED build), so it is
+    #: NOT a substitute for ``active_version``: a bare-name job ref still
+    #: resolves the active version and refuses without one. None when the
+    #: dataset has no version rows at all, and on an older server.
+    latest_version: Optional[DatasetVersion] = None
     #: Where this dataset's git source points now versus what its active
     #: version was built from. None when there is nothing to watch (an uploaded
     #: corpus, a seeded one, or one imported before provenance was recorded);
@@ -1738,9 +1664,10 @@ class DatasetImportFailure:
 class ImportWarning:
     """Non-fatal but consequential import outcome.
 
-    A version whose warnings include ``no_solutions_archived`` cannot be
-    activated through this API (``version_not_activatable``) — an import that
-    will never become runnable must not look identical to one that will.
+    A version whose warnings include ``no_solutions_archived`` permanently
+    lacks its reference-solution record — the record operator verification
+    tooling reads, never a gate. The version still publishes, activates, and
+    runs; the warning makes the permanent gap visible instead of silent.
     """
     code: str
     message: Optional[str] = None
@@ -2047,88 +1974,6 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
     )
 
 
-def _map_version_gate(data: Any) -> Optional[DatasetVersionGate]:
-    """Map a version's activation-gate field, tolerating every server generation.
-
-    An older server has no ``gate`` field at all; the current server sends the
-    nested form (``{status, attempts, failure: {code, message}}``); the flat
-    form carries ``code``/``message`` directly. Anything unreadable becomes
-    ``None`` — a missing gate is "nothing to report", never a crash and never
-    "passed".
-    """
-    if not isinstance(data, dict) or not isinstance(data.get('status'), str):
-        return None
-    failure = data.get('failure')
-    failure = failure if isinstance(failure, dict) else {}
-    code = data.get('code') if isinstance(data.get('code'), str) else failure.get('code')
-    message = (
-        data.get('message') if isinstance(data.get('message'), str) else failure.get('message')
-    )
-    attempts = data.get('attempts')
-    raw_failed = data.get('failed_tasks')
-    if not isinstance(raw_failed, list):
-        raw_failed = failure.get('failed_tasks')
-    failed_tasks = _map_gate_failed_tasks(raw_failed)
-    raw_count = data.get('failed_task_count')
-    if not isinstance(raw_count, int) or isinstance(raw_count, bool):
-        raw_count = failure.get('failed_task_count')
-    # The UNPROVEN stamp ({reason, at}) — the server's honest sentence for a
-    # version that activated with no oracle-conformance proof. It used to be
-    # dropped here, which left the reason API-only and made the docs' "read it
-    # off the gate" unfollowable. Same tolerance as the gate itself: anything
-    # unreadable, or a stamp without its reason, is None.
-    raw_unproven = data.get('unproven')
-    raw_unproven = raw_unproven if isinstance(raw_unproven, dict) else {}
-    unproven_reason = raw_unproven.get('reason')
-    unproven_at = raw_unproven.get('at')
-    return DatasetVersionGate(
-        status=data['status'],
-        attempts=attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0,
-        code=code if isinstance(code, str) else None,
-        message=message if isinstance(message, str) else None,
-        failed_tasks=failed_tasks,
-        # The TRUE total behind the 25-task cap on failed_tasks. An older
-        # server never truncated without the count, so absence reads as the
-        # length.
-        failed_task_count=(
-            raw_count
-            if isinstance(raw_count, int) and not isinstance(raw_count, bool)
-            else len(failed_tasks)
-        ),
-        unproven=(
-            DatasetVersionGateUnproven(
-                reason=unproven_reason,
-                at=unproven_at if isinstance(unproven_at, str) else None,
-            )
-            if isinstance(unproven_reason, str)
-            else None
-        ),
-    )
-
-
-def _map_gate_failed_tasks(data: Any) -> List[DatasetVersionGateFailedTask]:
-    """The per-task cause list behind a FAILED gate, with the gate's tolerance.
-
-    Absent or unreadable input is an empty list, an entry without a task name
-    is dropped, and non-string reasons are filtered — an older or misbehaving
-    server must never crash the client here.
-    """
-    if not isinstance(data, list):
-        return []
-    tasks: List[DatasetVersionGateFailedTask] = []
-    for item in data:
-        if not isinstance(item, dict) or not isinstance(item.get('task_name'), str):
-            continue
-        outcome = item.get('outcome')
-        reasons = item.get('reasons')
-        tasks.append(DatasetVersionGateFailedTask(
-            task_name=item['task_name'],
-            outcome=outcome if isinstance(outcome, str) else None,
-            reasons=[r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else [],
-        ))
-    return tasks
-
-
 def _map_version_manifest(data: Any) -> Optional[DatasetManifestMetadata]:
     """The dataset.toml metadata a version imported under, defensively.
 
@@ -2171,7 +2016,7 @@ def _map_version_source(data: Any) -> Optional[DatasetVersionSource]:
     Absent (an older server, or a non-git version — an uploaded tarball has
     no git upstream) or unreadable input is ``None`` — "nothing to report",
     never a fabricated value and never a crash. Served on every git-imported
-    version, including one whose activation gate FAILED (it can never
+    version, including one whose build FAILED (it can never
     activate, so it never appears as ``upstream``).
     """
     if not isinstance(data, dict):
@@ -2198,7 +2043,6 @@ def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
         task_count=int(data.get('task_count', 0)),
         manifest=_map_version_manifest(data.get('manifest')),
         source=_map_version_source(data.get('source')),
-        gate=_map_version_gate(data.get('gate')),
     )
 
 
@@ -2213,47 +2057,15 @@ def _map_dataset_summary(data: Dict[str, Any]) -> Dataset:
             if data.get('active_version')
             else None
         ),
+        # The newest version row, active or not -- the field that lets a
+        # caller watch a FIRST import from the list alone. Absent on an older
+        # server, which reads as None.
+        latest_version=(
+            _map_dataset_version(data['latest_version'])
+            if data.get('latest_version')
+            else None
+        ),
         upstream=_map_upstream(data.get('upstream')),
-    )
-
-
-def _map_gate_running_progress(data: Any) -> GateRunningProgress:
-    """The 202 body's ``gate`` progress block, defensively.
-
-    A count that is not a number reads as 0 and a missing status as PENDING
-    (scheduled is the least a 202 can mean) — a misbehaving server must never
-    crash the refusal path.
-    """
-    raw = data if isinstance(data, dict) else {}
-
-    def _count(value: Any) -> int:
-        return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-    status = raw.get('status')
-    return GateRunningProgress(
-        status=status if isinstance(status, str) else 'PENDING',
-        tasks=_count(raw.get('tasks')),
-        unverified=_count(raw.get('unverified')),
-        ineligible=_count(raw.get('ineligible')),
-    )
-
-
-def _map_task_gate(data: Any) -> Optional[TaskGate]:
-    """A task's own activation-gate verdict, with the gate mappers' tolerance.
-
-    Absent (the gate has not run it, or an older server) or unreadable input
-    is ``None`` — "nothing to report", never "passed" and never a crash. An
-    entry without an outcome word is no verdict at all.
-    """
-    if not isinstance(data, dict) or not isinstance(data.get('outcome'), str):
-        return None
-    reasons = data.get('reasons')
-    ran_at = data.get('ran_at')
-    return TaskGate(
-        outcome=data['outcome'],
-        flaky=data.get('flaky') is True,
-        reasons=[r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else [],
-        ran_at=ran_at if isinstance(ran_at, str) else None,
     )
 
 
@@ -2281,15 +2093,15 @@ def _map_task(data: Dict[str, Any]) -> Task:
             if isinstance(gpu_types_raw, list) and gpu_types_raw
             else None
         ),
-        # The per-task half of the version's gate — verdicts appear here as
-        # they land while the gate runs.
-        gate=_map_task_gate(data.get('gate')),
     )
 
 
 def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
     """The full detail Dataset shape: get() and activate() echo it."""
     active = raw.get('active_version')
+    # The newest version row, active or not -- served on the detail route
+    # beside active_version. Absent on an older server, which reads as None.
+    latest = raw.get('latest_version')
     selected = raw.get('selected_version')
     task_items, task_cursor, task_more = _page_parts(raw.get('tasks'))
     return Dataset(
@@ -2297,6 +2109,7 @@ def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
         title=raw.get('title'),
         description=raw.get('description'),
         active_version=_map_dataset_version(active) if active else None,
+        latest_version=_map_dataset_version(latest) if latest else None,
         upstream=_map_upstream(raw.get('upstream')),
         versions=[_map_dataset_version(item) for item in raw.get('versions', [])],
         selected_version=_map_dataset_version(selected) if selected else None,
@@ -2767,8 +2580,8 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     )
     dataset_import.failure = _map_import_failure(data.get('failure'))
     # Consequential, not cosmetic: an import whose warnings include
-    # no_solutions_archived can never be activated, and dropping the field made
-    # it look identical to one that can.
+    # no_solutions_archived permanently lacks its reference-solution record,
+    # and dropping the field would hide that gap.
     dataset_import.warnings = [
         ImportWarning(code=item.get('code', ''), message=item.get('message'))
         for item in data.get('warnings', [])
@@ -2893,25 +2706,6 @@ class _HostedHttp:
         headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         return await asyncio.to_thread(self._request_sync, path, method, body, headers, False)
-
-    async def request_json_status(
-        self,
-        path: str,
-        method: str = 'GET',
-        body: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-    ) -> 'tuple[Dict[str, Any], int]':
-        """Like :meth:`request_json`, plus the HTTP status code.
-
-        For the one verb whose 2xx statuses mean different bodies — activate
-        answers 200 with the Dataset and 202 with a GateRunning progress
-        report — where parsing every 2xx as the success shape returned a
-        garbage object.
-        """
-        return await asyncio.to_thread(
-            self._request_sync, path, method, body, headers, False,
-            REQUEST_TIMEOUT_SEC, True,
-        )
 
     async def request_bytes(
         self,
@@ -3572,14 +3366,34 @@ class DatasetsClient:
         id: str,
         *,
         on_status: Optional[Callable[[DatasetImport], None]] = None,
+        on_version: Optional[Callable[[DatasetVersion, Dataset], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
+        settle_timeout_s: float = _DEFAULT_SETTLE_TIMEOUT_S,
     ) -> DatasetImport:
-        """Poll ``get_import()`` until the import reaches a terminal status.
+        """Watch a publish to its SETTLED end: READY or FAILED.
 
-        Terminal statuses: "COMPLETED" or "FAILED" (``failure`` populated).
-        ``on_status`` fires on every observed status change, including the
-        first status seen.
+        Polls ``get_import()`` until the import is terminal. COMPLETED means
+        the version is READY under build-then-READY — every task image in the
+        platform registry (each provider builds its boot artifact lazily at
+        the first trial) and, on an owner-stamped dataset, already ACTIVE —
+        so the settle phase is normally one confirming dataset-detail read;
+        against a mid-deploy OLDER server it keeps polling until the VERSION
+        itself lands READY, ARCHIVED, or FAILED (a failure rides the returned
+        import's ``failure``).
+
+        ``on_status`` fires on every observed import status change (including
+        the first status seen). ``on_version`` fires on every observed change
+        of the version's state during the settle phase, with the detail read
+        it came from — its ``active_version`` says whether the settled
+        version is now the one a bare dataset name resolves to.
+
+        Bounded on purpose (fail closed, never an infinite poll): raises the
+        typed :class:`ImportSettleError` (``'settle_timeout'``) when the
+        ``settle_timeout_s`` backstop elapses first — a bound on the WAIT,
+        never a verdict on the publish; keep following with ``get()``.
+        ``timeout_s`` still bounds the whole watch and raises
+        :class:`TimeoutError`, exactly as before.
 
         A rate limit or transient outage mid-watch is a delay, not an outcome:
         a 429/503 sleeps the server's ``retry_after_sec`` and keeps watching
@@ -3607,10 +3421,149 @@ class DatasetsClient:
                 last_status = dataset_import.status
                 if on_status is not None:
                     on_status(dataset_import)
-            if dataset_import.status in _TERMINAL_IMPORT_STATUSES:
+            if dataset_import.status == 'FAILED':
                 return dataset_import
+            if dataset_import.status == 'COMPLETED':
+                # COMPLETED means the version is READY (built, and on an
+                # owner dataset active) — the settle phase is one confirming
+                # read, plus the poll that covers a mid-deploy older server
+                # (see _settle_import).
+                return await self._settle_import(
+                    dataset_import,
+                    on_version=on_version,
+                    poll_interval_s=poll_interval_s,
+                    overall_deadline=deadline,
+                    overall_timeout_s=timeout_s,
+                    settle_timeout_s=settle_timeout_s,
+                )
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
+            await asyncio.sleep(poll_interval_s)
+
+    async def _settle_import(
+        self,
+        imported: DatasetImport,
+        *,
+        on_version: Optional[Callable[[DatasetVersion, Dataset], None]],
+        poll_interval_s: float,
+        overall_deadline: Optional[float],
+        overall_timeout_s: Optional[float],
+        settle_timeout_s: float,
+    ) -> DatasetImport:
+        """Phase two of ``watch_import`` — the confirming read behind the
+        import surface.
+
+        Under build-then-READY the server completes an import only when the
+        version is READY, so COMPLETED and "settled" are the same fact and
+        this phase normally confirms it in one dataset-detail read. It still
+        POLLS rather than assumes, for exactly one skew: a mid-deploy OLDER
+        server can answer COMPLETED while its version is still short of
+        READY — the poll then follows the version's own state until it lands:
+
+        - state READY or ARCHIVED: settled success (ARCHIVED = superseded by
+          a newer publish while we watched — it completed all the same)
+        - state FAILED: the version's terminal failure lands its structured
+          cause on the same row the import surface reads — re-read the
+          import and return it FAILED, the one import shape
+
+        Bounded on purpose (fail closed, never an infinite poll):
+        ``settle_timeout_s`` backstops every stall (a server that answers
+        nothing but 429/503 stalls the polling itself):
+        ``ImportSettleError('settle_timeout')`` with the last observed
+        state.
+        """
+        settle_deadline = time.monotonic() + settle_timeout_s
+        ref = f'{imported.name}@{imported.version}'
+        last_seen: Optional[str] = None
+        last_version: Optional[DatasetVersion] = None
+
+        def settle_timeout_error() -> ImportSettleError:
+            """ONE home for the settle_timeout refusal, built from whatever
+            was last observed. Two true stories share the code: usually the
+            version never settled inside the budget; after a FAILED
+            observation the version DID settle — it is the final import read
+            the server kept refusing."""
+            if last_version is not None and last_version.state == 'FAILED':
+                return ImportSettleError(
+                    'settle_timeout',
+                    f'Import {imported.id}\'s dataset "{imported.name}" version '
+                    f'"{imported.version}" settled FAILED, '
+                    f'but the final import read kept answering '
+                    f'rate-limited/unavailable past the {settle_timeout_s}s '
+                    f'settle budget. Read the failure with '
+                    f'datasets().get_import("{imported.id}").',
+                    import_id=imported.id,
+                    dataset=imported.name,
+                    version=imported.version,
+                    state=last_version.state,
+                )
+            last_state = last_version.state if last_version is not None else 'never observed'
+            return ImportSettleError(
+                'settle_timeout',
+                f'Import {imported.id} completed, but dataset '
+                f'"{imported.name}" version "{imported.version}" did not '
+                f'settle within {settle_timeout_s}s: last observed state '
+                f'{last_state}. Keep following with '
+                f'datasets().get("{ref}").',
+                import_id=imported.id,
+                dataset=imported.name,
+                version=imported.version,
+                state=last_version.state if last_version is not None else None,
+            )
+
+        async def read_through_rate_limits(read):
+            """ONE home for the settle phase's delay-not-outcome law: every
+            read — the detail poll and the final import re-read alike —
+            survives a 429/503 by sleeping the server's delay, and the SAME
+            settle deadline bounds the retrying (a server answering nothing
+            but rate limits must not turn this bounded wait into an infinite
+            loop)."""
+            while True:
+                try:
+                    return await read()
+                except EvolveAPIError as error:
+                    if error.status not in (429, 503):
+                        raise
+                    remaining = settle_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise settle_timeout_error() from error
+                    if overall_deadline is not None and time.monotonic() >= overall_deadline:
+                        raise TimeoutError(
+                            f'watch_import({imported.id!r}) timed out after {overall_timeout_s}s'
+                        ) from error
+                    await asyncio.sleep(
+                        min(max(error.retry_after_sec or 0.0, poll_interval_s), remaining)
+                    )
+
+        while True:
+            # limit=1: the watch reads the version's state, never the task
+            # list — keep the poll as small as the route allows.
+            detail = await read_through_rate_limits(lambda: self.get(ref, limit=1))
+            version = detail.selected_version
+            if version is not None:
+                last_version = version
+                if version.state != last_seen:
+                    last_seen = version.state
+                    if on_version is not None:
+                        on_version(version, detail)
+                if version.state == 'FAILED':
+                    # The failed version's row is what the import surface
+                    # reads, so the import answers FAILED with the structured
+                    # cause on ``failure`` — return that, the one import
+                    # shape. The read lives under the same delay-not-outcome
+                    # law: a transient 429 here must not turn a settled
+                    # failure into a thrown rate-limit error.
+                    return await read_through_rate_limits(
+                        lambda: self.get_import(imported.id)
+                    )
+                if version.state in ('READY', 'ARCHIVED'):
+                    return imported
+            if time.monotonic() >= settle_deadline:
+                raise settle_timeout_error()
+            if overall_deadline is not None and time.monotonic() >= overall_deadline:
+                raise TimeoutError(
+                    f'watch_import({imported.id!r}) timed out after {overall_timeout_s}s'
+                )
             await asyncio.sleep(poll_interval_s)
 
     async def download(
@@ -3700,35 +3653,20 @@ class DatasetsClient:
         )
 
     async def activate(self, name: str, version: str) -> Dataset:
-        """Make a READY version the dataset's active version.
+        """Make a built version the dataset's active version.
 
-        Returns the full detail shape, exactly like :meth:`get`. While the
-        version's activation gate is still scheduled or running the API
-        answers 202 ``gate_running`` — a healthy in-progress state, raised
-        here as the typed :class:`GateRunningError` (its ``gate`` carries the
-        gate's progress). A gate that passes activates the version itself, so
-        there is normally nothing left to call.
+        Returns the full detail shape, exactly like :meth:`get`. A publish
+        lands READY and active on its own (build-then-READY), so this verb
+        re-points the default at a version that is already built — an older
+        READY one. A version still building
+        refuses with the typed 409 ``version_not_ready``
+        (:class:`EvolveAPIError`).
         """
-        raw, status = await self._http.request_json_status(
+        raw = await self._http.request_json(
             f'/api/datasets/{urllib.parse.quote(name)}'
             f'/versions/{urllib.parse.quote(version)}/activate',
             method='POST',
         )
-        # 202 is "not yet", not "here is the dataset": the body is a
-        # GateRunning progress report — parsing it as a Dataset returned a
-        # garbage object. Typed, like NoActiveVersionError, so a caller can
-        # branch and poll.
-        if status == 202:
-            message = raw.get('message')
-            raise GateRunningError(
-                name,
-                version,
-                message if isinstance(message, str) else (
-                    f'Dataset {name!r} version {version!r} is still being '
-                    'proven by its activation gate'
-                ),
-                _map_gate_running_progress(raw.get('gate')),
-            )
         return _map_dataset_detail(raw)
 
     async def update(self, name: str, *, upstream_auto_import: bool) -> Dataset:

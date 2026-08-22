@@ -147,6 +147,7 @@ import {
   CliUsageError,
   eventLine,
   importStatusLine,
+  TRIAL_COLUMNS,
   parseAgentKwargs,
   parseArgs,
   parseEnvPairs,
@@ -1849,6 +1850,77 @@ function testTrialDetailLiveSpend() {
 }
 
 /**
+ * THE SETTLED MONEY ROW CARRIES ITS LANE. `agent_result.cost_usd` is half of
+ * the API's statement; `spend_source` is the half that says how final it is,
+ * and the row is one cell wide. Printing the number bare turned "nobody
+ * measured this trial" into "spent $0.00" — measured in production
+ * 2026-08-20 on an `assumed_cap` trial the platform later read at $0.057.
+ * That lane is the ORDINARY state of a freshly settled trial.
+ */
+function testTrialDetailSpendLane() {
+  console.log("\n--- trialDetailLines: the settled spend row states its lane ---");
+
+  const scored = (over: Record<string, unknown>) =>
+    trialDetailLines(trialFixture({ status: "SCORED", reward: 1, ...over })).join("\n");
+
+  const capped = scored({ agent_result: { cost_usd: 0 }, spend_source: "assumed_cap" });
+  assert(/spent\s+-/.test(capped), "assumed_cap states no figure");
+  assert(!capped.includes("$0.00"), "and the zero the column holds never reaches the screen");
+
+  const floor = scored({ agent_result: { cost_usd: 0.06 }, spend_source: "measured_provisional" });
+  assert(floor.includes("at least $0.06"), "a provisional reading is named a lower bound");
+
+  const measured = scored({ agent_result: { cost_usd: 0.06 }, spend_source: "measured" });
+  assert(/spent\s+\$0\.06/.test(measured), "a measured reading is stated plainly");
+  assert(!measured.includes("at least"), "and never hedged");
+
+  // The unevidenced measured zero: money and tokens come from the same gateway
+  // read, so a real measured zero carries its token trace. Without one the
+  // stamp is not authoritative, whatever wrote it.
+  const unevidenced = scored({
+    agent_result: {
+      cost_usd: 0,
+      n_input_tokens: null,
+      n_cache_tokens: null,
+      n_output_tokens: null,
+    },
+    spend_source: "measured",
+  });
+  assert(/spent\s+-/.test(unevidenced), "a 'measured' $0 with no token evidence states no figure");
+
+  // ...and one that DOES carry its tokens is a real reading, which must survive.
+  const provenZero = scored({
+    agent_result: { cost_usd: 0, n_input_tokens: 12, n_cache_tokens: 0, n_output_tokens: 0 },
+    spend_source: "measured",
+  });
+  assert(provenZero.includes("$0.00"), "an evidenced measured zero is still a figure");
+
+  // THE LIST COLUMN IS THE SAME CELL. A page of freshly settled trials is where
+  // a wall of "$0.00" would read as a free job, so the SPENT column obeys the
+  // identical rule — the detail row and the list must never disagree about the
+  // same trial.
+  const spentCell = TRIAL_COLUMNS.find((column) => column.key === "spent");
+  assert(spentCell !== undefined, "the trial list has a SPENT column");
+  const cellFor = (over: Record<string, unknown>) =>
+    spentCell!.cell(trialFixture({ status: "SCORED", reward: 1, ...over }));
+  assertEqual(
+    cellFor({ agent_result: { cost_usd: 0 }, spend_source: "assumed_cap" }),
+    "-",
+    "the column states no figure for an unmeasured trial",
+  );
+  assertEqual(
+    cellFor({ agent_result: { cost_usd: 0.06 }, spend_source: "measured_provisional" }),
+    "at least $0.06",
+    "the column names a provisional reading a lower bound",
+  );
+  assertEqual(
+    cellFor({ agent_result: { cost_usd: 0.06 }, spend_source: "measured" }),
+    "$0.06",
+    "the column states a measured reading plainly",
+  );
+}
+
+/**
  * GPU COST (Wave-3 lane 5): the trial detail renders the compute estimate as
  * its own labeled row — the audit sentence for a priced trial, the server's
  * own reason for an unpriced one, and NOTHING for a non-GPU trial. Never
@@ -1926,6 +1998,42 @@ function testTrialDetailJudgeSplit() {
   assert(judged.includes("spent (judge)"), "a judge trial shows the judge row");
   assert(judged.includes("$0.04"), "the judge row carries the judge figure");
   assert(judged.includes("$0.31"), "the agent figure stays the agent's alone");
+
+  // THE JUDGE ROW HAS ITS OWN LANE and obeys the same law as the row above it.
+  // The judge key seals through the platform's identical settle, so it reaches
+  // `assumed_cap` for the identical reason and at the identical moment — and a
+  // bare figure here would be the same lie, one row lower down.
+  const judgeUnmeasured = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      judge_result: { cost_usd: 0 },
+      judge_spend_source: "assumed_cap",
+    }),
+  ).join("\n");
+  assert(
+    /spent \(judge\)\s+-/.test(judgeUnmeasured),
+    "an unmeasured judge states no figure",
+  );
+  assert(!judgeUnmeasured.includes("$0.00"), "and its zero never reaches the screen");
+  assert(judgeUnmeasured.includes("$0.31"), "while the measured agent figure is untouched");
+
+  const judgeFloor = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      judge_result: { cost_usd: 0.04 },
+      judge_spend_source: "measured_provisional",
+    }),
+  ).join("\n");
+  assert(
+    judgeFloor.includes("spent (judge)") && judgeFloor.includes("at least $0.04"),
+    "a provisional judge reading is named a lower bound",
+  );
 
   const plain = trialDetailLines(
     trialFixture({
@@ -2336,6 +2444,99 @@ async function testJobShowMultiId() {
  * labeled row beside — never inside — the spent row, and a job without one
  * (no GPU trials, or an older server) shows no row at all.
  */
+/**
+ * A JOB TOTAL IS A FLOOR WHEN TRIALS WENT UNMEASURED. `stats.cost_usd` is the
+ * sum of its trials, and a trial nobody measured folds a ZERO in — the wire
+ * counts them for exactly this reason ("cost_usd comes out LOWER than what was
+ * really spent"). A freshly finished job is normally in that state for its
+ * first few minutes, which is when someone is most likely to be watching it.
+ *
+ * One-way by construction: a positive count proves the total cannot ACCOUNT for
+ * every trial, which is exactly what "at least" claims — the sum may still be
+ * exact if an unmeasured trial really did spend nothing. A plain figure means
+ * "no shortfall we can prove": trials still in the provisional lane fold floors
+ * in too and the wire carries no count of those.
+ */
+async function testJobShowUnmeasuredTotal() {
+  console.log("\n--- runCli: a job total that cannot account for every trial says so ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, n_unmeasured_trials: 3 } }),
+    });
+    const short = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], short.io), 0, "exit 0");
+    const text = short.out.join("\n");
+    assert(text.includes("at least $1.50"), "the total is named a floor");
+
+    // The production shape: every trial seals unmeasured first, so the sum is
+    // zero and the job reads as free unless the count is honored.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 0, n_unmeasured_trials: 3 } }),
+    });
+    const fresh = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], fresh.io), 0, "exit 0");
+    const freshText = fresh.out.join("\n");
+    assert(freshText.includes("at least $0.00"), "a freshly settled job is not reported as free");
+
+    // Absent counters (a server predating the field) are not evidence of zero,
+    // so nothing is claimed either way — the same plain figure as before.
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ stats: { cost_usd: 1.5 } }) });
+    const older = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], older.io), 0, "exit 0");
+    assert(
+      !older.out.join("\n").includes("at least"),
+      "an absent counter claims no shortfall it cannot prove",
+    );
+
+    // THE JUDGE SHARE FOLDS ITS OWN ZEROS IN, and its row exists when judging
+    // HAPPENED, not when the figure is positive. A job whose judges all sealed
+    // unmeasured holds a judge share of 0 — suppressing the row there says "no
+    // judging happened", which is false.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        stats: { cost_usd: 1.5, judge_cost_usd: 0, n_unmeasured_judge_trials: 2 },
+      }),
+    });
+    const judgeUnmeasured = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], judgeUnmeasured.io), 0, "exit 0");
+    const judgeText = judgeUnmeasured.out.join("\n");
+    assert(judgeText.includes("spent (judge)"), "judging that happened is reported");
+    assert(judgeText.includes("at least $0.00"), "and its unmeasured share is named a floor");
+
+    // A short-but-positive judge share is hedged too.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        stats: { cost_usd: 1.5, judge_cost_usd: 0.2, n_unmeasured_judge_trials: 1 },
+      }),
+    });
+    const judgeShort = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], judgeShort.io), 0, "exit 0");
+    assert(
+      judgeShort.out.join("\n").includes("at least $0.20"),
+      "a judge share that cannot account for every judge is a floor",
+    );
+
+    // And a job with no judging at all still shows no row — the original rule.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ stats: { cost_usd: 1.5, judge_cost_usd: 0 } }),
+    });
+    const noJudge = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], noJudge.io), 0, "exit 0");
+    assert(
+      !noJudge.out.join("\n").includes("spent (judge)"),
+      "a job that never judged says nothing about judging",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobShowGpuCost() {
   console.log("\n--- runCli: job show renders the GPU compute estimate separately ---");
   installMockFetch();
@@ -2351,6 +2552,10 @@ async function testJobShowGpuCost() {
     assert(text.includes("$0.2500"), "the summed estimate renders at 4 decimals");
     assert(text.includes("$1.50"), "the spent row keeps the model-spend figure untouched");
     assert(!text.includes("$1.75"), "the two figures are never summed into one");
+    assert(
+      !text.includes("at least"),
+      "a job with nothing unmeasured states its total plainly",
+    );
 
     setMockResponse("/api/jobs/eval-2", {
       status: 200,
@@ -3890,7 +4095,6 @@ async function testDatasetListAndShow() {
     assert(text.includes("VERSION") && text.includes("READY"), "renders the version table");
     assert(text.includes("dataset show deep-swe --cursor task-cur"), "the task paging hint speaks the new grammar");
     assert(text.includes("modal: needs docker"), "provider limitations are named once");
-    assert(!text.includes("GATE"), "no GATE column when the server reports no gate (older server)");
   } finally {
     restoreFetch();
   }
@@ -4013,10 +4217,10 @@ async function testDatasetProvenanceAndPinNotice() {
 }
 
 async function testDatasetShowVersionSource() {
-  console.log("\n--- runCli: dataset show serves a gate-FAILED version's git provenance ---");
+  console.log("\n--- runCli: dataset show serves a FAILED version's git provenance ---");
   installMockFetch();
   try {
-    // The Q5 shape: annotated-tag import COMPLETED, gate FAILED, NO active
+    // The Q5 shape: annotated-tag import COMPLETED, build FAILED, NO active
     // version — so `upstream` is null, and only the per-version `source` can
     // say which bytes were imported. The human page must show the PEELED
     // commit both on the source line (selected version) and in the versions
@@ -4033,7 +4237,6 @@ async function testDatasetShowVersionSource() {
         commit: PEELED,
         path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
       },
-      gate: { status: "FAILED", attempts: 1, code: "gate_failed", message: "2 of 2 task(s) failed the activation gate" },
     };
     setMockResponse("/api/datasets/q5-tagpeel", {
       status: 200,
@@ -4072,198 +4275,40 @@ async function testDatasetShowVersionSource() {
   }
 }
 
-async function testDatasetShowGate() {
-  console.log("\n--- runCli: dataset show surfaces the activation gate ---");
-  installMockFetch();
-  try {
-    const gateMessage = "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)";
-    const goldReason =
-      "gold run produced no usable score in 3 attempt(s) - last status: INDETERMINATE (the verifier produced neither reward.json nor reward.txt)";
-    setMockResponse("/api/datasets/r1-init", {
-      status: 200,
-      body: {
-        name: "r1-init",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T19:15:55.930Z",
-            task_count: 1,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: gateMessage,
-                failed_tasks: [
-                  { task_name: "starter-task", outcome: "ERROR", reasons: [goldReason, "second reason"] },
-                  { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
-                ],
-              },
-            },
-          },
-          {
-            version: "0.9",
-            state: "VALIDATING",
-            created_at: "2026-08-01T00:00:00.000Z",
-            task_count: 1,
-            gate: { status: "RUNNING", attempts: 1 },
-          },
-          // U2: a solution-less version activates READY with gate UNPROVEN and
-          // the server's own {reason, at} stamp — the reason must reach both
-          // the human view and --json, not stay API-only.
-          {
-            version: "0.8",
-            state: "READY",
-            created_at: "2026-07-30T00:00:00.000Z",
-            task_count: 1,
-            gate: {
-              status: "UNPROVEN",
-              attempts: 0,
-              unproven: { reason: "no reference solutions to run", at: "2026-08-15T19:24:02.985Z" },
-            },
-          },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-        created_at: "2026-08-03T19:15:55.921Z",
-        updated_at: "2026-08-03T19:15:55.921Z",
-      },
-    });
 
-    const show = captureIO();
-    assertEqual(await runCli(["dataset", "show", "r1-init", ...AUTH], show.io), 0, "show exits 0");
-    const text = show.out.join("\n");
-    assert(text.includes("FAILED"), "the version state FAILED is visible");
-    assert(text.includes("GATE"), "the versions table grows a GATE column when the server reports gate progress");
-    assert(text.includes("RUNNING"), "a healthy in-progress gate shows its status");
-    assert(
-      text.includes(`version 1.0 activation gate FAILED: ${gateMessage}`),
-      "a failed gate is unmissable: one line naming the version and the server's reason"
-    );
-    assert(
-      text.includes(`  starter-task: ${goldReason}; second reason`),
-      "the cause follows the verdict: one indented line per failed task, every reason joined"
-    );
-    assert(
-      text.includes("  quiet-task: FAIL"),
-      "a task the server names without reasons still gets its line — the outcome word stands in"
-    );
-    assert(
-      !text.includes("… and"),
-      "when the failed-task list is complete (count equals the list length) no truncation line appears"
-    );
-    assert(
-      text.includes("version 0.8 gate UNPROVEN: no reference solutions to run"),
-      "an unproven gate prints its reason line — the stamp is not API-only (U2)"
-    );
 
-    const json = captureIO();
-    assertEqual(await runCli(["dataset", "show", "r1-init", "--json", ...AUTH], json.io), 0, "show --json exits 0");
-    const body = JSON.parse(json.out.join("\n"));
-    assertEqual(body.versions[0].state, "FAILED", "--json carries the version state");
-    assertEqual(
-      body.versions[0].gate,
-      {
-        status: "FAILED",
-        attempts: 1,
-        code: "gate_failed",
-        message: gateMessage,
-        failed_tasks: [
-          { task_name: "starter-task", outcome: "ERROR", reasons: [goldReason, "second reason"] },
-          { task_name: "quiet-task", outcome: "FAIL", reasons: [] },
-        ],
-        failed_task_count: 2,
-        unproven: null,
-      },
-      "--json carries the gate: status, attempts, code, message, the full failed_tasks array, and the true count"
-    );
-    assertEqual(
-      body.versions[1].gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0, unproven: null },
-      "--json carries a healthy gate with null code/message, no failed tasks, count 0"
-    );
-    assertEqual(
-      body.versions[2].gate,
-      {
-        status: "UNPROVEN",
-        attempts: 0,
-        code: null,
-        message: null,
-        failed_tasks: [],
-        failed_task_count: 0,
-        unproven: { reason: "no reference solutions to run", at: "2026-08-15T19:24:02.985Z" },
-      },
-      "--json carries the UNPROVEN stamp verbatim: {reason, at} (U2)"
-    );
-  } finally {
-    restoreFetch();
-  }
-}
-
-async function testDatasetShowGateTruncation() {
-  console.log("\n--- runCli: dataset show truncated gate list names the true total ---");
-  installMockFetch();
-  try {
-    // The server caps failed_tasks at 25 entries but reports the true count
-    // separately. Here it names 2 tasks out of 27 ineligible — the page must
-    // say "… and 25 more" or it under-reports the damage.
-    setMockResponse("/api/datasets/big-fail", {
-      status: 200,
-      body: {
-        name: "big-fail",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T19:15:55.930Z",
-            task_count: 30,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: "27 of 30 task(s) failed the activation gate",
-                failed_tasks: [
-                  { task_name: "task-a", outcome: "FAIL", reasons: ["gold run failed"] },
-                  { task_name: "task-b", outcome: "ERROR", reasons: ["verifier crashed"] },
-                ],
-                failed_task_count: 27,
-              },
-            },
-          },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-        created_at: "2026-08-03T19:15:55.921Z",
-        updated_at: "2026-08-03T19:15:55.921Z",
-      },
-    });
-
-    const show = captureIO();
-    assertEqual(await runCli(["dataset", "show", "big-fail", ...AUTH], show.io), 0, "show exits 0");
-    const text = show.out.join("\n");
-    assert(
-      text.includes("version 1.0 activation gate FAILED: 27 of 30 task(s) failed the activation gate"),
-      "the verdict line still leads with the server's reason"
-    );
-    assert(text.includes("  task-a: gold run failed"), "the named tasks keep their cause lines");
-    assert(text.includes("  task-b: verifier crashed"), "every listed task appears before the truncation notice");
-    assert(
-      text.includes("  … and 25 more (27 ineligible tasks in total)"),
-      "a capped list must confess the true total: 27 ineligible, 2 named, 25 unnamed"
-    );
-  } finally {
-    restoreFetch();
-  }
+/**
+ * A wire dataset-detail body holding exactly one version, for publish
+ * --watch's settle phase: the watch follows the version here until it
+ * settles at READY or FAILED.
+ */
+function publishDetailBody(opts: {
+  name: string;
+  version: string;
+  state: string;
+  active?: boolean;
+}): Record<string, unknown> {
+  const versionBody = {
+    version: opts.version,
+    state: opts.state,
+    created_at: "2026-08-20T00:00:00Z",
+    task_count: 12,
+    manifest: null,
+    source: null,
+  };
+  return {
+    name: opts.name,
+    title: null,
+    description: null,
+    visibility: "private",
+    active_version: opts.active ? versionBody : null,
+    versions: [versionBody],
+    selected_version: versionBody,
+    tasks: { items: [], next_cursor: null, has_more: false },
+    upstream: null,
+    created_at: "2026-08-20T00:00:00Z",
+    updated_at: "2026-08-20T00:00:00Z",
+  };
 }
 
 async function testDatasetPublishWatch() {
@@ -4277,6 +4322,17 @@ async function testDatasetPublishWatch() {
     setMockResponse("/api/datasets/publish", {
       status: 202,
       body: { id: "imp-1", status: "QUEUED", name: "my-bench", version: "1.0", failure: null, warnings: [] },
+    });
+    // COMPLETED means the version is READY under build-then-READY; the settle
+    // phase is one confirming read. Served READY + active accordingly.
+    setMockResponse("/api/datasets/my-bench?", {
+      status: 200,
+      body: publishDetailBody({
+        name: "my-bench",
+        version: "1.0",
+        state: "READY",
+        active: true,
+      }),
     });
 
     const { io, out, err } = captureIO();
@@ -4292,7 +4348,7 @@ async function testDatasetPublishWatch() {
       ],
       io
     );
-    assertEqual(code, 0, "exit code 0 on COMPLETED");
+    assertEqual(code, 0, "exit code 0 once the version is READY — not at bare COMPLETED");
     assertEqual(err, [], "nothing on stderr");
 
     const createCall = fetchCalls.find((c) => c.url === `${BASE}/api/datasets/publish`);
@@ -4304,6 +4360,61 @@ async function testDatasetPublishWatch() {
     assertEqual(form.get("name"), "my-bench", "name part");
     assertEqual(form.get("version"), "1.0", "version part");
     assert(out.some((l) => l.includes("COMPLETED") && l.includes("tasks=12")), "renders the COMPLETED status line");
+    assert(
+      fetchCalls.some((c) => c.url.includes("/api/datasets/my-bench?") && c.url.includes("version=1.0")),
+      "polls the dataset detail for THIS version after import COMPLETED"
+    );
+    assert(
+      out.some((l) => l.includes("state") && l.includes("READY")),
+      "the watch stream shows the version settling"
+    );
+    assert(
+      out.some((l) => l.includes("active") && l.includes("1.0 (this publish)")),
+      "the final block says the ACTIVE version is now this publish"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+
+/**
+ * Solutions archiving disabled is a warning about the missing
+ * reference-solution record, never a settling dead end — the same publish
+ * settles READY like any other and exits 0.
+ */
+async function testDatasetPublishWatchArchivingDisabled() {
+  console.log("\n--- runCli: dataset publish --watch settles normally when solutions archiving was disabled ---");
+  installMockFetch();
+  try {
+    const job = {
+      id: "imp-8",
+      name: "my-bench",
+      version: "3.0",
+      failure: null,
+      warnings: [{ code: "solutions_archiving_disabled", message: "solutions archiving is disabled" }],
+    };
+    setMockResponse("/api/datasets/publish", { status: 202, body: { ...job, status: "QUEUED" } });
+    setMockResponse("/api/datasets/imports/imp-8", {
+      status: 200,
+      body: { ...job, status: "COMPLETED", task_count: 12 },
+    });
+    setMockResponse("/api/datasets/my-bench?", {
+      status: 200,
+      body: publishDetailBody({ name: "my-bench", version: "3.0", state: "READY", active: true }),
+    });
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "my-bench", "--version", "3.0", "--watch", ...AUTH],
+      io
+    );
+    assertEqual(code, 0, "exit code 0 — the warning gates nothing");
+    assertEqual(err, [], "nothing on stderr");
+    assert(
+      out.some((l) => l.includes("active") && l.includes("3.0 (this publish)")),
+      "the final block says the ACTIVE version is now this publish"
+    );
   } finally {
     restoreFetch();
   }
@@ -4405,39 +4516,27 @@ async function testDatasetDownloadAndActivate() {
     const missing = captureIO();
     assertEqual(await runCli(["dataset", "activate", "acme", ...AUTH], missing.io), 2, "activate needs name AND version");
 
-    // A 202 gate_running is a healthy "not yet": named as such (never the
-    // generic Error: line), with the gate's progress and the next step, exit 1
-    // because nothing was activated.
+    // A still-building version refuses with the ordinary typed 409
+    // version_not_ready (build-then-READY: activate never answers 202) —
+    // rendered by the generic error path, exit 1.
     setMockResponse("/api/datasets/acme/versions/2.0/activate", {
-      status: 202,
+      status: 409,
       body: {
-        code: "gate_running",
-        message: "The activation gate is still proving version 2.0",
-        gate: { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
+        error: {
+          code: "version_not_ready",
+          message:
+            "Dataset version acme@2.0 is in state BUILDING; a publish lands READY (and " +
+            "active) on its own when it finishes building",
+          details: { state: "BUILDING" },
+        },
       },
     });
-    const running = captureIO();
-    const runningCode = await runCli(["dataset", "activate", "acme", "2.0", ...AUTH], running.io);
-    assertEqual(runningCode, 1, "a gate still running exits 1 — nothing was activated");
-    const runningText = running.out.join("\n");
-    assert(runningText.includes("Not yet: The activation gate is still proving version 2.0"), "says 'not yet' with the server's own sentence");
-    assert(runningText.includes("12 task(s), 3 unverified, 1 ineligible"), "prints the gate's progress");
-    assert(runningText.includes("evolve dataset show acme"), "points at the poll command");
-    assertEqual(running.err.length, 0, "a healthy in-progress gate is not an Error: line");
-
-    const runningJson = captureIO();
-    assertEqual(await runCli(["dataset", "activate", "acme", "2.0", "--json", ...AUTH], runningJson.io), 1, "--json exits 1 too");
-    assertEqual(
-      JSON.parse(runningJson.out.join("\n")),
-      {
-        kind: "gate.running",
-        code: "gate_running",
-        message: "The activation gate is still proving version 2.0",
-        dataset: "acme",
-        version: "2.0",
-        gate: { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
-      },
-      "--json carries the typed gate-running shape, never a garbage Dataset"
+    const building = captureIO();
+    const buildingCode = await runCli(["dataset", "activate", "acme", "2.0", ...AUTH], building.io);
+    assertEqual(buildingCode, 1, "a still-building version exits 1 — nothing was activated");
+    assert(
+      building.err.some((l) => l.includes("version_not_ready") || l.includes("BUILDING")),
+      "the refusal names the state on stderr, the ordinary typed-error path"
     );
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -5073,6 +5172,7 @@ async function main() {
   testImportStatusLine();
   testEventLine();
   testTrialDetailLiveSpend();
+  testTrialDetailSpendLane();
   testTrialDetailGpuCost();
   testTrialDetailJudgeSplit();
   testBuildInputsDirect();
@@ -5083,6 +5183,7 @@ async function main() {
   await testJsonErrorObject();
   await testJobListOutputModes();
   await testJobShowMultiId();
+  await testJobShowUnmeasuredTotal();
   await testJobShowGpuCost();
   await testJobShowPassAtK();
   await testJobShowJudgeSplit();
@@ -5110,9 +5211,8 @@ async function main() {
   await testDatasetListAndShow();
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowVersionSource();
-  await testDatasetShowGate();
-  await testDatasetShowGateTruncation();
   await testDatasetPublishWatch();
+  await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
   await testDatasetDownloadAndActivate();
   await testAgentAdd();

@@ -10,7 +10,9 @@
  * regrade-returns-a-Job, the download surfaces (buffer / file / stream, with
  * truncation + digest verification on BOTH), SSE watch with Last-Event-ID
  * resume + reconnect backoff, the publish trio (publish/getImport/watchImport)
- * with import warnings, compare aggregates + task matrix, globally addressable
+ * with import warnings and the watch's SETTLE phase (past import COMPLETED the
+ * version is followed on the dataset detail to READY/ARCHIVED/FAILED, with the
+ * typed ImportSettleError refusals), compare aggregates + task matrix, globally addressable
  * trials (get / trace / artifact / regrade / stop), internal-field leak
  * sentinels, per-task provider verdicts, and the typed EvolveApiError mapping
  * of { error: { code, message } } bodies.
@@ -144,7 +146,6 @@ import {
   EvolveApiError,
   EvolveDigestMismatchError,
   EvolveIncompleteDownloadError,
-  GateRunningError,
   isHostedErrorCode,
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
@@ -197,12 +198,27 @@ async function testDatasetsList() {
             title: "DeepSWE",
             description: "SWE-bench style tasks",
             active_version: { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
+            // The newest version row is a DIFFERENT row from the active one:
+            // a FAILED 1.2 can never activate, so the two pointers disagree
+            // and the mapper must carry the server's own field rather than
+            // echoing active_version.
+            latest_version: { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0 },
           },
           {
             name: "empty-set",
             title: null,
             description: null,
             active_version: null,
+          },
+          {
+            // A FIRST import: nothing is active for the whole
+            // IMPORTING -> BUILDING walk, and latest_version is the only
+            // field on the row with anything to say during it.
+            name: "first-import",
+            title: null,
+            description: null,
+            active_version: null,
+            latest_version: { version: "1.0", state: "IMPORTING", created_at: "2026-07-23T00:00:00.000Z", task_count: 0 },
           },
         ],
         nextCursor: null,
@@ -214,17 +230,33 @@ async function testDatasetsList() {
     const catalog = await d.list();
 
     // The one page envelope, the same on every collection this surface returns.
-    assertEqual(catalog.items.length, 2, "returns 2 datasets");
+    assertEqual(catalog.items.length, 3, "returns 3 datasets");
     assertEqual(catalog.nextCursor, null, "nextCursor null = no next page");
     assertEqual(catalog.hasMore, false, "hasMore says the same as a boolean");
     assertEqual(catalog.items[0].name, "deep-swe", "maps name");
     assertEqual(catalog.items[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog.items[0].active_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
-      "maps active_version object (one shape: version/state/created_at/task_count/manifest/source/gate; manifest/source null on older servers)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      "maps active_version object (one shape: version/state/created_at/task_count/manifest/source; manifest/source null on older servers)"
     );
     assertEqual(catalog.items[1].active_version, null, "null active_version preserved");
+
+    // latest_version is its OWN pointer, in the same version shape.
+    assertEqual(
+      catalog.items[0].latest_version,
+      { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0, manifest: null, source: null },
+      "maps latest_version as its own version object, not a copy of active_version"
+    );
+    assertEqual(
+      catalog.items[2].latest_version?.state,
+      "IMPORTING",
+      "a first import is observable from the list alone: latest_version walks while active_version is still null"
+    );
+    assertEqual(catalog.items[2].active_version, null, "…and that row really has nothing active");
+    // An older server does not send the key at all — that reads as null, the
+    // same absence a dataset with no version rows reports.
+    assertEqual(catalog.items[1].latest_version, null, "a body without latest_version reads as null");
 
     const headers = fetchCalls[0].init?.headers as Record<string, string>;
     assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
@@ -244,6 +276,9 @@ async function testDatasetsGet() {
         title: "DeepSWE",
         description: "SWE-bench style tasks",
         active_version: { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
+        // The detail route carries the same pointer the list does, and here
+        // too it names a DIFFERENT row than active_version.
+        latest_version: { version: "1.2", state: "BUILDING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113 },
         versions: [
           { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
           { version: "1.0", state: "ARCHIVED", created_at: "2026-07-01T00:00:00.000Z", task_count: 100 },
@@ -256,17 +291,12 @@ async function testDatasetsGet() {
               agent_timeout_sec: 5400,
               verifier_timeout_sec: 1800,
               providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
-              // The per-task half of the version's gate: outcome + flaky +
-              // reasons + ran_at, non-string reasons filtered.
-              gate: { outcome: "FLAKY", flaky: true, reasons: ["gold passed on retry 2", 7], ran_at: "2026-07-20T00:00:00.000Z" },
             },
             {
               task_name: "no-verdict-yet",
               agent_timeout_sec: 600,
               verifier_timeout_sec: 600,
               providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } },
-              // No outcome word = no verdict at all — never a crash.
-              gate: { flaky: false },
             },
           ],
           nextCursor: "task-1",
@@ -288,11 +318,16 @@ async function testDatasetsGet() {
     assertEqual(detail.title, "DeepSWE", "maps title");
     assertEqual(detail.active_version?.version, "1.1", "active_version is the full version object");
     assertEqual(detail.active_version?.state, "READY", "active_version carries state");
+    assertEqual(
+      detail.latest_version,
+      { version: "1.2", state: "BUILDING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      "detail maps latest_version too — the newest row, which here is NOT the active one"
+    );
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(
       detail.selected_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
-      "selected_version is a full version object (never a bare label; manifest/source/gate null when the server sends none)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      "selected_version is a full version object (never a bare label; manifest/source null when the server sends none)"
     );
     // A nested collection is the same envelope as a top-level one.
     assertEqual(detail.tasks?.hasMore, true, "tasks are paged like every collection");
@@ -303,17 +338,6 @@ async function testDatasetsGet() {
       { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
       "per-task provider verdicts mapped — capability visible before money is spent"
     );
-    assertEqual(
-      detail.tasks?.items[0].gate,
-      { outcome: "FLAKY", flaky: true, reasons: ["gold passed on retry 2"], ran_at: "2026-07-20T00:00:00.000Z" },
-      "per-task gate verdict mapped (outcome/flaky/reasons/ran_at; non-string reasons filtered)"
-    );
-    assertEqual(
-      detail.tasks?.items[1].gate,
-      null,
-      "a gate value without an outcome word is no verdict at all — null, never a crash"
-    );
-
     // Bare name: no version param
     await d.get("deep-swe");
     url = fetchCalls[fetchCalls.length - 1].url;
@@ -323,151 +347,11 @@ async function testDatasetsGet() {
   }
 }
 
-async function testDatasetGateMapping() {
-  console.log("\n--- datasets().get() maps the activation gate (both wire forms, older servers) ---");
-  installMockFetch();
-  try {
-    setMockResponse("/api/datasets/r1-init", {
-      status: 200,
-      body: {
-        name: "r1-init",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          // The server's nested form: failure carries code + message.
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T19:15:55.930Z",
-            task_count: 1,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
-                failed_tasks: [
-                  { task_name: "starter-task", outcome: "ERROR", reasons: ["gold run produced no usable score", 7, "last status: INDETERMINATE"] },
-                  { outcome: "FAIL" }, // no task name — dropped, never a crash
-                  "junk", // not even an object — dropped
-                  { task_name: "bare-task" }, // name only — outcome null, reasons empty
-                ],
-              },
-            },
-          },
-          // The flat form: code + message directly on the gate.
-          {
-            version: "0.9",
-            state: "VALIDATING",
-            created_at: "2026-08-01T00:00:00.000Z",
-            task_count: 1,
-            gate: { status: "RUNNING", attempts: 1, code: null, message: null },
-          },
-          // No gate scheduled (or an older server): field absent.
-          { version: "0.8", state: "READY", created_at: "2026-07-01T00:00:00.000Z", task_count: 1 },
-          // Garbage gate value: never a crash, always null.
-          { version: "0.7", state: "READY", created_at: "2026-06-01T00:00:00.000Z", task_count: 1, gate: "oops" },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-        created_at: "2026-08-03T19:15:55.921Z",
-        updated_at: "2026-08-03T19:15:55.921Z",
-      },
-    });
-
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
-    const detail = await d.get("r1-init");
-    const [failed, running, none, garbage] = detail.versions ?? [];
-
-    assertEqual(failed.state, "FAILED", "terminal gate failure surfaces as version state FAILED");
-    assertEqual(
-      failed.gate,
-      {
-        status: "FAILED",
-        attempts: 1,
-        code: "gate_failed",
-        message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
-        failed_tasks: [
-          {
-            task_name: "starter-task",
-            outcome: "ERROR",
-            reasons: ["gold run produced no usable score", "last status: INDETERMINATE"],
-          },
-          { task_name: "bare-task", outcome: null, reasons: [] },
-        ],
-        failed_task_count: 2,
-        unproven: null,
-      },
-      "nested failure form maps to {status, attempts, code, message, failed_tasks, failed_task_count}; nameless/garbage entries dropped, non-string reasons filtered; absent count falls back to the mapped list's length"
-    );
-    assertEqual(
-      running.gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0, unproven: null },
-      "flat form maps unchanged; healthy gate carries null code/message, no failed tasks, count 0"
-    );
-    assertEqual(none.gate, null, "a version without a gate field maps to gate null (older server: no crash)");
-    assertEqual(garbage.gate, null, "an unreadable gate value maps to null, never a throw");
-  } finally {
-    restoreFetch();
-  }
-}
-
-async function testGateFailedTaskCountTruncation() {
-  console.log("\n--- gate failed_task_count carries the TRUE total behind the 25-task cap ---");
-  installMockFetch();
-  try {
-    setMockResponse("/api/datasets/big-fail", {
-      status: 200,
-      body: {
-        name: "big-fail",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T00:00:00.000Z",
-            task_count: 40,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: "40 of 40 task(s) failed the activation gate",
-                failed_tasks: Array.from({ length: 25 }, (_, i) => ({
-                  task_name: `task-${i}`,
-                  outcome: "FAIL",
-                  reasons: ["gold never scored 1.0"],
-                })),
-                failed_task_count: 40,
-              },
-            },
-          },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-      },
-    });
-
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
-    const detail = await d.get("big-fail");
-    const gate = detail.versions?.[0].gate;
-    assertEqual(gate?.failed_tasks.length, 25, "the list stays capped at the server's first 25");
-    assertEqual(gate?.failed_task_count, 40, "failed_task_count is the true total, not the list's length");
-  } finally {
-    restoreFetch();
-  }
-}
-
 async function testVersionSourceMapping() {
-  console.log("\n--- datasets().get() maps per-version git provenance (source), incl. a gate-FAILED version ---");
+  console.log("\n--- datasets().get() maps per-version git provenance (source), incl. a FAILED version ---");
   installMockFetch();
   try {
-    // The Q5 shape: an annotated-tag import COMPLETED, the activation gate
+    // The Q5 shape: an annotated-tag import COMPLETED, the build
     // FAILED, the dataset never gained an active version — and the resolved
     // PEELED commit must still be observable on the version object itself.
     setMockResponse("/api/datasets/q5-tagpeel", {
@@ -489,7 +373,6 @@ async function testVersionSourceMapping() {
               commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
               path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
             },
-            gate: { status: "FAILED", attempts: 1, code: "gate_failed", message: "2 of 2 task(s) failed" },
           },
           // A non-git version (uploaded tarball): source is null on the wire.
           { version: "0.9", state: "READY", created_at: "2026-08-01T00:00:00.000Z", task_count: 2, source: null },
@@ -525,7 +408,7 @@ async function testVersionSourceMapping() {
         commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
         path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
       },
-      "a gate-FAILED git version serves its full provenance — url, requested ref, PEELED commit, subfolder"
+      "a FAILED git version serves its full provenance — url, requested ref, PEELED commit, subfolder"
     );
     assertEqual(detail.upstream, null, "upstream stays the ACTIVE version's field — null when nothing activated");
     assertEqual(
@@ -540,49 +423,34 @@ async function testVersionSourceMapping() {
   }
 }
 
-async function testActivateGateRunning202() {
-  console.log("\n--- datasets().activate() surfaces a 202 gate_running as the typed GateRunningError ---");
+async function testActivateNotReady409() {
+  console.log("\n--- datasets().activate() surfaces a still-building version as the typed 409 version_not_ready ---");
   installMockFetch();
   try {
+    // Build-then-READY: activate never answers 202 — a version still building
+    // refuses 409 version_not_ready, and the publish lands READY on its own.
     setMockResponse("/api/datasets/my-swe/versions/1.0/activate", {
-      status: 202,
+      status: 409,
       body: {
-        code: "gate_running",
-        message: "The activation gate is still proving version 1.0",
-        gate: { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
+        error: {
+          code: "version_not_ready",
+          message: "Dataset version my-swe@1.0 is in state BUILDING; a publish lands READY (and active) on its own when it finishes building",
+          details: { state: "BUILDING" },
+        },
       },
     });
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
     try {
       await d.activate("my-swe", "1.0");
-      assert(false, "a 202 must not resolve to a Dataset");
+      assert(false, "a 409 must not resolve to a Dataset");
     } catch (error) {
-      assert(error instanceof GateRunningError, "202 gate_running throws GateRunningError, never a garbage Dataset");
-      const gateRunning = error as GateRunningError;
-      assert(!(gateRunning instanceof EvolveApiError), "healthy in-progress state is NOT an EvolveApiError");
-      assertEqual(gateRunning.code, "gate_running", "carries the stable machine word");
-      assertEqual(gateRunning.dataset, "my-swe", "names the dataset");
-      assertEqual(gateRunning.version, "1.0", "names the version");
-      assertEqual(gateRunning.message, "The activation gate is still proving version 1.0", "keeps the server's own sentence");
+      assert(error instanceof EvolveApiError, "the refusal is the ordinary typed EvolveApiError");
+      assertEqual((error as EvolveApiError).code, "version_not_ready", "carries the stable machine word");
       assertEqual(
-        gateRunning.gate,
-        { status: "RUNNING", tasks: 12, unverified: 3, ineligible: 1 },
-        "carries the gate progress block"
-      );
-    }
-
-    // A malformed 202 body still yields the typed refusal, defensively.
-    setMockResponse("/api/datasets/my-swe/versions/2.0/activate", { status: 202, body: {} });
-    try {
-      await d.activate("my-swe", "2.0");
-      assert(false, "a malformed 202 must not resolve to a Dataset");
-    } catch (error) {
-      assert(error instanceof GateRunningError, "a bodyless 202 still throws GateRunningError");
-      assertEqual(
-        (error as GateRunningError).gate,
-        { status: "PENDING", tasks: 0, unverified: 0, ineligible: 0 },
-        "missing progress reads as PENDING with zero counts — never a crash"
+        ((error as EvolveApiError).details as { state?: string } | undefined)?.state,
+        "BUILDING",
+        "details name the version's actual state"
       );
     }
 
@@ -602,6 +470,9 @@ async function testActivateGateRunning202() {
     });
     const activated = await d.activate("other", "1.0");
     assertEqual(activated.active_version?.version, "1.0", "200 still maps the full Dataset detail");
+    // This body carries no latest_version key — an older server's answer, and
+    // the absence must read as null rather than throw or echo active_version.
+    assertEqual(activated.latest_version, null, "a detail body without latest_version reads as null");
   } finally {
     restoreFetch();
   }
@@ -957,8 +828,9 @@ async function testGetImport() {
       },
       "self-describing job: id/status/name/version/failure/warnings/task_count"
     );
-    // WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions can
-    // never be activated — dropping the field made it look runnable.
+    // WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions still
+    // activates, but permanently lacks its reference-solution record — this
+    // warning is the early notice. Dropping the field hid that.
     assertEqual(imported.warnings[0].code, "no_solutions_archived", "warnings surface, never dropped");
   } finally {
     restoreFetch();
@@ -975,13 +847,11 @@ async function testWatchImportPollsToTerminal() {
       { ...job, status: "RUNNING", failure: null, task_count: 0 },
       { ...job, status: "COMPLETED", failure: null, task_count: 113 },
     ];
-    let calls = 0;
-    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
-      fetchCalls.push({ url: url.toString(), init });
-      const body = statuses[Math.min(calls, statuses.length - 1)];
-      calls++;
-      return buildMockResponse({ status: 200, body });
-    };
+    // After COMPLETED the watch follows the VERSION on the dataset detail;
+    // an already-settled READY answer ends it on the first settle poll.
+    const counters = installSettleFetch(statuses, [
+      settleDetailBody({ state: "READY", active: true }),
+    ]);
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
     const seen: string[] = [];
@@ -990,7 +860,7 @@ async function testWatchImportPollsToTerminal() {
       pollIntervalMs: 1,
     });
 
-    assertEqual(calls, 3, "polled until the terminal status");
+    assertEqual(counters.importCalls(), 3, "polled the import until its terminal status");
     assertEqual(seen, ["QUEUED", "RUNNING", "COMPLETED"], "onStatus fires on every status change");
     assertEqual(final.status, "COMPLETED", "resolves with the terminal import");
     assertEqual(final.task_count, 113, "terminal import carries task_count");
@@ -1036,10 +906,27 @@ async function testWatchImportSurvivesRateLimit() {
       },
       { status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 113 } },
     ];
-    let calls = 0;
+    // The SETTLE phase lives under the same law: its first detail poll is
+    // rate-limited too, and the watch sleeps the server's delay and polls on.
+    const detailReplies: MockResponse[] = [
+      {
+        status: 429,
+        body: { error: { code: "rate_limited", message: "slow down", retryAfterSec: 0.05 } },
+      },
+      {
+        status: 200,
+        body: settleDetailBody({ state: "READY", active: true }),
+      },
+    ];
+    let importCalls = 0;
+    let detailCalls = 0;
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
-      fetchCalls.push({ url: url.toString(), init });
-      return buildMockResponse(replies[Math.min(calls++, replies.length - 1)]);
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        return buildMockResponse(replies[Math.min(importCalls++, replies.length - 1)]);
+      }
+      return buildMockResponse(detailReplies[Math.min(detailCalls++, detailReplies.length - 1)]);
     };
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
@@ -1047,11 +934,12 @@ async function testWatchImportSurvivesRateLimit() {
     const final = await d.watchImport("imp-1", { pollIntervalMs: 1 });
     const elapsedMs = Date.now() - startedAt;
 
-    assertEqual(calls, 3, "the 429 and the 503 are survived, not surfaced");
+    assertEqual(importCalls, 3, "the 429 and the 503 are survived, not surfaced");
+    assertEqual(detailCalls, 2, "the settle poll's 429 is survived the same way");
     assertEqual(final.status, "COMPLETED", "resolves with the terminal import the 429 would have hidden");
     assert(
-      elapsedMs >= 80,
-      `slept both 50ms Retry-After delays, not the 1ms poll interval (waited ${elapsedMs}ms)`
+      elapsedMs >= 120,
+      `slept all three 50ms Retry-After delays, not the 1ms poll interval (waited ${elapsedMs}ms)`
     );
 
     // Every other failure still ends the watch — the survival is scoped to the
@@ -1068,6 +956,409 @@ async function testWatchImportSurvivesRateLimit() {
       threw = error instanceof EvolveApiError && error.status === 404;
     }
     assert(threw, "a 404 still ends the watch with the typed error");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// WATCH-IMPORT SETTLE TESTS — the publish is not over at import COMPLETED
+// =============================================================================
+
+/**
+ * A wire dataset-detail body holding exactly one version, for the settle
+ * tests: a mid-deploy older server can answer import COMPLETED while the
+ * version is still short of READY, and the watch follows it here, on the
+ * dataset detail, until it settles.
+ */
+function settleDetailBody(opts: {
+  name?: string;
+  version?: string;
+  state: string;
+  active?: boolean;
+}): Record<string, unknown> {
+  const versionBody = {
+    version: opts.version ?? "1.2",
+    state: opts.state,
+    created_at: "2026-08-20T00:00:00Z",
+    task_count: 113,
+    manifest: null,
+    source: null,
+  };
+  return {
+    name: opts.name ?? "deep-swe",
+    title: null,
+    description: null,
+    visibility: "private",
+    active_version: opts.active ? versionBody : null,
+    versions: [versionBody],
+    selected_version: versionBody,
+    tasks: { items: [], next_cursor: null, has_more: false },
+    upstream: null,
+    created_at: "2026-08-20T00:00:00Z",
+    updated_at: "2026-08-20T00:00:00Z",
+  };
+}
+
+/** Route a settle test's fetches: import reads by id, detail reads by name. */
+function installSettleFetch(
+  importBodies: unknown[],
+  detailBodies: unknown[]
+): { importCalls: () => number; detailCalls: () => number } {
+  let importCalls = 0;
+  let detailCalls = 0;
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    const urlStr = url.toString();
+    fetchCalls.push({ url: urlStr, init });
+    if (urlStr.includes("/api/datasets/imports/")) {
+      const body = importBodies[Math.min(importCalls, importBodies.length - 1)];
+      importCalls++;
+      return buildMockResponse({ status: 200, body });
+    }
+    const body = detailBodies[Math.min(detailCalls, detailBodies.length - 1)];
+    detailCalls++;
+    return buildMockResponse({ status: 200, body });
+  };
+  return { importCalls: () => importCalls, detailCalls: () => detailCalls };
+}
+
+/**
+ * THE SKEW THIS GUARDS AGAINST: under build-then-READY the server completes
+ * an import only when the version is READY, so the settle phase is normally
+ * one confirming read — but a MID-DEPLOY OLDER server can answer COMPLETED
+ * while its version is still short of READY. The watch must keep polling the
+ * dataset detail until the VERSION itself settles (READY/ARCHIVED/FAILED),
+ * never resolving a publish whose version a chained job start would refuse.
+ */
+async function testWatchImportSettlesToReady() {
+  console.log("\n--- datasets().watchImport() keeps watching past COMPLETED until the version is READY ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-1", name: "deep-swe", version: "1.2", failure: null, warnings: [] };
+    const counters = installSettleFetch(
+      [
+        { ...job, status: "RUNNING", task_count: 0 },
+        { ...job, status: "COMPLETED", task_count: 113 },
+      ],
+      [
+        settleDetailBody({ state: "BUILDING" }),
+        settleDetailBody({ state: "BUILDING" }),
+        settleDetailBody({ state: "BUILDING" }),
+        settleDetailBody({ state: "READY", active: true }),
+      ]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const transitions: string[] = [];
+    let activeAfterSettle: string | null = null;
+    const final = await d.watchImport("imp-1", {
+      pollIntervalMs: 1,
+      onVersion: (version, dataset) => {
+        transitions.push(version.state);
+        activeAfterSettle = dataset.active_version?.version ?? null;
+      },
+    });
+
+    assertEqual(final.status, "COMPLETED", "resolves with the COMPLETED import");
+    const detailCall = fetchCalls.find((c) => c.url.includes("/api/datasets/deep-swe?"));
+    assert(
+      detailCall !== undefined,
+      "polls the dataset detail after import COMPLETED — COMPLETED alone is not a settled publish"
+    );
+    assert(
+      detailCall?.url.includes("version=1.2") === true,
+      "the detail poll pins ?version= to the version this publish created"
+    );
+    assertEqual(counters.detailCalls(), 4, "keeps polling until the version state settles to READY");
+    assertEqual(
+      transitions,
+      ["BUILDING", "READY"],
+      "onVersion fires on every observed STATE change"
+    );
+    assertEqual(activeAfterSettle, "1.2", "the settled detail names the new version as the active one");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * A version that settles FAILED fails the WATCH: the failure's structured
+ * cause lands on the same row the import surface reads, so the watch
+ * re-reads the import and returns it FAILED — the one import shape. Never a
+ * silent success. (The fixture wears a mid-deploy older server's shape: the
+ * import answered COMPLETED before the version settled; the watch reads only
+ * the STATE.)
+ */
+async function testWatchImportSurfacesBuildFailure() {
+  console.log("\n--- datasets().watchImport() ends FAILED when the version settles FAILED ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-9", name: "deep-swe", version: "2.0", warnings: [] };
+    const buildFailure = {
+      code: "import_failed",
+      message: "task image build failed for task-7",
+    };
+    installSettleFetch(
+      [
+        { ...job, status: "COMPLETED", failure: null, task_count: 113 },
+        { ...job, status: "FAILED", failure: buildFailure, task_count: 113 },
+      ],
+      [
+        settleDetailBody({ version: "2.0", state: "BUILDING" }),
+        settleDetailBody({ version: "2.0", state: "FAILED" }),
+      ]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const transitions: string[] = [];
+    const final = await d.watchImport("imp-9", {
+      pollIntervalMs: 1,
+      onVersion: (version) => transitions.push(version.state),
+    });
+
+    assertEqual(final.status, "FAILED", "a failed version fails the watch — never exit-0 on stale content");
+    assertEqual(final.failure?.code, "import_failed", "the structured cause rides the import's own failure field");
+    assertEqual(
+      transitions,
+      ["BUILDING", "FAILED"],
+      "the failing version is observed before the import re-read"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testWatchImportArchivingDisabledSettlesNormally() {
+  console.log("\n--- datasets().watchImport() settles normally when solutions archiving was disabled ---");
+  installMockFetch();
+  try {
+    const job = {
+      id: "imp-3",
+      name: "deep-swe",
+      version: "1.4",
+      failure: null,
+      warnings: [{ code: "solutions_archiving_disabled", message: "solutions archiving is disabled" }],
+    };
+    // The first detail read shows a not-yet-settled version (a mid-deploy
+    // older server's shape); the watch keeps polling to READY.
+    const counters = installSettleFetch(
+      [{ ...job, status: "COMPLETED", task_count: 4 }],
+      [
+        settleDetailBody({ version: "1.4", state: "BUILDING" }),
+        settleDetailBody({ version: "1.4", state: "READY", active: true }),
+      ]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const final = await d.watchImport("imp-3", { pollIntervalMs: 1 });
+
+    assertEqual(final.status, "COMPLETED", "the warning blocks nothing — the publish settles as a success");
+    assertEqual(counters.detailCalls(), 2, "the watch polls through the not-yet-READY read to READY");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The bounded backstop: whatever else goes wrong (a mid-deploy older server
+ * that keeps answering a never-settling state), the settle wait is a bounded
+ * await — it ends with the named settle_timeout cause carrying the last
+ * observed state, never an unbounded hang.
+ */
+async function testWatchImportSettleTimeoutBackstop() {
+  console.log("\n--- datasets().watchImport() bounds the settle wait with a typed settle_timeout ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-4", name: "deep-swe", version: "1.5", failure: null, warnings: [] };
+    installSettleFetch(
+      [{ ...job, status: "COMPLETED", task_count: 4 }],
+      [settleDetailBody({ version: "1.5", state: "BUILDING" })]
+    );
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    try {
+      await d.watchImport("imp-4", { pollIntervalMs: 1, settleTimeoutMs: 40 });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(
+      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
+      "the settle wait is bounded: it ends with the typed ImportSettleError"
+    );
+    assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
+    assertEqual((thrown as any)?.state, "BUILDING", "the error carries the last observed version state");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * THE HOLE A REVIEW FOUND: the settle poll's 429/503 retry path skipped the
+ * deadline check, so a server answering nothing but rate limits turned the
+ * bounded settle wait into an infinite loop — `publish --watch` hung forever
+ * while a deploy answered 503. Both laws hold AT THE SAME TIME: a 429/503 is
+ * a delay, not an outcome, AND the settle deadline bounds the whole wait,
+ * retries included.
+ */
+async function testWatchImportSettleTimeoutBoundsRateLimitedPolls() {
+  console.log("\n--- datasets().watchImport() settle_timeout fires even when the server answers only 429s ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-5", name: "deep-swe", version: "1.6", failure: null, warnings: [] };
+    let detailCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        return buildMockResponse({ status: 200, body: { ...job, status: "COMPLETED", task_count: 4 } });
+      }
+      detailCalls++;
+      return buildMockResponse({
+        status: 429,
+        body: { error: { code: "rate_limited", message: "slow down" } },
+      });
+    };
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    // The proof itself is bounded: pre-fix this watch never exits, so it is
+    // raced against a hard cap instead of hanging the whole suite.
+    let thrown: unknown = null;
+    const outcome = await Promise.race([
+      d.watchImport("imp-5", { pollIntervalMs: 1, settleTimeoutMs: 40 }).then(
+        () => "resolved",
+        (error) => {
+          thrown = error;
+          return "rejected";
+        }
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 1500).unref();
+      }),
+    ]);
+
+    assertEqual(outcome, "rejected", "the watch ends instead of looping forever on endless 429s");
+    assert(
+      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
+      "the bounded end is the typed ImportSettleError"
+    );
+    assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
+    assertEqual((thrown as any)?.state, null, "no version state was ever observed through the rate limits");
+    assert(
+      String((thrown as Error)?.message ?? "").includes("never observed"),
+      "the message says honestly that nothing was observed"
+    );
+    assert(detailCalls >= 2, "the 429s WERE retried (delay, not outcome) before the deadline ended the wait");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The delay-not-outcome law covers the LAST read too: with the version
+ * settled FAILED, the final import re-read (the one that fetches the
+ * failure's structured cause) can itself be rate-limited — a transient 429
+ * there must not turn a settled failure into a thrown rate-limit error.
+ */
+async function testWatchImportFailureReReadSurvivesRateLimit() {
+  console.log("\n--- datasets().watchImport() retries a rate-limited final re-read after a failed build ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-6", name: "deep-swe", version: "2.1", warnings: [] };
+    const buildFailure = { code: "import_failed", message: "task image build failed for task-2" };
+    const importReplies: MockResponse[] = [
+      { status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 4 } },
+      { status: 429, body: { error: { code: "rate_limited", message: "slow down" } } },
+      { status: 200, body: { ...job, status: "FAILED", failure: buildFailure, task_count: 4 } },
+    ];
+    let importCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        return buildMockResponse(importReplies[Math.min(importCalls++, importReplies.length - 1)]);
+      }
+      return buildMockResponse({
+        status: 200,
+        body: settleDetailBody({ version: "2.1", state: "FAILED" }),
+      });
+    };
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    let thrown: unknown = null;
+    let final: Awaited<ReturnType<typeof d.watchImport>> | null = null;
+    try {
+      final = await d.watchImport("imp-6", { pollIntervalMs: 1 });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEqual(thrown, null, "nothing thrown — the re-read's 429 was a delay, not an outcome");
+    assertEqual(importCalls, 3, "the rate-limited re-read was retried");
+    assertEqual(final?.status, "FAILED", "the settled failure is still the reported outcome");
+    assertEqual(final?.failure?.code, "import_failed", "with the structured cause, not a rate-limit error");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * And when the rate limiting never relents, the final re-read is bounded by
+ * the SAME settle deadline — refusing with facts that stay true: the version
+ * settled FAILED (the state rides the error), the watch just could not fetch
+ * the final import body inside its budget.
+ */
+async function testWatchImportFailureReReadIsBounded() {
+  console.log("\n--- datasets().watchImport() bounds a rate-limited final re-read with the same settle deadline ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-7", name: "deep-swe", version: "2.2", warnings: [] };
+    let importCalls = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (urlStr.includes("/api/datasets/imports/")) {
+        importCalls++;
+        if (importCalls === 1) {
+          return buildMockResponse({ status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 4 } });
+        }
+        return buildMockResponse({ status: 429, body: { error: { code: "rate_limited", message: "slow down" } } });
+      }
+      return buildMockResponse({
+        status: 200,
+        body: settleDetailBody({ version: "2.2", state: "FAILED" }),
+      });
+    };
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    const outcome = await Promise.race([
+      d.watchImport("imp-7", { pollIntervalMs: 1, settleTimeoutMs: 40 }).then(
+        () => "resolved",
+        (error) => {
+          thrown = error;
+          return "rejected";
+        }
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 1500).unref();
+      }),
+    ]);
+
+    assertEqual(outcome, "rejected", "the re-read ends (typed) instead of retrying forever");
+    assert(
+      hosted.ImportSettleError !== undefined && thrown instanceof hosted.ImportSettleError,
+      "the bounded end is the typed ImportSettleError"
+    );
+    assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
+    assertEqual((thrown as any)?.state, "FAILED", "the error carries the settled FAILED state — the fact survives");
+    const message = String((thrown as Error)?.message ?? "");
+    assert(message.includes("settled FAILED"), "the message states the version DID settle FAILED");
+    assert(message.includes('getImport("imp-7")'), "and names the read that fetches the failed import");
   } finally {
     restoreFetch();
   }
@@ -4019,10 +4310,8 @@ async function main() {
   await testFactoriesRequireApiKey();
   await testDatasetsList();
   await testDatasetsGet();
-  await testDatasetGateMapping();
-  await testGateFailedTaskCountTruncation();
   await testVersionSourceMapping();
-  await testActivateGateRunning202();
+  await testActivateNotReady409();
   await testGetActive();
   await testGetActiveNoActiveVersion();
   await testDatasetUpdate();
@@ -4036,6 +4325,13 @@ async function main() {
   await testGetImport();
   await testWatchImportPollsToTerminal();
   await testWatchImportSurvivesRateLimit();
+  await testWatchImportSettlesToReady();
+  await testWatchImportSurfacesBuildFailure();
+  await testWatchImportArchivingDisabledSettlesNormally();
+  await testWatchImportSettleTimeoutBackstop();
+  await testWatchImportSettleTimeoutBoundsRateLimitedPolls();
+  await testWatchImportFailureReReadSurvivesRateLimit();
+  await testWatchImportFailureReReadIsBounded();
   await testAgentCreateInstallScript();
   await testAgentCreateTarball();
   await testSkillsUploadCarriesFolderName();

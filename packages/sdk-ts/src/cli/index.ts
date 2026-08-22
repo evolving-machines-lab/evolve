@@ -27,7 +27,7 @@ import { parse as parseToml } from "smol-toml";
 import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
-  GateRunningError,
+  ImportSettleError,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -37,8 +37,12 @@ import {
   jobEvolveRecord,
   jobs,
   passAtK,
+  jobSpend,
   skills,
+  type SpendStatement,
+  trialAgentCost,
   trialEvolveRecord,
+  trialJudgeCost,
   trials,
 } from "../hosted/index";
 import type {
@@ -51,6 +55,7 @@ import type {
   Dataset,
   DatasetImport,
   DatasetSelector,
+  DatasetVersion,
   EvalSandboxProvider,
   GrepJobOptions,
   HostedClientConfig,
@@ -595,7 +600,7 @@ const GROUPS: Record<string, GroupSpec> = {
           dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
           version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
-          watch: { kind: "boolean", help: "Poll until the publish is COMPLETED or FAILED" },
+          watch: { kind: "boolean", help: "Poll until the publish settles: the version READY (built and active) or FAILED" },
         },
         minPositionals: 0,
         maxPositionals: 0,
@@ -2166,6 +2171,32 @@ function fmtUsd(value: number | undefined | null): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "-";
 }
 
+/**
+ * A MONEY CELL IS ONE CELL WIDE, so it has to carry the lane inside it.
+ *
+ * `cost_usd` is only half of the API's statement — the lane beside it
+ * (`spend_source`, `judge_spend_source`, or a job's count of trials its total
+ * cannot account for) is what says how final the figure is. Printing the number
+ * bare turned "nobody ever measured this" into "spent $0.00": measured in
+ * production 2026-08-20, where an `assumed_cap` trial carried a literal 0 and
+ * the platform read $0.057 for it minutes later. That lane is the ORDINARY
+ * state of a freshly settled trial, so every one of these cells was wrong at
+ * exactly the moment a user is most likely to look at it.
+ *
+ * Three lanes, three sentences (the rule itself is hosted/money.ts):
+ *
+ *   measured   $0.06                  the reading, final
+ *   floor      at least $0.06         a total still being written — the same
+ *                                     words the live row already uses, so one
+ *                                     idiom covers every kind of lower bound
+ *   unmeasured -                      no figure, because none exists
+ */
+function fmtSpend(spend: SpendStatement): string {
+  if (spend.lane === "measured") return fmtUsd(spend.usd);
+  if (spend.lane === "floor") return `at least ${fmtUsd(spend.usd)}`;
+  return "-";
+}
+
 function fmtAgent(agent: AgentArm | AgentArmInput): string {
   const base = `${agent.name}:${agent.model_name}`;
   return agent.version ? `${base}:${agent.version}` : base;
@@ -2328,7 +2359,11 @@ function jobLines(e: Job): string[] {
     }
   }
   rows.push(["provider", e.sandbox_provider]);
-  rows.push(["spent", fmtUsd(e.stats.cost_usd)]);
+  // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
+  // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
+  // _usd comes out LOWER than what was really spent"). A freshly finished job
+  // is normally in that state for its first few minutes.
+  rows.push(["spent", fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials))]);
   // GPU compute is a SEPARATE labeled estimate (lane 5) — never summed into
   // the spent row above, and absent entirely for a job with no GPU trials.
   if (e.stats.gpu_cost_usd != null) {
@@ -2337,8 +2372,23 @@ function jobLines(e: Job): string[] {
   // The judge share of the bill, itemized only when one exists: `spent` above
   // is the WHOLE bill (agent + judge), and a job with no judge tasks holds a
   // judge share of 0 — a row saying "$0.00 of judging" would be noise.
-  if (e.stats.judge_cost_usd != null && e.stats.judge_cost_usd > 0) {
-    rows.push(["spent (judge)", fmtUsd(e.stats.judge_cost_usd)]);
+  //
+  // "EXISTS" IS NOT "IS POSITIVE". Judge trials fold their zeros into
+  // judge_cost_usd exactly as agent trials do into the total, so a job whose
+  // judges all sealed unmeasured holds a judge share of 0 with a positive
+  // n_unmeasured_judge_trials — and suppressing the row there says "no judging
+  // happened", which is false. The count is what decides whether there is
+  // anything to report; the lane rule then decides how to say it, the same way
+  // the whole-bill row above does.
+  const judgeUnmeasured = e.stats.n_unmeasured_judge_trials;
+  const judged =
+    (e.stats.judge_cost_usd != null && e.stats.judge_cost_usd > 0) ||
+    (typeof judgeUnmeasured === "number" && judgeUnmeasured > 0);
+  if (judged) {
+    rows.push([
+      "spent (judge)",
+      fmtSpend(jobSpend(e.stats.judge_cost_usd, judgeUnmeasured)),
+    ]);
   }
   // Only the statuses actually present: the response names all of them (so a
   // client never hardcodes the enum), but a row of eight zeros helps nobody.
@@ -2392,12 +2442,17 @@ const JOB_COLUMNS: ListColumn<Job>[] = [
   { key: "datasets", header: "DATASETS", cell: (e) => fmtDatasets(e.datasets) },
   { key: "agents", header: "AGENTS", cell: (e) => e.agents.map(fmtAgent).join(", ") },
   { key: "trials", header: "TRIALS", cell: (e) => String(e.trials.total) },
-  { key: "spent", header: "SPENT", cell: (e) => fmtUsd(e.stats.cost_usd) },
+  {
+    key: "spent",
+    header: "SPENT",
+    cell: (e) => fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+  },
   { key: "started", header: "STARTED", cell: (e) => e.started_at },
 ];
 const JOB_DEFAULT_COLUMNS = ["id", "status", "datasets", "trials", "spent", "started"];
 
-const TRIAL_COLUMNS: ListColumn<Trial>[] = [
+/** Exported for its test, like trialDetailLines above it. */
+export const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   { key: "task", header: "TASK", cell: (r) => r.task_name },
   {
     key: "agent",
@@ -2413,7 +2468,11 @@ const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   { key: "attempt", header: "ATTEMPT", cell: (r) => String(r.attempt) },
   { key: "status", header: "STATUS", cell: (r) => r.status },
   { key: "reward", header: "REWARD", cell: (r) => (r.reward !== null ? String(r.reward) : "-") },
-  { key: "spent", header: "SPENT", cell: (r) => fmtUsd(r.agent_result?.cost_usd) },
+  // Same lane law as the detail row (fmtTrialSpend): a column is one cell wide
+  // too, so an unmeasured trial shows "-" rather than the zero its column
+  // happens to hold. A list of freshly settled trials is exactly where a wall
+  // of "$0.00" would read as a free job.
+  { key: "spent", header: "SPENT", cell: (r) => fmtSpend(trialAgentCost(r)) },
   {
     // GPU compute estimate — its own column, never folded into SPENT (lane-5
     // law). Opt-in via --columns; "-" for non-GPU trials and unpriced ones.
@@ -2524,12 +2583,16 @@ export function trialDetailLines(run: Trial): string[] {
         .join(" · "),
     ]);
   }
-  rows.push(["spent", fmtUsd(run.agent_result?.cost_usd)]);
+  rows.push(["spent", fmtSpend(trialAgentCost(run))]);
   // THE JUDGE'S SHARE, itemized beside the agent's when this task's verifier
   // ran an LLM judge on its own gateway key (judge_result present). The agent
   // figure above stays the agent's alone; the trial's whole bill is the sum.
+  // Its own lane, read the same way: the judge key seals through the identical
+  // settle, so it reaches `assumed_cap` for the identical reason and at the
+  // identical moment, and a bare figure here would be the same lie one row
+  // lower down.
   if (run.judge_result) {
-    rows.push(["spent (judge)", fmtUsd(run.judge_result.cost_usd)]);
+    rows.push(["spent (judge)", fmtSpend(trialJudgeCost(run))]);
   }
   // WHILE THE TRIAL RUNS, show the live sample beside the (still empty) settled
   // figure. It is a lagging lower bound, and the row says so with "at least";
@@ -2686,6 +2749,36 @@ export function importStatusLine(job: DatasetImport): string {
   if (job.task_count !== undefined) parts.push(`tasks=${job.task_count}`);
   if (job.failure) parts.push(truncate(importFailureText(job.failure), 140));
   return `status ${job.status.padEnd(12)} ${parts.join(" ")}`.trimEnd();
+}
+
+/**
+ * Compact one-line rendering of one version state change for --watch's
+ * settle phase: the version's own walk (BUILDING, then READY/ARCHIVED or
+ * FAILED).
+ */
+export function versionStatusLine(version: DatasetVersion): string {
+  return `state  ${version.state}`;
+}
+
+/**
+ * The settled version's facts for the final --watch block: state, and
+ * whether the dataset's ACTIVE version is now this publish — the fact a
+ * re-publisher needs, because a bare name resolves to the active version.
+ */
+function versionSettleLines(version: DatasetVersion, detail: Dataset | null): string[] {
+  const rows: string[][] = [["state", version.state]];
+  if (detail) {
+    const active = detail.active_version?.version ?? null;
+    rows.push([
+      "active",
+      active === version.version
+        ? `${active} (this publish)`
+        : active
+          ? `${active} (unchanged)`
+          : "none",
+    ]);
+  }
+  return table(rows);
 }
 
 /** Compact one-line rendering of one SSE event for --watch. */
@@ -3570,7 +3663,7 @@ function datasetDetailLines(b: Dataset): string[] {
   // PROVENANCE: what the SHOWN version was built from — the repository, the
   // requested ref, the resolved commit, and the subfolder when the import was
   // narrowed to one. The selected version's own `source` wins: `dataset show
-  // name@version` must say what THAT version imported even when its gate
+  // name@version` must say what THAT version imported even when its build
   // FAILED and it can never activate — exactly the moment a user needs the
   // resolved sha. `upstream` (the active version's provenance) is the
   // fallback for a server that predates per-version `source`. Quiet block,
@@ -3604,15 +3697,12 @@ function datasetDetailLines(b: Dataset): string[] {
   }
   if (b.versions && b.versions.length > 0) {
     lines.push("");
-    // The GATE column appears only when the server reports gate progress —
-    // an older server without the field keeps the four-column table. Same law
-    // for COMMIT: it appears when some version carries git provenance, and
-    // shows EVERY version's resolved sha — a gate-FAILED version can never
+    // The COMMIT column appears when some version carries git provenance, and
+    // shows EVERY version's resolved sha — a FAILED version can never
     // activate, and this column is where its imported bytes stay observable.
-    const anyGate = b.versions.some((v) => v.gate != null);
     const anySource = b.versions.some((v) => v.source != null);
     const rows = [
-      ["VERSION", "STATE", "TASKS", "CREATED", ...(anySource ? ["COMMIT"] : []), ...(anyGate ? ["GATE"] : [])],
+      ["VERSION", "STATE", "TASKS", "CREATED", ...(anySource ? ["COMMIT"] : [])],
     ];
     for (const v of b.versions) {
       rows.push([
@@ -3621,41 +3711,9 @@ function datasetDetailLines(b: Dataset): string[] {
         String(v.task_count),
         v.created_at ?? "-",
         ...(anySource ? [v.source ? v.source.commit.slice(0, 12) : "-"] : []),
-        ...(anyGate ? [v.gate?.status ?? "-"] : []),
       ]);
     }
     lines.push(...table(rows));
-    // A failed gate is terminal and must be unmissable: the version cannot be
-    // activated or run until it is republished, so say why, right here.
-    for (const v of b.versions) {
-      if (v.gate?.status === "FAILED") {
-        const reason = v.gate.message ?? v.gate.code ?? "no reason reported";
-        lines.push(`version ${v.version} activation gate FAILED: ${reason}`);
-        // The cause, task by task: the gate's own reasons, indented under the
-        // verdict — nobody should need --json to learn WHY a publish died.
-        for (const t of v.gate.failed_tasks) {
-          const why = t.reasons.length > 0 ? t.reasons.join("; ") : (t.outcome ?? "no reason reported");
-          lines.push(`  ${t.task_name}: ${why}`);
-        }
-        // The list is capped at 25; the count is not. A gate that failed
-        // more tasks than the list names must say so, or the page under-
-        // reports the damage.
-        if (v.gate.failed_task_count > v.gate.failed_tasks.length) {
-          lines.push(
-            `  … and ${v.gate.failed_task_count - v.gate.failed_tasks.length} more ` +
-              `(${v.gate.failed_task_count} ineligible tasks in total)`
-          );
-        }
-      }
-      // UNPROVEN is not a failure — the version is READY and runnable — but
-      // the GATE word alone hides WHY no proof backs it. The server stamps
-      // the reason (U2: it used to be readable only on the raw API); print it
-      // the way FAILED prints its message, one quiet line per such version.
-      // A server that predates the stamp prints nothing, as everywhere else.
-      if (v.gate?.status === "UNPROVEN" && v.gate.unproven) {
-        lines.push(`version ${v.version} gate UNPROVEN: ${v.gate.unproven.reason}`);
-      }
-    }
   }
   if (b.tasks && b.tasks.items.length > 0) {
     lines.push("", `Tasks (version ${b.selected_version?.version ?? "?"}):`);
@@ -3786,7 +3844,7 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     } else {
       for (const line of importLines(created)) io.out(line);
       io.out("");
-      // Version state (VALIDATING → READY/FAILED) lives on the dataset body.
+      // Version state (IMPORTING → BUILDING → READY/FAILED) lives on the dataset body.
       // `created.name`, not the flag: a manifest-derived publish had no --name,
       // and the 202 echoes the name the server actually chose.
       io.out(`Follow it with: evolve dataset show ${created.name}`);
@@ -3800,17 +3858,48 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     io.out(`Publish ${created.id} (${created.name}) ${created.status} — watching…`);
   }
 
-  const final = await client.watchImport(created.id, {
-    onStatus: (job) => {
-      io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
-    },
-  });
+  // The watch follows the publish to its SETTLED end: the version READY
+  // (every task image in the platform registry — providers build their boot
+  // artifacts lazily at the first trial — and, on an owner dataset,
+  // already ACTIVE) or FAILED. COMPLETED means READY under build-then-READY;
+  // the SDK's settle phase adds one confirming read (and covers a mid-deploy
+  // older server), and the exit code is the settled outcome.
+  let lastVersion: DatasetVersion | null = null;
+  let lastDetail: Dataset | null = null;
+  let final: DatasetImport;
+  try {
+    final = await client.watchImport(created.id, {
+      onStatus: (job) => {
+        io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
+      },
+      onVersion: (version, dataset) => {
+        lastVersion = version;
+        lastDetail = dataset;
+        io.out(json ? JSON.stringify({ kind: "import.version", version }) : versionStatusLine(version));
+      },
+    });
+  } catch (error) {
+    // A typed settle refusal is an outcome, not a crash: nothing settled, so
+    // the exit code is 1 and the named cause plus the follow-up command are
+    // printed — never exit 0 on an unproven wait.
+    if (error instanceof ImportSettleError) {
+      // jsonErrorBody is the ONE home for the --json error body's shape.
+      if (json) io.out(JSON.stringify({ error: jsonErrorBody(error) }));
+      io.err(`Error: ${error.message}`);
+      io.err(`Follow it with: evolve dataset show ${error.dataset}@${error.version}`);
+      return 1;
+    }
+    throw error;
+  }
 
   if (json) {
     io.out(JSON.stringify({ kind: "import.final", datasetImport: final }));
   } else {
     io.out("");
     for (const line of importLines(final)) io.out(line);
+    if (lastVersion !== null) {
+      for (const line of versionSettleLines(lastVersion, lastDetail)) io.out(line);
+    }
   }
   return final.status === "FAILED" ? 1 : 0;
 }
@@ -3838,36 +3927,10 @@ async function cmdDatasetDownload(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdDatasetActivate(inv: Invocation, io: CliIO): Promise<number> {
   const client = datasets(clientConfig(inv));
   const [name, version] = inv.positionals;
-  let dataset: Dataset;
-  try {
-    dataset = await client.activate(name, version);
-  } catch (error) {
-    // 202 gate_running: a healthy "not yet", not a failure — say so instead
-    // of the generic Error: line, but exit 1 because nothing was activated.
-    if (error instanceof GateRunningError) {
-      if (inv.flags.json === true) {
-        io.out(
-          JSON.stringify({
-            kind: "gate.running",
-            code: error.code,
-            message: error.message,
-            dataset: error.dataset,
-            version: error.version,
-            gate: error.gate,
-          })
-        );
-      } else {
-        io.out(`Not yet: ${error.message}`);
-        io.out(
-          `Gate ${error.gate.status}: ${error.gate.tasks} task(s), ` +
-            `${error.gate.unverified} unverified, ${error.gate.ineligible} ineligible so far.`
-        );
-        io.out(`Follow it with: evolve dataset show ${name} — a gate that passes activates the version itself.`);
-      }
-      return 1;
-    }
-    throw error;
-  }
+  // A version still building refuses with 409 version_not_ready (the
+  // generic typed-error path prints it): the publish lands READY and active
+  // on its own, so this verb only re-points the default at a built version.
+  const dataset: Dataset = await client.activate(name, version);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(dataset));
   } else {
@@ -4229,6 +4292,11 @@ function jsonErrorBody(error: unknown): Record<string, unknown> {
       ...(error.retryAfterSec !== undefined ? { retryAfterSec: error.retryAfterSec } : {}),
       ...(error.requestId !== undefined ? { request_id: error.requestId } : {}),
     };
+  }
+  // A settle refusal carries its own named cause — not an invented code, the
+  // SDK's typed one (settle_timeout).
+  if (error instanceof ImportSettleError) {
+    return { code: error.code, message: error.message };
   }
   return { message: error instanceof Error ? error.message : String(error) };
 }

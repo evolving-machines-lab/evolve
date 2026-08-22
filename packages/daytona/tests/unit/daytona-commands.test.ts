@@ -82,11 +82,17 @@ function loggedStream(output: string, token: string | null): string {
 
 /**
  * What the box is asked to run: the caller's command inside a brace group whose
- * closing brace opens a line of its own, then the sentinel. Nothing is appended
- * to the caller's last line — see [4l]/[4m] for the shapes that breaks.
+ * closing brace opens a line of its own, then the sentinel — printed through a
+ * SAVED COPY of the original stdout, so a command that redirects the shell's
+ * own fd 1 cannot capture it (see [4o]). Nothing is appended to the caller's
+ * last line — see [4l]/[4m] for the shapes that breaks.
  */
 function withSentinel(command: string, token: string): string {
-  return `{ :\n${command}\n\n}; __evolve_eos=$?; printf '%s' '${token}'; (exit $__evolve_eos)`;
+  return (
+    `exec 9>&1 && { :\n${command}\n\n}; __evolve_eos=$?; ` +
+    `printf '%s' '${token}' 2>/dev/null >&9; exec 9>&-; ` +
+    `(exit $__evolve_eos)`
+  );
 }
 
 // =============================================================================
@@ -997,6 +1003,147 @@ async function testSentinelSurvivesHeredocTerminatedAtEndOfString(): Promise<voi
   assertEqual(written, "line1\nline2\n", "the file holds the caller's bytes and nothing else");
 }
 
+/**
+ * THE PRODUCTION LEAK, PINNED. The hosted verifier runs its command as
+ * `exec > /verifier.log 2>&1` + the command, so the run explains itself even
+ * when the box dies mid-command. `exec >` repoints the SHELL's own stdout, so
+ * a sentinel printed to fd 1 after the group lands in that FILE — and the file
+ * is served to the user as verifier/test-stdout.txt, where no filter in this
+ * module can reach it. Measured in production 2026-08-20 (trial 4f103397,
+ * daytona): `reward=1` followed by a bare `EVOLVE-EOS-mt18atit-gdzwvn`.
+ *
+ * The token must land on the TRANSPORT and the caller's file must hold the
+ * caller's bytes and nothing else.
+ */
+async function testSentinelEscapesACommandThatRedirectsStdout(): Promise<void> {
+  console.log("\n[4o] A command that redirects the shell's stdout cannot capture the sentinel");
+
+  const token = "EVOLVE-EOS-redirect-test";
+  const path = join(tmpdir(), `evolve-redirect-${Date.now()}.log`);
+
+  // The verifier's own shape, verbatim in structure.
+  const run = runSentinelled(`exec > ${path} 2>&1\necho reward=1`, token);
+  const logged = readFileSync(path, "utf8");
+  rmSync(path, { force: true });
+
+  assertEqual(run.code, 0, "the redirected command still reports its own status");
+  assertEqual(run.stdout, token, "the sentinel lands on the transport, not in the file");
+  assertEqual(logged, "reward=1\n", "the caller's file holds the caller's bytes and nothing else");
+
+  // The same property one level down: a command that redirects and then FAILS
+  // keeps its status, and still marks its end.
+  const failing = runSentinelled(`exec > ${path} 2>&1\nexit 4`, token);
+  rmSync(path, { force: true });
+  assertEqual(failing.code, 4, "a redirected command that fails keeps its own status");
+}
+
+/**
+ * THE CWD GUARD THE SAVE MUST NOT BREAK. wrapCommand prepends
+ * `cd '<cwd>' && ` to the whole sentinel-wrapped string. If the fd save ended
+ * that `&&` list — a newline between the save and the brace group would — the
+ * group became a SEPARATE command that ran even when the cd failed, executing
+ * the caller's command in the wrong directory instead of skipping it. `&&`
+ * before the group is what keeps the chain one list.
+ */
+async function testFailedCwdStillSkipsTheCommand(): Promise<void> {
+  console.log("\n[4p] A cwd that does not exist skips the command rather than running it elsewhere");
+
+  const token = "EVOLVE-EOS-cwd-test";
+  const missing = join(tmpdir(), `evolve-no-such-dir-${Date.now()}`);
+  const wrapped = _testWrapCommand(_testWithEndOfOutputSentinel("echo RAN", token), missing);
+  const result = spawnSync("/bin/sh", ["-c", wrapped], { encoding: "utf8" });
+
+  assert(result.status !== 0, `a failed cd fails the whole command (got exit ${result.status})`);
+  assert(!result.stdout.includes("RAN"), "the caller's command never ran in the wrong directory");
+
+  // And the same wrapper in a directory that DOES exist runs normally.
+  const ok = spawnSync(
+    "/bin/sh",
+    ["-c", _testWrapCommand(_testWithEndOfOutputSentinel("echo RAN", token), tmpdir())],
+    { encoding: "utf8" },
+  );
+  assertEqual(ok.status, 0, "an existing cwd runs the command");
+  assertEqual(ok.stdout, `RAN\n${token}`, "and the sentinel still lands after it");
+}
+
+/**
+ * THE SESSION SHELL SURVIVES THE WRAPPER WITH WORKING FILE DESCRIPTORS. This is
+ * the property the whole close-not-restore design exists for, and asserting the
+ * command's own exit code cannot see it: a wrapper that killed the shell and a
+ * wrapper that ran cleanly both leave the same status behind.
+ *
+ * It caught a real defect. `exec 9>&- 2>/dev/null` reads like a per-command
+ * silencer and is not one: a redirection written on `exec` with NO COMMAND is
+ * permanent, so it repointed the shell's fd 2 at /dev/null for good. Nothing
+ * showed today (run() and spawn() each open a one-command session), but every
+ * later command in a reused session would have lost its stderr silently.
+ * Measured in /bin/bash, /bin/sh and /bin/dash: the probe below printed
+ * nothing on stderr until the redirection was deleted.
+ */
+async function testSessionShellSurvivesWithWorkingFds(): Promise<void> {
+  console.log("\n[4r] The shell that ran the wrapper keeps working stdout AND stderr");
+
+  const token = "EVOLVE-EOS-session-test";
+  // ONE persistent shell, the wrapper first and the probes after it — the shape
+  // of a reused Daytona session, which the no-timeout path runs against
+  // directly.
+  const script = `${_testWithEndOfOutputSentinel("echo HI", token)}\necho PROBE-OUT\necho PROBE-ERR >&2\n`;
+
+  for (const shell of ["/bin/bash", "/bin/sh", "/bin/dash"]) {
+    const result = spawnSync(shell, [], { input: script, encoding: "utf8" });
+    assertEqual(result.status, 0, `${shell}: the shell exits 0`);
+    assert(
+      result.stdout.includes("HI") && result.stdout.includes(token),
+      `${shell}: the command ran and the sentinel landed (got ${JSON.stringify(result.stdout)})`,
+    );
+    assert(
+      result.stdout.includes("PROBE-OUT"),
+      `${shell}: a LATER command still reaches stdout`,
+    );
+    assert(
+      result.stderr.includes("PROBE-ERR"),
+      `${shell}: a LATER command still reaches STDERR (got ${JSON.stringify(result.stderr)})`,
+    );
+  }
+
+  // ...and the saved copy is GONE, not merely unused. A wrapper that left fd 9
+  // open would pass every probe above while handing the next command in the
+  // session an inherited descriptor it never opened. Run in a subshell so the
+  // failure cannot end the script.
+  for (const shell of ["/bin/bash", "/bin/sh", "/bin/dash"]) {
+    const probe = `${_testWithEndOfOutputSentinel("echo HI", token)}\n( echo LEAK >&9 ) 2>/dev/null\n`;
+    const result = spawnSync(shell, [], { input: probe, encoding: "utf8" });
+    assert(
+      !result.stdout.includes("LEAK"),
+      `${shell}: fd 9 is closed afterward, not left open (got ${JSON.stringify(result.stdout)})`,
+    );
+  }
+}
+
+/**
+ * THE RESIDUAL, PINNED SO IT STAYS A CHOICE. The token rides fd 9, so a command
+ * that REPOINTS fd 9 — `exec 9>lockfile`, the flock man-page idiom — captures it
+ * exactly as fd 1 used to. Only fds 0-9 are portably addressable, so no fixed
+ * choice is collision-free; what this test fixes in place is the SHAPE of the
+ * loss: that one command's sentinel, and nothing else. The shell survives, the
+ * status is the command's own, and no later command is harmed.
+ */
+async function testACommandThatRepointsFd9TakesOnlyItsOwnSentinel(): Promise<void> {
+  console.log("\n[4q] A command that repoints fd 9 loses its own sentinel, and nothing more");
+
+  const token = "EVOLVE-EOS-fd9-test";
+  const path = join(tmpdir(), `evolve-fd9-${Date.now()}.lock`);
+  const run = runSentinelled(`exec 9>${path}\necho WORK`, token);
+  const captured = readFileSync(path, "utf8");
+  rmSync(path, { force: true });
+
+  assertEqual(run.code, 0, "the command keeps its own status");
+  assertEqual(run.stdout, "WORK\n", "its real output still reaches the transport");
+  assert(!run.stdout.includes(token), "the sentinel is the only casualty");
+  assertEqual(captured, token, "and it went where the command pointed fd 9");
+  assertEqual(run.stderr, "", "no diagnostic leaks to the caller");
+}
+
 async function testRunPlantsInBoxTimeout(): Promise<void> {
   console.log("\n[4a] run() - plants coreutils `timeout` inside the box");
 
@@ -1157,6 +1304,10 @@ const tests = [
   testSentinelSurvivesEveryCommandShape,
   testSentinelSurvivesHeredocTerminatedAtEndOfString,
   testUnterminatedHeredocFailsLoudly,
+  testSentinelEscapesACommandThatRedirectsStdout,
+  testFailedCwdStillSkipsTheCommand,
+  testSessionShellSurvivesWithWorkingFds,
+  testACommandThatRepointsFd9TakesOnlyItsOwnSentinel,
   testRunPlantsInBoxTimeout,
   testRunKeepsBlockingSemantics,
   testRunWithoutTimeoutIsUnchanged,

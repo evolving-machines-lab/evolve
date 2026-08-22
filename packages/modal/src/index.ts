@@ -31,6 +31,7 @@ import {
   App,
   Image,
   ContainerProcess,
+  NotFoundError,
 } from "modal";
 import { pack } from "tar-stream";
 
@@ -1542,6 +1543,12 @@ export class ModalProvider implements SandboxProvider {
   /**
    * Build a Modal Image for the resolved tag, routing private registries
    * (AWS ECR, GCP Artifact Registry) through the configured Modal Secret.
+   *
+   * Digest-pinned ECR refs (`<repo>@sha256:<digest>`) are accepted by
+   * fromAwsEcr — verified LIVE against Modal 2026-08-21 (built and booted a
+   * sandbox from one). Modal's docs never say so (the modal.Image reference
+   * describes the parameter only as "Full ECR image URI", tag-form example),
+   * so treat the capability as observed behavior, not contract.
    */
   private async resolveImage(tag: string): Promise<Image> {
     const registry = resolveImageRegistry(tag);
@@ -1561,19 +1568,31 @@ export class ModalProvider implements SandboxProvider {
           "with read-only ECR IAM). Create one at https://modal.com/secrets"
       );
     }
-    const secret = await this.client.secrets.fromName(this.imageSecretName);
+    const secret =
+      registry === "aws-ecr"
+        ? // Modal's own ECR example names these exact keys (modal.Image
+          // reference, from_aws_ecr: required_keys=["AWS_ACCESS_KEY_ID",
+          // "AWS_SECRET_ACCESS_KEY", "AWS_REGION"]). Asserting them at the
+          // lookup makes a mis-provisioned secret fail HERE with the missing
+          // key named, instead of as an opaque registry 403 mid-build.
+          await this.client.secrets.fromName(this.imageSecretName, {
+            requiredKeys: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
+          })
+        : await this.client.secrets.fromName(this.imageSecretName);
     return registry === "aws-ecr"
       ? this.client.images.fromAwsEcr(tag, secret)
       : this.client.images.fromGcpArtifactRegistry(tag, secret);
   }
 
   /**
-   * Resolve a requested image name to the Modal image identity and eagerly
-   * build it. The ONE place that pair happens, because create() and
-   * prepareImage() drifting apart is a silent failure: the prewarm would
-   * populate one image while trials created against another, and nothing
-   * would report the mismatch — only the cold-start cost prewarm was meant
-   * to remove would quietly come back.
+   * Resolve a requested image name to the Modal image identity, eagerly
+   * building it when it is a registry reference and resolving WITHOUT a build
+   * when it is a published Modal image name. The ONE place that resolution
+   * happens, because create(), prepareImage() and publishImageAs() drifting
+   * apart is a silent failure: the prewarm would populate one image while
+   * trials created against another, and nothing would report the mismatch —
+   * only the cold-start cost prewarm was meant to remove would quietly come
+   * back.
    *
    * "Eagerly builds an Image on Modal" — the SDK's own description of
    * Image.build(app) (modal@0.9.0, dist/index.d.ts). The call is idempotent:
@@ -1581,9 +1600,29 @@ export class ModalProvider implements SandboxProvider {
    * pays the registry pull and later ones resolve quickly.
    */
   private async resolveAndBuildImage(imageName: string): Promise<{ tag: string; image: Image }> {
-    const app = await this.getApp();
     // Resolve image name through IMAGE_MAP (e.g., "evolve-all" -> "evolvingmachines/evolve-all")
     const tag = IMAGE_MAP[imageName] ?? imageName;
+    // PUBLISHED-NAME BOOT. A bare token (no '/', ':' or '@') that is not an
+    // IMAGE_MAP alias may be a name a previous publishImageAs bound; resolving
+    // it through images.fromName yields the already-built image with NO app
+    // lookup, no registry resolve and no build IN THIS RESOLUTION (create()
+    // separately fetches its app once, because sandboxes.create needs one;
+    // prepareImage returns here and never touches the app) — Modal's own
+    // guidance for Sandboxes ("it's recommended to use Modal's named Images
+    // with sandboxes"; from_name references the Image "in a way that's
+    // guaranteed to not block on rebuilds" — modal.com/docs/guide/sandbox). A bare name
+    // that was never published answers NotFound and stays what it always was:
+    // a Docker Hub library ref ("alpine"), resolved below. The one behavior
+    // change for such names is precedence — a published name shadows its
+    // Docker Hub twin — which is a deliberate act by whoever published it.
+    if (!/[/:@]/.test(tag)) {
+      try {
+        return { tag, image: await this.client.images.fromName(tag) };
+      } catch (err) {
+        if (!(err instanceof NotFoundError)) throw err;
+      }
+    }
+    const app = await this.getApp();
     const image = await this.resolveImage(tag);
     return { tag, image: await image.build(app) };
   }
@@ -1626,6 +1665,50 @@ export class ModalProvider implements SandboxProvider {
    * exists — prewarm the versioned name unless you specifically want the
    * account's already-pulled copy.
    */
+  /**
+   * Give a built image OUR name on Modal, so it can be found — and deleted —
+   * later by a name this platform minted rather than an id Modal minted.
+   *
+   * WHY THIS EXISTS. Every other provider hands back a named artifact: an e2b
+   * template alias, a daytona snapshot name. Modal's image identity is the
+   * registry reference plus an opaque server-side id, and its delete verb
+   * (`client.images.delete`) takes the ID — which only exists after a build and
+   * is never returned by any lookup we could do later from a reference alone.
+   * So a Modal image built for a dataset could never be reclaimed when that
+   * dataset was deleted; the platform recorded the honest refusal
+   * `store_unsupported` and the images accumulated.
+   *
+   * `Image.publish(name)` closes that: it binds a stable name to the built
+   * image, and `images.fromName(name)` resolves that name back to the id
+   * WITHOUT rebuilding (it is a plain `imageGetByTag` lookup). Named, findable,
+   * deletable — the same shape the other two providers already have.
+   *
+   * IDEMPOTENT BY CONSTRUCTION for our use: the alias is a content address, so
+   * re-publishing the same alias re-binds it to the image that same content
+   * built. A caller that publishes twice names the same bytes twice.
+   *
+   * The build goes through resolveAndBuildImage, the ONE pair every other path
+   * uses, so a published image and the image a trial creates against cannot be
+   * different images — the same law prepareImage keeps.
+   *
+   * MODAL-ONLY, deliberately not on the shared provider interface: e2b and
+   * daytona name their artifacts at creation and have nothing to publish. The
+   * platform feature-detects this method rather than every provider carrying a
+   * verb only one of them can honor.
+   */
+  async publishImageAs(alias: string, imageName?: string): Promise<string> {
+    if (!alias.trim()) {
+      throw new Error("publishImageAs requires a non-empty alias to publish under");
+    }
+    const { image } = await this.resolveAndBuildImage(imageName || this.imageName);
+    await image.publish(alias);
+    // RETURNS the name it bound, so a caller can assert the name it asked for
+    // is the name that now exists. A void return would let a build that
+    // published nothing look identical to one that published correctly, and
+    // the only symptom would be an image nobody can reclaim months later.
+    return alias;
+  }
+
   async prepareImage(imageName?: string): Promise<void> {
     // `||`, not `??`, so an empty string falls back to the default exactly as
     // create()'s `options.image || this.imageName` does. Two different

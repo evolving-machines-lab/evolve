@@ -1397,71 +1397,9 @@ export type DatasetVersionState =
   | "DRAFT"
   | "IMPORTING"
   | "BUILDING"
-  | "VALIDATING"
   | "READY"
   | "FAILED"
   | "ARCHIVED";
-
-/**
- * The activation gate's progress for one dataset version — the gold-run check
- * a version must pass before it can be activated. `status` is the gate's own
- * lifecycle as wire values: PENDING → RUNNING → PASSED/FAILED, plus UNPROVEN —
- * the third terminal word, for a version activated with nothing to prove
- * (render unknown values as-is). `code` and `message` are populated on failure
- * and explain it in one machine word and one human sentence; both are null
- * while the gate is healthy. `attempts` counts gate runs so far.
- */
-export interface DatasetVersionGate {
-  status: string;
-  attempts: number;
-  code: string | null;
-  message: string | null;
-  /**
-   * The tasks the gate found ineligible, each with the gate's own reasons —
-   * so the cause of a FAILED gate never has to be parsed back out of the
-   * message. The server sends the first 25. Empty while the gate is healthy,
-   * and empty on servers that predate the field: absence is "nothing to
-   * report", never a crash.
-   */
-  failed_tasks: DatasetVersionGateFailedTask[];
-  /**
-   * The TRUE total of ineligible tasks. `failed_tasks` is capped at 25, so a
-   * gate that failed more tasks than that is under-counted by its length —
-   * this number never is. Falls back to `failed_tasks.length` on servers that
-   * predate the field, which never truncated without it.
-   */
-  failed_task_count: number;
-  /**
-   * Present only when `status` is UNPROVEN: the version activated with no
-   * oracle-conformance proof because the gate had no reference solutions to
-   * run. The server's own stamp — the honest reason sentence and when it was
-   * stamped. Null on every other status and on servers that predate the
-   * field: absence is "nothing to report", never a crash.
-   */
-  unproven: DatasetVersionGateUnproven | null;
-}
-
-/**
- * The UNPROVEN stamp on a version's activation gate: `reason` is the server's
- * own sentence for why no proof ran (today: "no reference solutions to run"),
- * `at` is when the stamp was written (null when the server omits it).
- */
-export interface DatasetVersionGateUnproven {
-  reason: string;
-  at: string | null;
-}
-
-/**
- * One task the activation gate found ineligible. `outcome` is the gate's
- * verdict word (FAIL, or ERROR when the run produced no usable score; null
- * when the server omits it) and `reasons` are the gate's own sentences for
- * this task — empty when the server names none.
- */
-export interface DatasetVersionGateFailedTask {
-  task_name: string;
-  outcome: string | null;
-  reasons: string[];
-}
 
 /** One dataset.toml author: a name, and an email when the manifest gives one. */
 export interface DatasetManifestAuthor {
@@ -1496,8 +1434,8 @@ export interface DatasetManifestMetadata {
  * the RESOLVED commit the clone landed on (for an annotated tag, the peeled
  * commit — never the tag object), and the repository subfolder the corpus was
  * read from. Served on EVERY git-imported version whatever its state — a
- * version whose activation gate FAILED can never become the active version,
- * so this is where its imported bytes stay observable.
+ * version whose build FAILED can never become the active version, so this is
+ * where its imported bytes stay observable.
  */
 export interface DatasetVersionSource {
   /**
@@ -1532,12 +1470,6 @@ export interface DatasetVersion {
    * "nothing to report", never a fabricated value.
    */
   source: DatasetVersionSource | null;
-  /**
-   * Activation-gate progress. Null when no gate was scheduled for this
-   * version, and also null when the server predates the gate field — so a
-   * missing gate never means "passed", only "nothing to report".
-   */
-  gate: DatasetVersionGate | null;
 }
 
 /**
@@ -1553,26 +1485,6 @@ export interface DatasetVersion {
 export type TaskProviderVerdict =
   | { ok: true; degrades_to?: "modal"; reason?: string }
   | { ok: false; reason: string };
-
-/**
- * One task's activation-gate verdict — the public subset. The per-task half
- * of the version's `gate`: while the gate is RUNNING, verdicts appear on
- * tasks as they land. The full stored verdict carries oracle diagnostics
- * that stay internal, like the environment specs beside it.
- */
-export interface TaskGate {
-  /**
-   * PASS; FLAKY (gold passed only on a retry — still eligible under the
-   * operator default); FAIL (definitive: gold never scored 1.0, or a
-   * do-nothing agent did); ERROR (inconclusive — no usable score, e.g. no
-   * archived solution to run).
-   */
-  outcome: string;
-  flaky: boolean;
-  /** Human-readable; empty on PASS. */
-  reasons: string[];
-  ran_at: string | null;
-}
 
 /** Public task fields only — instructions, environments, and tests never leave the server */
 export interface Task {
@@ -1597,26 +1509,6 @@ export interface Task {
    * spent on a trial that cannot execute.
    */
   providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
-  /**
-   * This task's activation-gate verdict; null until the gate has run it, and
-   * null on servers that predate the field — absence is "nothing to report",
-   * never "passed".
-   */
-  gate: TaskGate | null;
-}
-
-/**
- * Gate progress at the moment of an activate() call that answered 202 —
- * carried on GateRunningError. `status` is the gate's own lifecycle
- * (PENDING or RUNNING here), `tasks` the version's task count, `unverified`
- * the tasks the gate has not yet produced a verdict for, and `ineligible`
- * the tasks whose verdict so far is not activation-eligible.
- */
-export interface GateRunningProgress {
-  status: string;
-  tasks: number;
-  unverified: number;
-  ineligible: number;
 }
 
 /**
@@ -1679,6 +1571,23 @@ export interface Dataset {
   description: string | null;
   /** The active version, or null when none is active (bare-name job refs refuse). */
   active_version: DatasetVersion | null;
+  /**
+   * The dataset's NEWEST version row (newest created_at first, id as the
+   * tiebreak) — active or not.
+   *
+   * This is what makes a publish observable BEFORE it lands: a first
+   * publish walks IMPORTING -> BUILDING here while `active_version` is
+   * still null — the importer itself flips the finished build to READY and,
+   * on an owner-stamped dataset, promotes it to the active version in the
+   * same transaction. It can also hold a version that never landed (a
+   * FAILED build), so it is NOT a substitute for `active_version`: a
+   * bare-name job ref still resolves the active version and refuses
+   * without one.
+   *
+   * Null when the dataset has no version rows at all — and also null when
+   * talking to a server older than this field.
+   */
+  latest_version: DatasetVersion | null;
   /** All versions, newest first (get() only) */
   versions?: DatasetVersion[];
   /** The version whose tasks are listed below (get() only) */
@@ -1822,9 +1731,10 @@ export interface DatasetImportFailure {
 
 /**
  * Non-fatal but consequential import outcome. A version whose warnings include
- * `no_solutions_archived` cannot be activated through this API
- * (`version_not_activatable`) — an import that will never become runnable must
- * not look identical to one that will.
+ * `no_solutions_archived` permanently lacks its reference-solution record —
+ * the record operator verification tooling reads, never a gate. The version
+ * still publishes, activates, and runs; the warning makes the permanent gap
+ * visible instead of silent.
  */
 export interface ImportWarning {
   code:
@@ -2088,12 +1998,30 @@ export interface TrialFileRange {
 
 /** Options for datasets().watchImport() */
 export interface WatchImportOptions {
-  /** Called on every observed status change (including the first status seen) */
+  /** Called on every observed import status change (including the first status seen) */
   onStatus?: (datasetImport: DatasetImport) => void;
+  /**
+   * Called on every observed change of the imported VERSION's state during
+   * the watch's settle phase — normally the single confirming READY read
+   * (COMPLETED means the version is READY under build-then-READY), or the
+   * walk to READY/ARCHIVED/FAILED against a mid-deploy older server.
+   * `dataset` is the detail read the observation came from: its
+   * `active_version` says whether the settled version is now the one a bare
+   * dataset name resolves to.
+   */
+  onVersion?: (version: DatasetVersion, dataset: Dataset) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
-  /** Poll interval between getImport() calls (default: 2000ms) */
+  /** Poll interval between polls (default: 2000ms) */
   pollIntervalMs?: number;
+  /**
+   * Backstop bound on the settle phase — how long past import COMPLETED the
+   * watch may wait for the version to settle before refusing with
+   * ImportSettleError("settle_timeout") (default: 30 minutes). Normally
+   * unused (COMPLETED means READY); it bounds the wait against a mid-deploy
+   * older server, and the error carries the last observed state.
+   */
+  settleTimeoutMs?: number;
 }
 
 /** Options for jobs().watch() */
@@ -2157,8 +2085,16 @@ export interface DatasetsClient {
   /** Get an import job's status (failure, warnings, and task_count when available) */
   getImport(id: string): Promise<DatasetImport>;
   /**
-   * Poll getImport() until the import reaches a terminal status ("COMPLETED"
-   * or "FAILED") and resolve with the final import.
+   * Watch a publish to its settled end: poll getImport() until the import is
+   * terminal, then confirm the version against the dataset detail. Under
+   * build-then-READY, COMPLETED means the version is READY — every task
+   * image in the platform registry (each provider builds its boot artifact
+   * lazily at the first trial) and, on an owner-stamped dataset,
+   * already active — so the settle phase is normally the single confirming
+   * read; against a mid-deploy older server it keeps polling until the
+   * version reaches READY, ARCHIVED, or FAILED. A failed build rides the
+   * returned import's `failure`. Throws ImportSettleError("settle_timeout")
+   * when settleTimeoutMs elapses before the version settles.
    */
   watchImport(id: string, options?: WatchImportOptions): Promise<DatasetImport>;
   /**
@@ -2205,9 +2141,11 @@ export interface DatasetsClient {
   update(name: string, patch: DatasetPatch): Promise<Dataset>;
   /**
    * Activate a READY version you own: bare-name job references resolve to it
-   * from then on. Refused with `version_not_ready` while the import still
-   * runs and `version_not_activatable` for a version that can never be
-   * activated (for example, no reference solutions were archived).
+   * from then on. A publish activates its own version when it lands, so this
+   * verb is for re-pointing the default — a rollback to an older READY
+   * version, or choosing between several. Refused with `version_not_ready`
+   * while the publish is still building and `version_not_activatable` for a
+   * FAILED or ARCHIVED version, which can never be activated.
    */
   activate(name: string, version: string): Promise<Dataset>;
   /**
@@ -2562,6 +2500,7 @@ export const HOSTED_ERROR_CODES = [
   "invalid_input",
   "invalid_limit",
   "invalid_status",
+  "invalid_visibility",
   "invalid_cursor",
   "invalid_after",
   "invalid_format",

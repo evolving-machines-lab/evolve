@@ -35,9 +35,6 @@ import type {
   DatasetPatch,
   DatasetRef,
   DatasetVersion,
-  DatasetVersionGate,
-  DatasetVersionGateFailedTask,
-  DatasetVersionGateUnproven,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -45,7 +42,6 @@ import type {
   DownloadJobOptions,
   EvalSandboxProvider,
   ExceptionInfo,
-  GateRunningProgress,
   GetDatasetOptions,
   GrepJobOptions,
   HostedClientConfig,
@@ -91,7 +87,6 @@ import type {
   StepResult,
   StopResponse,
   Task,
-  TaskGate,
   TimingInfo,
   TraceEvent,
   TraceEventPage,
@@ -167,9 +162,6 @@ export type {
   DatasetSelector,
   DatasetSource,
   DatasetVersion,
-  DatasetVersionGate,
-  DatasetVersionGateFailedTask,
-  DatasetVersionGateUnproven,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -177,7 +169,6 @@ export type {
   DownloadJobOptions,
   EvalSandboxProvider,
   ExceptionInfo,
-  GateRunningProgress,
   GetDatasetOptions,
   GrepJobOptions,
   HostedClientConfig,
@@ -234,7 +225,6 @@ export type {
   StepResult,
   StopResponse,
   Task,
-  TaskGate,
   TaskProviderVerdict,
   TimingInfo,
   TraceEvent,
@@ -276,6 +266,17 @@ export {
   visibleHomeTree,
   type TrialTreeParts,
 } from "./trial-tree";
+
+// THE MONEY LANE RULE — how a trial's agent spend may be stated to a reader.
+// Exported because every surface that shows the number without the lane beside
+// it has to make the same decision, and the wrong one prints "$0.00" for a
+// trial nobody measured.
+export {
+  jobSpend,
+  trialAgentCost,
+  trialJudgeCost,
+  type SpendStatement,
+} from "./money";
 
 /**
  * A typed failure from the hosted evals API.
@@ -435,52 +436,54 @@ export class NoActiveVersionError extends Error {
   }
 }
 
-/**
- * Thrown by datasets().activate() when the version's activation gate is
- * still scheduled or running — the API's 202 `gate_running` answer.
- *
- * NOT an EvolveApiError: the wire body is deliberately not the error
- * envelope, because an in-progress gate is a healthy state — nothing is
- * wrong and nothing is asked of the caller. Poll the dataset (each version
- * carries `gate`); a gate that PASSES activates the version itself, so
- * there is normally nothing left to call. Its own type, like
- * NoActiveVersionError, because activate() promised a Dataset it cannot
- * return yet.
- */
-export class GateRunningError extends Error {
-  readonly name = "GateRunningError";
-  /** The stable machine word for this state. */
-  readonly code = "gate_running";
-  /** The dataset whose version is still being proven. */
-  readonly dataset: string;
-  /** The version the gate is proving. */
-  readonly version: string;
-  /** Gate progress at the moment of the call. */
-  readonly gate: GateRunningProgress;
-  constructor(dataset: string, version: string, message: string, gate: GateRunningProgress) {
-    super(message);
-    this.dataset = dataset;
-    this.version = version;
-    this.gate = gate;
-  }
-}
+/** Why datasets().watchImport() could not watch the version to a settled state. */
+export type ImportSettleErrorCode = "settle_timeout";
 
 /**
- * The 202 body's `gate` progress block, defensively: a count that is not a
- * number reads as 0 and a missing status as PENDING (scheduled is the least
- * a 202 can mean) — a misbehaving server must never crash the refusal path.
+ * Thrown by datasets().watchImport() when the import itself COMPLETED but the
+ * WATCH cannot truthfully report the version settled: the settleTimeoutMs
+ * backstop elapsed first ("settle_timeout"). This bounds the WAIT, never the
+ * publish — keep following with datasets().get("name@version"). When `state`
+ * is "FAILED" the version DID settle and the budget was spent retrying the
+ * final import read through rate limits — read the failure with
+ * datasets().getImport(importId). Rare by construction: the server settles a
+ * publish at import COMPLETED (COMPLETED means the version is READY), so the
+ * settle phase normally confirms in one read; the timeout exists for a
+ * mid-deploy older server still finishing a version after COMPLETED.
+ *
+ * NOT an EvolveApiError: no request failed — the caller's wait could not be
+ * honestly satisfied. Carries the last observed version state so a handler
+ * can say exactly where the publish stands.
  */
-function mapGateRunningProgress(raw: unknown): GateRunningProgress {
-  const value = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<
-    string,
-    unknown
-  >;
-  return {
-    status: typeof value.status === "string" ? value.status : "PENDING",
-    tasks: typeof value.tasks === "number" ? value.tasks : 0,
-    unverified: typeof value.unverified === "number" ? value.unverified : 0,
-    ineligible: typeof value.ineligible === "number" ? value.ineligible : 0,
-  };
+export class ImportSettleError extends Error {
+  readonly name = "ImportSettleError";
+  /** The named cause; "settle_timeout" is the only one. */
+  readonly code: ImportSettleErrorCode;
+  /** The import job whose version did not settle. */
+  readonly importId: string;
+  /** The dataset the import published into. */
+  readonly dataset: string;
+  /** The version the import created. */
+  readonly version: string;
+  /** The last observed version state; null when the version was never observed. */
+  readonly state: string | null;
+  constructor(
+    code: ImportSettleErrorCode,
+    message: string,
+    facts: {
+      importId: string;
+      dataset: string;
+      version: string;
+      state: string | null;
+    }
+  ) {
+    super(message);
+    this.code = code;
+    this.importId = facts.importId;
+    this.dataset = facts.dataset;
+    this.version = facts.version;
+    this.state = facts.state;
+  }
 }
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
@@ -501,8 +504,15 @@ const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
 
 const DEFAULT_IMPORT_POLL_INTERVAL_MS = 2_000;
 
-// Terminal import statuses.
-const TERMINAL_IMPORT_STATUSES: ReadonlySet<string> = new Set(["COMPLETED", "FAILED"]);
+/**
+ * Backstop bound on watchImport's settle phase — how long past import
+ * COMPLETED the watch may wait for the version to settle before refusing
+ * with ImportSettleError("settle_timeout"). Normally one confirming read:
+ * the server settles the publish at import COMPLETED (the version is
+ * already READY), so this bound exists for a mid-deploy older server still
+ * moving a version after COMPLETED; overridable per call.
+ */
+const DEFAULT_IMPORT_SETTLE_TIMEOUT_MS = 30 * 60_000;
 
 // =============================================================================
 // SHARED HELPERS
@@ -605,78 +615,6 @@ function mapAgentArm(raw: Record<string, unknown>): AgentArm {
 }
 
 /**
- * Map a version's activation-gate field, tolerating every server generation:
- * an older server that has no `gate` field at all, the current server's
- * nested form ({status, attempts, failure: {code, message, failed_tasks}}),
- * and the flat form ({status, attempts, code, message}). Anything unreadable becomes null
- * — a missing gate is "nothing to report", never a crash and never "passed".
- */
-function mapVersionGate(raw: unknown): DatasetVersionGate | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const value = raw as Record<string, unknown>;
-  if (typeof value.status !== "string") return null;
-  const failure =
-    value.failure && typeof value.failure === "object" && !Array.isArray(value.failure)
-      ? (value.failure as Record<string, unknown>)
-      : {};
-  const code = typeof value.code === "string" ? value.code : failure.code;
-  const message = typeof value.message === "string" ? value.message : failure.message;
-  const failedTasks = mapGateFailedTasks(
-    Array.isArray(value.failed_tasks) ? value.failed_tasks : failure.failed_tasks
-  );
-  const rawCount =
-    typeof value.failed_task_count === "number"
-      ? value.failed_task_count
-      : failure.failed_task_count;
-  // The UNPROVEN stamp ({reason, at}) — the server's honest sentence for a
-  // version that activated with no oracle-conformance proof. U2: this used to
-  // be dropped at the map, leaving the reason API-only. Same tolerance as the
-  // gate itself: anything unreadable, or a stamp without its reason, is null.
-  const unproven =
-    value.unproven && typeof value.unproven === "object" && !Array.isArray(value.unproven)
-      ? (value.unproven as Record<string, unknown>)
-      : null;
-  return {
-    status: value.status,
-    attempts: typeof value.attempts === "number" ? value.attempts : 0,
-    code: typeof code === "string" ? code : null,
-    message: typeof message === "string" ? message : null,
-    failed_tasks: failedTasks,
-    // The TRUE total behind the 25-task cap on failed_tasks. An older server
-    // never truncated without the count, so its absence reads as the length.
-    failed_task_count: typeof rawCount === "number" ? rawCount : failedTasks.length,
-    unproven:
-      unproven && typeof unproven.reason === "string"
-        ? { reason: unproven.reason, at: typeof unproven.at === "string" ? unproven.at : null }
-        : null,
-  };
-}
-
-/**
- * The per-task cause list behind a FAILED gate. Same tolerance as the gate
- * itself: absent or unreadable input is an empty list, an entry without a
- * task name is dropped, and non-string reasons are filtered — an older or
- * misbehaving server must never crash the CLI here.
- */
-function mapGateFailedTasks(raw: unknown): DatasetVersionGateFailedTask[] {
-  if (!Array.isArray(raw)) return [];
-  const tasks: DatasetVersionGateFailedTask[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const entry = item as Record<string, unknown>;
-    if (typeof entry.task_name !== "string") continue;
-    tasks.push({
-      task_name: entry.task_name,
-      outcome: typeof entry.outcome === "string" ? entry.outcome : null,
-      reasons: Array.isArray(entry.reasons)
-        ? entry.reasons.filter((r): r is string => typeof r === "string")
-        : [],
-    });
-  }
-  return tasks;
-}
-
-/**
  * The dataset.toml metadata a version imported under. Defensive like every
  * mapper here: an older server (no field) or garbage reads as null, and a
  * present manifest gets its arrays normalized so a caller can iterate without
@@ -708,8 +646,8 @@ function mapVersionManifest(raw: unknown): DatasetVersion["manifest"] {
 
 /**
  * A version's own git provenance ({git_url, ref, commit, path}) — served on
- * every git-imported version, including one whose activation gate FAILED (it
- * can never activate, so it never appears as `upstream`). Absent (an older
+ * every git-imported version, including one whose build FAILED (it can never
+ * activate, so it never appears as `upstream`). Absent (an older
  * server, or a non-git version) or unreadable input is null — "nothing to
  * report", never a fabricated value and never a crash.
  */
@@ -733,27 +671,6 @@ function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
     task_count: (raw.task_count as number) ?? 0,
     manifest: mapVersionManifest(raw.manifest),
     source: mapVersionSource(raw.source),
-    gate: mapVersionGate(raw.gate),
-  };
-}
-
-/**
- * A task's own activation-gate verdict, with the tolerance every gate mapper
- * here keeps: absent (the gate has not run it, or an older server) or
- * unreadable input is null — "nothing to report", never "passed" and never a
- * crash. An entry without an outcome word is no verdict at all.
- */
-function mapTaskGate(raw: unknown): TaskGate | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const value = raw as Record<string, unknown>;
-  if (typeof value.outcome !== "string") return null;
-  return {
-    outcome: value.outcome,
-    flaky: value.flaky === true,
-    reasons: Array.isArray(value.reasons)
-      ? value.reasons.filter((r): r is string => typeof r === "string")
-      : [],
-    ran_at: typeof value.ran_at === "string" ? value.ran_at : null,
   };
 }
 
@@ -772,9 +689,6 @@ function mapTask(raw: Record<string, unknown>): Task {
     // Per-provider capability verdicts — the law: where a task can run is
     // visible before any money is spent.
     providers: raw.providers as Task["providers"],
-    // The per-task half of the version's gate — verdicts appear here as they
-    // land while the gate runs.
-    gate: mapTaskGate(raw.gate),
   };
 }
 
@@ -1023,8 +937,8 @@ function mapDatasetImport(raw: Record<string, unknown>): DatasetImport {
     version: raw.version as string,
     failure: (raw.failure as DatasetImportFailure | null) ?? null,
     // Consequential, not cosmetic: an import whose warnings include
-    // no_solutions_archived can never be activated, and dropping the field
-    // made it look identical to one that can.
+    // no_solutions_archived permanently lacks its reference-solution record,
+    // and dropping the field would hide that gap.
     warnings: (raw.warnings as ImportWarning[]) ?? [],
   };
   if (typeof raw.task_count === "number") {
@@ -1532,6 +1446,11 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       active_version: raw.active_version
         ? mapDatasetVersion(raw.active_version as Record<string, unknown>)
         : null,
+      // The newest version row, active or not — served on both routes beside
+      // it. Absent on an older server, which reads as null.
+      latest_version: raw.latest_version
+        ? mapDatasetVersion(raw.latest_version as Record<string, unknown>)
+        : null,
       versions: ((raw.versions as Record<string, unknown>[]) || []).map(mapDatasetVersion),
       selected_version: raw.selected_version
         ? mapDatasetVersion(raw.selected_version as Record<string, unknown>)
@@ -1556,6 +1475,137 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     return mapDatasetDetail((await res.json()) as Record<string, unknown>);
   }
 
+  /**
+   * Phase two of watchImport — the confirming read behind the import surface.
+   *
+   * Under the build-then-READY model the server completes an import only
+   * when the version is READY (every task image in the platform registry —
+   * each provider builds its boot artifact lazily at the first trial —
+   * and, on an owner-stamped dataset, already ACTIVE), so COMPLETED and
+   * "settled" are the same fact and this phase normally confirms it in one
+   * dataset-detail read. It still POLLS rather than assumes, for exactly one
+   * skew: a mid-deploy OLDER server can answer COMPLETED while its version
+   * is still short of READY — the poll then follows the version's own state
+   * until it lands:
+   *
+   *   - state READY or ARCHIVED       settled success (ARCHIVED = superseded
+   *                                   by a newer publish while we watched —
+   *                                   it completed all the same)
+   *   - state FAILED                  the version's terminal failure lands
+   *                                   its structured cause on the same row
+   *                                   the import surface reads — re-read the
+   *                                   import and return it FAILED, the one
+   *                                   import shape
+   *
+   * Bounded on purpose (fail closed, never an infinite poll): settleTimeoutMs
+   * backstops every stall (a server that answers nothing but 429/503 stalls
+   * the polling itself): ImportSettleError("settle_timeout"), carrying the
+   * last observed state.
+   */
+  async function settleImport(
+    imported: DatasetImport,
+    options?: WatchImportOptions
+  ): Promise<DatasetImport> {
+    const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+    const settleTimeoutMs = options?.settleTimeoutMs ?? DEFAULT_IMPORT_SETTLE_TIMEOUT_MS;
+    const deadline = Date.now() + settleTimeoutMs;
+    const ref = `${imported.name}@${imported.version}`;
+    let lastSeen: string | null = null;
+    let lastVersion: DatasetVersion | null = null;
+
+    // ONE home for the settle_timeout refusal, built from whatever was last
+    // observed. Two true stories share the code: usually the version never
+    // settled inside the budget; after a FAILED observation the version DID
+    // settle — it is the final import read the server kept refusing.
+    const settleTimeoutError = () => {
+      if (lastVersion?.state === "FAILED") {
+        return new ImportSettleError(
+          "settle_timeout",
+          `Import ${imported.id}'s dataset "${imported.name}" version ` +
+            `"${imported.version}" settled FAILED, but the final import ` +
+            `read kept answering rate-limited/unavailable past the ` +
+            `${settleTimeoutMs}ms settle budget. Read the failure with ` +
+            `datasets().getImport("${imported.id}").`,
+          {
+            importId: imported.id,
+            dataset: imported.name,
+            version: imported.version,
+            state: lastVersion.state,
+          }
+        );
+      }
+      return new ImportSettleError(
+        "settle_timeout",
+        `Import ${imported.id} completed, but dataset "${imported.name}" version ` +
+          `"${imported.version}" did not settle within ${settleTimeoutMs}ms: last ` +
+          `observed state ${lastVersion?.state ?? "never observed"}. Keep following ` +
+          `with datasets().get("${ref}").`,
+        {
+          importId: imported.id,
+          dataset: imported.name,
+          version: imported.version,
+          state: lastVersion?.state ?? null,
+        }
+      );
+    };
+
+    // ONE home for the settle phase's delay-not-outcome law: every read — the
+    // detail poll and the final import re-read alike — survives a 429/503 by
+    // sleeping the server's delay, and the SAME settle deadline bounds the
+    // retrying (a server answering nothing but rate limits must not turn this
+    // bounded wait into an infinite loop).
+    const readThroughRateLimits = async <T>(read: () => Promise<T>): Promise<T> => {
+      for (;;) {
+        throwIfAborted(options?.signal);
+        try {
+          return await read();
+        } catch (error) {
+          if (
+            !(error instanceof EvolveApiError) ||
+            (error.status !== 429 && error.status !== 503)
+          ) {
+            throw error;
+          }
+          const remainingMs = deadline - Date.now();
+          if (remainingMs <= 0) throw settleTimeoutError();
+          await sleep(
+            Math.min(
+              Math.max((error.retryAfterSec ?? 0) * 1000, pollIntervalMs),
+              remainingMs
+            ),
+            options?.signal
+          );
+        }
+      }
+    };
+
+    for (;;) {
+      throwIfAborted(options?.signal);
+      // limit=1: the watch reads the version's state, never the task list —
+      // keep the poll as small as the route allows.
+      const detail: Dataset = await readThroughRateLimits(() => getDataset(ref, { limit: 1 }));
+      const version = detail.selected_version;
+      if (version) {
+        lastVersion = version;
+        if (version.state !== lastSeen) {
+          lastSeen = version.state;
+          options?.onVersion?.(version, detail);
+        }
+        if (version.state === "FAILED") {
+          // The failed version's row is what the import surface reads, so the
+          // import answers FAILED with the structured cause on `failure` —
+          // return that, the one import shape. The read lives under the same
+          // delay-not-outcome law: a transient 429 here must not turn a
+          // settled failure into a thrown rate-limit error.
+          return readThroughRateLimits(() => getImport(imported.id));
+        }
+        if (version.state === "READY" || version.state === "ARCHIVED") return imported;
+      }
+      if (Date.now() >= deadline) throw settleTimeoutError();
+      await sleep(pollIntervalMs, options?.signal);
+    }
+  }
+
   /** The summary Dataset shape: list rows and the update() echo share it. */
   function mapDatasetSummary(raw: Record<string, unknown>): Dataset {
     return {
@@ -1564,6 +1614,12 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       description: (raw.description as string | null) ?? null,
       active_version: raw.active_version
         ? mapDatasetVersion(raw.active_version as Record<string, unknown>)
+        : null,
+      // The newest version row, active or not — the field that lets a caller
+      // watch a FIRST import from the list alone. Absent on an older server,
+      // which reads as null.
+      latest_version: raw.latest_version
+        ? mapDatasetVersion(raw.latest_version as Record<string, unknown>)
         : null,
       upstream: mapUpstream(raw.upstream),
     };
@@ -1717,7 +1773,11 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           lastStatus = current.status;
           options?.onStatus?.(current);
         }
-        if (TERMINAL_IMPORT_STATUSES.has(current.status)) return current;
+        if (current.status === "FAILED") return current;
+        // COMPLETED means the version is READY (built, and on an owner
+        // dataset active) — the settle phase is one confirming read, plus
+        // the poll that covers a mid-deploy older server (see settleImport).
+        if (current.status === "COMPLETED") return settleImport(current, options);
         await sleep(pollIntervalMs, options?.signal);
       }
     },
@@ -1768,26 +1828,15 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     },
 
     async activate(name: string, version: string): Promise<Dataset> {
+      // Promotes a BUILT version (READY) to
+      // the dataset's default; a version still building refuses with 409
+      // version_not_ready (EvolveApiError) — the publish lands READY and
+      // active on its own, so this verb is for re-pointing the default.
       const res = await request(
         cfg,
         `/api/datasets/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/activate`,
         { method: "POST" }
       );
-      // 202 is "not yet", not "here is the dataset": the activation gate is
-      // still proving this version, and the body is a GateRunning progress
-      // report — parsing it as a Dataset returned a garbage object. Typed,
-      // like NoActiveVersionError, so a caller can branch and poll.
-      if (res.status === 202) {
-        const body = (await res.json()) as Record<string, unknown>;
-        throw new GateRunningError(
-          name,
-          version,
-          typeof body.message === "string"
-            ? body.message
-            : `Dataset "${name}" version "${version}" is still being proven by its activation gate`,
-          mapGateRunningProgress(body.gate)
-        );
-      }
       return mapDatasetDetail((await res.json()) as Record<string, unknown>);
     },
 
