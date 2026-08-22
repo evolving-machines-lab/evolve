@@ -202,6 +202,15 @@ export type DaytonaNetworkPolicyReason =
   | "port-unsupported"
   | "invalid-ipv4"
   /**
+   * An empty/whitespace-only destination, or one carrying a comma. Both wire
+   * allowlists are single comma-joined strings, so a blank entry would emit
+   * an empty allowlist — which Daytona reads, with blockAll:false, as
+   * UNRESTRICTED egress — and an embedded comma would smuggle extra entries
+   * past the 10/20 caps and corrupt the joined value. Rejected before
+   * classification so a sealed policy can never boot an open box.
+   */
+  | "invalid-destination"
+  /**
    * The policy names both CIDR and domain destinations. Daytona keeps two
    * allowlists — networkAllowList (CIDRs) and domainAllowList (names) — and
    * its docs make them mutually exclusive: "Set at most one non-empty value.
@@ -1226,8 +1235,8 @@ function isIpv4Destination(destination: string): boolean {
 /**
  * Dotted-quad shape (optionally with a /prefix) that is NOT a valid IPv4/CIDR
  * — an out-of-range octet (>255) or prefix (>32). Used to reject
- * "300.1.1.1" / "10.0.0.0/40" loudly instead of DNS-resolving them as
- * hostnames.
+ * "300.1.1.1" / "10.0.0.0/40" loudly instead of forwarding them to the
+ * domain allowlist as if they were hostnames.
  */
 function looksLikeInvalidIpv4(destination: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}(\/\d+)?$/.test(destination) && !isIpv4Destination(destination);
@@ -1278,7 +1287,8 @@ function isPrefixWildcardDomain(destination: string): boolean {
  * error"), so a policy mixing CIDR and hostname destinations is refused typed
  * (mixed-allowlist) with the fix named, rather than sent to a guaranteed 400.
  * Destinations no list can express — IPv6, host:port, malformed IPv4, a
- * wildcard anywhere but the `*.` prefix, an over-cap list — throw
+ * wildcard anywhere but the `*.` prefix, an empty/whitespace or
+ * comma-carrying entry, an over-cap list — throw
  * DaytonaNetworkPolicyError; the policy is never silently weakened.
  */
 function mapNetworkPolicy(
@@ -1307,6 +1317,33 @@ function mapNetworkPolicy(
   const destinations = network.allowedDestinations ?? [];
   if (destinations.length === 0) {
     return { networkBlockAll: true };
+  }
+
+  // Reject malformed entries BEFORE classification. Both wire allowlists are
+  // single comma-joined strings, so a blank destination would join into an
+  // empty (or ",host"-corrupted) allowlist — and Daytona treats an empty
+  // domainAllowList with blockAll:false as unrestricted egress, turning a
+  // sealed policy into an open box. A comma inside one entry would smuggle
+  // extra destinations past the 10/20 caps and corrupt the joined value.
+  for (const destination of destinations) {
+    if (destination.trim() === "") {
+      throw new DaytonaNetworkPolicyError(
+        "invalid-destination",
+        `network.allowedDestinations contains an empty destination (${JSON.stringify(destination)}). ` +
+          "Every entry must be a hostname, *.wildcard domain, IPv4 address, or IPv4 CIDR — " +
+          "remove the blank entry (an empty allowlist would open the sandbox, not seal it).",
+        destination
+      );
+    }
+    if (destination.includes(",")) {
+      throw new DaytonaNetworkPolicyError(
+        "invalid-destination",
+        `network.allowedDestinations entry "${destination}" contains a comma. ` +
+          "Daytona's allowlists are sent as one comma-joined string, so a comma inside an entry " +
+          "would smuggle extra destinations past the list caps — pass one destination per array entry.",
+        destination
+      );
+    }
   }
 
   // Classify destinations and reject what no Daytona list can express.
@@ -2750,11 +2787,10 @@ class DaytonaSandboxImpl implements SandboxInstance {
    * first as the second sends the caller to the billing page over a
    * credential.
    *
-   * DNS-PIN CAVEAT INHERITED FROM CREATE: hostname destinations are resolved
-   * to IPv4 /32s HERE, at switch time, so a switch to a hostname allowlist
-   * pins whatever DNS answers at that moment. A caller that pinned a host at
-   * create and needs the SAME addresses after the switch must pass the
-   * addresses, not the name — two lookups can disagree.
+   * Hostname destinations forward VERBATIM into domainAllowList, exactly as
+   * at create — nothing is DNS-resolved or pinned, Daytona enforces the
+   * domain layer itself — so create and switch express the same policy the
+   * same way.
    */
   async updateNetwork(network: SandboxCreateOptions["network"]): Promise<void> {
     const params = mapNetworkPolicyForUpdate(network);
