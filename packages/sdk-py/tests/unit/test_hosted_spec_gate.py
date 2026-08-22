@@ -176,6 +176,11 @@ OPERATION_TO_METHOD = {
     'publishDataset': (DatasetsClient, 'publish'),
     'listDatasetImports': (DatasetsClient, 'list_imports'),
     'getDatasetImport': (DatasetsClient, 'get_import'),
+    # Session-only admin verb (the platform administrator's browser session
+    # is the one accepted credential; API keys are refused with 403), so it
+    # is deliberately NOT an SDK method — an SDK call could only ever be
+    # refused. x-wave: 2 in the spec = outside the SDKs' wave 1.
+    'setDatasetVisibility': None,
     # Agents (bring-your-own)
     'registerAgent': (AgentsClient, 'create'),
     'listAgents': (AgentsClient, 'list'),
