@@ -1151,10 +1151,13 @@ async function testPublishImageAsNamesTheImageCreateUses(): Promise<void> {
  * PUBLISHED-NAME BOOT. A bare image name (no '/', ':' or '@') that is not an
  * IMAGE_MAP alias may be a name a previous publishImageAs bound — the platform
  * hands exactly that name back as the create-time `image` once the publish is
- * known live, so create() must boot it through images.fromName WITHOUT an app
- * lookup, a registry resolve or a build (Modal's own guidance: named Images
- * with Sandboxes never block on rebuilds). A bare name that was never
- * published (NotFound) stays what it always was: a Docker Hub library ref.
+ * known live, so create() must boot it through images.fromName WITHOUT a
+ * registry resolve or a build (Modal's own guidance: named Images with
+ * Sandboxes never block on rebuilds). create() still fetches its app EXACTLY
+ * ONCE — sandboxes.create(app, image) needs one — while prepareImage on a
+ * published name needs no app at all; both counts are asserted below. A bare
+ * name that was never published (NotFound) stays what it always was: a Docker
+ * Hub library ref.
  */
 async function testCreateBootsPublishedNamesWithoutBuilding(): Promise<void> {
   console.log("\n[10e] create() - a published name boots via images.fromName, no build");
@@ -1189,7 +1192,14 @@ async function testCreateBootsPublishedNamesWithoutBuilding(): Promise<void> {
   assertEqual(fromName, ["evolve-eval-cafebabe"], "a bare non-IMAGE_MAP name is looked up as a published name");
   assertEqual(builds, 0, "and boots WITHOUT a build");
   assertEqual(fromRegistry, [], "…or a registry resolve");
+  assertEqual(appLookups, 1, "create() fetches the app once — sandboxes.create(app, image) needs it");
   assert(created[0] === namedImage, "the sandbox boots the fromName-resolved image itself");
+
+  // prepareImage is the path that truly never touches the app: resolving a
+  // published name returns before getApp, and there is no sandbox to create.
+  await provider.prepareImage("evolve-eval-cafebabe");
+  assertEqual(appLookups, 1, "prepareImage on a published name performs ZERO app lookups");
+  assertEqual(builds, 0, "and still no build");
 }
 
 async function testCreateFallsBackToRegistryWhenNameUnpublished(): Promise<void> {

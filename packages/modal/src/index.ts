@@ -1604,11 +1604,13 @@ export class ModalProvider implements SandboxProvider {
     const tag = IMAGE_MAP[imageName] ?? imageName;
     // PUBLISHED-NAME BOOT. A bare token (no '/', ':' or '@') that is not an
     // IMAGE_MAP alias may be a name a previous publishImageAs bound; resolving
-    // it through images.fromName boots the already-built image with NO app
-    // lookup, no registry resolve and no build — Modal's own guidance for
-    // Sandboxes ("it's recommended to use Modal's named Images with
-    // sandboxes"; from_name references the Image "in a way that's guaranteed
-    // to not block on rebuilds" — modal.com/docs/guide/sandbox). A bare name
+    // it through images.fromName yields the already-built image with NO app
+    // lookup, no registry resolve and no build IN THIS RESOLUTION (create()
+    // separately fetches its app once, because sandboxes.create needs one;
+    // prepareImage returns here and never touches the app) — Modal's own
+    // guidance for Sandboxes ("it's recommended to use Modal's named Images
+    // with sandboxes"; from_name references the Image "in a way that's
+    // guaranteed to not block on rebuilds" — modal.com/docs/guide/sandbox). A bare name
     // that was never published answers NotFound and stays what it always was:
     // a Docker Hub library ref ("alpine"), resolved below. The one behavior
     // change for such names is precedence — a published name shadows its
