@@ -783,7 +783,7 @@ A rate limit is a delay, not a mystery: a `429` prints one line naming the limit
 
 Closed sets are validated at the keyboard: a typo in `--stream`, `--status`, or `-e/--env` is a usage error naming the legal values, never a round trip.
 
-Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish SETTLED — the version `READY`, built and active), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`; for a publish, a version that settled `FAILED` or could not be confirmed settled in time), `2` usage error.
+Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish SETTLED — the version `READY`, built and, on a dataset you own, active), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`; for a publish, a version that settled `FAILED` or could not be confirmed settled in time), `2` usage error.
 
 ### Signing in
 
@@ -1186,9 +1186,9 @@ const localPublish = await catalog.publish({
 // tarball's sha256 — the version's source identity on the server — is
 // reproducible.
 
-// Block until the publish SETTLES: the version READY (fully built — task
-// images and sandbox templates — and, on a dataset you own, already the
-// ACTIVE one) or FAILED. COMPLETED means READY: the import IS the whole
+// Block until the publish SETTLES: the version READY (every task image in
+// the platform registry — and, on a dataset you own, already the ACTIVE
+// one) or FAILED. COMPLETED means READY: the import IS the whole platform
 // build, so the settle phase is one confirming read.
 const done = await catalog.watchImport(publishJob.id, {
     onStatus: (imp) => console.log(imp.status, imp.task_count),
@@ -1219,7 +1219,7 @@ const history = await catalog.listImports({ dataset: "my-swe", limit: 20 });
 
 A watch whose settle read cannot land ends with the typed `ImportSettleError` (`code: "settle_timeout"`) when the `settleTimeoutMs` backstop elapses — a bound on the wait, not a verdict on the publish, and rare by construction: `COMPLETED` means the version is `READY`, so the settle phase normally confirms in one read. The same deadline bounds the watch's 429/503 patience, so a server that answers nothing but rate limits still ends the wait typed instead of hanging it. When the error's `state` reads `FAILED` the version did settle and the budget was spent retrying the final import read through rate limits — read the failure with `getImport(importId)`. The error carries the last observed `state`.
 
-`warnings` is worth reading even on success: an import whose warnings include `no_solutions_archived` produced a version that can never be activated through this API (`version_not_activatable`) — an import that will never become runnable must not look identical to one that will.
+`warnings` is worth reading even on success: an import whose warnings include `no_solutions_archived` produced a version that permanently lacks its reference-solution record — the record operator verification tooling reads, never a gate. The version still publishes, activates, and runs; the warning exists so that permanent gap is visible instead of silent.
 
 ```bash
 evolve dataset publish \
@@ -1261,9 +1261,9 @@ What happens next:
 
 - **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.
 - **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. GPU declarations (`gpus`, `gpu_types`) are honored — see [GPU tasks](#gpu-tasks); a GPU count no provider can allocate is refused at import with the numbers. Multi-step `[[steps]]` tasks, `[environment.env]` variables, MCP servers, readiness healthchecks, and `[agent] user` all import and run — see [What runs](#what-runs).
-- **Environments are FULLY prepared at import — the import is the whole build.** Dockerfile-defined environments are built once into the platform registry, multi-container service images are resolved and pinned, and the sandbox templates the trials boot from are converted — all before the version can complete. Nothing is left for a job to build later, which is exactly why job creation refuses any version short of `READY`.
+- **Task images are built at import — the import is the whole platform build.** Dockerfile-defined environments are built once into the platform registry and multi-container service images are resolved and pinned — all before the version can complete, which is exactly why job creation refuses any version short of `READY`. Each sandbox provider builds its own boot artifact from those images lazily, at the first trial on it (cached provider-side for every trial after) — so the first trial on a new image legitimately takes 1–3 minutes longer. That is the provider build, not a hang.
 
-`COMPLETED` is the import's terminal success, and it means `READY`: the version is fully built, runnable, visible in the catalog (`catalog.get("my-swe@1.0")`), and — on a dataset you own — already the dataset's **active** version. A publish is finished when its import completes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A publish that fails anywhere in that build — parse, an image build, a template conversion — lands the version in state `FAILED` with the structured reason on the import's `failure`, and changes nothing else: the dataset keeps serving whatever it served before. `evals.start()` against any state short of `READY` is rejected with a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success, and it means `READY`: every task image is in the platform registry, the version is runnable, visible in the catalog (`catalog.get("my-swe@1.0")`), and — on a dataset you own — already the dataset's **active** version. A publish is finished when its import completes: nothing else to call, and `{ name: "my-swe" }` in a job already resolves to what you just published. A publish that fails anywhere in that build — parse, or an image build — lands the version in state `FAILED` with the structured reason on the import's `failure`, and changes nothing else: the dataset keeps serving whatever it served before. `evals.start()` against any state short of `READY` is rejected with a `409 version_not_ready` naming it.
 
 Reference solutions (`solution/`) are archived at publish when the corpus ships them — they are the version's permanent reference-solution record (the checkout is deleted after import), used by operator verification tooling. They gate nothing: a corpus that ships none, or only some, still publishes and activates, and the import's `warnings` say exactly which record the version will permanently lack (`no_solutions_archived`, `partial_solutions_archived`, or `solutions_archiving_disabled`).
 
@@ -1596,7 +1596,7 @@ Everything else is identical: the patch is collected, the verifier scores it, an
 | Status | Meaning |
 |--------|---------|
 | `QUEUED` | Accepted; the corpus row exists and nothing has started |
-| `RUNNING` | The whole build: clone/extract, parse, image builds, template conversion |
+| `RUNNING` | The whole build: clone/extract, parse, image builds into the platform registry |
 | `COMPLETED` | Terminal — the version is `READY` (built, runnable, and on your own dataset already active) |
 | `FAILED` | Terminal — read `failure` |
 
@@ -1946,7 +1946,7 @@ interface DatasetImport {
     name: string;                        // dataset the import creates or extends
     version: string;
     failure: DatasetImportFailure | null;    // never `error` on a 200 body
-    warnings: ImportWarning[];           // e.g. no_solutions_archived → not activatable
+    warnings: ImportWarning[];           // e.g. no_solutions_archived → no reference-solution record
     task_count?: number;
     created_at?: string;
     updated_at?: string;

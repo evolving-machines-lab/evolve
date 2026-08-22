@@ -3859,7 +3859,8 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   // The watch follows the publish to its SETTLED end: the version READY
-  // (fully built — images and sandbox templates — and, on an owner dataset,
+  // (every task image in the platform registry — providers build their boot
+  // artifacts lazily at the first trial — and, on an owner dataset,
   // already ACTIVE) or FAILED. COMPLETED means READY under build-then-READY;
   // the SDK's settle phase adds one confirming read (and covers a mid-deploy
   // older server), and the exit code is the settled outcome.
