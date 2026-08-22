@@ -1731,9 +1731,10 @@ export interface DatasetImportFailure {
 
 /**
  * Non-fatal but consequential import outcome. A version whose warnings include
- * `no_solutions_archived` cannot be activated through this API
- * (`version_not_activatable`) — an import that will never become runnable must
- * not look identical to one that will.
+ * `no_solutions_archived` permanently lacks its reference-solution record —
+ * the record operator verification tooling reads, never a gate. The version
+ * still publishes, activates, and runs; the warning makes the permanent gap
+ * visible instead of silent.
  */
 export interface ImportWarning {
   code:
@@ -2086,8 +2087,9 @@ export interface DatasetsClient {
   /**
    * Watch a publish to its settled end: poll getImport() until the import is
    * terminal, then confirm the version against the dataset detail. Under
-   * build-then-READY, COMPLETED means the version is READY — fully built
-   * (task images and sandbox templates) and, on an owner-stamped dataset,
+   * build-then-READY, COMPLETED means the version is READY — every task
+   * image in the platform registry (each provider builds its boot artifact
+   * lazily at the first trial) and, on an owner-stamped dataset,
    * already active — so the settle phase is normally the single confirming
    * read; against a mid-deploy older server it keeps polling until the
    * version reaches READY, ARCHIVED, or FAILED. A failed build rides the
