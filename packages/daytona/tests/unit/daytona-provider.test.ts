@@ -6,7 +6,8 @@
  * Tests:
  *   1. wrapCommand() — user param: root sudo wrapper, non-root passthrough
  *   2. mapNetworkPolicy() — Evolve network policy → Daytona create() params
- *      (IPv4 CIDR pinning, DNS resolution, typed rejections)
+ *      (CIDRs → networkAllowList, hostnames/*.wildcards → domainAllowList,
+ *      mutual exclusivity, typed rejections — daytona.io/docs/en/network-limits)
  *   3. imageRegistryHost() — private registry detection for DaytonaImagePullError
  *   4. toSandboxInfo() — real API timestamps, no fabrication
  *   5. daytonaStateToEvolveState() — list() state filter mapping
@@ -34,6 +35,7 @@ import {
   _testToSandboxInfo,
   _testDaytonaStateToEvolveState,
   DAYTONA_MAX_NETWORK_ALLOWLIST,
+  DAYTONA_MAX_DOMAIN_ALLOWLIST,
   DAYTONA_AUTO_DELETE_GRACE_MINUTES,
   DaytonaNetworkPolicyError,
   DaytonaResourcesError,
@@ -245,70 +247,97 @@ async function testNetworkIpv4Allowlist(): Promise<void> {
   );
 }
 
-async function testNetworkHostnamePinning(): Promise<void> {
-  console.log("\n[2e] mapNetworkPolicy() - hostnames DNS-pinned to /32s at create time (loudly)");
+async function testNetworkHostnamesToDomainAllowList(): Promise<void> {
+  console.log("\n[2e] mapNetworkPolicy() - hostnames → domainAllowList, verbatim, no DNS");
 
-  const resolved: string[] = [];
-  const resolver = async (hostname: string) => {
-    resolved.push(hostname);
-    return ["1.2.3.4", "5.6.7.8"];
-  };
-
-  const { result, warnings } = await captureWarnings(() =>
-    _testMapNetworkPolicy(
-      { outbound: "blocked", allowedDestinations: ["10.1.2.3", "api.anthropic.com"] },
-      resolver
-    )
-  );
-
+  // Daytona's network-limits docs: domainAllowList "restricts to specific
+  // domains" — a real DNS/domain layer, so hostnames are forwarded AS NAMES.
+  // Nothing is resolved and nothing is pinned: a host that rotates DNS keeps
+  // working, which is exactly what the old create-time /32 pinning broke.
   assertEqual(
-    result,
-    { networkBlockAll: false, networkAllowList: "10.1.2.3/32,1.2.3.4/32,5.6.7.8/32" },
-    "Hostname A records appended as /32 CIDRs after literal IPs"
-  );
-  assertEqual(resolved, ["api.anthropic.com"], "Only the hostname destination was resolved");
-  assert(
-    warnings.some((w) => w.includes("api.anthropic.com") && w.includes("BLOCKED")),
-    "DNS-rotation caveat is warned loudly at create time"
+    await _testMapNetworkPolicy({
+      outbound: "blocked",
+      allowedDestinations: ["api.anthropic.com", "example.com"],
+    }),
+    { networkBlockAll: false, domainAllowList: "api.anthropic.com,example.com" },
+    "Hostnames map to domainAllowList verbatim (no DNS pinning)"
   );
 }
 
-async function testNetworkHostnameDedupe(): Promise<void> {
-  console.log("\n[2f] mapNetworkPolicy() - duplicate CIDRs deduped");
+async function testNetworkDomainDedupe(): Promise<void> {
+  console.log("\n[2f] mapNetworkPolicy() - duplicate destinations deduped in both lists");
 
-  const { result } = await captureWarnings(() =>
-    _testMapNetworkPolicy(
-      { outbound: "blocked", allowedDestinations: ["1.2.3.4", "example.com"] },
-      async () => ["1.2.3.4"]
-    )
+  assertEqual(
+    await _testMapNetworkPolicy({
+      outbound: "blocked",
+      allowedDestinations: ["example.com", "example.com"],
+    }),
+    { networkBlockAll: false, domainAllowList: "example.com" },
+    "Duplicate domains produce a single entry"
   );
   assertEqual(
-    result,
+    await _testMapNetworkPolicy({
+      outbound: "blocked",
+      allowedDestinations: ["1.2.3.4", "1.2.3.4/32"],
+    }),
     { networkBlockAll: false, networkAllowList: "1.2.3.4/32" },
-    "Hostname resolving to an already-listed IP produces a single entry"
+    "A bare IP and its /32 spelling dedupe to one CIDR entry"
   );
 }
 
-async function testNetworkWildcardThrows(): Promise<void> {
-  console.log("\n[2g] mapNetworkPolicy() - wildcard hostnames are typed-rejected, never weakened");
+async function testNetworkWildcards(): Promise<void> {
+  console.log("\n[2g] mapNetworkPolicy() - *.prefix wildcards map to domainAllowList; other shapes are typed-rejected");
 
-  let error: unknown;
-  let resolverCalled = false;
-  try {
-    await _testMapNetworkPolicy(
-      { outbound: "blocked", allowedDestinations: ["*.openai.com"] },
-      async () => {
-        resolverCalled = true;
-        return ["9.9.9.9"];
-      }
+  // The docs' one wildcard form: "Prefix a domain with `*.` to allow the base
+  // domain and its subdomains".
+  assertEqual(
+    await _testMapNetworkPolicy({
+      outbound: "blocked",
+      allowedDestinations: ["*.daytona.io", "example.com"],
+    }),
+    { networkBlockAll: false, domainAllowList: "*.daytona.io,example.com" },
+    "*.prefix wildcard forwards verbatim next to plain domains"
+  );
+
+  // Any OTHER wildcard placement is not expressible on Daytona's wire.
+  for (const dest of ["api.*.com", "foo*", "*"]) {
+    let error: unknown;
+    try {
+      await _testMapNetworkPolicy({ outbound: "blocked", allowedDestinations: [dest] });
+    } catch (e) {
+      error = e;
+    }
+    assert(error instanceof DaytonaNetworkPolicyError, `"${dest}" throws DaytonaNetworkPolicyError`);
+    assertEqual(
+      (error as DaytonaNetworkPolicyError).reason,
+      "wildcard-hostname",
+      `"${dest}" reason = wildcard-hostname (only the *.domain prefix form is documented)`
     );
+    assertEqual((error as DaytonaNetworkPolicyError).destination, dest, "Error carries the destination");
+  }
+}
+
+async function testNetworkMixedAllowlistThrows(): Promise<void> {
+  console.log("\n[2g2] mapNetworkPolicy() - mixing CIDRs and domains is typed-rejected (mutually exclusive lists)");
+
+  // network-limits docs: "The options are mutually exclusive. Set at most one
+  // non-empty value. Sending a conflicting combination returns a 400 error."
+  // Refusing here keeps the 400 out of production and names the fix.
+  let error: unknown;
+  try {
+    await _testMapNetworkPolicy({
+      outbound: "blocked",
+      allowedDestinations: ["10.0.0.0/8", "api.anthropic.com"],
+    });
   } catch (e) {
     error = e;
   }
   assert(error instanceof DaytonaNetworkPolicyError, "Throws DaytonaNetworkPolicyError");
-  assertEqual((error as DaytonaNetworkPolicyError).reason, "wildcard-hostname", "reason = wildcard-hostname");
-  assertEqual((error as DaytonaNetworkPolicyError).destination, "*.openai.com", "Error carries the destination");
-  assert(!resolverCalled, "Rejection happens before any DNS lookup");
+  assertEqual((error as DaytonaNetworkPolicyError).reason, "mixed-allowlist", "reason = mixed-allowlist");
+  assert(
+    String(error).includes("mutually exclusive"),
+    "Message states the two lists are mutually exclusive on Daytona's wire"
+  );
 }
 
 async function testNetworkIpv6Throws(): Promise<void> {
@@ -323,40 +352,6 @@ async function testNetworkIpv6Throws(): Promise<void> {
   assert(error instanceof DaytonaNetworkPolicyError, "Throws DaytonaNetworkPolicyError");
   assertEqual((error as DaytonaNetworkPolicyError).reason, "ipv6-unsupported", "reason = ipv6-unsupported");
   assert(String(error).includes("IPv4"), "Error explains Daytona is IPv4-CIDR-only");
-}
-
-async function testNetworkUnresolvableThrows(): Promise<void> {
-  console.log("\n[2i] mapNetworkPolicy() - unresolvable hostnames are typed-rejected");
-
-  let error: unknown;
-  try {
-    await _testMapNetworkPolicy(
-      { outbound: "blocked", allowedDestinations: ["nope.invalid"] },
-      async () => {
-        throw new Error("ENOTFOUND nope.invalid");
-      }
-    );
-  } catch (e) {
-    error = e;
-  }
-  assert(error instanceof DaytonaNetworkPolicyError, "Resolver failure throws DaytonaNetworkPolicyError");
-  assertEqual((error as DaytonaNetworkPolicyError).reason, "unresolvable-hostname", "reason = unresolvable-hostname");
-  assert(String(error).includes("ENOTFOUND"), "Original DNS error surfaced in the message");
-
-  let emptyError: unknown;
-  try {
-    await _testMapNetworkPolicy(
-      { outbound: "blocked", allowedDestinations: ["empty.example"] },
-      async () => []
-    );
-  } catch (e) {
-    emptyError = e;
-  }
-  assert(
-    emptyError instanceof DaytonaNetworkPolicyError &&
-      (emptyError as DaytonaNetworkPolicyError).reason === "unresolvable-hostname",
-    "Zero A records also throws unresolvable-hostname"
-  );
 }
 
 async function testNetworkAllowlistLimit(): Promise<void> {
@@ -383,20 +378,38 @@ async function testNetworkAllowlistLimit(): Promise<void> {
   assertEqual((error as DaytonaNetworkPolicyError).reason, "allowlist-too-large", "reason = allowlist-too-large");
 }
 
+async function testNetworkDomainAllowlistLimit(): Promise<void> {
+  console.log("\n[2j2] mapNetworkPolicy() - max 20 domains enforced with a typed error");
+
+  const twentyDomains = Array.from({ length: 20 }, (_, i) => `host${i + 1}.example.com`);
+  const ok = await _testMapNetworkPolicy({ outbound: "blocked", allowedDestinations: twentyDomains });
+  assertEqual(
+    (ok.domainAllowList ?? "").split(",").length,
+    DAYTONA_MAX_DOMAIN_ALLOWLIST,
+    "Exactly 20 domain entries are allowed"
+  );
+
+  let error: unknown;
+  try {
+    await _testMapNetworkPolicy({
+      outbound: "blocked",
+      allowedDestinations: [...twentyDomains, "host21.example.com"],
+    });
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaNetworkPolicyError, "21 domains throw DaytonaNetworkPolicyError");
+  assertEqual((error as DaytonaNetworkPolicyError).reason, "allowlist-too-large", "reason = allowlist-too-large");
+  assert(String(error).includes("20"), "Message names the domain cap");
+}
+
 async function testNetworkPortThrows(): Promise<void> {
   console.log("\n[2k] mapNetworkPolicy() - host:port / ip:port are typed-rejected (not read as IPv6)");
 
   for (const dest of ["example.com:443", "1.2.3.4:8080"]) {
     let error: unknown;
-    let resolverCalled = false;
     try {
-      await _testMapNetworkPolicy(
-        { outbound: "blocked", allowedDestinations: [dest] },
-        async () => {
-          resolverCalled = true;
-          return ["9.9.9.9"];
-        }
-      );
+      await _testMapNetworkPolicy({ outbound: "blocked", allowedDestinations: [dest] });
     } catch (e) {
       error = e;
     }
@@ -411,7 +424,6 @@ async function testNetworkPortThrows(): Promise<void> {
       `"${dest}" message says allowlists filter hosts/IPs only and to strip the port`
     );
     assertEqual((error as DaytonaNetworkPolicyError).destination, dest, "Error carries the destination");
-    assert(!resolverCalled, `"${dest}" rejected before any DNS lookup`);
   }
 }
 
@@ -436,15 +448,8 @@ async function testNetworkInvalidIpv4Throws(): Promise<void> {
 
   for (const dest of ["300.1.1.1", "10.0.0.0/40"]) {
     let error: unknown;
-    let resolverCalled = false;
     try {
-      await _testMapNetworkPolicy(
-        { outbound: "blocked", allowedDestinations: [dest] },
-        async () => {
-          resolverCalled = true;
-          return ["9.9.9.9"];
-        }
-      );
+      await _testMapNetworkPolicy({ outbound: "blocked", allowedDestinations: [dest] });
     } catch (e) {
       error = e;
     }
@@ -584,19 +589,19 @@ async function testCreateValidatesBeforeNetwork(): Promise<void> {
     "create() throws the typed network policy error offline (no API call needed)"
   );
 
-  let wildcardError: unknown;
+  let mixedError: unknown;
   try {
     await provider.create({
       image: "evolve-all",
-      network: { outbound: "blocked", allowedDestinations: ["*.openai.com"] },
+      network: { outbound: "blocked", allowedDestinations: ["10.0.0.0/8", "api.openai.com"] },
     });
   } catch (e) {
-    wildcardError = e;
+    mixedError = e;
   }
   assert(
-    wildcardError instanceof DaytonaNetworkPolicyError &&
-      (wildcardError as DaytonaNetworkPolicyError).reason === "wildcard-hostname",
-    "create() typed-rejects wildcard hostnames offline"
+    mixedError instanceof DaytonaNetworkPolicyError &&
+      (mixedError as DaytonaNetworkPolicyError).reason === "mixed-allowlist",
+    "create() typed-rejects a mixed CIDR+domain allowlist offline"
   );
 }
 
@@ -2096,6 +2101,14 @@ async function testUpdateMapperClearsStaleAllowlists(): Promise<void> {
     "a CIDR allowlist clears the domain allowlist it replaces"
   );
   assertEqual(
+    await _testMapNetworkPolicyForUpdate({
+      outbound: "blocked",
+      allowedDestinations: ["api.anthropic.com", "*.daytona.io"],
+    }),
+    { networkBlockAll: false, networkAllowList: "", domainAllowList: "api.anthropic.com,*.daytona.io" },
+    "a domain allowlist clears the CIDR allowlist it replaces"
+  );
+  assertEqual(
     await _testMapNetworkPolicyForUpdate({ outbound: "blocked" }),
     { networkBlockAll: true, networkAllowList: "", domainAllowList: "" },
     "sealing the box clears both allowlists rather than leaving them behind"
@@ -2110,7 +2123,7 @@ async function testUpdateMapperClearsStaleAllowlists(): Promise<void> {
 async function testUpdateMapperKeepsCreateRefusals(): Promise<void> {
   console.log("\n[8b] the update path refuses exactly what create refuses");
 
-  for (const destination of ["2001:db8::1", "*.example.com", "example.com:8443"]) {
+  for (const destination of ["2001:db8::1", "api.*.example.com", "example.com:8443"]) {
     let err: unknown;
     try {
       await _testMapNetworkPolicyForUpdate({
@@ -2178,12 +2191,13 @@ const tests = [
   testNetworkOpenWithDestinationsThrows,
   testNetworkBlockedAll,
   testNetworkIpv4Allowlist,
-  testNetworkHostnamePinning,
-  testNetworkHostnameDedupe,
-  testNetworkWildcardThrows,
+  testNetworkHostnamesToDomainAllowList,
+  testNetworkDomainDedupe,
+  testNetworkWildcards,
+  testNetworkMixedAllowlistThrows,
   testNetworkIpv6Throws,
-  testNetworkUnresolvableThrows,
   testNetworkAllowlistLimit,
+  testNetworkDomainAllowlistLimit,
   testNetworkPortThrows,
   testNetworkTrueIpv6StillThrowsIpv6,
   testNetworkInvalidIpv4Throws,
