@@ -1664,9 +1664,10 @@ class DatasetImportFailure:
 class ImportWarning:
     """Non-fatal but consequential import outcome.
 
-    A version whose warnings include ``no_solutions_archived`` cannot be
-    activated through this API (``version_not_activatable``) — an import that
-    will never become runnable must not look identical to one that will.
+    A version whose warnings include ``no_solutions_archived`` permanently
+    lacks its reference-solution record — the record operator verification
+    tooling reads, never a gate. The version still publishes, activates, and
+    runs; the warning makes the permanent gap visible instead of silent.
     """
     code: str
     message: Optional[str] = None
@@ -2579,8 +2580,8 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     )
     dataset_import.failure = _map_import_failure(data.get('failure'))
     # Consequential, not cosmetic: an import whose warnings include
-    # no_solutions_archived can never be activated, and dropping the field made
-    # it look identical to one that can.
+    # no_solutions_archived permanently lacks its reference-solution record,
+    # and dropping the field would hide that gap.
     dataset_import.warnings = [
         ImportWarning(code=item.get('code', ''), message=item.get('message'))
         for item in data.get('warnings', [])
@@ -3373,8 +3374,9 @@ class DatasetsClient:
         """Watch a publish to its SETTLED end: READY or FAILED.
 
         Polls ``get_import()`` until the import is terminal. COMPLETED means
-        the version is READY under build-then-READY — fully built (images and
-        sandbox templates) and, on an owner-stamped dataset, already ACTIVE —
+        the version is READY under build-then-READY — every task image in the
+        platform registry (each provider builds its boot artifact lazily at
+        the first trial) and, on an owner-stamped dataset, already ACTIVE —
         so the settle phase is normally one confirming dataset-detail read;
         against a mid-deploy OLDER server it keeps polling until the VERSION
         itself lands READY, ARCHIVED, or FAILED (a failure rides the returned

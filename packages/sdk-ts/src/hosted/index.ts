@@ -937,8 +937,8 @@ function mapDatasetImport(raw: Record<string, unknown>): DatasetImport {
     version: raw.version as string,
     failure: (raw.failure as DatasetImportFailure | null) ?? null,
     // Consequential, not cosmetic: an import whose warnings include
-    // no_solutions_archived can never be activated, and dropping the field
-    // made it look identical to one that can.
+    // no_solutions_archived permanently lacks its reference-solution record,
+    // and dropping the field would hide that gap.
     warnings: (raw.warnings as ImportWarning[]) ?? [],
   };
   if (typeof raw.task_count === "number") {
@@ -1479,7 +1479,8 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
    * Phase two of watchImport — the confirming read behind the import surface.
    *
    * Under the build-then-READY model the server completes an import only
-   * when the version is READY (fully built — images and sandbox templates —
+   * when the version is READY (every task image in the platform registry —
+   * each provider builds its boot artifact lazily at the first trial —
    * and, on an owner-stamped dataset, already ACTIVE), so COMPLETED and
    * "settled" are the same fact and this phase normally confirms it in one
    * dataset-detail read. It still POLLS rather than assumes, for exactly one
