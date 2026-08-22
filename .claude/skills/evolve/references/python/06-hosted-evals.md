@@ -441,6 +441,14 @@ evolve.json               the platform's own record: gateway cost and tokens per
 
 An artifact the trial never recorded is an **absent file**, never an empty placeholder — Harbor's own law, so listing the directory is an honest inventory of what the run produced.
 
+The **job archive** writes three more files per trial that a single-trial download cannot: `lock.json` (the resolved trial inputs), `trial.log` (the lifecycle summary) and `artifacts/` with its `manifest.json`. They are built from records outside the trial's own tree — dataset and arm state, and a separate artifact store — so download the job when you need the complete tree.
+
+`result.json` states `agent_result.cost_usd` **only when the gateway measured one** — the same law the job archive follows. A trial whose spend is still a floor, or was never measured at all, states `null` there rather than a figure no meter produced; `evolve.json` carries the raw number next to the `spend_source` lane that qualifies it. Tokens are always stated: they were counted either way.
+
+The CLI states the same thing in one cell, because it has only one. A measured reading prints plainly (`$0.06`), a provisional one prints as the lower bound it is (`at least $0.06`), and a trial nobody measured prints `-`. It applies everywhere a figure appears without its lane: the `spent` and `spent (judge)` rows of `evolve trial show`, and the `SPENT` column of every trial listing.
+
+A freshly settled trial is normally unmeasured for its first few minutes while the gateway's spend log catches up, so `-` there means "not read yet", not "free". A **job** total is different in kind — it is real metered money, but every unmeasured trial folded a zero into the sum, so it prints as `at least $X` whenever the job reports trials its total cannot account for. A plain job figure means "no shortfall we can prove", which is not the same as final.
+
 This tree is assembled on your machine out of the trial's own artifacts, which is why it is not identical to the per-trial directories inside [the job archive](#download-the-archive): the server builds those, so they also carry `lock.json`, `trial.log` and `artifacts/`, and they have no `agent/trace-parsed.jsonl`. `evolve job download` adds an `evolve.json` of its own — one at the job root, one in every trial directory.
 
 The two modes are exclusive, and `--cursor`/`--limit` page only `--stream trace-parsed` — the CLI refuses any other mix as a usage error instead of letting one flag silently win.
@@ -761,7 +769,7 @@ A rate limit is a delay, not a mystery: a `429` prints one line naming the limit
 
 Closed sets are validated at the keyboard: a typo in `--stream`, `--status`, or `-e/--env` is a usage error naming the legal values, never a round trip.
 
-Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish `COMPLETED`), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`), `2` usage error.
+Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish SETTLED — the version `READY`, built and, on a dataset you own, active), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`; for a publish, a version that settled `FAILED` or could not be confirmed settled in time), `2` usage error.
 
 ### Signing in
 
@@ -1081,7 +1089,7 @@ The verdict is narrower than the full set of things a provider can decline, and 
 
 The rest are decided when the sandbox is actually created, so they surface as a trial that ends `INFRASTRUCTURE_ERROR` with the reason in its failure detail rather than as a `400` at creation. There are two, and both are Daytona-and-Modal specifics you can check yourself before choosing a provider:
 
-- **Daytona serves IP-based allowlists only.** Its network filter takes IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so a task's own list gets slightly fewer. A task whose `allowlist` names a hostname, or needs more than the cap, fails on Daytona when its sandbox is created. Run it on e2b or Modal, which serve hostname allowlists. Daytona serves `no-network` and `public` normally.
+- **Daytona's allowlist carries one kind of entry per sandbox, and the task's shape picks the kind.** A single-container task gets the IP list: IPv4 addresses and CIDRs, capped at 10 entries — a cap that also has to fit the address the agent uses to reach its model, so the task's own list gets slightly fewer — and an `allowlist` naming a hostname fails on Daytona when the sandbox is created. A multi-container task gets the hostname list instead, because its images are pulled from registry hostnames and Daytona will not carry an IP list and a hostname list on the same sandbox: its `allowlist` must name hostnames (a `*.` prefix wildcard covers a domain and its subdomains), capped at 20 entries that also have to fit the model address and the registry endpoints, and there an IP or CIDR entry is what fails at creation. Either failure names the entry and the fix. Run what Daytona refuses on e2b or Modal, which serve both kinds together. Daytona serves `no-network` and `public` normally.
 - **Modal caps every sandbox at 24 hours.** A task whose timeout exceeds the cap fails fast when its sandbox is created — never truncated mid-run.
 
 ### GPU tasks
@@ -1110,7 +1118,7 @@ Four task shapes the platform does not run today. The first and the last are **r
 
 ## Bring your own dataset
 
-Any corpus in the task layout runs on the hosted stack: point at it, publish it, let the activation gate certify it, run it. A corpus in another format gets converted *into* the layout first — it is small, and a complete task fits on one screen (below).
+Any corpus in the task layout runs on the hosted stack: point at it, publish it, run it. A corpus in another format gets converted *into* the layout first — it is small, and a complete task fits on one screen (below).
 
 What you publish is **private to your account**. It never appears in anyone else's catalog, and another account asking for its name reads a plain `404 dataset_not_found` — existence is never leaked. Your own `catalog.list()` shows the shared platform datasets plus your own. A name belongs to its first publisher: re-publishing a name you own extends that dataset with a new version, while publishing a name owned by anyone else — a platform dataset or another account's private one — is refused with a `409 dataset_name_taken`.
 
@@ -1155,11 +1163,16 @@ local_publish = await catalog.publish(
 # tarball's sha256 — the version's source identity on the server — is
 # reproducible.
 
-# Block until COMPLETED or FAILED
+# Block until the publish SETTLES: the version READY (every task image in
+# the platform registry — and, on a dataset you own, already the ACTIVE
+# one) or FAILED. COMPLETED means READY: the import IS the whole platform
+# build, so the settle phase is one confirming read.
 done = await catalog.watch_import(
     publish_job.id,
     on_status=lambda imp: print(imp.status, imp.task_count),
+    on_version=lambda v, d: print(v.state),
     poll_interval_s=2.0,          # (optional) default 2s
+    settle_timeout_s=1800.0,      # (optional) settle-phase backstop, default 30min
 )
 
 if done.status == 'FAILED':
@@ -1177,9 +1190,11 @@ async for imp in catalog.list_imports(status='FAILED'):
 history = await catalog.list_imports(dataset='my-swe', limit=20)
 ```
 
-`get_import(id)` is the single read behind all of this — status, `task_count`, `failure` once there is one, and `warnings`. `watch_import()` is a poll loop over it, so reach for `get_import()` when you drive your own scheduler. A terminal import stays readable, id included, for as long as its dataset exists — deleting the dataset takes its import records with it, and a later `get_import` answers the same not-found as an id that never existed.
+`get_import(id)` is the single read behind the import phase — status, `task_count`, `failure` once there is one, and `warnings`. `watch_import()` polls it to a terminal import status, then keeps polling `get()` until the version settles (the settle phase above), so reach for `get_import()` when you drive your own scheduler. A terminal import stays readable, id included, for as long as its dataset exists — deleting the dataset takes its import records with it, and a later `get_import` answers the same not-found as an id that never existed.
 
-`warnings` is worth reading even on success: an import whose warnings include `no_solutions_archived` produced a version that can never be activated through this API (`version_not_activatable`) — an import that will never become runnable must not look identical to one that will.
+A watch whose settle read cannot land ends with the typed `ImportSettleError` (`code='settle_timeout'`) when the `settle_timeout_s` backstop elapses — a bound on the wait, not a verdict on the publish, and rare by construction: `COMPLETED` means the version is `READY`, so the settle phase normally confirms in one read. The same deadline bounds the watch's 429/503 patience, so a server that answers nothing but rate limits still ends the wait typed instead of hanging it. When the error's `state` reads `FAILED` the version did settle and the budget was spent retrying the final import read through rate limits — read the failure with `get_import(import_id)`. The error carries the last observed `state`.
+
+`warnings` is worth reading even on success: an import whose warnings include `no_solutions_archived` produced a version that permanently lacks its reference-solution record — the record operator verification tooling reads, never a gate. The version still publishes, activates, and runs; the warning exists so that permanent gap is visible instead of silent.
 
 ```bash
 evolve dataset publish \
@@ -1221,21 +1236,11 @@ What happens next:
 
 - **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.
 - **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. GPU declarations (`gpus`, `gpu_types`) are honored — see [GPU tasks](#gpu-tasks); a GPU count no provider can allocate is refused at import with the numbers. Multi-step `[[steps]]` tasks, `[environment.env]` variables, MCP servers, readiness healthchecks, and `[agent] user` all import and run — see [What runs](#what-runs).
-- **Environments are prepared at import.** Dockerfile-defined environments are built once; multi-container service images are resolved and pinned so runs are reproducible.
-- **The activation gate certifies every task** before the version goes live:
-  - **gold** — the task's reference solution (`solution/`) is pushed through the real agent-side + verifier path and must score exactly `1.0`. Proof the task is solvable as written.
-  - **no-op** — an empty submission goes straight to the verifier and must *not* score `1.0`. A task a do-nothing agent passes measures nothing.
+- **Task images are built at import — the import is the whole platform build.** Dockerfile-defined environments are built once into the platform registry and multi-container service images are resolved and pinned — all before the version can complete, which is exactly why job creation refuses any version short of `READY`. Each sandbox provider builds its own boot artifact from those images lazily, at the first trial on it (cached provider-side for every trial after) — so the first trial on a new image legitimately takes 1–3 minutes longer. That is the provider build, not a hang.
 
-`COMPLETED` is the import's terminal success: the corpus landed as a dataset version, visible in the catalog (`catalog.get('my-swe@1.0')`) in state `VALIDATING`. The gate then runs, and a version that passes it in full reaches `READY` — the one state that accepts jobs — and becomes the dataset's active version in the same step. A publish is therefore finished when its gate passes: nothing else to call, and `{'name': 'my-swe'}` in a job already resolves to what you just published. A version that fails its gate terminally lands in state `FAILED`, with the reason attached: every version row carries a `gate` field — a `DatasetVersionGate` with `status`, `attempts`, `code`, `message`, `failed_tasks` (a list of `DatasetVersionGateFailedTask` naming each ineligible task with the gate's own `outcome` and `reasons`, the first 25), and `failed_task_count` — the true total, so a gate that failed more than 25 tasks is never under-reported by the list's length — and `evolve dataset show` prints a failed gate as its own line (`version 1.0 activation gate FAILED: <the server's reason>`) followed by one indented line per failed task (`  starter-task: gold run produced no usable score …`), so a dead publish is never mistaken for one still validating and the cause is on the page, not just the count. The failure changes nothing else — the dataset keeps serving whatever it served before. `evals.start()` against any other state is rejected with a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success, and it means `READY`: every task image is in the platform registry, the version is runnable, visible in the catalog (`catalog.get('my-swe@1.0')`), and — on a dataset you own — already the dataset's **active** version. A publish is finished when its import completes: nothing else to call, and `{'name': 'my-swe'}` in a job already resolves to what you just published. A publish that fails anywhere in that build — parse, or an image build — lands the version in state `FAILED` with the structured reason on the import's `failure`, and changes nothing else: the dataset keeps serving whatever it served before. `evals.start()` against any state short of `READY` is rejected with a `409 version_not_ready` naming it.
 
-One corpus shape skips the gate honestly: a publish whose tasks ship **no reference solutions at all**. There is nothing to prove — no gold solution exists, so no gold run is possible — and Harbor publishes solution-less tasks with zero ceremony, so this platform does too: shortly after the import completes, the version activates on its own with its gate stamped `UNPROVEN` and the reason recorded. Never `PASSED`, because nothing passed; never `FAILED`, because nothing failed — the third word exists so a proof that ran can never be confused with one that could not. The version reaches `READY` and serves jobs like any other. The label is visible everywhere the gate is: the version row's `gate.status` reads `UNPROVEN` with the stamp beside it (`unproven: { reason, at }` on the wire), and `evolve dataset show` prints it as its own line — `version 1.0 gate UNPROVEN: no reference solutions to run`. The lane is all-or-nothing: a corpus where only *some* tasks carry a `solution/` runs the real gate, and the tasks without solutions fail it — a partial archive is a failed proof, never half of an unproven one.
-
-The gate is queued work, and the queue says so: within seconds of the import completing, the version's `gate` field shows `PENDING`. Each worker proves one version's gate at a time, and a single gate run can take minutes to hours of real sandbox work, so a `PENDING` gate may wait while another version's gate finishes ahead of it. `PENDING` means scheduled and waiting; `RUNNING` means your tasks are being proven right now. Neither means stuck.
-
-Two gate rules worth knowing before your first publish:
-
-- **The gold run must write a reward file.** The gate scores the reference solution through the real verifier, and the verifier's verdict is exactly Harbor's contract: `tests/test.sh` writes `/logs/verifier/reward.json` — one flat JSON object of named numeric scores (the singular flat dict form; no nesting, no strings) — or `/logs/verifier/reward.txt` holding one number. `reward.json` wins when both exist; neither file is a verifier error, and a gold run that produces no usable score fails the gate.
-- **Harbor's starter template gate-fails by design.** The `harbor task init` scaffold imports cleanly, but its stub `tests/test.sh` is comments only and writes no reward file — so its gold run produces no score and the gate fails with a message saying exactly that. Fill in the tests (make them write the reward file) and republish; the stub is a scaffold to complete, not a runnable task.
+Reference solutions (`solution/`) are archived at publish when the corpus ships them — they are the version's permanent reference-solution record (the checkout is deleted after import), used by operator verification tooling. They gate nothing: a corpus that ships none, or only some, still publishes and activates, and the import's `warnings` say exactly which record the version will permanently lack (`no_solutions_archived`, `partial_solutions_archived`, or `solutions_archiving_disabled`).
 
 ### Activating
 
@@ -1249,7 +1254,7 @@ await catalog.activate('my-swe', '1.0')
 evolve dataset activate my-swe 1.0
 ```
 
-From then on `{'name': 'my-swe'}` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. While the version's activation gate is still scheduled or running the API answers 202 `gate_running` — a healthy "not yet", deliberately not the error envelope — and the SDK raises it as the typed `GateRunningError`: `err.gate` carries the gate's progress (a `GateRunningProgress` with `status`, `tasks`, `unverified`, `ineligible`), and there is normally nothing to do but wait, because a gate that passes activates the version itself. Once the gate has landed, activating is refused with `version_not_ready` for a version whose gate failed (the gate's failure detail rides `details['gate_failure']`), and with `version_not_activatable` for a version in a dead state (`FAILED`, or archived). A version whose import archived no reference solutions is not a dead end: the platform activates it itself with its gate stamped `UNPROVEN` ([Publishing](#publishing)), and an activate call that lands in the short window before that happens answers the same 202 `gate_running`.
+From then on `{'name': 'my-swe'}` in a job resolves to that version, and asking for the version that is already active succeeds without changing anything. A version still building refuses with the typed `409 version_not_ready` naming its state — nothing to do but let the publish finish, since it lands `READY` and active on its own. Activating is refused with `version_not_activatable` for a version in a dead state (`FAILED`, or archived).
 
 ### Getting your corpus back
 
@@ -1297,7 +1302,7 @@ if dataset.upstream and dataset.upstream.moved:
     print(f'{dataset.upstream.ref} has moved past {dataset.upstream.current_commit}')
 ```
 
-`upstream` also carries the same provenance for the **active** version: `git_url` (userinfo stripped — an embedded token never reaches the wire), the requested `ref`, the resolved commit (`current_commit`), and the repository subfolder (`path`, `None` for the repository root). But provenance is not an active-version privilege — **every** git-imported version carries its own `source` object (`ref`, `commit`, `git_url`, `path`) whatever its state, so a version whose activation gate FAILED (which can never activate) still says exactly which bytes it imported; for an annotated tag, `commit` is the peeled commit the clone landed on, never the tag object. A version that did not come from a git remote serves `source=None` — never a fabricated value. Beside the provenance ride the watch fields: where the ref points now (`latest_commit`, `None` when the last check failed), `acked_commit` (the newest commit a local version already exists for), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`.
+`upstream` also carries the same provenance for the **active** version: `git_url` (userinfo stripped — an embedded token never reaches the wire), the requested `ref`, the resolved commit (`current_commit`), and the repository subfolder (`path`, `None` for the repository root). But provenance is not an active-version privilege — **every** git-imported version carries its own `source` object (`ref`, `commit`, `git_url`, `path`) whatever its state, so a version that FAILED (which can never activate) still says exactly which bytes it imported; for an annotated tag, `commit` is the peeled commit the clone landed on, never the tag object. A version that did not come from a git remote serves `source=None` — never a fabricated value. Beside the provenance ride the watch fields: where the ref points now (`latest_commit`, `None` when the last check failed), `acked_commit` (the newest commit a local version already exists for), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`.
 
 It is `None`, not "up to date", when the active version did not come from a git remote — an uploaded corpus, or one published before provenance was recorded. A version pinned to an exact commit sha serves its provenance with the watch at rest (`latest_commit`/`checked_at`/`error` `None`, `moved` `False`): a pin cannot move, and nothing checks one. A tag keeps the watch — a re-pointed tag is an update worth a badge. A failed check keeps the last known answer and sets `error`: a network blip should not quietly erase an update that is genuinely available.
 
@@ -1326,7 +1331,7 @@ my-swe/
         ├── tests/
         │   └── test.sh             # verifier entrypoint — writes the reward
         └── solution/
-            └── solve.sh            # reference solution, run by the activation gate
+            └── solve.sh            # reference solution, archived at publish
 ```
 
 `task.toml` — the declarations from [What runs](#what-runs), honored as written:
@@ -1396,7 +1401,7 @@ else
 fi
 ```
 
-`solution/solve.sh` — the reference solution the activation gate runs; it must earn a `1.0`:
+`solution/solve.sh` — the reference solution, archived at publish for operator verification tooling (a correct one earns a `1.0`):
 
 ```bash
 #!/bin/bash
@@ -1409,7 +1414,7 @@ That's the whole format. The rules that matter when converting:
 - `tests/Dockerfile` is built for real whenever the verifier can own its own image: a `separate` verifier on a task that builds from `environment/Dockerfile` — no pinned `docker_image`, no compose — gets a verifier image built from `tests/`, so grader dependencies installed there are genuinely present. Everywhere else the verifier reuses the task image and the test files are uploaded onto it. The Dockerfile is not built on that path, so it is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — a richer recipe's dependencies would be silently missing, so it is refused by name.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image`, or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service). Any valid public image reference works for `docker_image` — Docker Hub, GHCR, ECR Public, or any other registry a pull can reach without credentials — with the tag pinned, never `:latest`. A reference that does not parse as an image reference is refused at import with the reference named; a reference that parses but cannot be pulled surfaces as an infrastructure error naming the pull, never as a task that quietly scores zero.
 - Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits['job']['default_agent_timeout_sec']` and `default_verifier_timeout_sec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
-- `solution/` (`solve.sh`, or a `solution.patch` to apply) is what the gate certifies with. A corpus that ships none anywhere still publishes and activates, with its gate stamped `UNPROVEN` instead of a proof — see [Publishing](#publishing).
+- `solution/` (`solve.sh`, or a `solution.patch` to apply) is archived at publish as the version's permanent reference-solution record — it gates nothing. A corpus that ships none anywhere (or only some) still publishes and activates; the import's `warnings` name the missing record — see [Publishing](#publishing).
 
 Then publish and run it — exactly the [flow above](#publishing).
 
@@ -1566,8 +1571,8 @@ Everything else is identical: the patch is collected, the verifier scores it, an
 | Status | Meaning |
 |--------|---------|
 | `QUEUED` | Accepted; the corpus row exists and nothing has started |
-| `RUNNING` | Cloning or extracting, then parsing and building the environment |
-| `COMPLETED` | Terminal — the corpus landed as a dataset version |
+| `RUNNING` | The whole build: clone/extract, parse, image builds into the platform registry |
+| `COMPLETED` | Terminal — the version is `READY` (built, runnable, and on your own dataset already active) |
 | `FAILED` | Terminal — read `failure` |
 
 A terminal import stays readable. A successful import used to start answering `404` the moment its version was superseded, telling a watcher holding a week-old id that the import never happened — it `COMPLETED`, and the catalog moving on afterwards does not unmake that.
@@ -1575,10 +1580,10 @@ A terminal import stays readable. A successful import used to start answering `4
 **Dataset version** (`DatasetVersion.state`) — the catalog's lifecycle, distinct from the import's statuses above:
 
 ```
-DRAFT → IMPORTING → BUILDING → VALIDATING → READY
+DRAFT → IMPORTING → BUILDING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or environment build lands `FAILED` before `VALIDATING` is ever reached, a terminal activation-gate failure lands `FAILED` from `VALIDATING` (with the gate's reason on the version's `gate` field, printed by `dataset show`), and `ARCHIVED` shelves a version that has been moved past. An import lands a version at `VALIDATING`; the activation gate (gold + no-op, above) then certifies it and promotes what it certifies — a version that passes reaches `READY`, the only state that accepts jobs, and becomes the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions are certified the same way but sit at `VALIDATING` with a passing gate until an operator promotes them, since its default is not any account's to move.
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or image build lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry — so `READY` means every task image is in the registry; it is the only state that accepts jobs, and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. Each sandbox provider builds its own boot artifact from that image at the first trial on it (cached provider-side for every trial after), so nothing per-provider is built at publish. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move.
 
 All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 
@@ -1833,7 +1838,6 @@ class DatasetVersion:               # one shape on every surface
     created_at: str
     task_count: int
     source: Optional[DatasetVersionSource]  # THIS version's git provenance; None = not a git import
-    gate: Optional[DatasetVersionGate]  # None = no gate scheduled (or an older server)
 
 @dataclass
 class DatasetVersionSource:         # served on EVERY git-imported version, active or not
@@ -1843,40 +1847,11 @@ class DatasetVersionSource:         # served on EVERY git-imported version, acti
     path: Optional[str]             # repository subfolder; None = repository root
 
 @dataclass
-class DatasetVersionGate:           # the activation gate's progress
-    status: str                     # PENDING | RUNNING | PASSED | FAILED | UNPROVEN
-    attempts: int
-    code: Optional[str]             # set on failure, e.g. "gate_failed"
-    message: Optional[str]          # the human reason, set on failure
-    failed_tasks: List[DatasetVersionGateFailedTask]  # the ineligible tasks, first 25
-    failed_task_count: int          # the TRUE total behind the 25-task cap
-    unproven: Optional[DatasetVersionGateUnproven]  # the UNPROVEN stamp; None on every other status
-
-@dataclass
-class DatasetVersionGateUnproven:   # why a version activated with no proof
-    reason: str                     # today always "no reference solutions to run"
-    at: Optional[str]               # when the stamp was written; None on older rows
-
-@dataclass
-class DatasetVersionGateFailedTask:
-    task_name: str
-    outcome: Optional[str]          # FAIL, or ERROR (no usable score)
-    reasons: List[str]              # the gate's own sentences
-
-@dataclass
 class Task:                         # public fields only
     task_name: str
     agent_timeout_sec: int
     verifier_timeout_sec: int
     providers: Dict[str, TaskProviderVerdict]  # where it can run, per provider
-    gate: Optional[TaskGate]        # this task's gate verdict; None until it ran
-
-@dataclass
-class TaskGate:                     # the per-task half of the version's gate
-    outcome: str                    # PASS | FLAKY | FAIL | ERROR
-    flaky: bool
-    reasons: List[str]              # human-readable; empty on PASS
-    ran_at: Optional[str]
 
 @dataclass
 class DatasetImport:
@@ -1885,7 +1860,7 @@ class DatasetImport:
     name: str                       # dataset the import creates or extends
     version: str
     failure: Optional[DatasetImportFailure]    # never `error` on a 200 body
-    warnings: List[ImportWarning]   # e.g. no_solutions_archived → not activatable
+    warnings: List[ImportWarning]   # e.g. no_solutions_archived → no reference-solution record
     task_count: Optional[int]
     created_at: Optional[str]
     updated_at: Optional[str]
