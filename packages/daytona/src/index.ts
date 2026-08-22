@@ -1664,13 +1664,17 @@ export interface SandboxCreateOptions {
    */
   resources?: SandboxResources;
   /**
-   * Provider-neutral outbound network policy, enforced by kernel iptables on
-   * the Daytona runner. "blocked" with no allowedDestinations drops all
-   * egress. With allowedDestinations, Daytona supports IPv4 CIDRs ONLY (max
-   * 10): IPs/CIDRs pass through; hostnames are DNS-resolved ONCE at create
-   * time and pinned as /32 CIDRs — if the host rotates DNS later (CDNs and
-   * cloud APIs often do), its new IPs are BLOCKED for the sandbox's
-   * lifetime. Wildcards, IPv6, and unresolvable hostnames throw
+   * Provider-neutral outbound network policy
+   * (daytona.io/docs/en/network-limits). "blocked" with no
+   * allowedDestinations drops all egress. With allowedDestinations, the list
+   * maps onto exactly one of Daytona's two mutually exclusive allowlists:
+   * IPs/CIDRs → networkAllowList (IPv4 CIDRs, bare IPs sent as /32, max 10);
+   * hostnames and `*.domain` prefix wildcards → domainAllowList (max 20),
+   * forwarded VERBATIM as names — Daytona enforces the domain layer itself,
+   * nothing is DNS-resolved or pinned here. A list mixing CIDRs with
+   * hostnames, and any destination neither list can express — IPv6,
+   * host:port, malformed IPv4, a wildcard anywhere but the `*.` prefix, a
+   * blank or comma-carrying entry, an over-cap list — throws
    * DaytonaNetworkPolicyError rather than silently weakening the policy.
    * Note: on Daytona orgs below Tier 3, org network policy overrides
    * per-sandbox settings server-side.
