@@ -245,10 +245,12 @@ export class DaytonaNetworkPolicyError extends Error {
 /**
  * Typed error for image pull failures on private registries.
  *
- * Daytona has no per-call image pull secret: credentials for private
- * registries (AWS ECR, GHCR, GCP Artifact Registry, private Docker Hub)
- * must be pre-registered in the Daytona dashboard BEFORE creating the
- * sandbox (dashboard → Registries → Add Registry).
+ * Daytona has no per-call image pull secret: the registry must be
+ * pre-registered in the Daytona dashboard BEFORE creating the sandbox
+ * (dashboard → Registries → Add Registry) — username/password for GHCR, GCP
+ * Artifact Registry or private Docker Hub, and for AWS ECR a cross-account
+ * IAM role ARN Daytona assumes server-side (its docs: "Password is not used
+ * for ECR").
  */
 export class DaytonaImagePullError extends Error {
   /** The image reference that failed to pull. */
@@ -258,9 +260,10 @@ export class DaytonaImagePullError extends Error {
     const causeMsg = cause instanceof Error ? cause.message : String(cause ?? "unknown error");
     super(
       `Failed to pull image "${image}" on Daytona: ${causeMsg}. ` +
-        "Private registry images (e.g. AWS ECR) require registry credentials pre-registered in the " +
-        "Daytona dashboard (Registries page) before sandbox creation — Daytona has no per-call image " +
-        "pull secret. Register the registry at https://app.daytona.io, then retry. " +
+        "Private registry images require the registry pre-registered in the Daytona dashboard " +
+        "(Registries page) before sandbox creation — Daytona has no per-call image pull secret; " +
+        "AWS ECR registrations name an IAM role Daytona assumes (no password). " +
+        "Register the registry at https://app.daytona.io, then retry. " +
         "Also ensure the image is linux/amd64 and pinned to a tag or digest (floating tags like " +
         "\"latest\" are rejected by Daytona's snapshot builder)."
     );
