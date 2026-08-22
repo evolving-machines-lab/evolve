@@ -220,6 +220,11 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   publishDataset: "datasets.publish",
   listDatasetImports: "datasets.listImports",
   getDatasetImport: "datasets.getImport",
+  // Session-only admin verb (the platform administrator's browser session is
+  // the one accepted credential; API keys are refused with 403), so it is
+  // deliberately NOT an SDK method — an SDK call could only ever be refused.
+  // x-wave: 2 in the spec = outside the SDKs' wave 1.
+  setDatasetVisibility: null,
   // Agents (bring-your-own)
   registerAgent: "agents.create",
   listAgents: "agents.list",
