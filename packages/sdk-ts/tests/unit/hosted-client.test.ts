@@ -199,9 +199,9 @@ async function testDatasetsList() {
             description: "SWE-bench style tasks",
             active_version: { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
             // The newest version row is a DIFFERENT row from the active one:
-            // a gate-FAILED 1.2 can never activate, so the two pointers
-            // disagree and the mapper must carry the server's own field
-            // rather than echoing active_version.
+            // a FAILED 1.2 can never activate, so the two pointers disagree
+            // and the mapper must carry the server's own field rather than
+            // echoing active_version.
             latest_version: { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0 },
           },
           {
@@ -212,8 +212,8 @@ async function testDatasetsList() {
           },
           {
             // A FIRST import: nothing is active for the whole
-            // IMPORTING -> BUILDING -> VALIDATING walk, and latest_version is
-            // the only field on the row with anything to say during it.
+            // IMPORTING -> BUILDING walk, and latest_version is the only
+            // field on the row with anything to say during it.
             name: "first-import",
             title: null,
             description: null,
@@ -237,15 +237,15 @@ async function testDatasetsList() {
     assertEqual(catalog.items[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog.items[0].active_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
-      "maps active_version object (one shape: version/state/created_at/task_count/manifest/source/gate; manifest/source null on older servers)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      "maps active_version object (one shape: version/state/created_at/task_count/manifest/source; manifest/source null on older servers)"
     );
     assertEqual(catalog.items[1].active_version, null, "null active_version preserved");
 
     // latest_version is its OWN pointer, in the same version shape.
     assertEqual(
       catalog.items[0].latest_version,
-      { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0, manifest: null, source: null, gate: null },
+      { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0, manifest: null, source: null },
       "maps latest_version as its own version object, not a copy of active_version"
     );
     assertEqual(
@@ -278,7 +278,7 @@ async function testDatasetsGet() {
         active_version: { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
         // The detail route carries the same pointer the list does, and here
         // too it names a DIFFERENT row than active_version.
-        latest_version: { version: "1.2", state: "VALIDATING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113 },
+        latest_version: { version: "1.2", state: "BUILDING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113 },
         versions: [
           { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113 },
           { version: "1.0", state: "ARCHIVED", created_at: "2026-07-01T00:00:00.000Z", task_count: 100 },
@@ -291,17 +291,12 @@ async function testDatasetsGet() {
               agent_timeout_sec: 5400,
               verifier_timeout_sec: 1800,
               providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
-              // The per-task half of the version's gate: outcome + flaky +
-              // reasons + ran_at, non-string reasons filtered.
-              gate: { outcome: "FLAKY", flaky: true, reasons: ["gold passed on retry 2", 7], ran_at: "2026-07-20T00:00:00.000Z" },
             },
             {
               task_name: "no-verdict-yet",
               agent_timeout_sec: 600,
               verifier_timeout_sec: 600,
               providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } },
-              // No outcome word = no verdict at all — never a crash.
-              gate: { flaky: false },
             },
           ],
           nextCursor: "task-1",
@@ -325,14 +320,14 @@ async function testDatasetsGet() {
     assertEqual(detail.active_version?.state, "READY", "active_version carries state");
     assertEqual(
       detail.latest_version,
-      { version: "1.2", state: "VALIDATING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
+      { version: "1.2", state: "BUILDING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113, manifest: null, source: null },
       "detail maps latest_version too — the newest row, which here is NOT the active one"
     );
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(
       detail.selected_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null, gate: null },
-      "selected_version is a full version object (never a bare label; manifest/source/gate null when the server sends none)"
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      "selected_version is a full version object (never a bare label; manifest/source null when the server sends none)"
     );
     // A nested collection is the same envelope as a top-level one.
     assertEqual(detail.tasks?.hasMore, true, "tasks are paged like every collection");
@@ -343,17 +338,6 @@ async function testDatasetsGet() {
       { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
       "per-task provider verdicts mapped — capability visible before money is spent"
     );
-    assertEqual(
-      detail.tasks?.items[0].gate,
-      { outcome: "FLAKY", flaky: true, reasons: ["gold passed on retry 2"], ran_at: "2026-07-20T00:00:00.000Z" },
-      "per-task gate verdict mapped (outcome/flaky/reasons/ran_at; non-string reasons filtered)"
-    );
-    assertEqual(
-      detail.tasks?.items[1].gate,
-      null,
-      "a gate value without an outcome word is no verdict at all — null, never a crash"
-    );
-
     // Bare name: no version param
     await d.get("deep-swe");
     url = fetchCalls[fetchCalls.length - 1].url;
@@ -363,151 +347,11 @@ async function testDatasetsGet() {
   }
 }
 
-async function testDatasetGateMapping() {
-  console.log("\n--- datasets().get() maps the activation gate (both wire forms, older servers) ---");
-  installMockFetch();
-  try {
-    setMockResponse("/api/datasets/r1-init", {
-      status: 200,
-      body: {
-        name: "r1-init",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          // The server's nested form: failure carries code + message.
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T19:15:55.930Z",
-            task_count: 1,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
-                failed_tasks: [
-                  { task_name: "starter-task", outcome: "ERROR", reasons: ["gold run produced no usable score", 7, "last status: INDETERMINATE"] },
-                  { outcome: "FAIL" }, // no task name — dropped, never a crash
-                  "junk", // not even an object — dropped
-                  { task_name: "bare-task" }, // name only — outcome null, reasons empty
-                ],
-              },
-            },
-          },
-          // The flat form: code + message directly on the gate.
-          {
-            version: "0.9",
-            state: "VALIDATING",
-            created_at: "2026-08-01T00:00:00.000Z",
-            task_count: 1,
-            gate: { status: "RUNNING", attempts: 1, code: null, message: null },
-          },
-          // No gate scheduled (or an older server): field absent.
-          { version: "0.8", state: "READY", created_at: "2026-07-01T00:00:00.000Z", task_count: 1 },
-          // Garbage gate value: never a crash, always null.
-          { version: "0.7", state: "READY", created_at: "2026-06-01T00:00:00.000Z", task_count: 1, gate: "oops" },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-        created_at: "2026-08-03T19:15:55.921Z",
-        updated_at: "2026-08-03T19:15:55.921Z",
-      },
-    });
-
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
-    const detail = await d.get("r1-init");
-    const [failed, running, none, garbage] = detail.versions ?? [];
-
-    assertEqual(failed.state, "FAILED", "terminal gate failure surfaces as version state FAILED");
-    assertEqual(
-      failed.gate,
-      {
-        status: "FAILED",
-        attempts: 1,
-        code: "gate_failed",
-        message: "1 of 1 task(s) failed the activation gate (1 not eligible, 0 unverified)",
-        failed_tasks: [
-          {
-            task_name: "starter-task",
-            outcome: "ERROR",
-            reasons: ["gold run produced no usable score", "last status: INDETERMINATE"],
-          },
-          { task_name: "bare-task", outcome: null, reasons: [] },
-        ],
-        failed_task_count: 2,
-        unproven: null,
-      },
-      "nested failure form maps to {status, attempts, code, message, failed_tasks, failed_task_count}; nameless/garbage entries dropped, non-string reasons filtered; absent count falls back to the mapped list's length"
-    );
-    assertEqual(
-      running.gate,
-      { status: "RUNNING", attempts: 1, code: null, message: null, failed_tasks: [], failed_task_count: 0, unproven: null },
-      "flat form maps unchanged; healthy gate carries null code/message, no failed tasks, count 0"
-    );
-    assertEqual(none.gate, null, "a version without a gate field maps to gate null (older server: no crash)");
-    assertEqual(garbage.gate, null, "an unreadable gate value maps to null, never a throw");
-  } finally {
-    restoreFetch();
-  }
-}
-
-async function testGateFailedTaskCountTruncation() {
-  console.log("\n--- gate failed_task_count carries the TRUE total behind the 25-task cap ---");
-  installMockFetch();
-  try {
-    setMockResponse("/api/datasets/big-fail", {
-      status: 200,
-      body: {
-        name: "big-fail",
-        title: null,
-        description: null,
-        active_version: null,
-        versions: [
-          {
-            version: "1.0",
-            state: "FAILED",
-            created_at: "2026-08-03T00:00:00.000Z",
-            task_count: 40,
-            gate: {
-              status: "FAILED",
-              attempts: 1,
-              failure: {
-                code: "gate_failed",
-                message: "40 of 40 task(s) failed the activation gate",
-                failed_tasks: Array.from({ length: 25 }, (_, i) => ({
-                  task_name: `task-${i}`,
-                  outcome: "FAIL",
-                  reasons: ["gold never scored 1.0"],
-                })),
-                failed_task_count: 40,
-              },
-            },
-          },
-        ],
-        selected_version: null,
-        tasks: { items: [], nextCursor: null, hasMore: false },
-        upstream: null,
-      },
-    });
-
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
-    const detail = await d.get("big-fail");
-    const gate = detail.versions?.[0].gate;
-    assertEqual(gate?.failed_tasks.length, 25, "the list stays capped at the server's first 25");
-    assertEqual(gate?.failed_task_count, 40, "failed_task_count is the true total, not the list's length");
-  } finally {
-    restoreFetch();
-  }
-}
-
 async function testVersionSourceMapping() {
-  console.log("\n--- datasets().get() maps per-version git provenance (source), incl. a gate-FAILED version ---");
+  console.log("\n--- datasets().get() maps per-version git provenance (source), incl. a FAILED version ---");
   installMockFetch();
   try {
-    // The Q5 shape: an annotated-tag import COMPLETED, the activation gate
+    // The Q5 shape: an annotated-tag import COMPLETED, the build
     // FAILED, the dataset never gained an active version — and the resolved
     // PEELED commit must still be observable on the version object itself.
     setMockResponse("/api/datasets/q5-tagpeel", {
@@ -529,7 +373,6 @@ async function testVersionSourceMapping() {
               commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
               path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
             },
-            gate: { status: "FAILED", attempts: 1, code: "gate_failed", message: "2 of 2 task(s) failed" },
           },
           // A non-git version (uploaded tarball): source is null on the wire.
           { version: "0.9", state: "READY", created_at: "2026-08-01T00:00:00.000Z", task_count: 2, source: null },
@@ -565,7 +408,7 @@ async function testVersionSourceMapping() {
         commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
         path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
       },
-      "a gate-FAILED git version serves its full provenance — url, requested ref, PEELED commit, subfolder"
+      "a FAILED git version serves its full provenance — url, requested ref, PEELED commit, subfolder"
     );
     assertEqual(detail.upstream, null, "upstream stays the ACTIVE version's field — null when nothing activated");
     assertEqual(
@@ -986,8 +829,8 @@ async function testGetImport() {
       "self-describing job: id/status/name/version/failure/warnings/task_count"
     );
     // WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions still
-    // activates, but with its gate stamped UNPROVEN — this warning is the
-    // early notice that no proof will run. Dropping the field hid that.
+    // activates, but permanently lacks its reference-solution record — this
+    // warning is the early notice. Dropping the field hid that.
     assertEqual(imported.warnings[0].code, "no_solutions_archived", "warnings surface, never dropped");
   } finally {
     restoreFetch();
@@ -1007,11 +850,7 @@ async function testWatchImportPollsToTerminal() {
     // After COMPLETED the watch follows the VERSION on the dataset detail;
     // an already-settled READY answer ends it on the first settle poll.
     const counters = installSettleFetch(statuses, [
-      settleDetailBody({
-        state: "READY",
-        gate: { status: "PASSED", attempts: 1, failure: null, unproven: null },
-        active: true,
-      }),
+      settleDetailBody({ state: "READY", active: true }),
     ]);
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
@@ -1076,11 +915,7 @@ async function testWatchImportSurvivesRateLimit() {
       },
       {
         status: 200,
-        body: settleDetailBody({
-          state: "READY",
-          gate: { status: "PASSED", attempts: 1, failure: null, unproven: null },
-          active: true,
-        }),
+        body: settleDetailBody({ state: "READY", active: true }),
       },
     ];
     let importCalls = 0;
@@ -1132,15 +967,14 @@ async function testWatchImportSurvivesRateLimit() {
 
 /**
  * A wire dataset-detail body holding exactly one version, for the settle
- * tests: import COMPLETED only means the corpus landed as a version — the
- * version then sits VALIDATING while the activation gate proves it, and the
- * watch follows it here, on the dataset detail, until it settles.
+ * tests: a mid-deploy older server can answer import COMPLETED while the
+ * version is still short of READY, and the watch follows it here, on the
+ * dataset detail, until it settles.
  */
 function settleDetailBody(opts: {
   name?: string;
   version?: string;
   state: string;
-  gate?: unknown;
   active?: boolean;
 }): Record<string, unknown> {
   const versionBody = {
@@ -1150,7 +984,6 @@ function settleDetailBody(opts: {
     task_count: 113,
     manifest: null,
     source: null,
-    gate: opts.gate ?? null,
   };
   return {
     name: opts.name ?? "deep-swe",
@@ -1208,10 +1041,10 @@ async function testWatchImportSettlesToReady() {
         { ...job, status: "COMPLETED", task_count: 113 },
       ],
       [
-        settleDetailBody({ state: "VALIDATING", gate: null }),
-        settleDetailBody({ state: "VALIDATING", gate: { status: "PENDING", attempts: 0, failure: null, unproven: null } }),
-        settleDetailBody({ state: "VALIDATING", gate: { status: "RUNNING", attempts: 1, failure: null, unproven: null } }),
-        settleDetailBody({ state: "READY", gate: { status: "PASSED", attempts: 1, failure: null, unproven: null }, active: true }),
+        settleDetailBody({ state: "BUILDING" }),
+        settleDetailBody({ state: "BUILDING" }),
+        settleDetailBody({ state: "BUILDING" }),
+        settleDetailBody({ state: "READY", active: true }),
       ]
     );
 
@@ -1239,8 +1072,8 @@ async function testWatchImportSettlesToReady() {
     assertEqual(counters.detailCalls(), 4, "keeps polling until the version state settles to READY");
     assertEqual(
       transitions,
-      ["VALIDATING", "READY"],
-      "onVersion fires on every observed STATE change (the gate is not consulted)"
+      ["BUILDING", "READY"],
+      "onVersion fires on every observed STATE change"
     );
     assertEqual(activeAfterSettle, "1.2", "the settled detail names the new version as the active one");
   } finally {
@@ -1252,27 +1085,27 @@ async function testWatchImportSettlesToReady() {
  * A version that settles FAILED fails the WATCH: the failure's structured
  * cause lands on the same row the import surface reads, so the watch
  * re-reads the import and returns it FAILED — the one import shape. Never a
- * silent success. (The fixture wears a legacy gate failure — an older
- * mid-deploy server's shape; the watch reads only the STATE.)
+ * silent success. (The fixture wears a mid-deploy older server's shape: the
+ * import answered COMPLETED before the version settled; the watch reads only
+ * the STATE.)
  */
-async function testWatchImportSurfacesGateFailure() {
+async function testWatchImportSurfacesBuildFailure() {
   console.log("\n--- datasets().watchImport() ends FAILED when the version settles FAILED ---");
   installMockFetch();
   try {
     const job = { id: "imp-9", name: "deep-swe", version: "2.0", warnings: [] };
-    const gateFailure = {
-      code: "gate_failed",
-      message: "1/113 task(s) are not activation-eligible",
-      failed_tasks: [{ task_name: "task-7", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
+    const buildFailure = {
+      code: "import_failed",
+      message: "task image build failed for task-7",
     };
     installSettleFetch(
       [
         { ...job, status: "COMPLETED", failure: null, task_count: 113 },
-        { ...job, status: "FAILED", failure: { code: "gate_failed", message: gateFailure.message }, task_count: 113 },
+        { ...job, status: "FAILED", failure: buildFailure, task_count: 113 },
       ],
       [
-        settleDetailBody({ version: "2.0", state: "VALIDATING", gate: { status: "RUNNING", attempts: 1, failure: null, unproven: null } }),
-        settleDetailBody({ version: "2.0", state: "FAILED", gate: { status: "FAILED", attempts: 1, failure: gateFailure, unproven: null } }),
+        settleDetailBody({ version: "2.0", state: "BUILDING" }),
+        settleDetailBody({ version: "2.0", state: "FAILED" }),
       ]
     );
 
@@ -1284,10 +1117,10 @@ async function testWatchImportSurfacesGateFailure() {
     });
 
     assertEqual(final.status, "FAILED", "a failed version fails the watch — never exit-0 on stale content");
-    assertEqual(final.failure?.code, "gate_failed", "the structured cause rides the import's own failure field");
+    assertEqual(final.failure?.code, "import_failed", "the structured cause rides the import's own failure field");
     assertEqual(
       transitions,
-      ["VALIDATING", "FAILED"],
+      ["BUILDING", "FAILED"],
       "the failing version is observed before the import re-read"
     );
   } finally {
@@ -1295,73 +1128,6 @@ async function testWatchImportSurfacesGateFailure() {
   }
 }
 
-/**
- * UNPROVEN is a SUCCESS end-state: a solution-less corpus is auto-activated
- * with its gate stamped UNPROVEN (Harbor parity — a publish without reference
- * solutions just works), and the watch resolves with that fact observable on
- * the version, never disguised as PASSED and never a hang.
- */
-async function testWatchImportUnprovenSettlesAsSuccess() {
-  console.log("\n--- datasets().watchImport() treats READY + gate UNPROVEN as settled success ---");
-  installMockFetch();
-  try {
-    const job = {
-      id: "imp-2",
-      name: "deep-swe",
-      version: "1.3",
-      failure: null,
-      warnings: [{ code: "no_solutions_archived", message: "no reference solutions were archived" }],
-    };
-    installSettleFetch(
-      [{ ...job, status: "COMPLETED", task_count: 4 }],
-      [
-        settleDetailBody({ version: "1.3", state: "VALIDATING", gate: null }),
-        settleDetailBody({
-          version: "1.3",
-          state: "READY",
-          active: true,
-          gate: {
-            status: "UNPROVEN",
-            attempts: 0,
-            failure: null,
-            unproven: { reason: "no reference solutions to run", at: "2026-08-20T00:01:00Z" },
-          },
-        }),
-      ]
-    );
-
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
-    let settled: { state: string; gate: string | null; reason: string | null } | null = null;
-    const final = await d.watchImport("imp-2", {
-      pollIntervalMs: 1,
-      onVersion: (version) => {
-        settled = {
-          state: version.state,
-          gate: version.gate?.status ?? null,
-          reason: version.gate?.unproven?.reason ?? null,
-        };
-      },
-    });
-
-    assertEqual(final.status, "COMPLETED", "an UNPROVEN activation is a successful watch");
-    assertEqual(
-      settled,
-      { state: "READY", gate: "UNPROVEN", reason: "no reference solutions to run" },
-      "the unproven fact is observable on the settled version, never disguised as PASSED"
-    );
-  } finally {
-    restoreFetch();
-  }
-}
-
-/**
- * THE OLD TRAP, gone with the gate: solutions archiving disabled used to
- * mean no activation gate could ever be scheduled, so the watch refused
- * typed ("gate_unschedulable") instead of hanging. Under build-then-READY
- * there is no gate — the warning is a statement about the missing
- * reference-solution record, not about settling — so the same import now
- * settles like any other, in one confirming READY read.
- */
 async function testWatchImportArchivingDisabledSettlesNormally() {
   console.log("\n--- datasets().watchImport() settles normally when solutions archiving was disabled ---");
   installMockFetch();
@@ -1373,13 +1139,12 @@ async function testWatchImportArchivingDisabledSettlesNormally() {
       failure: null,
       warnings: [{ code: "solutions_archiving_disabled", message: "solutions archiving is disabled" }],
     };
-    // The first detail read shows the old dead-end shape (VALIDATING, no
-    // gate) — the OLD client refused right here with "gate_unschedulable";
-    // the new one keeps polling to READY.
+    // The first detail read shows a not-yet-settled version (a mid-deploy
+    // older server's shape); the watch keeps polling to READY.
     const counters = installSettleFetch(
       [{ ...job, status: "COMPLETED", task_count: 4 }],
       [
-        settleDetailBody({ version: "1.4", state: "VALIDATING", gate: null }),
+        settleDetailBody({ version: "1.4", state: "BUILDING" }),
         settleDetailBody({ version: "1.4", state: "READY", active: true }),
       ]
     );
@@ -1387,16 +1152,16 @@ async function testWatchImportArchivingDisabledSettlesNormally() {
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
     const final = await d.watchImport("imp-3", { pollIntervalMs: 1 });
 
-    assertEqual(final.status, "COMPLETED", "the warning gates nothing — the publish settles as a success");
-    assertEqual(counters.detailCalls(), 2, "the watch polls through the legacy VALIDATING read to READY");
+    assertEqual(final.status, "COMPLETED", "the warning blocks nothing — the publish settles as a success");
+    assertEqual(counters.detailCalls(), 2, "the watch polls through the not-yet-READY read to READY");
   } finally {
     restoreFetch();
   }
 }
 
 /**
- * The bounded backstop: whatever else goes wrong (a worker fleet that is
- * down leaves the gate PENDING indefinitely), the settle wait is a bounded
+ * The bounded backstop: whatever else goes wrong (a mid-deploy older server
+ * that keeps answering a never-settling state), the settle wait is a bounded
  * await — it ends with the named settle_timeout cause carrying the last
  * observed state, never an unbounded hang.
  */
@@ -1407,7 +1172,7 @@ async function testWatchImportSettleTimeoutBackstop() {
     const job = { id: "imp-4", name: "deep-swe", version: "1.5", failure: null, warnings: [] };
     installSettleFetch(
       [{ ...job, status: "COMPLETED", task_count: 4 }],
-      [settleDetailBody({ version: "1.5", state: "VALIDATING", gate: { status: "PENDING", attempts: 0, failure: null, unproven: null } })]
+      [settleDetailBody({ version: "1.5", state: "BUILDING" })]
     );
 
     const d = datasets({ apiKey: "test-key", baseUrl: BASE });
@@ -1424,7 +1189,7 @@ async function testWatchImportSettleTimeoutBackstop() {
       "the settle wait is bounded: it ends with the typed ImportSettleError"
     );
     assertEqual((thrown as any)?.code, "settle_timeout", "the cause is named: settle_timeout");
-    assertEqual((thrown as any)?.state, "VALIDATING", "the error carries the last observed version state");
+    assertEqual((thrown as any)?.state, "BUILDING", "the error carries the last observed version state");
   } finally {
     restoreFetch();
   }
@@ -1494,27 +1259,20 @@ async function testWatchImportSettleTimeoutBoundsRateLimitedPolls() {
 
 /**
  * The delay-not-outcome law covers the LAST read too: with the version
- * settled FAILED, the final import re-read (the one that fetches the gate's
- * structured cause) can itself be rate-limited — a transient 429 there must
- * not turn a settled gate failure into a thrown rate-limit error.
+ * settled FAILED, the final import re-read (the one that fetches the
+ * failure's structured cause) can itself be rate-limited — a transient 429
+ * there must not turn a settled failure into a thrown rate-limit error.
  */
-async function testWatchImportGateFailureReReadSurvivesRateLimit() {
-  console.log("\n--- datasets().watchImport() retries a rate-limited final re-read after a gate failure ---");
+async function testWatchImportFailureReReadSurvivesRateLimit() {
+  console.log("\n--- datasets().watchImport() retries a rate-limited final re-read after a failed build ---");
   installMockFetch();
   try {
     const job = { id: "imp-6", name: "deep-swe", version: "2.1", warnings: [] };
-    const gateFailure = {
-      code: "gate_failed",
-      message: "1/4 task(s) are not activation-eligible",
-      failed_tasks: [{ task_name: "task-2", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
-    };
+    const buildFailure = { code: "import_failed", message: "task image build failed for task-2" };
     const importReplies: MockResponse[] = [
       { status: 200, body: { ...job, status: "COMPLETED", failure: null, task_count: 4 } },
       { status: 429, body: { error: { code: "rate_limited", message: "slow down" } } },
-      {
-        status: 200,
-        body: { ...job, status: "FAILED", failure: { code: "gate_failed", message: gateFailure.message }, task_count: 4 },
-      },
+      { status: 200, body: { ...job, status: "FAILED", failure: buildFailure, task_count: 4 } },
     ];
     let importCalls = 0;
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
@@ -1525,11 +1283,7 @@ async function testWatchImportGateFailureReReadSurvivesRateLimit() {
       }
       return buildMockResponse({
         status: 200,
-        body: settleDetailBody({
-          version: "2.1",
-          state: "FAILED",
-          gate: { status: "FAILED", attempts: 1, failure: gateFailure, unproven: null },
-        }),
+        body: settleDetailBody({ version: "2.1", state: "FAILED" }),
       });
     };
 
@@ -1544,8 +1298,8 @@ async function testWatchImportGateFailureReReadSurvivesRateLimit() {
 
     assertEqual(thrown, null, "nothing thrown — the re-read's 429 was a delay, not an outcome");
     assertEqual(importCalls, 3, "the rate-limited re-read was retried");
-    assertEqual(final?.status, "FAILED", "the settled gate failure is still the reported outcome");
-    assertEqual(final?.failure?.code, "gate_failed", "with the gate's structured cause, not a rate-limit error");
+    assertEqual(final?.status, "FAILED", "the settled failure is still the reported outcome");
+    assertEqual(final?.failure?.code, "import_failed", "with the structured cause, not a rate-limit error");
   } finally {
     restoreFetch();
   }
@@ -1554,19 +1308,14 @@ async function testWatchImportGateFailureReReadSurvivesRateLimit() {
 /**
  * And when the rate limiting never relents, the final re-read is bounded by
  * the SAME settle deadline — refusing with facts that stay true: the version
- * settled FAILED (state and gate ride the error), the watch just could not
- * fetch the final import body inside its budget.
+ * settled FAILED (the state rides the error), the watch just could not fetch
+ * the final import body inside its budget.
  */
-async function testWatchImportGateFailureReReadIsBounded() {
+async function testWatchImportFailureReReadIsBounded() {
   console.log("\n--- datasets().watchImport() bounds a rate-limited final re-read with the same settle deadline ---");
   installMockFetch();
   try {
     const job = { id: "imp-7", name: "deep-swe", version: "2.2", warnings: [] };
-    const gateFailure = {
-      code: "gate_failed",
-      message: "1/4 task(s) are not activation-eligible",
-      failed_tasks: [{ task_name: "task-2", outcome: "FAIL", reasons: ["gold solution scored 0.0"] }],
-    };
     let importCalls = 0;
     (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
       const urlStr = url.toString();
@@ -1580,11 +1329,7 @@ async function testWatchImportGateFailureReReadIsBounded() {
       }
       return buildMockResponse({
         status: 200,
-        body: settleDetailBody({
-          version: "2.2",
-          state: "FAILED",
-          gate: { status: "FAILED", attempts: 1, failure: gateFailure, unproven: null },
-        }),
+        body: settleDetailBody({ version: "2.2", state: "FAILED" }),
       });
     };
 
@@ -4565,8 +4310,6 @@ async function main() {
   await testFactoriesRequireApiKey();
   await testDatasetsList();
   await testDatasetsGet();
-  await testDatasetGateMapping();
-  await testGateFailedTaskCountTruncation();
   await testVersionSourceMapping();
   await testActivateNotReady409();
   await testGetActive();
@@ -4583,13 +4326,12 @@ async function main() {
   await testWatchImportPollsToTerminal();
   await testWatchImportSurvivesRateLimit();
   await testWatchImportSettlesToReady();
-  await testWatchImportSurfacesGateFailure();
-  await testWatchImportUnprovenSettlesAsSuccess();
+  await testWatchImportSurfacesBuildFailure();
   await testWatchImportArchivingDisabledSettlesNormally();
   await testWatchImportSettleTimeoutBackstop();
   await testWatchImportSettleTimeoutBoundsRateLimitedPolls();
-  await testWatchImportGateFailureReReadSurvivesRateLimit();
-  await testWatchImportGateFailureReReadIsBounded();
+  await testWatchImportFailureReReadSurvivesRateLimit();
+  await testWatchImportFailureReReadIsBounded();
   await testAgentCreateInstallScript();
   await testAgentCreateTarball();
   await testSkillsUploadCarriesFolderName();

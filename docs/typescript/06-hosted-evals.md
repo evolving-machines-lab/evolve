@@ -1608,7 +1608,7 @@ A terminal import stays readable. A successful import used to start answering `4
 DRAFT → IMPORTING → BUILDING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse, image build, or template conversion lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry, sandbox-template conversion — so `READY` means everything a trial boots already exists; it is the only state that accepts jobs, and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move. (`VALIDATING` still appears on versions published before the verification gate was removed from the publish path — a legacy resting state that new publishes never enter; such a version is fully built and `activate()` promotes it exactly like `READY`.)
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or image build lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry — so `READY` means every task image is in the registry; it is the only state that accepts jobs, and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. Each sandbox provider builds its own boot artifact from that image at the first trial on it (cached provider-side for every trial after), so nothing per-provider is built at publish. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move.
 
 All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 
@@ -1918,7 +1918,6 @@ interface DatasetVersion {
     created_at: string;
     task_count: number;
     source: DatasetVersionSource | null; // THIS version's git provenance; null = not a git import
-    gate: DatasetVersionGate | null;     // LEGACY — pre-ruling verdicts only; null on every new publish
 }
 
 interface DatasetVersionSource {         // served on EVERY git-imported version, active or not
@@ -1928,35 +1927,11 @@ interface DatasetVersionSource {         // served on EVERY git-imported version
     path: string | null;                 // repository subfolder; null = repository root
 }
 
-interface DatasetVersionGate {           // LEGACY — the removed publish-path gate's stored verdict
-    status: string;                      // PENDING | RUNNING | PASSED | FAILED | UNPROVEN
-    attempts: number;
-    code: string | null;                 // set on failure, e.g. "gate_failed"
-    message: string | null;              // the human reason, set on failure
-    failed_tasks: DatasetVersionGateFailedTask[];  // the ineligible tasks, first 25
-    failed_task_count: number;           // the TRUE total behind the 25-task cap
-    unproven: { reason: string; at: string | null } | null;  // the UNPROVEN stamp; null on every other status
-}
-
-interface DatasetVersionGateFailedTask {
-    task_name: string;
-    outcome: string | null;              // FAIL, or ERROR (no usable score)
-    reasons: string[];                   // the gate's own sentences
-}
-
 interface Task {                         // public fields only
     task_name: string;
     agent_timeout_sec: number;
     verifier_timeout_sec: number;
     providers: Record<EvalSandboxProvider, TaskProviderVerdict>;  // where it can run
-    gate: TaskGate | null;               // this task's gate verdict; null until it ran
-}
-
-interface TaskGate {                     // the per-task half of the version's gate
-    outcome: string;                     // PASS | FLAKY | FAIL | ERROR
-    flaky: boolean;
-    reasons: string[];                   // human-readable; empty on PASS
-    ran_at: string | null;
 }
 
 type TaskProviderVerdict = { ok: true } | { ok: false; reason: string };

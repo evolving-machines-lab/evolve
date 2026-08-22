@@ -2754,7 +2754,7 @@ export function importStatusLine(job: DatasetImport): string {
 /**
  * Compact one-line rendering of one version state change for --watch's
  * settle phase: the version's own walk (BUILDING, then READY/ARCHIVED or
- * FAILED). No gate rides here — the publish path has none.
+ * FAILED).
  */
 export function versionStatusLine(version: DatasetVersion): string {
   return `state  ${version.state}`;
@@ -3663,7 +3663,7 @@ function datasetDetailLines(b: Dataset): string[] {
   // PROVENANCE: what the SHOWN version was built from — the repository, the
   // requested ref, the resolved commit, and the subfolder when the import was
   // narrowed to one. The selected version's own `source` wins: `dataset show
-  // name@version` must say what THAT version imported even when its gate
+  // name@version` must say what THAT version imported even when its build
   // FAILED and it can never activate — exactly the moment a user needs the
   // resolved sha. `upstream` (the active version's provenance) is the
   // fallback for a server that predates per-version `source`. Quiet block,
@@ -3697,15 +3697,12 @@ function datasetDetailLines(b: Dataset): string[] {
   }
   if (b.versions && b.versions.length > 0) {
     lines.push("");
-    // The GATE column appears only when the server reports gate progress —
-    // an older server without the field keeps the four-column table. Same law
-    // for COMMIT: it appears when some version carries git provenance, and
-    // shows EVERY version's resolved sha — a gate-FAILED version can never
+    // The COMMIT column appears when some version carries git provenance, and
+    // shows EVERY version's resolved sha — a FAILED version can never
     // activate, and this column is where its imported bytes stay observable.
-    const anyGate = b.versions.some((v) => v.gate != null);
     const anySource = b.versions.some((v) => v.source != null);
     const rows = [
-      ["VERSION", "STATE", "TASKS", "CREATED", ...(anySource ? ["COMMIT"] : []), ...(anyGate ? ["GATE"] : [])],
+      ["VERSION", "STATE", "TASKS", "CREATED", ...(anySource ? ["COMMIT"] : [])],
     ];
     for (const v of b.versions) {
       rows.push([
@@ -3714,41 +3711,9 @@ function datasetDetailLines(b: Dataset): string[] {
         String(v.task_count),
         v.created_at ?? "-",
         ...(anySource ? [v.source ? v.source.commit.slice(0, 12) : "-"] : []),
-        ...(anyGate ? [v.gate?.status ?? "-"] : []),
       ]);
     }
     lines.push(...table(rows));
-    // A failed gate is terminal and must be unmissable: the version cannot be
-    // activated or run until it is republished, so say why, right here.
-    for (const v of b.versions) {
-      if (v.gate?.status === "FAILED") {
-        const reason = v.gate.message ?? v.gate.code ?? "no reason reported";
-        lines.push(`version ${v.version} activation gate FAILED: ${reason}`);
-        // The cause, task by task: the gate's own reasons, indented under the
-        // verdict — nobody should need --json to learn WHY a publish died.
-        for (const t of v.gate.failed_tasks) {
-          const why = t.reasons.length > 0 ? t.reasons.join("; ") : (t.outcome ?? "no reason reported");
-          lines.push(`  ${t.task_name}: ${why}`);
-        }
-        // The list is capped at 25; the count is not. A gate that failed
-        // more tasks than the list names must say so, or the page under-
-        // reports the damage.
-        if (v.gate.failed_task_count > v.gate.failed_tasks.length) {
-          lines.push(
-            `  … and ${v.gate.failed_task_count - v.gate.failed_tasks.length} more ` +
-              `(${v.gate.failed_task_count} ineligible tasks in total)`
-          );
-        }
-      }
-      // UNPROVEN is not a failure — the version is READY and runnable — but
-      // the GATE word alone hides WHY no proof backs it. The server stamps
-      // the reason (U2: it used to be readable only on the raw API); print it
-      // the way FAILED prints its message, one quiet line per such version.
-      // A server that predates the stamp prints nothing, as everywhere else.
-      if (v.gate?.status === "UNPROVEN" && v.gate.unproven) {
-        lines.push(`version ${v.version} gate UNPROVEN: ${v.gate.unproven.reason}`);
-      }
-    }
   }
   if (b.tasks && b.tasks.items.length > 0) {
     lines.push("", `Tasks (version ${b.selected_version?.version ?? "?"}):`);

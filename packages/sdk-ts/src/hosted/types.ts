@@ -1397,77 +1397,9 @@ export type DatasetVersionState =
   | "DRAFT"
   | "IMPORTING"
   | "BUILDING"
-  | "VALIDATING"
   | "READY"
   | "FAILED"
   | "ARCHIVED";
-
-/**
- * The activation gate's progress for one dataset version — the gold-run check
- * a version must pass before it can be activated. `status` is the gate's own
- * lifecycle as wire values: PENDING → RUNNING → PASSED/FAILED, plus UNPROVEN —
- * the third terminal word, for a version activated without a full proof:
- * nothing to prove at all (no reference solutions archived), or a PARTIAL
- * archive whose provable tasks all passed while the solution-less ones were
- * labeled UNPROVEN per task (render unknown values as-is). `code` and
- * `message` are populated on failure and explain it in one machine word and
- * one human sentence; both are null while the gate is healthy. `attempts`
- * counts gate runs so far.
- */
-export interface DatasetVersionGate {
-  status: string;
-  attempts: number;
-  code: string | null;
-  message: string | null;
-  /**
-   * The tasks the gate found ineligible, each with the gate's own reasons —
-   * so the cause of a FAILED gate never has to be parsed back out of the
-   * message. The server sends the first 25. Empty while the gate is healthy,
-   * and empty on servers that predate the field: absence is "nothing to
-   * report", never a crash.
-   */
-  failed_tasks: DatasetVersionGateFailedTask[];
-  /**
-   * The TRUE total of ineligible tasks. `failed_tasks` is capped at 25, so a
-   * gate that failed more tasks than that is under-counted by its length —
-   * this number never is. Falls back to `failed_tasks.length` on servers that
-   * predate the field, which never truncated without it.
-   */
-  failed_task_count: number;
-  /**
-   * Present only when `status` is UNPROVEN: the version activated without a
-   * full oracle-conformance proof because the gate had no reference
-   * solutions to run — for any task, or (partial archive) for some tasks,
-   * every task WITH a solution having proved eligible. The server's own
-   * stamp — the honest reason sentence and when it was stamped. Null on
-   * every other status and on servers that predate the field: absence is
-   * "nothing to report", never a crash.
-   */
-  unproven: DatasetVersionGateUnproven | null;
-}
-
-/**
- * The UNPROVEN stamp on a version's activation gate: `reason` is the server's
- * own sentence for why no full proof ran ("no reference solutions to run",
- * or the partial flavor naming how many tasks shipped none), `at` is when
- * the stamp was written (null when the server omits it).
- */
-export interface DatasetVersionGateUnproven {
-  reason: string;
-  at: string | null;
-}
-
-/**
- * One task the activation gate found ineligible. `outcome` is the gate's
- * verdict word (FAIL, or ERROR when the run produced no usable score; null
- * when the server omits it) and `reasons` are the gate's own sentences for
- * this task — empty when the server names none.
- */
-export interface DatasetVersionGateFailedTask {
-  task_name: string;
-  outcome: string | null;
-  reasons: string[];
-}
 
 /** One dataset.toml author: a name, and an email when the manifest gives one. */
 export interface DatasetManifestAuthor {
@@ -1502,8 +1434,8 @@ export interface DatasetManifestMetadata {
  * the RESOLVED commit the clone landed on (for an annotated tag, the peeled
  * commit — never the tag object), and the repository subfolder the corpus was
  * read from. Served on EVERY git-imported version whatever its state — a
- * version whose activation gate FAILED can never become the active version,
- * so this is where its imported bytes stay observable.
+ * version whose build FAILED can never become the active version, so this is
+ * where its imported bytes stay observable.
  */
 export interface DatasetVersionSource {
   /**
@@ -1538,12 +1470,6 @@ export interface DatasetVersion {
    * "nothing to report", never a fabricated value.
    */
   source: DatasetVersionSource | null;
-  /**
-   * Activation-gate progress. Null when no gate was scheduled for this
-   * version, and also null when the server predates the gate field — so a
-   * missing gate never means "passed", only "nothing to report".
-   */
-  gate: DatasetVersionGate | null;
 }
 
 /**
@@ -1559,28 +1485,6 @@ export interface DatasetVersion {
 export type TaskProviderVerdict =
   | { ok: true; degrades_to?: "modal"; reason?: string }
   | { ok: false; reason: string };
-
-/**
- * One task's activation-gate verdict — the public subset. The per-task half
- * of the version's `gate`: while the gate is RUNNING, verdicts appear on
- * tasks as they land. The full stored verdict carries oracle diagnostics
- * that stay internal, like the environment specs beside it.
- */
-export interface TaskGate {
-  /**
-   * PASS; FLAKY (gold passed only on a retry — still eligible under the
-   * operator default); FAIL (definitive: gold never scored 1.0, or a
-   * do-nothing agent did); ERROR (inconclusive — no usable score, e.g. an
-   * archived solution that could not be read); or UNPROVEN (the task
-   * shipped no reference solution, so the gate had nothing to run — a
-   * labeled gap, never counted as proof and never counted as a failure).
-   */
-  outcome: string;
-  flaky: boolean;
-  /** Human-readable; empty on PASS. */
-  reasons: string[];
-  ran_at: string | null;
-}
 
 /** Public task fields only — instructions, environments, and tests never leave the server */
 export interface Task {
@@ -1605,12 +1509,6 @@ export interface Task {
    * spent on a trial that cannot execute.
    */
   providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
-  /**
-   * This task's activation-gate verdict; null until the gate has run it, and
-   * null on servers that predate the field — absence is "nothing to report",
-   * never "passed".
-   */
-  gate: TaskGate | null;
 }
 
 /**

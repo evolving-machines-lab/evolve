@@ -1583,7 +1583,7 @@ A terminal import stays readable. A successful import used to start answering `4
 DRAFT → IMPORTING → BUILDING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse, image build, or template conversion lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry, sandbox-template conversion — so `READY` means everything a trial boots already exists; it is the only state that accepts jobs, and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move. (`VALIDATING` still appears on versions published before the verification gate was removed from the publish path — a legacy resting state that new publishes never enter; such a version is fully built and `activate()` promotes it exactly like `READY`.)
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or image build lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry — so `READY` means every task image is in the registry; it is the only state that accepts jobs, and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. Each sandbox provider builds its own boot artifact from that image at the first trial on it (cached provider-side for every trial after), so nothing per-provider is built at publish. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move.
 
 All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 
@@ -1838,7 +1838,6 @@ class DatasetVersion:               # one shape on every surface
     created_at: str
     task_count: int
     source: Optional[DatasetVersionSource]  # THIS version's git provenance; None = not a git import
-    gate: Optional[DatasetVersionGate]  # None = no gate scheduled (or an older server)
 
 @dataclass
 class DatasetVersionSource:         # served on EVERY git-imported version, active or not
@@ -1848,40 +1847,11 @@ class DatasetVersionSource:         # served on EVERY git-imported version, acti
     path: Optional[str]             # repository subfolder; None = repository root
 
 @dataclass
-class DatasetVersionGate:           # LEGACY — the removed publish-path gate's stored verdict
-    status: str                     # PENDING | RUNNING | PASSED | FAILED | UNPROVEN
-    attempts: int
-    code: Optional[str]             # set on failure, e.g. "gate_failed"
-    message: Optional[str]          # the human reason, set on failure
-    failed_tasks: List[DatasetVersionGateFailedTask]  # the ineligible tasks, first 25
-    failed_task_count: int          # the TRUE total behind the 25-task cap
-    unproven: Optional[DatasetVersionGateUnproven]  # the UNPROVEN stamp; None on every other status
-
-@dataclass
-class DatasetVersionGateUnproven:   # why a version activated with no proof
-    reason: str                     # today always "no reference solutions to run"
-    at: Optional[str]               # when the stamp was written; None on older rows
-
-@dataclass
-class DatasetVersionGateFailedTask:
-    task_name: str
-    outcome: Optional[str]          # FAIL, or ERROR (no usable score)
-    reasons: List[str]              # the gate's own sentences
-
-@dataclass
 class Task:                         # public fields only
     task_name: str
     agent_timeout_sec: int
     verifier_timeout_sec: int
     providers: Dict[str, TaskProviderVerdict]  # where it can run, per provider
-    gate: Optional[TaskGate]        # this task's gate verdict; None until it ran
-
-@dataclass
-class TaskGate:                     # the per-task half of the version's gate
-    outcome: str                    # PASS | FLAKY | FAIL | ERROR
-    flaky: bool
-    reasons: List[str]              # human-readable; empty on PASS
-    ran_at: Optional[str]
 
 @dataclass
 class DatasetImport:
