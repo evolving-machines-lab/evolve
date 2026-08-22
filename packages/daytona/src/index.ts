@@ -10,14 +10,19 @@
  * - Parallel structure to E2B provider
  *
  * Daytona-specific notes:
- * - Network policy maps to Daytona's networkBlockAll / networkAllowList,
- *   enforced by kernel iptables on the runner. The allowlist is IPv4 CIDR
- *   ONLY (max 10 entries, DAYTONA_MAX_NETWORK_ALLOWLIST). Hostname
- *   destinations are pinned to their IPv4 addresses by a DNS lookup at
- *   create time — see the DNS-ROTATION CAVEAT on SandboxCreateOptions.network.
- *   Destinations Daytona can never enforce (wildcards, IPv6, unresolvable
- *   hostnames, >10 CIDRs) throw DaytonaNetworkPolicyError instead of
- *   silently weakening the policy.
+ * - Network policy maps to Daytona's three network controls
+ *   (daytona.io/docs/en/network-limits): networkBlockAll (all egress
+ *   dropped), networkAllowList (IPv4 CIDRs only, max 10 entries,
+ *   DAYTONA_MAX_NETWORK_ALLOWLIST) and domainAllowList (DNS domains, `*.`
+ *   prefix wildcards allowed, max 20 entries, DAYTONA_MAX_DOMAIN_ALLOWLIST).
+ *   Per the docs "The options are mutually exclusive. Set at most one
+ *   non-empty value" — so CIDR destinations map to networkAllowList,
+ *   hostname/wildcard destinations map to domainAllowList, and a policy
+ *   mixing the two kinds is refused typed (mixed-allowlist) rather than
+ *   sent to a guaranteed 400. Destinations Daytona can never enforce
+ *   (IPv6, ports, non-prefix wildcards, over-cap lists) throw
+ *   DaytonaNetworkPolicyError instead of silently weakening the policy.
+ *   Hostnames are forwarded AS NAMES — nothing is DNS-resolved or pinned.
  * - The `user` option is a CREATE-TIME OS user (Daytona's osUser field);
  *   there is no per-exec user switch — the Daytona daemon runs commands as
  *   the container's user (governed by the image's USER directive; default
@@ -47,7 +52,6 @@ import type {
   Sandbox as DaytonaSandbox,
   SandboxState as DaytonaApiSandboxState,
 } from "@daytonaio/sdk";
-import { resolve4 } from "node:dns/promises";
 
 // ============================================================
 // CONSTANTS
@@ -96,6 +100,13 @@ const IMAGE_MAP: Record<string, string> = {
 export const DAYTONA_AUTO_DELETE_GRACE_MINUTES = 10;
 
 export const DAYTONA_MAX_NETWORK_ALLOWLIST = 10;
+
+/**
+ * Daytona's hard cap on domainAllowList size (network-limits docs: "Maximum
+ * entries: 20 comma-separated items"). Policies naming more domains throw
+ * DaytonaNetworkPolicyError.
+ */
+export const DAYTONA_MAX_DOMAIN_ALLOWLIST = 20;
 
 /**
  * How long a reactivated snapshot may take to come back before create() gives
@@ -180,11 +191,24 @@ function getBasename(path: string): string {
 
 /** Why a network policy cannot be enforced by Daytona. */
 export type DaytonaNetworkPolicyReason =
+  /**
+   * A wildcard NOT of the documented `*.domain` prefix form. Daytona's
+   * domainAllowList supports exactly one wildcard shape ("Prefix a domain
+   * with `*.` to allow the base domain and its subdomains"); any other
+   * placement cannot be expressed.
+   */
   | "wildcard-hostname"
   | "ipv6-unsupported"
   | "port-unsupported"
   | "invalid-ipv4"
-  | "unresolvable-hostname"
+  /**
+   * The policy names both CIDR and domain destinations. Daytona keeps two
+   * allowlists — networkAllowList (CIDRs) and domainAllowList (names) — and
+   * its docs make them mutually exclusive: "Set at most one non-empty value.
+   * Sending a conflicting combination returns a 400 error." One policy can
+   * therefore hold IPs/CIDRs or hostnames, not both.
+   */
+  | "mixed-allowlist"
   | "allowlist-too-large"
   /**
    * The ORGANIZATION is not allowed to set a sandbox-level network policy at
@@ -199,10 +223,11 @@ export type DaytonaNetworkPolicyReason =
 /**
  * Typed error for network policies Daytona cannot enforce.
  *
- * Daytona's allowlist is kernel-level IPv4 CIDR filtering only (max 10
- * entries) — no DNS/domain layer. Anything that cannot be pinned to stable
- * IPv4 CIDRs at create time is rejected loudly instead of silently
- * weakening the sandbox's egress policy.
+ * Daytona's controls (network-limits docs) are networkBlockAll, an IPv4-CIDR
+ * networkAllowList (max 10) and a DNS domainAllowList (max 20, `*.` prefix
+ * wildcards) — mutually exclusive, at most one non-empty. Anything that fits
+ * none of them is rejected loudly instead of silently weakening the
+ * sandbox's egress policy.
  */
 export class DaytonaNetworkPolicyError extends Error {
   readonly reason: DaytonaNetworkPolicyReason;
@@ -1168,6 +1193,7 @@ function wrapCommand(
 interface DaytonaNetworkCreateParams {
   networkBlockAll?: boolean;
   networkAllowList?: string;
+  domainAllowList?: string;
 }
 
 /**
@@ -1180,11 +1206,6 @@ interface DaytonaNetworkUpdateParams {
   networkAllowList: string;
   domainAllowList: string;
 }
-
-/** Resolves a hostname to its IPv4 addresses (injectable for tests). */
-type HostnameResolver = (hostname: string) => Promise<string[]>;
-
-const defaultResolveHostname: HostnameResolver = (hostname) => resolve4(hostname);
 
 /**
  * Strict IPv4 literal or IPv4 CIDR (e.g. "10.0.0.1", "10.0.0.0/8"): every
@@ -1228,28 +1249,38 @@ function hasPort(destination: string): boolean {
 }
 
 /**
- * Map Evolve's provider-neutral network policy onto Daytona create() params.
+ * The docs' one supported wildcard shape: a single leading "*." followed by a
+ * wildcard-free domain ("*.example.com"). Anything else with a "*" in it is
+ * not expressible on Daytona's domain allowlist.
+ */
+function isPrefixWildcardDomain(destination: string): boolean {
+  return destination.startsWith("*.") && destination.length > 2 && !destination.slice(2).includes("*");
+}
+
+/**
+ * Map Evolve's provider-neutral network policy onto Daytona create() params
+ * (daytona.io/docs/en/network-limits).
  *
  * - outbound "open" (or no policy)     → no restrictions
- * - outbound "blocked", no allowlist   → networkBlockAll: true (kernel DROP of all egress)
- * - outbound "blocked" with allowlist  → networkAllowList (comma-separated IPv4
- *   CIDRs; bare IPv4 gets /32). Daytona enforces the allowlist with kernel
- *   iptables and supports IPv4 CIDRs ONLY, max 10 entries.
+ * - outbound "blocked", no allowlist   → networkBlockAll: true (all egress dropped)
+ * - outbound "blocked" + IP/CIDR list  → networkAllowList (comma-separated IPv4
+ *   CIDRs; bare IPv4 gets /32; max 10 entries)
+ * - outbound "blocked" + hostname list → domainAllowList (comma-separated DNS
+ *   names, forwarded VERBATIM — Daytona enforces the domain layer itself, so
+ *   nothing is DNS-resolved or pinned here; `*.domain` prefix wildcards allow
+ *   the base domain and its subdomains; max 20 entries)
  *
- * DNS-ROTATION CAVEAT (load-bearing): hostname destinations are resolved to
- * their IPv4 A records ONCE, at create time, and pinned as /32 CIDRs. If the
- * host rotates DNS afterwards (CDNs and cloud APIs often do), traffic to the
- * new IPs is BLOCKED for the sandbox's lifetime. Prefer stable IPs/CIDRs for
- * anything long-running.
- *
- * Anything that cannot be pinned to stable IPv4 CIDRs throws
- * DaytonaNetworkPolicyError (wildcard hostnames, IPv6, unresolvable
- * hostnames, >10 resolved CIDRs) — never silently weakened.
+ * The two allowlists are mutually exclusive on Daytona's wire ("Set at most
+ * one non-empty value. Sending a conflicting combination returns a 400
+ * error"), so a policy mixing CIDR and hostname destinations is refused typed
+ * (mixed-allowlist) with the fix named, rather than sent to a guaranteed 400.
+ * Destinations no list can express — IPv6, host:port, malformed IPv4, a
+ * wildcard anywhere but the `*.` prefix, an over-cap list — throw
+ * DaytonaNetworkPolicyError; the policy is never silently weakened.
  */
-async function mapNetworkPolicy(
-  network?: SandboxCreateOptions["network"],
-  resolveHostname: HostnameResolver = defaultResolveHostname
-): Promise<DaytonaNetworkCreateParams> {
+function mapNetworkPolicy(
+  network?: SandboxCreateOptions["network"]
+): DaytonaNetworkCreateParams {
   if (!network || network.outbound === "open") {
     if (network?.allowedDestinations?.length) {
       throw new Error("network.allowedDestinations is only valid when outbound is blocked");
@@ -1275,10 +1306,9 @@ async function mapNetworkPolicy(
     return { networkBlockAll: true };
   }
 
-  // Pass 1 (synchronous): classify destinations and reject what Daytona can
-  // never enforce, before any DNS lookups happen.
+  // Classify destinations and reject what no Daytona list can express.
   const cidrs: string[] = [];
-  const hostnames: string[] = [];
+  const domains: string[] = [];
   for (const destination of destinations) {
     if (isIpv4Destination(destination)) {
       cidrs.push(destination.includes("/") ? destination : `${destination}/32`);
@@ -1302,49 +1332,44 @@ async function mapNetworkPolicy(
           `drop the ":<port>" from "${destination}" and list just the host or IP.`,
         destination
       );
-    } else if (destination.includes("*")) {
+    } else if (destination.includes("*") && !isPrefixWildcardDomain(destination)) {
       throw new DaytonaNetworkPolicyError(
         "wildcard-hostname",
-        `Daytona cannot enforce wildcard hostname "${destination}": its allowlist is kernel-level IPv4 ` +
-          "CIDR filtering with no DNS/domain layer. List concrete hostnames or IPv4 CIDRs instead.",
+        `Daytona's domain allowlist supports exactly one wildcard form — a "*." prefix ` +
+          `("*.example.com" allows example.com and its subdomains) — and cannot express "${destination}". ` +
+          "Use a *.prefix wildcard, a concrete hostname, or an IPv4 CIDR instead.",
         destination
       );
     } else {
-      hostnames.push(destination);
+      domains.push(destination);
     }
   }
 
-  // Pass 2: pin hostnames to their IPv4 addresses at create time.
-  for (const hostname of hostnames) {
-    let ips: string[] = [];
-    try {
-      ips = await resolveHostname(hostname);
-    } catch (error) {
-      throw new DaytonaNetworkPolicyError(
-        "unresolvable-hostname",
-        `Cannot pin hostname "${hostname}" to stable IPv4 addresses at create time ` +
-          `(${error instanceof Error ? error.message : String(error)}). Daytona enforces IPv4 CIDRs ` +
-          "only; use an IPv4 CIDR for this destination instead.",
-        hostname
-      );
-    }
-    if (ips.length === 0) {
-      throw new DaytonaNetworkPolicyError(
-        "unresolvable-hostname",
-        `Hostname "${hostname}" resolved to no IPv4 addresses. Daytona enforces IPv4 CIDRs only; ` +
-          "use an IPv4 CIDR for this destination instead.",
-        hostname
-      );
-    }
-    // LOUD caveat: the pin is a snapshot of DNS at create time
-    console.warn(
-      `[daytona] Network allowlist: pinning "${hostname}" to [${ips.join(", ")}] (DNS resolved at ` +
-        "create time). Daytona enforces IPv4 CIDRs only — if this host rotates DNS (CDNs and cloud " +
-        "APIs often do), traffic to its new IPs will be BLOCKED for the sandbox's lifetime."
+  // The two allowlists are mutually exclusive on Daytona's wire (docs: "Set
+  // at most one non-empty value") — a policy mixing kinds cannot be sent.
+  if (cidrs.length > 0 && domains.length > 0) {
+    throw new DaytonaNetworkPolicyError(
+      "mixed-allowlist",
+      `Daytona's networkAllowList (IPv4 CIDRs) and domainAllowList (DNS names) are mutually exclusive — ` +
+        `at most one may be non-empty per sandbox, and this policy names both kinds ` +
+        `(CIDRs: ${cidrs.join(", ")}; domains: ${domains.join(", ")}). ` +
+        "List only IPs/CIDRs or only hostnames for this sandbox."
     );
-    for (const ip of ips) {
-      cidrs.push(`${ip}/32`);
+  }
+
+  if (domains.length > 0) {
+    const uniqueDomains = [...new Set(domains)];
+    if (uniqueDomains.length > DAYTONA_MAX_DOMAIN_ALLOWLIST) {
+      throw new DaytonaNetworkPolicyError(
+        "allowlist-too-large",
+        `Daytona allows at most ${DAYTONA_MAX_DOMAIN_ALLOWLIST} entries in its domain allowlist; ` +
+          `this policy names ${uniqueDomains.length} domains (${uniqueDomains.join(", ")}). ` +
+          "Consolidate under *.prefix wildcards or reduce the list."
+      );
     }
+    // networkBlockAll must stay false: Daytona's runner checks blockAll first
+    // and would ignore the allowlist if both were set.
+    return { networkBlockAll: false, domainAllowList: uniqueDomains.join(",") };
   }
 
   const uniqueCidrs = [...new Set(cidrs)];
@@ -1369,11 +1394,12 @@ async function mapNetworkPolicy(
  * policy does not set must be cleared by hand or the old value survives.
  *
  * Daytona keeps two independent allowlists (`networkAllowList` for CIDRs,
- * `domainAllowList` for names). This adapter only ever writes the CIDR one —
- * hostnames are pinned to IPs by mapNetworkPolicy — but the box may have been
- * created elsewhere, and a domain allowlist left behind would silently widen a
- * policy we believe is narrow. So the update always states BOTH: the one it
- * means, and "" for the one it does not.
+ * `domainAllowList` for names), and mapNetworkPolicy writes exactly one of
+ * them per policy — but the box may have been created elsewhere, and the OTHER
+ * allowlist left behind would silently widen a policy we believe is narrow.
+ * So the update always states BOTH: the one it means, and "" for the one it
+ * does not — which also keeps the wire on the docs' "at most one non-empty
+ * value" law.
  *
  * Upstream does exactly this, and only on the apply path: harbor
  * daytona/environment.py:1313-1343 (`_network_kwargs(..., clear_public_allowlist=True)`,
@@ -1382,17 +1408,16 @@ async function mapNetworkPolicy(
  * stale allowlist fields when reopening public access or switching between
  * domain and CIDR allowlists."
  */
-async function mapNetworkPolicyForUpdate(
-  network?: SandboxCreateOptions["network"],
-  resolveHostname: HostnameResolver = defaultResolveHostname
-): Promise<DaytonaNetworkUpdateParams> {
-  const params = await mapNetworkPolicy(network, resolveHostname);
-  if (params.networkAllowList !== undefined) {
-    // A CIDR allowlist: state it, and clear any domain allowlist it replaces.
+function mapNetworkPolicyForUpdate(
+  network?: SandboxCreateOptions["network"]
+): DaytonaNetworkUpdateParams {
+  const params = mapNetworkPolicy(network);
+  if (params.networkAllowList !== undefined || params.domainAllowList !== undefined) {
+    // One allowlist in force: state it, and clear the other one it replaces.
     return {
       networkBlockAll: false,
-      networkAllowList: params.networkAllowList,
-      domainAllowList: "",
+      networkAllowList: params.networkAllowList ?? "",
+      domainAllowList: params.domainAllowList ?? "",
     };
   }
   // Block-all, or open. Either way no allowlist is in force, so both are
@@ -2729,7 +2754,7 @@ class DaytonaSandboxImpl implements SandboxInstance {
    * addresses, not the name — two lookups can disagree.
    */
   async updateNetwork(network: SandboxCreateOptions["network"]): Promise<void> {
-    const params = await mapNetworkPolicyForUpdate(network);
+    const params = mapNetworkPolicyForUpdate(network);
     try {
       await this.sandbox.updateNetworkSettings(params);
     } catch (error) {
@@ -2840,22 +2865,21 @@ export class DaytonaProvider implements SandboxProvider {
     if (options.idleTimeoutMs !== undefined) throw new DaytonaIdleTimeoutError();
 
     // Validate the network policy before any Daytona API call: the invalid
-    // open+allowlist combination and every unenforceable destination
-    // (wildcard/IPv6/unresolvable/too-many) fail fast with typed errors.
-    // Hostname destinations are DNS-pinned to IPv4 /32s here (see the
-    // DNS-rotation caveat on SandboxCreateOptions.network).
+    // open+allowlist combination and every inexpressible destination
+    // (IPv6/port/malformed-IPv4/non-prefix-wildcard/mixed-lists/over-cap)
+    // fail fast with typed errors. Hostnames forward verbatim into
+    // domainAllowList — Daytona enforces the domain layer itself, so nothing
+    // is DNS-resolved or pinned here.
     // Every DECLARED phase policy is mapped here too, and its result thrown
     // away: mapping is what rejects a destination this provider cannot express,
     // and a phase policy that only gets mapped at switch time fails with the
     // box up and the agent waiting. Upstream validates the baseline and every
     // phase policy at start for the same reason (harbor
     // environments/base.py:832-836).
-    // Daytona's mapper also RESOLVES hostnames, so this both validates and
-    // proves each phase's hosts are pinnable before the box exists.
     for (const phase of options.phaseNetworkPolicies ?? []) {
-      await mapNetworkPolicy(phase);
+      mapNetworkPolicy(phase);
     }
-    const networkParams = await mapNetworkPolicy(options.network);
+    const networkParams = mapNetworkPolicy(options.network);
 
     // Daytona has no per-exec user switch: a non-root user is applied as the
     // create-time OS user; "root" keeps the image default user and elevates

@@ -102,20 +102,6 @@ function withSentinel(command: string, sentAs: string): string {
 }
 
 /** Run fn with console.warn captured (silenced), returning the warnings. */
-async function captureWarnings<T>(fn: () => Promise<T>): Promise<{ result: T; warnings: string[] }> {
-  const warnings: string[] = [];
-  const original = console.warn;
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(" "));
-  };
-  try {
-    const result = await fn();
-    return { result, warnings };
-  } finally {
-    console.warn = original;
-  }
-}
-
 // =============================================================================
 // [1] wrapCommand() — user param
 // =============================================================================
@@ -463,7 +449,8 @@ async function testNetworkInvalidIpv4Throws(): Promise<void> {
       String(error).includes("0-255") && String(error).includes("0-32"),
       `"${dest}" message states the octet/prefix ranges`
     );
-    assert(!resolverCalled, `"${dest}" rejected before any DNS lookup (not treated as a hostname)`);
+    // No fallthrough into the domain list: a malformed IP is never read as a
+    // hostname.
   }
 }
 
@@ -709,7 +696,7 @@ async function testCreateRejectsIdleTimeout(): Promise<void> {
 
   const provider = createDaytonaProvider({ apiKey: "test-key" });
   // A marker on the client proves the refusal happens before ANY API call —
-  // this one fires before even the DNS pinning that mapNetworkPolicy does.
+  // this one fires before even the network mapping mapNetworkPolicy does.
   (provider as unknown as { client: unknown }).client = {
     snapshot: { get: async () => ({ state: "active" }) },
     create: async () => {
