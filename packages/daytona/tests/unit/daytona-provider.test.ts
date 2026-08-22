@@ -454,6 +454,71 @@ async function testNetworkInvalidIpv4Throws(): Promise<void> {
   }
 }
 
+async function testNetworkEmptyDestinationThrows(): Promise<void> {
+  console.log("\n[2n] mapNetworkPolicy() - empty/whitespace destinations are typed-rejected, never fail open");
+
+  // A blocked policy whose only destinations are blank strings must NOT map
+  // to { networkBlockAll: false, domainAllowList: "" } — Daytona reads an
+  // empty domainAllowList with blockAll:false as UNRESTRICTED egress, so a
+  // sandbox the caller sealed would boot fully open.
+  for (const dest of ["", "   ", "\t"]) {
+    let error: unknown;
+    try {
+      await _testMapNetworkPolicy({ outbound: "blocked", allowedDestinations: [dest] });
+    } catch (e) {
+      error = e;
+    }
+    assert(
+      error instanceof DaytonaNetworkPolicyError,
+      `${JSON.stringify(dest)} throws DaytonaNetworkPolicyError (fail closed, never an open box)`
+    );
+    assertEqual(
+      (error as DaytonaNetworkPolicyError).reason,
+      "invalid-destination",
+      `${JSON.stringify(dest)} reason = invalid-destination`
+    );
+  }
+
+  // A blank mixed with a real hostname must throw too — before the fix it
+  // emitted the malformed wire value ",api.example.com".
+  let mixedError: unknown;
+  try {
+    await _testMapNetworkPolicy({ outbound: "blocked", allowedDestinations: ["", "api.example.com"] });
+  } catch (e) {
+    mixedError = e;
+  }
+  assert(
+    mixedError instanceof DaytonaNetworkPolicyError &&
+      (mixedError as DaytonaNetworkPolicyError).reason === "invalid-destination",
+    `["", "api.example.com"] throws invalid-destination (no ",api.example.com" wire value)`
+  );
+}
+
+async function testNetworkCommaDestinationThrows(): Promise<void> {
+  console.log("\n[2o] mapNetworkPolicy() - a comma inside one destination is typed-rejected (list smuggling)");
+
+  // The wire value is comma-joined, so one destination carrying a comma would
+  // smuggle extra entries past the 10/20 caps and corrupt the joined value.
+  for (const dest of ["a.example.com,b.example.com", "10.0.0.1,10.0.0.2"]) {
+    let error: unknown;
+    try {
+      await _testMapNetworkPolicy({ outbound: "blocked", allowedDestinations: [dest] });
+    } catch (e) {
+      error = e;
+    }
+    assert(
+      error instanceof DaytonaNetworkPolicyError,
+      `"${dest}" throws DaytonaNetworkPolicyError`
+    );
+    assertEqual(
+      (error as DaytonaNetworkPolicyError).reason,
+      "invalid-destination",
+      `"${dest}" reason = invalid-destination (one array entry per destination)`
+    );
+    assertEqual((error as DaytonaNetworkPolicyError).destination, dest, "Error carries the destination");
+  }
+}
+
 // =============================================================================
 // [3] imageRegistryHost() — private registry detection
 // =============================================================================
@@ -2188,6 +2253,8 @@ const tests = [
   testNetworkPortThrows,
   testNetworkTrueIpv6StillThrowsIpv6,
   testNetworkInvalidIpv4Throws,
+  testNetworkEmptyDestinationThrows,
+  testNetworkCommaDestinationThrows,
   // [3] registry detection + pull error
   testImageRegistryHostDetection,
   testImagePullErrorShape,
