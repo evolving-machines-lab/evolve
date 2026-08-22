@@ -1290,8 +1290,13 @@ function isPrefixWildcardDomain(destination: string): boolean {
  * wildcard anywhere but the `*.` prefix, an empty/whitespace or
  * comma-carrying entry, an over-cap list — throw
  * DaytonaNetworkPolicyError; the policy is never silently weakened.
+ *
+ * PUBLIC EXPORT (a security seal, not a helper): external callers that build
+ * Daytona create() params themselves — the eval worker's declarative boot
+ * path is one — reuse this as the ONE opinion on how destinations become
+ * wire fields, rather than growing a driftable second mapper.
  */
-function mapNetworkPolicy(
+export function mapNetworkPolicy(
   network?: SandboxCreateOptions["network"]
 ): DaytonaNetworkCreateParams {
   if (!network || network.outbound === "open") {
@@ -3561,6 +3566,8 @@ export function createDaytonaProvider(config: DaytonaConfig = {}): SandboxProvid
 /** @internal Test-only export for unit testing wrapCommand logic. */
 export const _testWrapCommand = wrapCommand;
 export const _testWithInBoxTimeout = withInBoxTimeout;
+/** @deprecated The create-side mapper is public API now — import
+ *  `mapNetworkPolicy` directly; this alias stays for existing tests only. */
 export const _testMapNetworkPolicy = mapNetworkPolicy;
 export const _testMapNetworkPolicyForUpdate = mapNetworkPolicyForUpdate;
 export const _testIsNetworkPolicyTierRefusal = isNetworkPolicyTierRefusal;
