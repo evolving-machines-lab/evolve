@@ -37,11 +37,13 @@ import {
   _testBuildSandboxInfo,
   _testValidateTimeout,
   _testMapIdleTimeout,
+  _testMapBootCommand,
   _testMapResources,
   EVOLVE_IMAGE_VERSION,
   MODAL_MAX_LIFETIME_MS,
   MODAL_STDIN_CHUNK_BYTES,
   ModalIdleTimeoutError,
+  ModalBootCommandError,
   ModalSandboxLifetimeError,
   ModalNetworkPolicyError,
   ModalResourcesError,
@@ -568,6 +570,40 @@ async function testIdleTimeoutRejectsOverCap(): Promise<void> {
   assert(String(error).includes("lifetime first"), "Error explains why the value is meaningless");
 }
 
+async function testBootCommandUnsetIsAbsent(): Promise<void> {
+  console.log("\n[5f] mapBootCommand() - absent means absent: no `command` param at all");
+
+  // Modal's default with no args is the image's own ENTRYPOINT/CMD as the
+  // sandbox main process; an invented keep-alive here would change what every
+  // existing caller's box runs.
+  assertEqual(_testMapBootCommand(undefined), {}, "Unset boot command spreads to nothing");
+}
+
+async function testBootCommandMapsToCreateArgs(): Promise<void> {
+  console.log("\n[5g] mapBootCommand() - the argv becomes Modal's `command`, copied not shared");
+
+  const argv = ["sh", "-c", "sleep infinity"];
+  const mapped = _testMapBootCommand(argv);
+  assertEqual(mapped, { command: ["sh", "-c", "sleep infinity"] }, "argv maps to the command param");
+  assert(mapped.command !== argv, "The param is a copy — a caller mutating its argv later changes nothing");
+}
+
+async function testBootCommandRejectsEmptyArgv(): Promise<void> {
+  console.log("\n[5h] mapBootCommand() - an empty argv is refused, never forwarded");
+
+  // On the wire, [] IS "no args" (the same entrypointArgs an omitted option
+  // sends), so forwarding it would boot the image's entrypoint while reading
+  // like an override.
+  let error: unknown;
+  try {
+    _testMapBootCommand([]);
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof ModalBootCommandError, "Empty argv throws ModalBootCommandError");
+  assert(String(error).includes("ENTRYPOINT/CMD"), "Error names what the empty shape would boot");
+}
+
 // =============================================================================
 // [6] ModalProvider.create() — offline validation order + enforcement wiring
 // =============================================================================
@@ -586,6 +622,73 @@ async function testCreateValidatesIdleTimeoutBeforeNetwork(): Promise<void> {
     error = e;
   }
   assert(error instanceof ModalIdleTimeoutError, "create() enforces the idle bound offline (typed error)");
+}
+
+
+async function testCreateValidatesBootCommandBeforeNetwork(): Promise<void> {
+  console.log("\n[6e] ModalProvider.create() - an empty boot command throws before any API call");
+
+  const provider = createModalProvider({ tokenId: "test-id", tokenSecret: "test-secret" });
+
+  // Tokens are fake, so anything that reached the network would fail with a
+  // transport error instead — the typed error IS the proof it never got there.
+  let error: unknown;
+  try {
+    await provider.create({ image: "evolve-all", bootCommand: [] });
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof ModalBootCommandError, "create() enforces the boot command offline (typed error)");
+}
+
+async function testCreateForwardsBootCommandToSandboxCreate(): Promise<void> {
+  console.log("\n[6f] ModalProvider.create() - bootCommand reaches sandboxes.create as `command`; absent stays absent");
+
+  // The stubbed-client idiom of [10d]: the params the wiring hands
+  // client.sandboxes.create are the pin, no network involved.
+  const createParams: Array<Record<string, unknown>> = [];
+  const image = { build: async () => image };
+  const client = {
+    apps: { fromName: async () => ({ appId: "ap-mock" }) },
+    images: { fromRegistry: async () => image },
+    sandboxes: {
+      create: async (_app: unknown, _image: unknown, params: Record<string, unknown>) => {
+        createParams.push(params);
+        return { sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) };
+      },
+    },
+  };
+
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = client;
+
+  await provider.create({
+    image: "evolve-all",
+    user: "root",
+    bootCommand: ["sh", "-c", "sleep infinity"],
+  });
+  assertEqual(
+    createParams[0].command,
+    ["sh", "-c", "sleep infinity"],
+    "The declared boot command is the sandbox's create-time command"
+  );
+
+  // Absent means ABSENT — not undefined, not []: Modal reads the key's very
+  // presence, and modal@0.9.0 turns an absent params.command into
+  // entrypointArgs [] itself. The wiring must not invent the key.
+  await provider.create({ image: "evolve-all", user: "root" });
+  assert(
+    !("command" in createParams[1]),
+    "With no bootCommand the create params carry no `command` key at all"
+  );
+
+  // The capability marker consumers gate on: a build that maps bootCommand
+  // says so (a stale build would silently drop the option — the marker is
+  // what lets a consumer refuse it instead of booting image entrypoints).
+  assert(
+    (provider as { supportsBootCommand?: boolean }).supportsBootCommand === true,
+    "The provider declares supportsBootCommand"
+  );
 }
 
 
@@ -1743,11 +1846,17 @@ const tests = [
   testIdleTimeoutHonored,
   testIdleTimeoutRejectsNonPositive,
   testIdleTimeoutRejectsOverCap,
+  // [5f-5h] mapBootCommand
+  testBootCommandUnsetIsAbsent,
+  testBootCommandMapsToCreateArgs,
+  testBootCommandRejectsEmptyArgv,
   // [6] provider create validation
   testCreateValidatesBeforeNetwork,
   testCreateNoLongerRejectsUserAndNetwork,
   testCreateValidatesIdleTimeoutBeforeNetwork,
   testCreateValidatesDeclaredPhasePolicies,
+  testCreateValidatesBootCommandBeforeNetwork,
+  testCreateForwardsBootCommandToSandboxCreate,
   // [7] ModalCommands
   testCommandsRunAsUser,
   testCommandsRunAsRoot,

@@ -452,6 +452,11 @@ export class ManagedModalProvider implements SandboxProvider {
         "The managed Modal door takes no idle timeout; bound the sandbox with `timeoutMs` instead.",
       );
     }
+    if (options.bootCommand !== undefined) {
+      throw new Error(
+        "Managed Modal sandboxes boot the platform image as configured; `bootCommand` cannot be enforced through the managed door.",
+      );
+    }
 
     const response = await this.door.request(
       "create",

@@ -187,13 +187,14 @@ async function testCreateOmitsUnsetFields(): Promise<void> {
 }
 
 async function testCreateRefusesWhatTheDoorCannotCarry(): Promise<void> {
-  console.log("\n[2c] create() - resources/network/user/idleTimeoutMs refused before any request");
+  console.log("\n[2c] create() - resources/network/user/idleTimeoutMs/bootCommand refused before any request");
 
   const cases: Array<[string, Parameters<ManagedModalProvider["create"]>[0]]> = [
     ["resources", { resources: { cpu: 2 } }],
     ["network", { network: { outbound: "blocked" } }],
     ["user", { user: "root" }],
     ["idleTimeoutMs", { idleTimeoutMs: 60_000 }],
+    ["bootCommand", { bootCommand: ["sh", "-c", "sleep infinity"] }],
   ];
   for (const [name, options] of cases) {
     const { requests, restore } = withMockDoor(() => json({ sandboxId: "never" }, 201));
