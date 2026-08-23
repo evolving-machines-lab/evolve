@@ -166,6 +166,28 @@ export interface SandboxCreateOptions {
    * not above the longest gap between API calls.
    */
   idleTimeoutMs?: number;
+  /**
+   * The argv the sandbox boots as its MAIN PROCESS, replacing whatever the
+   * image itself would start. Providers must reject it if they cannot run it,
+   * never silently ignore it — a dropped boot command means the image's own
+   * start program boots in its place, with nothing in any log to say so.
+   *
+   * Modal is the one first-party provider that takes it: its create call
+   * forwards the argv as the sandbox's args — "Set the CMD of the Sandbox,
+   * overriding any CMD of the container image" (modal.com/docs/reference/
+   * modal.Sandbox), a total override in operation, entrypoint included
+   * (harbor modal.py:1151-1155; the provider doc has the full evidence).
+   * Omitted there, the image's own ENTRYPOINT/CMD is the main process. e2b
+   * boots its template's init (a start command is a template-BUILD field,
+   * not a create-time one) and daytona never runs an image entrypoint at
+   * all, so neither can honor a create-time argv — both typed-reject it.
+   *
+   * The caller this exists for needs an INERT boot: a box held open (Harbor's
+   * keep-alive is ["sh", "-c", "sleep infinity"]) while every process it runs
+   * arrives by exec — so whoever execs the image's start program is its ONLY
+   * launcher, never the second of two.
+   */
+  bootCommand?: string[];
   workingDirectory?: string;
   /**
    * Per-sandbox compute sizing: cpu in cores, memory and disk in GiB.
@@ -385,6 +407,14 @@ export interface SandboxProvider {
   readonly providerType: string;
   /** Human-readable provider name for logging (e.g., "E2B") */
   readonly name?: string;
+  /**
+   * TRUE on a provider whose create() honors SandboxCreateOptions.bootCommand
+   * (today: modal). A consumer whose safety depends on the boot command being
+   * honored must CHECK this and refuse a provider without it, because the one
+   * failure a stale provider build produces is the silent one: the unknown
+   * option is dropped and the image's own start program boots instead.
+   */
+  readonly supportsBootCommand?: boolean;
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
 

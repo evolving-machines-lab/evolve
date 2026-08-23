@@ -40,6 +40,7 @@ import {
   DaytonaNetworkPolicyError,
   DaytonaResourcesError,
   DaytonaIdleTimeoutError,
+  DaytonaBootCommandError,
   DaytonaImagePullError,
   DaytonaSnapshotActivationError,
   DaytonaSnapshotConflictError,
@@ -795,6 +796,37 @@ async function testCreateRejectsIdleTimeout(): Promise<void> {
   assert(
     unsetError.includes("MARKER_CLIENT_CREATE_CALLED"),
     "Without idleTimeoutMs the create proceeds to the client as before"
+  );
+}
+
+async function testCreateRejectsBootCommand(): Promise<void> {
+  console.log("\n[6d2] DaytonaProvider.create() - bootCommand is refused: Daytona runs nothing at boot");
+
+  const provider = createDaytonaProvider({ apiKey: "test-key" });
+  // Same marker idiom as [6d]: the refusal must fire before ANY API call —
+  // the silent alternative (a dropped option) would read as the inert boot
+  // the caller asked for, with the requested argv never run.
+  (provider as unknown as { client: unknown }).client = {
+    snapshot: { get: async () => ({ state: "active" }) },
+    create: async () => {
+      throw new Error("MARKER_CLIENT_CREATE_CALLED");
+    },
+  };
+
+  let error: unknown;
+  try {
+    await provider.create({ image: "eval-env-cafe", bootCommand: ["sh", "-c", "sleep infinity"] });
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof DaytonaBootCommandError, "bootCommand throws DaytonaBootCommandError");
+  assert(
+    String(error).includes("exec"),
+    "Message points at the honest alternative: exec after create"
+  );
+  assert(
+    !String(error).includes("MARKER_CLIENT_CREATE_CALLED"),
+    "Refused before any Daytona API call"
   );
 }
 
@@ -2269,6 +2301,7 @@ const tests = [
   testCreateNoLongerRejectsUserAndNetwork,
   testCreateRejectsResourcesOnCachedSnapshot,
   testCreateRejectsIdleTimeout,
+  testCreateRejectsBootCommand,
   // [6.5] snapshot self-heal
   testCreateHealsInactiveSnapshot,
   testCreateActiveSnapshotUntouchedByActivation,
