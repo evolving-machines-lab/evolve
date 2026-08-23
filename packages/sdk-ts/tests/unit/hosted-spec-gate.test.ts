@@ -5,7 +5,7 @@
  * spec/openapi.yaml calls itself the single source of truth, and until this
  * file existed only its ErrorCode enum was machine-checked — every operation
  * and artifact-selector claim in it could drift from the client silently. This
- * gate holds the SDK to the contract on three axes:
+ * gate holds the SDK to the contract on five axes:
  *
  *   1. OPERATIONS. Every operationId in the spec appears in the explicit
  *      map below, and every wave-1 operation resolves to a real client
