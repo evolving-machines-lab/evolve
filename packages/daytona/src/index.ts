@@ -333,6 +333,18 @@ export class DaytonaResourcesError extends Error {
  * it is the only one there is, so `timeoutMs` is already mapped onto it. A
  * second option pointing at the same knob could only contradict the first.
  */
+export class DaytonaBootCommandError extends Error {
+  constructor() {
+    super(
+      "Daytona takes no create-time boot command: it never runs an image entrypoint or any " +
+        "argv at boot (harbor daytona/environment.py:706-708 works around exactly that, " +
+        "starting dockerd by hand). The boot is already inert — run the process by exec " +
+        "after create."
+    );
+    this.name = "DaytonaBootCommandError";
+  }
+}
+
 export class DaytonaIdleTimeoutError extends Error {
   constructor() {
     super(
@@ -1659,6 +1671,12 @@ export interface SandboxCreateOptions {
    * mapped onto it (autoStopInterval). Two options, one knob.
    */
   idleTimeoutMs?: number;
+  /**
+   * REJECTED with DaytonaBootCommandError. Daytona never runs an image
+   * entrypoint or any argv at boot, so a create-time boot command cannot be
+   * honored. The boot is already inert; exec the process after create.
+   */
+  bootCommand?: string[];
   workingDirectory?: string;
   /**
    * Resource allocation (cpu cores, memory GiB, disk GiB), applied when a
@@ -2911,6 +2929,10 @@ export class DaytonaProvider implements SandboxProvider {
     // already mapped onto it (autoStopInterval, below). Honouring both would be
     // two options steering one knob.
     if (options.idleTimeoutMs !== undefined) throw new DaytonaIdleTimeoutError();
+    // Same law for a boot command: Daytona runs nothing at boot — not the
+    // image's entrypoint, not a requested argv — so this cannot be honored
+    // and a silent drop would read as an inert boot the caller asked for.
+    if (options.bootCommand !== undefined) throw new DaytonaBootCommandError();
 
     // Validate the network policy before any Daytona API call: the invalid
     // open+allowlist combination and every inexpressible destination

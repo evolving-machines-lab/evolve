@@ -151,6 +151,18 @@ function mapNetworkPolicy(network?: SandboxCreateOptions["network"]): E2BNetwork
  * deadline — never what the sandbox is or is not doing. An `idleTimeoutMs`
  * would therefore be silently ignored, so it is refused instead.
  */
+export class E2BBootCommandError extends Error {
+  constructor() {
+    super(
+      "E2B takes no create-time boot command: the sandbox boots its template's own init, " +
+        "and a start command is a template-BUILD field (Template startCmd) this provider " +
+        "never sets. The boot is already inert — run the process by exec after create, " +
+        "or bake it into the template the `image` names."
+    );
+    this.name = "E2BBootCommandError";
+  }
+}
+
 export class E2BIdleTimeoutError extends Error {
   constructor() {
     super(
@@ -272,6 +284,13 @@ export interface SandboxCreateOptions {
    * map this onto and honouring it would be a lie.
    */
   idleTimeoutMs?: number;
+  /**
+   * REJECTED with E2BBootCommandError. The sandbox boots the template's own
+   * init — a start command is a template-BUILD field (startCmd) this provider
+   * never sets, so a create-time argv cannot be honored. The boot is already
+   * inert; exec the process after create instead.
+   */
+  bootCommand?: string[];
   workingDirectory?: string;
   /**
    * Per-sandbox compute sizing (cpu cores, memory GiB, disk GiB). E2B sizes
@@ -945,6 +964,12 @@ export class E2BProvider implements SandboxProvider {
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
+    if (options.bootCommand !== undefined) {
+      // Provider law: reject what cannot be enforced, never silently ignore.
+      // The silent failure here is the bad one: a dropped boot command boots
+      // whatever the template's init is instead, with no trace of the swap.
+      throw new E2BBootCommandError();
+    }
     if (options.idleTimeoutMs !== undefined) {
       // Provider law: reject what cannot be enforced, never silently ignore.
       // E2B's only clock is an absolute lifetime — the timeout set at create (or

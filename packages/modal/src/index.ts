@@ -210,6 +210,47 @@ function mapIdleTimeout(idleTimeoutMs?: number): { idleTimeoutMs?: number } {
 }
 
 /**
+ * Typed error for a boot command Modal could not act on as given. A refusal
+ * rather than a repair, same law as the idle bound above: the one shape
+ * rejected (an empty argv) is indistinguishable on the wire from "no args",
+ * which boots the image's own ENTRYPOINT/CMD — exactly what an explicit
+ * bootCommand exists to displace.
+ */
+export class ModalBootCommandError extends Error {
+  constructor(reason: string) {
+    super(`Modal bootCommand is invalid: ${reason}`);
+    this.name = "ModalBootCommandError";
+  }
+}
+
+/**
+ * Evolve's boot command -> Modal's create params, same shape as
+ * mapIdleTimeout and mapResources: provider-neutral option in, Modal
+ * fragment out.
+ *
+ * ABSENT MEANS ABSENT: with no bootCommand the create carries no `command`,
+ * and the image's own ENTRYPOINT/CMD boots as the sandbox main process —
+ * Modal's documented default and this provider's behavior since its first
+ * release; inventing a keep-alive here would silently change what every
+ * existing caller's box runs.
+ *
+ * An EMPTY argv is refused, never forwarded: Modal reads empty args as "no
+ * args" (the wire shape is the same `entrypointArgs: []` an omitted command
+ * produces), so `bootCommand: []` would boot the entrypoint while looking
+ * like an override — omit the option to boot the image's command.
+ */
+function mapBootCommand(bootCommand?: readonly string[]): { command?: string[] } {
+  if (bootCommand === undefined) return {};
+  if (bootCommand.length === 0) {
+    throw new ModalBootCommandError(
+      "an empty argv is Modal's own \"no args\" wire shape and would boot the image's " +
+        "ENTRYPOINT/CMD — omit bootCommand to boot the image's command"
+    );
+  }
+  return { command: [...bootCommand] };
+}
+
+/**
  * Wrap a command with cwd + env handling and (when not root) an
  * `su <user> -c` wrapper.
  *
@@ -715,6 +756,29 @@ export interface SandboxCreateOptions {
    * this re-checked.
    */
   idleTimeoutMs?: number;
+  /**
+   * The argv the sandbox boots as its MAIN PROCESS, replacing the image's own
+   * ENTRYPOINT/CMD. Forwarded to Modal's Sandbox.create args — documented as
+   * "Set the CMD of the Sandbox, overriding any CMD of the container image"
+   * (modal.com/docs/reference/modal.Sandbox), and the override is TOTAL in
+   * operation, entrypoint included: Harbor's modal backend documents its
+   * forwarded args as overriding "the image's ENTRYPOINT/CMD" and must pass
+   * None "to inherit the image's command (e.g. dockerd-entrypoint.sh for the
+   * DinD image)" (harbor modal.py:1151-1155) — with args present that DinD
+   * entrypoint would not run at all.
+   *
+   * OMITTED, the image's own ENTRYPOINT/CMD boots as the main process, and a
+   * start program that exits takes the sandbox down with it (harbor
+   * modal.py:285-291). A caller that needs an INERT boot — the box held open
+   * while every process it runs arrives by exec, so whoever execs the image's
+   * start program is its ONLY launcher — passes a keep-alive here (Harbor's
+   * own is ["sh", "-c", "sleep infinity"]).
+   *
+   * An empty argv is REJECTED (ModalBootCommandError): on the wire it is the
+   * same "no args" an omitted option sends, so it would boot the entrypoint
+   * while reading like an override.
+   */
+  bootCommand?: string[];
   workingDirectory?: string;
   /**
    * Per-sandbox compute sizing: cpu in cores, memory in GiB — mapped to
@@ -922,6 +986,15 @@ export interface SandboxProvider {
 
   /** Human-readable provider name for logging */
   readonly name?: string;
+
+  /**
+   * TRUE on every build whose create() maps SandboxCreateOptions.bootCommand
+   * to Modal's create args. A consumer whose safety depends on an inert boot
+   * must CHECK this and refuse a provider without it: an older build would
+   * silently drop the unknown option and boot the image's own ENTRYPOINT/CMD
+   * as the sandbox main process.
+   */
+  readonly supportsBootCommand?: boolean;
 
   /** Create new sandbox */
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
@@ -1499,6 +1572,8 @@ class ModalSandboxImpl implements SandboxInstance {
 export class ModalProvider implements SandboxProvider {
   readonly providerType = "modal" as const;
   readonly name = "Modal";
+  /** create() maps bootCommand (see SandboxCreateOptions.bootCommand). */
+  readonly supportsBootCommand = true;
   private readonly client: ModalClient;
   private readonly appName: string;
   private readonly defaultTimeoutMs: number;
@@ -1725,6 +1800,9 @@ export class ModalProvider implements SandboxProvider {
     // Resolved HERE, not at the create call, so an invalid idle bound throws
     // before the app/image round trips like every other validation above.
     const idleParams = mapIdleTimeout(options.idleTimeoutMs);
+    // Same offline-first law: an empty boot command is refused here, before
+    // the app/image round trips, never discovered as a booted entrypoint.
+    const bootParams = mapBootCommand(options.bootCommand);
     // A box whose later phases differ from its boot policy is created in the
     // SWITCHABLE shape (two allowlists, possibly empty) rather than the blunt
     // `blockNetwork: true` one, because Modal refuses to combine the two and a
@@ -1781,6 +1859,10 @@ export class ModalProvider implements SandboxProvider {
       ...(sizing.gpu !== undefined ? { gpu: sizing.gpu } : {}),
       timeoutMs,
       ...idleParams,
+      // The sandbox main process, when the caller declared one (see
+      // SandboxCreateOptions.bootCommand); absent, Modal boots the image's
+      // own ENTRYPOINT/CMD.
+      ...bootParams,
       workdir: options.workingDirectory,
       env,
       tags,
@@ -2023,6 +2105,7 @@ export const _testBuildSandboxInfo = buildSandboxInfo;
 export const _testCollectSandboxes = collectSandboxes;
 export const _testValidateTimeout = validateTimeout;
 export const _testMapIdleTimeout = mapIdleTimeout;
+export const _testMapBootCommand = mapBootCommand;
 
 /**
  * TYPE-ONLY handle on the concrete sandbox class, for the contract-conformance
