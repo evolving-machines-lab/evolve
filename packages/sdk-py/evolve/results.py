@@ -1,6 +1,7 @@
 """Result types for Evolve SDK."""
 
 from dataclasses import dataclass, field
+import math
 from typing import Any, Dict, List, Literal, Optional, Union
 
 
@@ -200,8 +201,12 @@ def _usage_reading_from_data(data: Any) -> Optional[UsageReading]:
         return None
 
     def _num(value: Any) -> Optional[float]:
-        # bool is an int subclass; a stray True must never become money.
-        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+        # bool is an int subclass; a stray True must never become money. And a
+        # non-finite float (json.loads admits NaN/Infinity) is not a reading —
+        # refuse it like the TS side's Number.isFinite does.
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        return value if math.isfinite(value) else None
 
     as_of = data.get('as_of')
     return UsageReading(

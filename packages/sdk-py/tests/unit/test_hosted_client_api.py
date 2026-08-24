@@ -3730,3 +3730,17 @@ class TestAuth:
             with pytest.raises(EvolveAPIError) as exc:
                 await auth_factory(CONFIG).status()
         assert exc.value.status == 404
+
+
+def test_usage_reading_refuses_non_finite_floats():
+    from evolve.results import _usage_reading_from_data
+
+    reading = _usage_reading_from_data(
+        {"provisional": True, "spent_usd": float("nan"), "input_tokens": float("inf"),
+         "cached_input_tokens": 5, "output_tokens": 2, "as_of": "2026-08-24T00:00:00Z"}
+    )
+    assert reading is not None
+    assert reading.spent_usd is None
+    assert reading.input_tokens is None
+    assert reading.cached_input_tokens == 5
+    assert reading.output_tokens == 2
