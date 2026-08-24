@@ -833,6 +833,8 @@ export class EvolveAdapter {
       ended_at: info.endedAt ?? null,
       step_count: info.stepCount,
       tool_stats: info.toolStats ?? null,
+      // Already snake_case on the wire and in the TS type — passed through.
+      usage: (info.usage as Record<string, unknown> | null) ?? null,
     };
   }
 

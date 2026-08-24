@@ -106,7 +106,9 @@ class RunCost:
         run_id: Run ID matching AgentResponse.run_id
         index: 1-based chronological position in session
         cost: Total cost in USD as billed to your Evolve account
-        tokens: Token counts {'prompt': N, 'completion': N}
+        tokens: Token counts {'prompt': N, 'completion': N, 'cached': N}.
+            ``prompt`` INCLUDES the cached share; ``cached`` is that share,
+            absent on servers predating the field (never 0-by-default).
         model: Model used (e.g., 'claude-opus-4-8')
         requests: Number of LLM API requests in this run
         as_of: ISO timestamp when this data was fetched
@@ -133,7 +135,9 @@ class SessionCost:
     Attributes:
         session_tag: Session tag matching get_session_tag()
         total_cost: Total cost across all runs in USD
-        total_tokens: Aggregate token counts {'prompt': N, 'completion': N}
+        total_tokens: Aggregate token counts
+            {'prompt': N, 'completion': N, 'cached': N}. ``prompt`` INCLUDES
+            the cached share; ``cached`` is absent on servers predating it.
         runs: Per-run breakdown, chronological order
         as_of: ISO timestamp when this data was fetched
         is_complete: False if session is still active or recently ended
@@ -146,6 +150,68 @@ class SessionCost:
     as_of: str
     is_complete: bool
     truncated: bool
+
+
+@dataclass
+class UsageReading:
+    """THE ONE-HOME USAGE READING — "what has this run's meter said so far".
+
+    Money and tokens come from the SAME gateway spend-log records, so the two
+    can never describe different sets of requests. Served under the one key
+    ``usage``, with these exact keys, by the trial surfaces and the
+    managed-agents session surfaces alike — a renderer that reads one reads
+    the other unchanged. While the run is alive the platform's own poll
+    raises the numbers, so a polling reader sees them tick; once settled, the
+    settled figures replace the live ones under the same keys. The whole
+    object is None when the meter has never answered — never a fabricated
+    zero.
+
+    Attributes:
+        provisional: True while every number is a LOWER BOUND that can still
+            grow — the run is alive, or its settled lane is not yet
+            confirmed. False = settled; the reading will not move again.
+        spent_usd: Metered model spend so far, USD. None = the money was
+            never measured (a trial's ``spend_source`` lane ``assumed_cap``;
+            the token fields beside it may still carry real readings).
+        input_tokens: Prompt tokens so far, INCLUDING the cached share.
+        cached_input_tokens: The cached share of ``input_tokens``.
+        output_tokens: Completion tokens so far.
+        as_of: When this reading was taken — show its age, never the figure
+            alone.
+    """
+    provisional: bool
+    spent_usd: Optional[float]
+    input_tokens: Optional[int]
+    cached_input_tokens: Optional[int]
+    output_tokens: Optional[int]
+    as_of: Optional[str]
+
+
+def _usage_reading_from_data(data: Any) -> Optional[UsageReading]:
+    """The wire's usage reading, defensively — the same one rule as the
+    TypeScript SDK's ``mapUsageReading``: anything malformed answers None
+    (which already means "the meter never answered"), each numeric field is
+    taken only as a real number, and ``provisional`` must be a real bool —
+    without it the reading has no statement to make."""
+    if not isinstance(data, dict):
+        return None
+    provisional = data.get('provisional')
+    if not isinstance(provisional, bool):
+        return None
+
+    def _num(value: Any) -> Optional[float]:
+        # bool is an int subclass; a stray True must never become money.
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    as_of = data.get('as_of')
+    return UsageReading(
+        provisional=provisional,
+        spent_usd=_num(data.get('spent_usd')),
+        input_tokens=_num(data.get('input_tokens')),
+        cached_input_tokens=_num(data.get('cached_input_tokens')),
+        output_tokens=_num(data.get('output_tokens')),
+        as_of=as_of if isinstance(as_of, str) else None,
+    )
 
 
 SessionEvent = Dict[str, Any]
@@ -171,6 +237,10 @@ class SessionInfo:
     ended_at: Optional[str]
     step_count: int
     tool_stats: Optional[Dict[str, int]]
+    #: The one-home usage reading — the SAME object, same keys, a trial
+    #: serves (see :class:`UsageReading`). None = the meter never answered
+    #: (and on servers predating the field).
+    usage: Optional[UsageReading] = None
 
 
 @dataclass

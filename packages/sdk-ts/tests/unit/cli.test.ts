@@ -1921,6 +1921,70 @@ function testTrialDetailSpendLane() {
 }
 
 /**
+ * THE ONE-HOME USAGE READING on the CLI surfaces: the token half renders as
+ * its own row/column with the provisional marker inside the cell, and the
+ * SPENT column folds the live floor in (trialSpendNow) so a RUNNING trial
+ * that has demonstrably spent shows "at least $X" instead of a dash.
+ */
+function testTrialUsageRendering() {
+  console.log("\n--- usage reading: tokens row/column + live SPENT floor ---");
+
+  const liveUsage = {
+    provisional: true,
+    spent_usd: 0.0421,
+    input_tokens: 12345,
+    cached_input_tokens: 4102,
+    output_tokens: 2210,
+    as_of: "2026-07-29T00:00:09.000Z",
+  };
+
+  const running = trialDetailLines(trialFixture({ usage: liveUsage })).join("\n");
+  assert(running.includes("tokens"), "a metered trial shows the tokens row");
+  assert(
+    running.includes("in 12,345 (4,102 cached) · out 2,210"),
+    "the row carries counts and the cached share",
+  );
+  assert(running.includes("— provisional"), "a growing count is marked provisional in the cell");
+
+  const settled = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      usage: { ...liveUsage, provisional: false, spent_usd: 0.31 },
+    }),
+  ).join("\n");
+  assert(settled.includes("in 12,345 (4,102 cached) · out 2,210"), "a settled trial keeps its tokens row");
+  assert(!settled.includes("— provisional"), "a settled count carries no provisional marker");
+
+  const noUsage = trialDetailLines(trialFixture({})).join("\n");
+  assert(!noUsage.includes("tokens"), "no reading means no tokens row, never a row of zeros");
+
+  // The list columns: SPENT folds the live floor in; TOKENS is the same cell
+  // the detail row prints.
+  const spentCell = TRIAL_COLUMNS.find((column) => column.key === "spent");
+  assertEqual(
+    spentCell!.cell(trialFixture({ usage: liveUsage })),
+    "at least $0.04",
+    "a RUNNING trial's SPENT cell states the live floor",
+  );
+  assertEqual(
+    spentCell!.cell(trialFixture({})),
+    "-",
+    "no reading still states no figure",
+  );
+  const tokensCell = TRIAL_COLUMNS.find((column) => column.key === "tokens");
+  assert(tokensCell !== undefined, "the trial list has a TOKENS column");
+  assertEqual(
+    tokensCell!.cell(trialFixture({ usage: liveUsage })),
+    "in 12,345 (4,102 cached) · out 2,210 — provisional",
+    "the TOKENS cell carries counts, cached share and the marker",
+  );
+  assertEqual(tokensCell!.cell(trialFixture({})), "-", "no reading reads as a dash");
+}
+
+/**
  * GPU COST (Wave-3 lane 5): the trial detail renders the compute estimate as
  * its own labeled row — the audit sentence for a priced trial, the server's
  * own reason for an unpriced one, and NOTHING for a non-GPU trial. Never
@@ -5380,6 +5444,7 @@ async function main() {
   testEventLine();
   testTrialDetailLiveSpend();
   testTrialDetailSpendLane();
+  testTrialUsageRendering();
   testTrialDetailGpuCost();
   testTrialDetailJudgeSplit();
   testBuildInputsDirect();

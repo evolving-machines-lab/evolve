@@ -492,6 +492,7 @@ export {
   type AgentSource,
   type AgentSourceInput,
   type SpendSource,
+  type UsageReading,
   type Page,
   type PageOptions,
   type JobPage,

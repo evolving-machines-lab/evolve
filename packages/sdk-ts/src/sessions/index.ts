@@ -1,3 +1,4 @@
+import { mapUsageReading } from "../hosted/types";
 import { createWriteStream } from "fs";
 import { mkdir } from "fs/promises";
 import { join } from "path";
@@ -94,6 +95,9 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       runtimeStatus:
         (raw.runtimeStatus as "alive" | "dead" | "unknown") || "unknown",
       cost: typeof raw.cost === "number" ? raw.cost : null,
+      // The one-home usage reading, by the one shared parsing rule — a
+      // malformed or absent object reads null ("the meter never answered").
+      usage: mapUsageReading(raw.usage),
       createdAt: raw.createdAt as string,
       endedAt: (raw.endedAt as string) || null,
       stepCount: (raw.stepCount as number) || 0,

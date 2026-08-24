@@ -146,6 +146,7 @@ from .results import (
     SessionPage,
     SessionEvent,
     BrowserReplay,
+    UsageReading,
 )
 from .storage_client import StorageClient
 from .sessions_client import SessionsClient
@@ -468,6 +469,7 @@ __all__ = [
     'SessionPage',
     'SessionEvent',
     'BrowserReplay',
+    'UsageReading',
 
     # Standalone clients
     'StorageClient',

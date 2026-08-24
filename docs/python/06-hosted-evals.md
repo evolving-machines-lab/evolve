@@ -270,6 +270,18 @@ Read the pair together or not at all, and hold on to the rules that follow from 
 
 The same reading reaches a watcher as a `trial.spend` event carrying `trial_id`, `task_name` and `live_spent_usd` — and, when the ledger sample carried them, the token sums. It is emitted only when a sample actually landed on a live trial, so a poll that raced the settle never fires one.
 
+### The one-home `usage` reading
+
+The pair above answers the money half; `trial.usage` answers the whole question in one object — spend so far plus the token breakdown, from the same ledger records, with a `provisional` flag saying whether the numbers can still grow:
+
+```python
+print(trial.usage)
+# UsageReading(provisional=True, spent_usd=3.41, input_tokens=2181733,
+#              cached_input_tokens=1965214, output_tokens=8177, as_of='2026-07-31T18:22:05.113Z')
+```
+
+While the trial runs the reading is `provisional: true` and ticks as the ledger batches in; at settle the settled figures replace the live ones under the same keys, and `provisional` flips to `false` once the lane is confirmed (`spend_source` `"measured"`). `None` means the meter never answered — never a fabricated zero. The object's keys are identical on the managed-agents session surfaces (`sessions()` `SessionInfo.usage`), so one renderer covers a trial and a session unchanged. The CLI reads it too: `evolve trial show` prints a `tokens` row and the trial list's `SPENT` column states a running trial's floor as `at least $X`.
+
 ---
 
 ## Read the results
@@ -1604,6 +1616,15 @@ TrialStatus = Literal['QUEUED', 'RUNNING', 'SCORING', 'SCORED',
                       'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED']
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 SpendSource = Literal['measured', 'measured_provisional', 'assumed_cap']
+
+@dataclass
+class UsageReading:                               # the one-home usage reading — same keys on session surfaces
+    provisional: bool                             # True while every number can still grow
+    spent_usd: Optional[float]                    # None = the money was never measured
+    input_tokens: Optional[int]                   # INCLUDES the cached share
+    cached_input_tokens: Optional[int]
+    output_tokens: Optional[int]
+    as_of: Optional[str]                          # when the reading was taken
 VerifierEnvironmentMode = Literal['shared', 'separate']
 AttemptPhase = Literal['prepare', 'build', 'boot', 'install', 'agent', 'verify', 'persist']
 
@@ -1770,6 +1791,7 @@ class Trial:                        # list rows and detail, one shape
     spend_source: Optional[SpendSource]
     judge_spend_source: Optional[SpendSource]     # the judge figure's lane; None == no judge ever ran
     live_spent_usd: Optional[float]               # mid-run LOWER BOUND; cleared at settle
+    usage: Optional[UsageReading]                 # the one-home reading — see Live cost and live tokens
     live_spend_at: Optional[str]
     max_trial_spend_usd: Optional[float]          # the cap THIS trial's key carried
     sandbox_provider: Optional[EvalSandboxProvider]

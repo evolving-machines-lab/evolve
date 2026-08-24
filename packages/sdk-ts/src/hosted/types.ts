@@ -124,6 +124,65 @@ export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
  */
 export type SpendSource = "measured" | "measured_provisional" | "assumed_cap";
 
+/**
+ * THE ONE-HOME USAGE READING — "what has this run's meter said so far", money
+ * and tokens from the SAME gateway spend-log records so the two can never
+ * describe different sets of requests. Served under the one key `usage`, with
+ * these exact keys, by the trial surfaces and the managed-agents session
+ * surfaces alike. While the run is alive the platform's own poll raises the
+ * numbers (~30s cadence over a gateway that batches its logs late), so a
+ * polling reader sees them tick; once settled, the settled figures replace
+ * the live ones under the same keys. The whole object is null when the meter
+ * has never answered — never a fabricated zero.
+ */
+export interface UsageReading {
+  /**
+   * True while every number is a LOWER BOUND that can still grow — the run is
+   * alive, or its settled lane is not yet confirmed. False = settled; the
+   * reading will not move again.
+   */
+  provisional: boolean;
+  /**
+   * Metered model spend so far, USD. Null = the money was never measured
+   * (which a trial's `spend_source` lane `assumed_cap` states; the token
+   * fields beside it may still carry real readings).
+   */
+  spent_usd: number | null;
+  /** Prompt tokens so far, INCLUDING the cached share. */
+  input_tokens: number | null;
+  /** The cached share of `input_tokens`. */
+  cached_input_tokens: number | null;
+  /** Completion tokens so far. */
+  output_tokens: number | null;
+  /** When this reading was taken — show its age, never the figure alone. */
+  as_of: string | null;
+}
+
+/**
+ * The wire's usage reading, defensively: anything malformed answers null,
+ * which already means "the meter never answered" on this shape. Each numeric
+ * field is taken only as a real number (a stray string never becomes money),
+ * and `provisional` must be a real boolean — without it the reading has no
+ * statement to make. Lives beside the type because BOTH clients that receive
+ * the object — the hosted trials client and the sessions client — parse it
+ * with this one rule.
+ */
+export function mapUsageReading(raw: unknown): UsageReading | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.provisional !== "boolean") return null;
+  const numOrNull = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    provisional: record.provisional,
+    spent_usd: numOrNull(record.spent_usd),
+    input_tokens: numOrNull(record.input_tokens),
+    cached_input_tokens: numOrNull(record.cached_input_tokens),
+    output_tokens: numOrNull(record.output_tokens),
+    as_of: typeof record.as_of === "string" ? record.as_of : null,
+  };
+}
+
 /** Where a trial's verifier executed: inside the agent's environment, or a separate one */
 export type VerifierEnvironmentMode = "shared" | "separate";
 
@@ -1059,6 +1118,17 @@ export interface Trial {
   live_spent_usd: number | null;
   /** When that reading was taken — show its age, never the figure alone. */
   live_spend_at: string | null;
+  /**
+   * THE ONE-HOME USAGE READING: spend so far plus the token breakdown from
+   * the same gateway records, `provisional` saying whether the numbers can
+   * still grow — present and ticking while the trial runs, settled once the
+   * lane is `measured`. The overlapping fields (`agent_result` tokens,
+   * `live_spent_usd`, `spend_source`) remain for their existing readers; this
+   * is where a client reads the whole answer at once, with the same keys the
+   * managed-agents session surfaces serve. Null = the meter never answered,
+   * never zero. Absent on servers predating the field.
+   */
+  usage?: UsageReading | null;
   /**
    * The cap THIS trial's gateway key carried — history, which can differ from
    * the job's current cap for rows settled before a change.

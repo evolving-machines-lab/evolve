@@ -109,6 +109,7 @@ import type {
   TrialStatus,
   TrialsClient,
   UpstreamStatus,
+  UsageReading,
   VerifierEnvironmentMode,
   VerifierResult,
   WatchImportOptions,
@@ -123,6 +124,7 @@ export {
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   isHostedErrorCode,
+  mapUsageReading,
   passAtK,
 } from "./types";
 export type {
@@ -254,6 +256,7 @@ export type {
   TrialStatusTally,
   TrialsClient,
   UpstreamStatus,
+  UsageReading,
   VerifierEnvironmentMode,
   VerifierResult,
   WatchImportOptions,
@@ -261,6 +264,7 @@ export type {
 } from "./types";
 import {
   isHostedErrorCode,
+  mapUsageReading,
   type Awaitable,
   type CapabilityDocument,
   type HostedErrorCode,
@@ -285,6 +289,7 @@ export {
   jobSpend,
   trialAgentCost,
   trialJudgeCost,
+  trialSpendNow,
   type SpendStatement,
 } from "./money";
 
@@ -951,6 +956,9 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     // it: it lags the gateway and is CLEARED when the trial settles.
     live_spent_usd: (raw.live_spent_usd as number | null) ?? null,
     live_spend_at: (raw.live_spend_at as string | null) ?? null,
+    // The one-home usage reading, verbatim. Defensive like its neighbours: a
+    // malformed or absent object reads null — "the meter never answered".
+    usage: mapUsageReading(raw.usage),
     max_trial_spend_usd: (raw.max_trial_spend_usd as number | null) ?? null,
     sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
     // GPU degrade record — defensive: a malformed object reads as null,

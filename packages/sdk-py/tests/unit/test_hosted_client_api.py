@@ -2372,6 +2372,47 @@ class TestJobs:
         assert trial.spend_source is None
 
     @pytest.mark.asyncio
+    async def test_trial_usage_reading_mapping(self):
+        """The one-home usage reading maps verbatim into UsageReading; absent
+        and malformed (no boolean ``provisional``) both read None — "the meter
+        never answered", never a fabricated reading."""
+        fake = FakeUrlopen([
+            ('/api/trials/run-live', wire_trial(
+                status='RUNNING',
+                reward=None,
+                verifier_result=None,
+                agent_result=None,
+                spend_source=None,
+                finished_at=None,
+                usage={
+                    'provisional': True,
+                    'spent_usd': 0.0421,
+                    'input_tokens': 12345,
+                    'cached_input_tokens': 4102,
+                    'output_tokens': 2210,
+                    'as_of': '2026-07-22T00:02:00.000Z',
+                },
+            )),
+            ('/api/trials/run-absent', wire_trial(id='run-absent')),
+            ('/api/trials/run-bad', wire_trial(id='run-bad', usage={'spent_usd': '0.42'})),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = trials_factory(CONFIG)
+            live = await client.get('run-live')
+            absent = await client.get('run-absent')
+            malformed = await client.get('run-bad')
+
+        assert live.usage is not None
+        assert live.usage.provisional is True
+        assert live.usage.spent_usd == 0.0421
+        assert live.usage.input_tokens == 12345
+        assert live.usage.cached_input_tokens == 4102
+        assert live.usage.output_tokens == 2210
+        assert live.usage.as_of == '2026-07-22T00:02:00.000Z'
+        assert absent.usage is None
+        assert malformed.usage is None
+
+    @pytest.mark.asyncio
     async def test_cancel_and_resume(self):
         fake = FakeUrlopen([
             ('/cancel', {**JOB_SUMMARY, 'status': 'CANCELLING'}),

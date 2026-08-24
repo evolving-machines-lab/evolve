@@ -53,6 +53,7 @@ from typing import (
 
 from . import _http
 from .config import HostedClientConfig
+from .results import UsageReading, _usage_reading_from_data
 
 DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 
@@ -1566,6 +1567,16 @@ class Trial:
     #: vocabulary as ``spend_source``, same rules. None exactly when
     #: ``judge_result`` is None: no judge ever ran.
     judge_spend_source: Optional[SpendSource] = None
+    #: THE ONE-HOME USAGE READING: spend so far plus the token breakdown from
+    #: the same gateway records, ``provisional`` saying whether the numbers
+    #: can still grow — present and ticking while the trial runs, settled
+    #: once the lane is ``measured``. The overlapping fields
+    #: (``agent_result`` tokens, ``live_spent_usd``, ``spend_source``) remain
+    #: for their existing readers; this is where a caller reads the whole
+    #: answer at once, with the same keys the managed-agents session surfaces
+    #: serve (:class:`evolve.results.UsageReading`). None = the meter never
+    #: answered, never zero.
+    usage: Optional[UsageReading] = None
 
 
 @dataclass
@@ -2606,6 +2617,9 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         # into it: it lags the gateway and is CLEARED when the trial settles.
         live_spent_usd=data.get('live_spent_usd'),
         live_spend_at=data.get('live_spend_at'),
+        # The one-home usage reading, by the one shared parsing rule — a
+        # malformed or absent object reads None ("the meter never answered").
+        usage=_usage_reading_from_data(data.get('usage')),
         max_trial_spend_usd=data.get('max_trial_spend_usd'),
         sandbox_provider=data.get('sandbox_provider'),
         # Defensive: a malformed degrade object reads as None, never a crash.

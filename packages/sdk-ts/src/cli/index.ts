@@ -43,6 +43,7 @@ import {
   trialAgentCost,
   trialEvolveRecord,
   trialJudgeCost,
+  trialSpendNow,
   trials,
 } from "../hosted/index";
 import type {
@@ -77,6 +78,7 @@ import type {
   Trial,
   TrialStatus,
   UpstreamStatus,
+  UsageReading,
 } from "../hosted/types";
 import {
   managedSecrets,
@@ -2198,6 +2200,24 @@ function fmtSpend(spend: SpendStatement): string {
   return "-";
 }
 
+/**
+ * The token half of a usage reading, one row wide. Null when the reading
+ * carries no token counts at all (money may land first) — the caller then
+ * prints nothing rather than a row of dashes. The provisional marker rides
+ * inside the cell for the same reason the money lane rides inside fmtSpend:
+ * a count still being written must never read as the total.
+ */
+function fmtUsageTokens(usage: UsageReading): string | null {
+  if (usage.input_tokens === null && usage.output_tokens === null) return null;
+  const count = (n: number | null) => (n === null ? "-" : n.toLocaleString("en-US"));
+  const cached =
+    usage.cached_input_tokens !== null ? ` (${count(usage.cached_input_tokens)} cached)` : "";
+  return (
+    `in ${count(usage.input_tokens)}${cached} · out ${count(usage.output_tokens)}` +
+    (usage.provisional ? " — provisional" : "")
+  );
+}
+
 function fmtAgent(agent: AgentArm | AgentArmInput): string {
   const base = `${agent.name}:${agent.model_name}`;
   return agent.version ? `${base}:${agent.version}` : base;
@@ -2481,8 +2501,18 @@ export const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   // Same lane law as the detail row (fmtTrialSpend): a column is one cell wide
   // too, so an unmeasured trial shows "-" rather than the zero its column
   // happens to hold. A list of freshly settled trials is exactly where a wall
-  // of "$0.00" would read as a free job.
-  { key: "spent", header: "SPENT", cell: (r) => fmtSpend(trialAgentCost(r)) },
+  // of "$0.00" would read as a free job. trialSpendNow folds in the live
+  // floor from the usage reading, so a RUNNING trial that has demonstrably
+  // spent shows "at least $X" instead of a dash — one idiom for every lower
+  // bound.
+  { key: "spent", header: "SPENT", cell: (r) => fmtSpend(trialSpendNow(r)) },
+  {
+    // The token half of the usage reading — opt-in via --columns; "-" until
+    // the meter answers.
+    key: "tokens",
+    header: "TOKENS",
+    cell: (r) => (r.usage && fmtUsageTokens(r.usage)) || "-",
+  },
   {
     // GPU compute estimate — its own column, never folded into SPENT (lane-5
     // law). Opt-in via --columns; "-" for non-GPU trials and unpriced ones.
@@ -2615,6 +2645,14 @@ export function trialDetailLines(run: Trial): string[] {
   ) {
     const asOf = run.live_spend_at ? ` as of ${run.live_spend_at}` : "";
     rows.push(["spent (live)", `at least $${run.live_spent_usd.toFixed(4)}${asOf}`]);
+  }
+  // THE TOKEN HALF of the meter, from the one-home usage reading — the same
+  // gateway records the money rows above were summed from, ticking while the
+  // trial runs and settling with it. The provisional marker inside the cell
+  // says whether the counts can still grow.
+  if (run.usage) {
+    const tokens = fmtUsageTokens(run.usage);
+    if (tokens) rows.push(["tokens", tokens]);
   }
   if (run.attempt_phase) rows.push(["phase", run.attempt_phase]);
   if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);

@@ -70,7 +70,7 @@ def _parse_session_info(data: Optional[Dict[str, Any]]) -> Optional['SessionInfo
     """Parse session dict from bridge response into SessionInfo."""
     if not data:
         return None
-    from .results import SessionInfo  # noqa: E402
+    from .results import SessionInfo, _usage_reading_from_data  # noqa: E402
     return SessionInfo(
         id=data['id'],
         tag=data['tag'],
@@ -85,6 +85,9 @@ def _parse_session_info(data: Optional[Dict[str, Any]]) -> Optional['SessionInfo
         ended_at=data.get('ended_at'),
         step_count=data.get('step_count', 0),
         tool_stats=data.get('tool_stats'),
+        # The one-home usage reading, by the one shared parsing rule — a
+        # malformed or absent object reads None ("the meter never answered").
+        usage=_usage_reading_from_data(data.get('usage')),
     )
 
 

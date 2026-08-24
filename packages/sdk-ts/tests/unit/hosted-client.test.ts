@@ -3523,6 +3523,60 @@ async function testTrialLiveSpend() {
   }
 }
 
+async function testTrialUsageReading() {
+  console.log("\n--- the one-home usage reading maps verbatim, and malformed answers null ---");
+  installMockFetch();
+  try {
+    // Live: provisional reading ticking while the trial runs.
+    setMockResponse("/api/trials/run-live-usage", {
+      status: 200,
+      body: wireTrial({
+        id: "run-live-usage",
+        status: "RUNNING",
+        reward: null,
+        verifier_result: null,
+        agent_result: null,
+        spend_source: null,
+        finished_at: null,
+        usage: {
+          provisional: true,
+          spent_usd: 0.0421,
+          input_tokens: 12345,
+          cached_input_tokens: 4102,
+          output_tokens: 2210,
+          as_of: "2026-07-22T00:02:00.000Z",
+        },
+      }),
+    });
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+    const live = await t.get("run-live-usage");
+    assertEqual(live.usage?.provisional, true, "provisional marks a reading still growing");
+    assertEqual(live.usage?.spent_usd, 0.0421, "money maps");
+    assertEqual(live.usage?.input_tokens, 12345, "input tokens map");
+    assertEqual(live.usage?.cached_input_tokens, 4102, "the cached share maps");
+    assertEqual(live.usage?.output_tokens, 2210, "output tokens map");
+    assertEqual(live.usage?.as_of, "2026-07-22T00:02:00.000Z", "the reading carries its age");
+
+    // Absent (older server) and malformed (no boolean provisional) both read
+    // null — "the meter never answered", never a fabricated reading.
+    setMockResponse("/api/trials/run-no-usage", {
+      status: 200,
+      body: wireTrial({ id: "run-no-usage" }),
+    });
+    const absent = await t.get("run-no-usage");
+    assertEqual(absent.usage ?? null, null, "absent usage reads null");
+
+    setMockResponse("/api/trials/run-bad-usage", {
+      status: 200,
+      body: wireTrial({ id: "run-bad-usage", usage: { spent_usd: "0.42" } }),
+    });
+    const malformed = await t.get("run-bad-usage");
+    assertEqual(malformed.usage ?? null, null, "a reading without its provisional bool is refused");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testTrialTracePage() {
   console.log("\n--- trials().trace() forwards cursor/limit and maps the page ---");
   installMockFetch();
@@ -4583,6 +4637,7 @@ async function main() {
   await testWatchAbort();
   await testTrialGet();
   await testTrialLiveSpend();
+  await testTrialUsageReading();
   await testTrialTracePage();
   await testTraceEventsIterator();
   await testInspectionSurface();
