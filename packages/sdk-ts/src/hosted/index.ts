@@ -26,6 +26,7 @@ import type {
   CompareResponse,
   CompareTaskRow,
   Dataset,
+  DatasetFailedTask,
   DatasetImport,
   DatasetImportFailure,
   DatasetImportList,
@@ -47,6 +48,7 @@ import type {
   HostedClientConfig,
   ImportWarning,
   Job,
+  JobBuildExclusion,
   JobCreate,
   JobEvent,
   JobFailure,
@@ -87,6 +89,9 @@ import type {
   StepResult,
   StopResponse,
   Task,
+  TaskBuild,
+  TaskBuildFailure,
+  TaskBuildState,
   TimingInfo,
   TraceEvent,
   TraceEventPage,
@@ -150,6 +155,7 @@ export type {
   CompareResponse,
   CompareTaskRow,
   Dataset,
+  DatasetFailedTask,
   DatasetImport,
   DatasetImportFailure,
   DatasetImportList,
@@ -175,6 +181,7 @@ export type {
   HostedErrorCode,
   ImportWarning,
   Job,
+  JobBuildExclusion,
   JobCreate,
   JobEvent,
   JobFailure,
@@ -225,6 +232,9 @@ export type {
   StepResult,
   StopResponse,
   Task,
+  TaskBuild,
+  TaskBuildFailure,
+  TaskBuildState,
   TaskProviderVerdict,
   TimingInfo,
   TraceEvent,
@@ -669,9 +679,40 @@ function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {
     state: raw.state as DatasetVersionState,
     created_at: raw.created_at as string,
     task_count: (raw.task_count as number) ?? 0,
+    // Tasks that FAILED their independent build (partial-publish model).
+    // Absent (an older server) reads as 0 — a fully built version.
+    n_failed_tasks: typeof raw.n_failed_tasks === "number" ? raw.n_failed_tasks : 0,
     manifest: mapVersionManifest(raw.manifest),
     source: mapVersionSource(raw.source),
   };
+}
+
+/**
+ * The ONE failure grammar of a task's independent build — served compact on
+ * the dataset detail's `failed_tasks` (no excerpt) and in full on the
+ * per-task build route.
+ */
+function mapTaskBuildFailure(raw: Record<string, unknown>): TaskBuildFailure {
+  return {
+    code: (raw.code as string) ?? "",
+    step: (raw.step as string) ?? "",
+    message: (raw.message as string) ?? "",
+    excerpt: (raw.excerpt as string | null) ?? null,
+  };
+}
+
+/**
+ * The dataset detail's `failed_tasks` list (partial-publish model). Absent
+ * (an older server, or a list row) reads as an empty list — never a crash.
+ */
+function mapFailedTasks(raw: unknown): DatasetFailedTask[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Record<string, unknown>[])
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      task_name: (item.task_name as string) ?? "",
+      failure: mapTaskBuildFailure((item.failure ?? {}) as Record<string, unknown>),
+    }));
 }
 
 function mapTask(raw: Record<string, unknown>): Task {
@@ -741,6 +782,27 @@ function optionalNumber(value: unknown): number | null {
 }
 
 /** ONE job mapper for every call — nothing conditional, because nothing is optional. */
+/**
+ * The job body's `build_exclusions` — "ran N of M" per dataset (the
+ * partial-publish model's honesty label). Absent (an older server) reads as
+ * an empty list: nothing excluded.
+ */
+function mapBuildExclusions(raw: unknown): JobBuildExclusion[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Record<string, unknown>[])
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      dataset: mapDatasetRef((item.dataset ?? {}) as Record<string, unknown>),
+      n_tasks_ran: typeof item.n_tasks_ran === "number" ? item.n_tasks_ran : 0,
+      n_tasks_failed_to_build:
+        typeof item.n_tasks_failed_to_build === "number" ? item.n_tasks_failed_to_build : 0,
+      failed_task_names: Array.isArray(item.failed_task_names)
+        ? (item.failed_task_names as unknown[]).map(String)
+        : [],
+      note: (item.note as string) ?? "",
+    }));
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
@@ -767,6 +829,9 @@ function mapJob(raw: Record<string, unknown>): Job {
     ),
     sandbox_provider: raw.sandbox_provider as EvalSandboxProvider,
     counts: raw.counts as Job["counts"],
+    // THE RESULTS-HONESTY LABEL (partial-publish model): always an array —
+    // absent (an older server) reads as "nothing was excluded".
+    build_exclusions: mapBuildExclusions(raw.build_exclusions),
     n_total_trials: (raw.n_total_trials as number) ?? 0,
     trials: {
       total: (trials.total as number) ?? 0,
@@ -1456,6 +1521,9 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         ? mapDatasetVersion(raw.selected_version as Record<string, unknown>)
         : null,
       tasks: mapPage(raw.tasks, mapTask),
+      // Always present on the detail body (empty on a fully built version);
+      // absent only on an older server, which reads the same way.
+      failed_tasks: mapFailedTasks(raw.failed_tasks),
       upstream: mapUpstream(raw.upstream),
       created_at: raw.created_at as string,
       updated_at: raw.updated_at as string,
@@ -1479,8 +1547,9 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
    * Phase two of watchImport — the confirming read behind the import surface.
    *
    * Under the build-then-READY model the server completes an import only
-   * when the version is READY (every task image in the platform registry —
-   * each provider builds its boot artifact lazily at the first trial —
+   * when the version is READY (the build settled with at least one task
+   * ready — the partial-publish model; each provider builds its boot
+   * artifact lazily at the first trial —
    * and, on an owner-stamped dataset, already ACTIVE), so COMPLETED and
    * "settled" are the same fact and this phase normally confirms it in one
    * dataset-detail read. It still POLLS rather than assumes, for exactly one
@@ -1659,6 +1728,33 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         versions: dataset.versions ?? [],
         created_at: dataset.created_at as string,
         updated_at: dataset.updated_at as string,
+      };
+    },
+
+    async getTaskBuild(ref: string, taskName: string): Promise<TaskBuild> {
+      // The outcome is a fact about ONE immutable version, so the ref must
+      // pin it — there is no active-version reading to guess client-side.
+      const parsed = parseDatasetRef(ref);
+      if (parsed.version === undefined) {
+        throw new Error(
+          `datasets().getTaskBuild() needs "name@version" — a task's build outcome ` +
+            `belongs to one immutable version (got "${ref}")`
+        );
+      }
+      const res = await request(
+        cfg,
+        `/api/datasets/${encodeURIComponent(parsed.name)}/versions/` +
+          `${encodeURIComponent(parsed.version)}/tasks/${encodeURIComponent(taskName)}/build`
+      );
+      const raw = (await res.json()) as Record<string, unknown>;
+      return {
+        task_name: (raw.task_name as string) ?? taskName,
+        state: raw.state as TaskBuild["state"],
+        failure:
+          raw.failure && typeof raw.failure === "object"
+            ? mapTaskBuildFailure(raw.failure as Record<string, unknown>)
+            : null,
+        build_log_ref: (raw.build_log_ref as string | null) ?? null,
       };
     },
 

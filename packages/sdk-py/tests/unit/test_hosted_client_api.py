@@ -50,8 +50,12 @@ import pytest
 
 from evolve import (
     AgentArm,
+    DatasetFailedTask,
+    DatasetRef,
     DatasetSelector,
     DatasetVersionSource,
+    JobBuildExclusion,
+    TaskBuildFailure,
     EvolveAPIError,
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
@@ -474,6 +478,131 @@ class TestDatasets:
         assert task.providers['modal'] == TaskProviderVerdict(
             ok=False, reason='multi-container tasks are not supported on modal'
         )
+
+    @pytest.mark.asyncio
+    async def test_partial_publish_reads(self):
+        """The partial-publish model's reads: a version's ``n_failed_tasks``,
+        the detail's ``failed_tasks`` reasons, and the per-task build route
+        (``get_task_build``) where the excerpt and log pointer live."""
+        detail = {
+            'name': 'part-swe',
+            'title': None,
+            'description': None,
+            'active_version': {
+                'version': '2.0', 'state': 'READY', 'created_at': '2026-08-21',
+                'task_count': 10, 'n_failed_tasks': 2,
+            },
+            'versions': [
+                {'version': '2.0', 'state': 'READY', 'created_at': '2026-08-21', 'task_count': 10, 'n_failed_tasks': 2},
+            ],
+            'selected_version': {
+                'version': '2.0', 'state': 'READY', 'created_at': '2026-08-21',
+                'task_count': 10, 'n_failed_tasks': 2,
+            },
+            'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+            'failed_tasks': [
+                {
+                    'task_name': 'broken-dockerfile',
+                    'failure': {
+                        'code': 'image_build_failed', 'step': 'image-build',
+                        'message': 'RUN apt-get install nonexistent-pkg exited 100',
+                    },
+                },
+                {
+                    'task_name': 'schema-typo',
+                    'failure': {'code': 'task_parse_failed', 'step': 'parse', 'message': 'instruction.md is missing'},
+                },
+            ],
+            'upstream': None,
+        }
+        fake = FakeUrlopen([('/api/datasets/part-swe', detail)])
+        with patch('evolve._http.urlopen', fake):
+            got = await datasets_factory(CONFIG).get('part-swe@2.0')
+
+        assert got.selected_version.n_failed_tasks == 2
+        # task_count stays the READY (runnable) count.
+        assert got.selected_version.task_count == 10
+        assert got.failed_tasks == [
+            DatasetFailedTask(
+                task_name='broken-dockerfile',
+                failure=TaskBuildFailure(
+                    code='image_build_failed',
+                    step='image-build',
+                    message='RUN apt-get install nonexistent-pkg exited 100',
+                ),
+            ),
+            DatasetFailedTask(
+                task_name='schema-typo',
+                failure=TaskBuildFailure(
+                    code='task_parse_failed', step='parse', message='instruction.md is missing',
+                ),
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_partial_publish_older_server_reads_as_fully_built(self):
+        """A server that predates the fields reads as a fully built version —
+        0 failed, empty list — never a crash."""
+        fake = FakeUrlopen([
+            ('/api/datasets/old-swe', {
+                'name': 'old-swe',
+                'title': None,
+                'description': None,
+                'active_version': {'version': '1.0', 'state': 'READY', 'created_at': '2026-01-01', 'task_count': 5},
+                'versions': [{'version': '1.0', 'state': 'READY', 'created_at': '2026-01-01', 'task_count': 5}],
+                'selected_version': {'version': '1.0', 'state': 'READY', 'created_at': '2026-01-01', 'task_count': 5},
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+                'upstream': None,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            got = await datasets_factory(CONFIG).get('old-swe')
+        assert got.selected_version.n_failed_tasks == 0
+        assert got.failed_tasks == []
+
+    @pytest.mark.asyncio
+    async def test_get_task_build_failed_and_ready(self):
+        """The per-task build route: FAILED answers the typed reason WITH the
+        failing-step excerpt and the full build-log pointer; READY answers
+        too (both null), so a poller needs no negative-space reasoning."""
+        fake = FakeUrlopen([
+            ('/api/datasets/part-swe/versions/2.0/tasks/broken-dockerfile/build', {
+                'task_name': 'broken-dockerfile',
+                'state': 'FAILED',
+                'failure': {
+                    'code': 'image_build_failed',
+                    'step': 'image-build',
+                    'message': 'RUN apt-get install nonexistent-pkg exited 100',
+                    'excerpt': '#12 ERROR: apt-get install nonexistent-pkg exited 100',
+                },
+                'build_log_ref': 'cloudwatch://dataset-builds/part-swe-2.0-broken-dockerfile',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = datasets_factory(CONFIG)
+            failed = await client.get_task_build('part-swe@2.0', 'broken-dockerfile')
+        assert '/api/datasets/part-swe/versions/2.0/tasks/broken-dockerfile/build' in fake.requests[0].full_url
+        assert failed.state == 'FAILED'
+        assert failed.failure.excerpt == '#12 ERROR: apt-get install nonexistent-pkg exited 100'
+        assert failed.build_log_ref == 'cloudwatch://dataset-builds/part-swe-2.0-broken-dockerfile'
+
+        fake = FakeUrlopen([
+            ('/api/datasets/part-swe/versions/2.0/tasks/good-task/build', {
+                'task_name': 'good-task', 'state': 'READY', 'failure': None, 'build_log_ref': None,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            ready = await datasets_factory(CONFIG).get_task_build('part-swe@2.0', 'good-task')
+        assert ready.state == 'READY'
+        assert ready.failure is None
+        assert ready.build_log_ref is None
+
+    @pytest.mark.asyncio
+    async def test_get_task_build_requires_pinned_version(self):
+        """The outcome belongs to ONE immutable version — a bare name refuses
+        client-side instead of guessing the active version."""
+        with pytest.raises(ValueError, match='name@version'):
+            await datasets_factory(CONFIG).get_task_build('part-swe', 'broken-dockerfile')
 
     @pytest.mark.asyncio
     async def test_get_maps_per_version_git_provenance(self):
@@ -1821,6 +1950,35 @@ class TestJobs:
         assert len(fake.requests) == 1
 
     @pytest.mark.asyncio
+    async def test_build_exclusions_map_and_default_empty(self):
+        """The ran-N-of-M honesty label (partial-publish model) maps on every
+        job read; an older server that sends none reads as "nothing was
+        excluded" — never a crash."""
+        labeled = dict(JOB_SUMMARY)
+        labeled['build_exclusions'] = [{
+            'dataset': {'name': 'part-swe', 'version': '2.0'},
+            'n_tasks_ran': 10,
+            'n_tasks_failed_to_build': 2,
+            'failed_task_names': ['broken-dockerfile', 'schema-typo'],
+            'note': 'ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)',
+        }]
+        fake = FakeUrlopen([('/api/jobs/job-1', labeled)])
+        with patch('evolve._http.urlopen', fake):
+            job = await jobs_factory(CONFIG).get('job-1')
+        assert job.build_exclusions == [JobBuildExclusion(
+            dataset=DatasetRef(name='part-swe', version='2.0'),
+            n_tasks_ran=10,
+            n_tasks_failed_to_build=2,
+            failed_task_names=['broken-dockerfile', 'schema-typo'],
+            note='ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)',
+        )]
+
+        fake = FakeUrlopen([('/api/jobs/job-1', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake):
+            older = await jobs_factory(CONFIG).get('job-1')
+        assert older.build_exclusions == []
+
+    @pytest.mark.asyncio
     async def test_every_job_response_is_the_same_shape(self):
         """Start, get and each list row carry the same fields.
 
@@ -1842,6 +2000,7 @@ class TestJobs:
             'agent_setup_timeout_multiplier',
             'agent_timeout_multiplier',
             'agents',
+            'build_exclusions',
             'counts',
             'datasets',
             'environment_build_timeout_multiplier',

@@ -237,7 +237,7 @@ async function testDatasetsList() {
     assertEqual(catalog.items[0].title, "DeepSWE", "maps title");
     assertEqual(
       catalog.items[0].active_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, n_failed_tasks: 0, manifest: null, source: null },
       "maps active_version object (one shape: version/state/created_at/task_count/manifest/source; manifest/source null on older servers)"
     );
     assertEqual(catalog.items[1].active_version, null, "null active_version preserved");
@@ -245,7 +245,7 @@ async function testDatasetsList() {
     // latest_version is its OWN pointer, in the same version shape.
     assertEqual(
       catalog.items[0].latest_version,
-      { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0, manifest: null, source: null },
+      { version: "1.2", state: "FAILED", created_at: "2026-07-22T00:00:00.000Z", task_count: 0, n_failed_tasks: 0, manifest: null, source: null },
       "maps latest_version as its own version object, not a copy of active_version"
     );
     assertEqual(
@@ -320,13 +320,13 @@ async function testDatasetsGet() {
     assertEqual(detail.active_version?.state, "READY", "active_version carries state");
     assertEqual(
       detail.latest_version,
-      { version: "1.2", state: "BUILDING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      { version: "1.2", state: "BUILDING", created_at: "2026-07-22T00:00:00.000Z", task_count: 113, n_failed_tasks: 0, manifest: null, source: null },
       "detail maps latest_version too — the newest row, which here is NOT the active one"
     );
     assertEqual(detail.versions?.length, 2, "maps versions");
     assertEqual(
       detail.selected_version,
-      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, manifest: null, source: null },
+      { version: "1.1", state: "READY", created_at: "2026-07-21T00:00:00.000Z", task_count: 113, n_failed_tasks: 0, manifest: null, source: null },
       "selected_version is a full version object (never a bare label; manifest/source null when the server sends none)"
     );
     // A nested collection is the same envelope as a top-level one.
@@ -342,6 +342,201 @@ async function testDatasetsGet() {
     await d.get("deep-swe");
     url = fetchCalls[fetchCalls.length - 1].url;
     assert(!url.includes("version="), "bare name omits version param");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The partial-publish model's read surfaces: a version's per-task outcome
+ * counts (n_failed_tasks), the dataset detail's failed_tasks reasons, and
+ * the per-task build route (datasets().getTaskBuild()) — the one place the
+ * failing-step excerpt and the build-log pointer live.
+ */
+async function testPartialPublishReads() {
+  console.log("\n--- datasets(): partial-publish reads — n_failed_tasks, failed_tasks, getTaskBuild() ---");
+  installMockFetch();
+  try {
+    // The per-task build route: FAILED answers the typed reason WITH the
+    // excerpt and the full build-log pointer.
+    setMockResponse("/api/datasets/part-swe/versions/2.0/tasks/broken-dockerfile/build", {
+      status: 200,
+      body: {
+        task_name: "broken-dockerfile",
+        state: "FAILED",
+        failure: {
+          code: "image_build_failed",
+          step: "image-build",
+          message: "RUN apt-get install nonexistent-pkg exited 100",
+          excerpt: "#12 ERROR: process \"apt-get install nonexistent-pkg\" exited 100",
+        },
+        build_log_ref: "cloudwatch://dataset-builds/part-swe-2.0-broken-dockerfile",
+      },
+    });
+    setMockResponse("/api/datasets/part-swe/versions/2.0/tasks/good-task/build", {
+      status: 200,
+      body: { task_name: "good-task", state: "READY", failure: null, build_log_ref: null },
+    });
+    setMockResponse("/api/datasets/part-swe", {
+      status: 200,
+      body: {
+        name: "part-swe",
+        title: null,
+        description: null,
+        active_version: { version: "2.0", state: "READY", created_at: "2026-08-20T00:00:00.000Z", task_count: 10, n_failed_tasks: 2 },
+        latest_version: { version: "2.0", state: "READY", created_at: "2026-08-20T00:00:00.000Z", task_count: 10, n_failed_tasks: 2 },
+        versions: [
+          { version: "2.0", state: "READY", created_at: "2026-08-20T00:00:00.000Z", task_count: 10, n_failed_tasks: 2 },
+        ],
+        selected_version: { version: "2.0", state: "READY", created_at: "2026-08-20T00:00:00.000Z", task_count: 10, n_failed_tasks: 2 },
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        failed_tasks: [
+          {
+            task_name: "broken-dockerfile",
+            failure: { code: "image_build_failed", step: "image-build", message: "RUN apt-get install nonexistent-pkg exited 100" },
+          },
+          {
+            task_name: "schema-typo",
+            failure: { code: "task_parse_failed", step: "parse", message: "instruction.md is missing" },
+          },
+        ],
+        upstream: null,
+        created_at: "2026-08-20T00:00:00.000Z",
+        updated_at: "2026-08-20T00:00:00.000Z",
+      },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const detail = await d.get("part-swe@2.0");
+    assertEqual(detail.selected_version?.n_failed_tasks, 2, "n_failed_tasks mapped on the version object");
+    assertEqual(detail.selected_version?.task_count, 10, "task_count stays the READY (runnable) count");
+    assertEqual(detail.failed_tasks?.length, 2, "the detail's failed_tasks list is mapped");
+    assertEqual(
+      detail.failed_tasks?.[0],
+      {
+        task_name: "broken-dockerfile",
+        failure: { code: "image_build_failed", step: "image-build", message: "RUN apt-get install nonexistent-pkg exited 100", excerpt: null },
+      },
+      "each entry carries the typed reason (compact — no excerpt on list surfaces)"
+    );
+
+    const failedBuild = await d.getTaskBuild("part-swe@2.0", "broken-dockerfile");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.includes("/api/datasets/part-swe/versions/2.0/tasks/broken-dockerfile/build"),
+      "targets the per-task build route"
+    );
+    assertEqual(failedBuild.state, "FAILED", "maps the per-task state");
+    assertEqual(
+      failedBuild.failure?.excerpt,
+      "#12 ERROR: process \"apt-get install nonexistent-pkg\" exited 100",
+      "the failing-step excerpt lives here"
+    );
+    assertEqual(
+      failedBuild.build_log_ref,
+      "cloudwatch://dataset-builds/part-swe-2.0-broken-dockerfile",
+      "the full build-log pointer lives here"
+    );
+
+    // READY tasks answer too — failure and log pointer null, no
+    // negative-space reasoning for a poller.
+    const readyBuild = await d.getTaskBuild("part-swe@2.0", "good-task");
+    assertEqual(readyBuild.state, "READY", "READY tasks answer too");
+    assertEqual(readyBuild.failure, null, "failure null on READY");
+    assertEqual(readyBuild.build_log_ref, null, "log pointer null on READY");
+
+    // The outcome belongs to ONE immutable version, so a bare name refuses
+    // client-side instead of guessing the active version.
+    let refused = false;
+    try {
+      await d.getTaskBuild("part-swe", "broken-dockerfile");
+    } catch (error) {
+      refused = true;
+      assert((error as Error).message.includes("name@version"), "the refusal names the required grammar");
+    }
+    assert(refused, "getTaskBuild refuses a version-less ref");
+
+    // An older server that sends none of the new fields reads as a fully
+    // built version — never a crash.
+    setMockResponse("/api/datasets/old-swe", {
+      status: 200,
+      body: {
+        name: "old-swe",
+        title: null,
+        description: null,
+        active_version: { version: "1.0", state: "READY", created_at: "2026-01-01T00:00:00.000Z", task_count: 5 },
+        latest_version: null,
+        versions: [{ version: "1.0", state: "READY", created_at: "2026-01-01T00:00:00.000Z", task_count: 5 }],
+        selected_version: { version: "1.0", state: "READY", created_at: "2026-01-01T00:00:00.000Z", task_count: 5 },
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+      },
+    });
+    const older = await d.get("old-swe");
+    assertEqual(older.selected_version?.n_failed_tasks, 0, "absent n_failed_tasks reads as 0 (older server)");
+    assertEqual(older.failed_tasks, [], "absent failed_tasks reads as an empty list (older server)");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The job body's `build_exclusions` — the results-honesty label ("ran N of
+ * M") — maps on every job read, and an older server that sends none reads as
+ * "nothing excluded".
+ */
+async function testJobBuildExclusionsMapping() {
+  console.log("\n--- jobs().get() maps build_exclusions (the ran-N-of-M honesty label) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-part", {
+      status: 200,
+      body: {
+        id: "eval-part",
+        job_name: "partial run",
+        status: "RUNNING",
+        datasets: [{ name: "part-swe", version: "2.0" }],
+        n_attempts: 1,
+        n_concurrent_trials: 4,
+        max_trial_spend_usd: 2.5,
+        worst_case_spend_usd: 25,
+        sandbox_provider: "e2b",
+        agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
+        counts: { agents: 1, tasks: 10 },
+        build_exclusions: [
+          {
+            dataset: { name: "part-swe", version: "2.0" },
+            n_tasks_ran: 10,
+            n_tasks_failed_to_build: 2,
+            failed_task_names: ["broken-dockerfile", "schema-typo"],
+            note: "ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)",
+          },
+        ],
+        n_total_trials: 10,
+        trials: { total: 10, byStatus: zeroTrialStatuses({ QUEUED: 10 }) },
+        stats: {},
+        failure: null,
+        source_jobs: [],
+        is_regrade: false,
+        idempotent_replay: false,
+        started_at: "2026-08-22T00:00:00.000Z",
+        updated_at: "2026-08-22T00:00:00.000Z",
+        finished_at: null,
+      },
+    });
+    const client = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const job = await client.get("eval-part");
+    assertEqual(job.build_exclusions.length, 1, "build_exclusions mapped");
+    assertEqual(
+      job.build_exclusions[0],
+      {
+        dataset: { name: "part-swe", version: "2.0" },
+        n_tasks_ran: 10,
+        n_tasks_failed_to_build: 2,
+        failed_task_names: ["broken-dockerfile", "schema-typo"],
+        note: "ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)",
+      },
+      "the whole exclusion survives the mapping — note verbatim, counts and names intact"
+    );
   } finally {
     restoreFetch();
   }
@@ -4310,6 +4505,8 @@ async function main() {
   await testFactoriesRequireApiKey();
   await testDatasetsList();
   await testDatasetsGet();
+  await testPartialPublishReads();
+  await testJobBuildExclusionsMapping();
   await testVersionSourceMapping();
   await testActivateNotReady409();
   await testGetActive();

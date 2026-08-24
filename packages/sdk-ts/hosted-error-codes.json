@@ -28,6 +28,8 @@
     "version_not_activatable",
     "unknown_task_names",
     "no_tasks",
+    "task_not_found",
+    "task_failed_to_build",
     "agent_not_found",
     "agent_name_taken",
     "agent_name_reserved",
