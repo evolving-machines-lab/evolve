@@ -1,3 +1,5 @@
+import type { UsageReading } from "../hosted/types";
+
 /** Options for listing sessions */
 export interface ListSessionsOptions {
   /** Max items per page (default: 20, max: 200) */
@@ -35,6 +37,15 @@ export interface SessionInfo {
   runtimeStatus: "alive" | "dead" | "unknown";
   /** Cost in USD. null if not synced yet. Eventually consistent. */
   cost: number | null;
+  /**
+   * THE ONE-HOME USAGE READING: spend so far plus the token breakdown from
+   * the same gateway records, `provisional` saying whether the numbers can
+   * still grow — live sessions tick as the gateway's spend logs batch in;
+   * an ended session settles once its sync runs past the flush window. The
+   * SAME object, same keys, a trial serves — one renderer covers both. Null
+   * = the meter never answered (and on servers predating the field).
+   */
+  usage: UsageReading | null;
   createdAt: string;
   endedAt: string | null;
   stepCount: number;

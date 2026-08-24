@@ -124,6 +124,65 @@ export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
  */
 export type SpendSource = "measured" | "measured_provisional" | "assumed_cap";
 
+/**
+ * THE ONE-HOME USAGE READING — "what has this run's meter said so far", money
+ * and tokens from the SAME gateway spend-log records so the two can never
+ * describe different sets of requests. Served under the one key `usage`, with
+ * these exact keys, by the trial surfaces and the managed-agents session
+ * surfaces alike. While the run is alive the platform's own poll raises the
+ * numbers (~30s cadence over a gateway that batches its logs late), so a
+ * polling reader sees them tick; once settled, the settled figures replace
+ * the live ones under the same keys. The whole object is null when the meter
+ * has never answered — never a fabricated zero.
+ */
+export interface UsageReading {
+  /**
+   * True while every number is a LOWER BOUND that can still grow — the run is
+   * alive, or its settled lane is not yet confirmed. False = settled; the
+   * reading will not move again.
+   */
+  provisional: boolean;
+  /**
+   * Metered model spend so far, USD. Null = the money was never measured
+   * (which a trial's `spend_source` lane `assumed_cap` states; the token
+   * fields beside it may still carry real readings).
+   */
+  spent_usd: number | null;
+  /** Prompt tokens so far, INCLUDING the cached share. */
+  input_tokens: number | null;
+  /** The cached share of `input_tokens`. */
+  cached_input_tokens: number | null;
+  /** Completion tokens so far. */
+  output_tokens: number | null;
+  /** When this reading was taken — show its age, never the figure alone. */
+  as_of: string | null;
+}
+
+/**
+ * The wire's usage reading, defensively: anything malformed answers null,
+ * which already means "the meter never answered" on this shape. Each numeric
+ * field is taken only as a real number (a stray string never becomes money),
+ * and `provisional` must be a real boolean — without it the reading has no
+ * statement to make. Lives beside the type because BOTH clients that receive
+ * the object — the hosted trials client and the sessions client — parse it
+ * with this one rule.
+ */
+export function mapUsageReading(raw: unknown): UsageReading | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.provisional !== "boolean") return null;
+  const numOrNull = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    provisional: record.provisional,
+    spent_usd: numOrNull(record.spent_usd),
+    input_tokens: numOrNull(record.input_tokens),
+    cached_input_tokens: numOrNull(record.cached_input_tokens),
+    output_tokens: numOrNull(record.output_tokens),
+    as_of: typeof record.as_of === "string" ? record.as_of : null,
+  };
+}
+
 /** Where a trial's verifier executed: inside the agent's environment, or a separate one */
 export type VerifierEnvironmentMode = "shared" | "separate";
 
@@ -739,6 +798,32 @@ export interface JobFailure {
 }
 
 /**
+ * One dataset of a job whose selection excluded tasks that FAILED to build
+ * (the partial-publish model). `note` is the sentence to show, and the
+ * structured fields beside it are the same fact for a UI: `n_tasks_selected`
+ * is how many READY tasks the caller's filters matched BEFORE any `n_tasks`
+ * cap, `n_tasks_ran` how many the job actually ran from this dataset (fewer
+ * than `n_tasks_selected` only under an `n_tasks` cap), and
+ * `n_tasks_failed_to_build` what the filters would have taken but the build
+ * lost. Uncapped, the note reads "ran N of M tasks — K failed to build" with
+ * M = n_tasks_selected + K; capped it reads "selection matched M tasks:
+ * K failed to build: …; ran R (n_tasks cap)" — the run was short for two
+ * separate reasons and the sentence keeps them apart. `failed_task_names`
+ * names every one, sorted; the reasons live on the dataset's `failed_tasks`
+ * and the per-task build route (datasets().getTaskBuild()). (Jobs recorded
+ * before `n_tasks_selected` existed answer it as `n_tasks_ran` — read as
+ * uncapped.)
+ */
+export interface JobBuildExclusion {
+  dataset: DatasetRef;
+  n_tasks_ran: number;
+  n_tasks_selected: number;
+  n_tasks_failed_to_build: number;
+  failed_task_names: string[];
+  note: string;
+}
+
+/**
  * THE job body — the same shape from create, get, list items, cancel, resume,
  * and regrade responses; no field appears on some responses and not others.
  */
@@ -778,6 +863,18 @@ export interface Job {
   sandbox_provider: EvalSandboxProvider;
   /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
+  /**
+   * THE RESULTS-HONESTY LABEL of the partial-publish model: one entry per
+   * dataset of this job whose selection excluded tasks that FAILED to build
+   * — a whole-dataset (or glob) run over a partially built version runs the
+   * READY tasks, and this field is where the job says so plainly instead of
+   * silently truncating. Always present; empty when nothing was excluded
+   * (every selected dataset fully built, or every failed task was already
+   * outside the caller's own filters). Recorded at create and immutable;
+   * derived jobs (resume/retry) answer empty — their honesty lives on the
+   * source job.
+   */
+  build_exclusions: JobBuildExclusion[];
   n_total_trials: number;
   /** The zeros-included 8-status histogram, beside the coarser counters in `stats`. */
   trials: TrialStatusTally;
@@ -1029,6 +1126,17 @@ export interface Trial {
   live_spent_usd: number | null;
   /** When that reading was taken — show its age, never the figure alone. */
   live_spend_at: string | null;
+  /**
+   * THE ONE-HOME USAGE READING: spend so far plus the token breakdown from
+   * the same gateway records, `provisional` saying whether the numbers can
+   * still grow — present and ticking while the trial runs, settled once the
+   * lane is `measured`. The overlapping fields (`agent_result` tokens,
+   * `live_spent_usd`, `spend_source`) remain for their existing readers; this
+   * is where a client reads the whole answer at once, with the same keys the
+   * managed-agents session surfaces serve. Null = the meter never answered,
+   * never zero. Absent on servers predating the field.
+   */
+  usage?: UsageReading | null;
   /**
    * The cap THIS trial's gateway key carried — history, which can differ from
    * the job's current cap for rows settled before a change.
@@ -1451,12 +1559,94 @@ export interface DatasetVersionSource {
   path: string | null;
 }
 
+/**
+ * One task's own terminal build state inside a published version — the
+ * per-task member of the DatasetVersionState family (the partial-publish
+ * model). Every task of a settled build is exactly one of these; there is no
+ * per-task "building" state on the wire, because outcomes are recorded only
+ * when the version settles.
+ */
+export type TaskBuildState = "READY" | "FAILED";
+
+/**
+ * Why one task FAILED its independent build — the ONE failure grammar for
+ * every step: parse-level refusals (schema/capability) and build-level
+ * failures (image build, mirror, compose resolution, image-config read,
+ * skills verification) speak it identically.
+ */
+export interface TaskBuildFailure {
+  /**
+   * Typed reason. Parse refusals record `task_parse_failed`; build steps
+   * record the builder's own family (`image_build_failed`,
+   * `builder_unavailable`, `image_push_failed`, ...). Open set — render the
+   * string; branch on `step` for coarse grouping.
+   */
+  code: string;
+  /**
+   * The build step that failed: `parse`, `image-build`, `image-config`,
+   * `skills-verify`, `compose-resolve`, `image-mirror`, or `store`.
+   */
+  step: string;
+  /** The failure sentence, naming the task's own defect. */
+  message: string;
+  /**
+   * Bounded tail of the failing step's build log (the failing line and its
+   * neighbourhood). Served by the per-task build route; list surfaces omit
+   * it. Null when the step produced no log to excerpt (a parse refusal's
+   * message IS the whole story).
+   */
+  excerpt?: string | null;
+}
+
+/**
+ * One task's build outcome inside one published version — the failure-detail
+ * read (datasets().getTaskBuild()). READY tasks answer too (failure and log
+ * pointer null), so a poller needs no negative-space reasoning.
+ */
+export interface TaskBuild {
+  task_name: string;
+  state: TaskBuildState;
+  /** The typed reason WITH the failing-step excerpt; null on READY. */
+  failure: TaskBuildFailure | null;
+  /**
+   * Pointer to the FULL build log of the failing step
+   * (`cloudwatch://<group>/<stream>` for image builds), for operators and
+   * support tooling. Null when the failing step kept no separate log (parse
+   * refusals), and on READY tasks.
+   */
+  build_log_ref: string | null;
+}
+
+/**
+ * One failed task on the dataset detail's `failed_tasks` list: the compact
+ * typed reason. The failing-step excerpt and build-log pointer live on the
+ * per-task build route (datasets().getTaskBuild()).
+ */
+export interface DatasetFailedTask {
+  task_name: string;
+  failure: TaskBuildFailure;
+}
+
 /** One immutable version of a dataset — one shape on every surface */
 export interface DatasetVersion {
   version: string;
   state: DatasetVersionState;
   created_at: string;
+  /**
+   * The READY (runnable) tasks of this version. Under the partial-publish
+   * model this is what a whole-dataset job runs.
+   */
   task_count: number;
+  /**
+   * Tasks of the published corpus that FAILED their independent build and
+   * are therefore not runnable in this version (the partial-publish model).
+   * 0 on a fully built version — and on servers that predate the field. The
+   * names and reasons are on the dataset detail's `failed_tasks`; the full
+   * per-task detail (excerpt + build-log pointer) answers at
+   * datasets().getTaskBuild(). Fixing one is a re-publish — versions are
+   * immutable.
+   */
+  n_failed_tasks: number;
   /**
    * The dataset.toml identity/metadata this version imported under. Null when
    * the corpus carried no manifest, and on servers that predate the field —
@@ -1598,6 +1788,15 @@ export interface Dataset {
    * pass { limit, cursor } to get() and follow nextCursor.
    */
   tasks?: Page<Task>;
+  /**
+   * The selected version's tasks that FAILED their independent build (get()
+   * only; the partial-publish model). Always present on the detail body —
+   * empty on a fully built version. Ordered by task name and capped at the
+   * task page limit; `n_failed_tasks` on the version object is always the
+   * exact count. Each entry carries the typed reason; the failing-step
+   * excerpt and build-log pointer live on datasets().getTaskBuild().
+   */
+  failed_tasks?: DatasetFailedTask[];
   upstream: UpstreamStatus | null;
   /** get() only */
   created_at?: string;
@@ -1735,12 +1934,19 @@ export interface DatasetImportFailure {
  * the record operator verification tooling reads, never a gate. The version
  * still publishes, activates, and runs; the warning makes the permanent gap
  * visible instead of silent.
+ *
+ * `tasks_failed_to_build` is the partial-publish model's warning: the import
+ * COMPLETED (the version is READY — at least one task built) but some tasks
+ * FAILED their independent build and are not runnable in this version. The
+ * names and typed reasons are on the dataset detail's `failed_tasks`; fixing
+ * them is a re-publish (immutable versions).
  */
 export interface ImportWarning {
   code:
     | "solutions_archiving_disabled"
     | "no_solutions_archived"
-    | "partial_solutions_archived";
+    | "partial_solutions_archived"
+    | "tasks_failed_to_build";
   message?: string;
 }
 
@@ -2077,6 +2283,20 @@ export interface DatasetsClient {
    */
   getActive(name: string, options?: GetDatasetOptions): Promise<ActiveDataset>;
   /**
+   * The failure-detail read of the partial-publish model: one task's own
+   * build outcome inside one published version — its state (READY or
+   * FAILED), the typed failure WITH the failing-step excerpt, and the full
+   * build-log pointer. The dataset detail's `failed_tasks` carries the
+   * compact reasons for every failed task; this call is where the excerpt
+   * and the log pointer live, one task at a time.
+   *
+   * `ref` must pin the version: "name@version" (the outcome is a fact about
+   * one immutable version, so there is no active-version reading to guess).
+   * A task the build has not settled — or a name the corpus never contained
+   * — answers 404 `task_not_found`.
+   */
+  getTaskBuild(ref: string, taskName: string): Promise<TaskBuild>;
+  /**
    * Publish a dataset version (asynchronous server-side import) from a git
    * source pinned to a ref, or a local corpus directory. Returns immediately;
    * poll with getImport()/watchImport().
@@ -2087,9 +2307,10 @@ export interface DatasetsClient {
   /**
    * Watch a publish to its settled end: poll getImport() until the import is
    * terminal, then confirm the version against the dataset detail. Under
-   * build-then-READY, COMPLETED means the version is READY — every task
-   * image in the platform registry (each provider builds its boot artifact
-   * lazily at the first trial) and, on an owner-stamped dataset,
+   * build-then-READY, COMPLETED means the version is READY — the build
+   * settled with at least one task ready (the partial-publish model; each
+   * provider builds its boot artifact lazily at the first trial) and, on an
+   * owner-stamped dataset,
    * already active — so the settle phase is normally the single confirming
    * read; against a mid-deploy older server it keeps polling until the
    * version reaches READY, ARCHIVED, or FAILED. A failed build rides the
@@ -2518,6 +2739,13 @@ export const HOSTED_ERROR_CODES = [
   "version_not_activatable",
   "unknown_task_names",
   "no_tasks",
+  // Partial publish: the failure-detail read of a task name with no recorded
+  // build outcome in the version, and a job create that NAMES a task whose
+  // build FAILED (refused typed, quoting the build failure — never a silent
+  // skip of an explicitly requested task; `details.failed_tasks` carries
+  // every named one with its reason).
+  "task_not_found",
+  "task_failed_to_build",
   "agent_not_found",
   "agent_name_taken",
   "agent_name_reserved",

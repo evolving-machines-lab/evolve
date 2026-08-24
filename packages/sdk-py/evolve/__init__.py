@@ -56,6 +56,7 @@ from .hosted import (
     CompareResponse,
     CompareTaskRow,
     Dataset,
+    DatasetFailedTask,
     DatasetImport,
     DatasetImportFailure,
     DatasetManifestAuthor,
@@ -79,6 +80,7 @@ from .hosted import (
     ImportTaskFailure,
     ImportWarning,
     Job,
+    JobBuildExclusion,
     JobCounts,
     JobEvent,
     JobFailure,
@@ -108,6 +110,8 @@ from .hosted import (
     StatusVocabulary,
     StopResponse,
     Task,
+    TaskBuild,
+    TaskBuildFailure,
     TaskPage,
     TaskProviderVerdict,
     TimingInfo,
@@ -142,6 +146,7 @@ from .results import (
     SessionPage,
     SessionEvent,
     BrowserReplay,
+    UsageReading,
 )
 from .storage_client import StorageClient
 from .sessions_client import SessionsClient
@@ -464,6 +469,7 @@ __all__ = [
     'SessionPage',
     'SessionEvent',
     'BrowserReplay',
+    'UsageReading',
 
     # Standalone clients
     'StorageClient',
@@ -492,6 +498,9 @@ __all__ = [
     'DatasetVersionSource',
     'DatasetRef',
     'DatasetSelector',
+    'DatasetFailedTask',
+    'TaskBuild',
+    'TaskBuildFailure',
     'DatasetImport',
     'DatasetImportFailure',
     'ImportTaskFailure',
@@ -501,6 +510,7 @@ __all__ = [
     'AgentArm',
     'AgentDatasetStats',
     'Job',
+    'JobBuildExclusion',
     'JobCounts',
     'JobFailure',
     'JobRetryConfig',

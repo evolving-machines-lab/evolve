@@ -1921,6 +1921,70 @@ function testTrialDetailSpendLane() {
 }
 
 /**
+ * THE ONE-HOME USAGE READING on the CLI surfaces: the token half renders as
+ * its own row/column with the provisional marker inside the cell, and the
+ * SPENT column folds the live floor in (trialSpendNow) so a RUNNING trial
+ * that has demonstrably spent shows "at least $X" instead of a dash.
+ */
+function testTrialUsageRendering() {
+  console.log("\n--- usage reading: tokens row/column + live SPENT floor ---");
+
+  const liveUsage = {
+    provisional: true,
+    spent_usd: 0.0421,
+    input_tokens: 12345,
+    cached_input_tokens: 4102,
+    output_tokens: 2210,
+    as_of: "2026-07-29T00:00:09.000Z",
+  };
+
+  const running = trialDetailLines(trialFixture({ usage: liveUsage })).join("\n");
+  assert(running.includes("tokens"), "a metered trial shows the tokens row");
+  assert(
+    running.includes("in 12,345 (4,102 cached) · out 2,210"),
+    "the row carries counts and the cached share",
+  );
+  assert(running.includes("— provisional"), "a growing count is marked provisional in the cell");
+
+  const settled = trialDetailLines(
+    trialFixture({
+      status: "SCORED",
+      reward: 1,
+      agent_result: { cost_usd: 0.31 },
+      spend_source: "measured",
+      usage: { ...liveUsage, provisional: false, spent_usd: 0.31 },
+    }),
+  ).join("\n");
+  assert(settled.includes("in 12,345 (4,102 cached) · out 2,210"), "a settled trial keeps its tokens row");
+  assert(!settled.includes("— provisional"), "a settled count carries no provisional marker");
+
+  const noUsage = trialDetailLines(trialFixture({})).join("\n");
+  assert(!noUsage.includes("tokens"), "no reading means no tokens row, never a row of zeros");
+
+  // The list columns: SPENT folds the live floor in; TOKENS is the same cell
+  // the detail row prints.
+  const spentCell = TRIAL_COLUMNS.find((column) => column.key === "spent");
+  assertEqual(
+    spentCell!.cell(trialFixture({ usage: liveUsage })),
+    "at least $0.04",
+    "a RUNNING trial's SPENT cell states the live floor",
+  );
+  assertEqual(
+    spentCell!.cell(trialFixture({})),
+    "-",
+    "no reading still states no figure",
+  );
+  const tokensCell = TRIAL_COLUMNS.find((column) => column.key === "tokens");
+  assert(tokensCell !== undefined, "the trial list has a TOKENS column");
+  assertEqual(
+    tokensCell!.cell(trialFixture({ usage: liveUsage })),
+    "in 12,345 (4,102 cached) · out 2,210 — provisional",
+    "the TOKENS cell carries counts, cached share and the marker",
+  );
+  assertEqual(tokensCell!.cell(trialFixture({})), "-", "no reading reads as a dash");
+}
+
+/**
  * GPU COST (Wave-3 lane 5): the trial detail renders the compute estimate as
  * its own labeled row — the audit sentence for a priced trial, the server's
  * own reason for an unpriced one, and NOTHING for a non-GPU trial. Never
@@ -4468,6 +4532,241 @@ async function testDatasetPublishFailedAndErrors() {
   }
 }
 
+/**
+ * The partial-publish model's CLI surfaces, all four reads:
+ *
+ *   1. `dataset show` renders the per-task states — the FAILED column and
+ *      the failed-tasks block with each typed reason.
+ *   2. `dataset publish --watch` prints every task's outcome once the build
+ *      settles (outcomes land in one transaction at settle, not mid-build)
+ *      and ends with "built N of M tasks — K failed to build" instead of
+ *      dying on the first failure — and still exits 0, because READY (>= 1
+ *      task built) is the settled success.
+ *   3. `job show` renders the job's ran-N-of-M honesty note verbatim.
+ *   4. `job start` naming a failed task surfaces the typed refusal with
+ *      every quoted reason on stderr, and the full envelope under --json.
+ */
+async function testPartialPublishCliSurfaces() {
+  console.log("\n--- runCli: partial-publish surfaces (dataset show / publish --watch / job show / job start refusal) ---");
+
+  const partialDetail = (name: string, version: string): Record<string, unknown> => {
+    const versionBody = {
+      version,
+      state: "READY",
+      created_at: "2026-08-21T00:00:00Z",
+      task_count: 10,
+      n_failed_tasks: 2,
+      manifest: null,
+      source: null,
+    };
+    return {
+      name,
+      title: null,
+      description: null,
+      active_version: versionBody,
+      versions: [versionBody],
+      selected_version: versionBody,
+      tasks: {
+        items: [
+          { task_name: "good-task", agent_timeout_sec: 600, verifier_timeout_sec: 120, providers: { e2b: { ok: true } } },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+      failed_tasks: [
+        {
+          task_name: "broken-dockerfile",
+          failure: { code: "image_build_failed", step: "image-build", message: "RUN apt-get install nonexistent-pkg exited 100" },
+        },
+        {
+          task_name: "schema-typo",
+          failure: { code: "task_parse_failed", step: "parse", message: "instruction.md is missing" },
+        },
+      ],
+      upstream: null,
+      created_at: "2026-08-21T00:00:00Z",
+      updated_at: "2026-08-21T00:00:00Z",
+    };
+  };
+
+  // 1. dataset show — the per-task states and their typed reasons.
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/part-swe", { status: 200, body: partialDetail("part-swe", "2.0") });
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "part-swe@2.0", ...AUTH], show.io), 0, "show exits 0 on a partially built version");
+    const text = show.out.join("\n");
+    assert(/VERSION\s+STATE\s+TASKS\s+FAILED/.test(text), "the versions table gains a FAILED column");
+    assert(text.includes("Failed tasks (version 2.0)"), "the failed-tasks block names the shown version");
+    assert(
+      text.includes("broken-dockerfile") && text.includes("image_build_failed (image-build): RUN apt-get install nonexistent-pkg exited 100"),
+      "each failed task carries its typed reason"
+    );
+    assert(
+      text.includes("schema-typo") && text.includes("task_parse_failed (parse): instruction.md is missing"),
+      "parse-level refusals speak the same per-task vocabulary"
+    );
+    assert(text.includes("re-publish a new version"), "the fix is named: a re-publish (immutable versions)");
+  } finally {
+    restoreFetch();
+  }
+
+  // 2. dataset publish --watch — outcomes at settle + the honest summary.
+  installMockFetch();
+  try {
+    const job = { id: "imp-9", name: "part-swe", version: "2.0", failure: null };
+    setMockResponse("/api/datasets/publish", { status: 202, body: { ...job, status: "QUEUED", warnings: [] } });
+    setMockResponse("/api/datasets/imports/imp-9", {
+      status: 200,
+      body: {
+        ...job,
+        status: "COMPLETED",
+        task_count: 10,
+        warnings: [{ code: "tasks_failed_to_build", message: "2 task(s) failed to build" }],
+      },
+    });
+    setMockResponse("/api/datasets/part-swe?", { status: 200, body: partialDetail("part-swe", "2.0") });
+
+    const watch = captureIO();
+    const code = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "part-swe", "--version", "2.0", "--watch", ...AUTH],
+      watch.io
+    );
+    assertEqual(code, 0, "exit 0 — READY (at least one task built) is the settled success, not a death on first failure");
+    const text = watch.out.join("\n");
+    assert(
+      text.includes("broken-dockerfile FAILED — image_build_failed (image-build)"),
+      "per-task outcomes are printed once the build settles"
+    );
+    assert(
+      watch.out.filter((l) => l.includes("broken-dockerfile FAILED")).length === 1,
+      "each task's outcome is printed exactly once"
+    );
+    assert(
+      text.includes("built 10 of 12 tasks — 2 failed to build"),
+      "the final block states the summary plainly"
+    );
+    assert(text.includes("2 task(s) failed to build"), "the import warning renders too");
+    assert(
+      text.includes("dataset show part-swe@2.0"),
+      "the summary points at where the reasons live"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  // 3. job show — the ran-N-of-M honesty label, verbatim.
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        build_exclusions: [
+          {
+            dataset: { name: "part-swe", version: "2.0" },
+            n_tasks_ran: 10,
+            n_tasks_selected: 10,
+            n_tasks_failed_to_build: 2,
+            failed_task_names: ["broken-dockerfile", "schema-typo"],
+            note: "ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)",
+          },
+          // An n_tasks-capped dataset: the note's second, capped form —
+          // rendered verbatim like any other.
+          {
+            dataset: { name: "big-swe", version: "1.0" },
+            n_tasks_ran: 5,
+            n_tasks_selected: 100,
+            n_tasks_failed_to_build: 10,
+            failed_task_names: ["broken-a", "broken-b"],
+            note: "selection matched 110 tasks: 10 failed to build: broken-a, broken-b, …; ran 5 (n_tasks cap)",
+          },
+        ],
+      }),
+    });
+    const showJob = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], showJob.io), 0, "job show exits 0");
+    assert(
+      showJob.out.some((l) => l.includes("build exclusions") && l.includes("ran 10 of 12 tasks — 2 failed to build")),
+      "the job body says ran-N-of-M plainly — silent truncation is forbidden"
+    );
+    assert(
+      showJob.out.some((l) => l.includes("selection matched 110 tasks: 10 failed to build") && l.includes("ran 5 (n_tasks cap)")),
+      "the capped form renders verbatim — the run was short for two separate reasons"
+    );
+
+    // A fully built job keeps its exact output — no empty row.
+    installMockFetch();
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob() });
+    const clean = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], clean.io);
+    assert(!clean.out.some((l) => l.includes("build exclusions")), "no exclusions row when nothing was excluded");
+  } finally {
+    restoreFetch();
+  }
+
+  // 4. job start naming a FAILED task — the typed refusal, reasons quoted.
+  //
+  // The details.failed_tasks entries here pin the SERVER's wire contract
+  // (spec/openapi.yaml's 409 description; api-errors.ts on the platform):
+  // the same nested {task_name, failure: {code, step, message}} grammar as
+  // the dataset detail's failed_tasks. An entry whose failure was never
+  // recorded must still render honestly — the fallback line, never a crash.
+  installMockFetch();
+  try {
+    const sentence = 'task "broken-dockerfile" failed to build in part-swe@2.0';
+    setMockResponse("/api/jobs", {
+      status: 409,
+      body: {
+        error: {
+          code: "task_failed_to_build",
+          message: sentence,
+          param: "datasets[0].task_names",
+          details: {
+            failed_tasks: [
+              {
+                task_name: "broken-dockerfile",
+                failure: { code: "image_build_failed", step: "image-build", message: "RUN apt-get install nonexistent-pkg exited 100" },
+              },
+              // No failure object recorded — the honest-fallback case.
+              { task_name: "orphaned-outcome" },
+            ],
+          },
+        },
+      },
+    });
+    const startArgs = ["job", "start", "-d", "part-swe@2.0", "-i", "broken-dockerfile", "-a", "codex", "-m", "gpt-5.5"];
+
+    const human = captureIO();
+    assertEqual(await runCli([...startArgs, ...AUTH], human.io), 1, "the typed refusal exits 1");
+    assertEqual(human.out, [], "nothing on stdout in human mode");
+    assert(human.err[0] === `Error: ${sentence}`, "stderr leads with the server's sentence");
+    assert(
+      human.err.some((l) => l.includes("broken-dockerfile: image_build_failed (image-build): RUN apt-get install nonexistent-pkg exited 100")),
+      "every named task's build failure is quoted on stderr as code (step): message"
+    );
+    assert(
+      human.err.some((l) => l.includes("orphaned-outcome: build failed (reason not recorded)")),
+      "an entry with no recorded failure renders the honest fallback"
+    );
+    assert(
+      human.err.some((l) => l.includes("re-publish a new version")),
+      "the fix is named beside the refusal"
+    );
+
+    const json = captureIO();
+    assertEqual(await runCli([...startArgs, "--json", ...AUTH], json.io), 1, "--json keeps exit 1");
+    const parsed = JSON.parse(json.out[0]);
+    assertEqual(parsed.error.code, "task_failed_to_build", "--json carries the typed code");
+    assertEqual(
+      parsed.error.details.failed_tasks[0].failure.code,
+      "image_build_failed",
+      "--json carries details.failed_tasks verbatim for machines"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testDatasetDownloadAndActivate() {
   console.log("\n--- runCli: dataset download + activate ---");
   installMockFetch();
@@ -5173,6 +5472,7 @@ async function main() {
   testEventLine();
   testTrialDetailLiveSpend();
   testTrialDetailSpendLane();
+  testTrialUsageRendering();
   testTrialDetailGpuCost();
   testTrialDetailJudgeSplit();
   testBuildInputsDirect();
@@ -5214,6 +5514,7 @@ async function main() {
   await testDatasetPublishWatch();
   await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
+  await testPartialPublishCliSurfaces();
   await testDatasetDownloadAndActivate();
   await testAgentAdd();
   await testAgentListShowRemove();

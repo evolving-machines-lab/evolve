@@ -1143,8 +1143,11 @@ export interface RunCost {
   index: number;
   /** Total cost in USD as billed to your Evolve account */
   cost: number;
-  /** Token counts */
-  tokens: { prompt: number; completion: number };
+  /**
+   * Token counts. `prompt` INCLUDES the cached share; `cached` is that share,
+   * absent on servers predating the field (never 0-by-default).
+   */
+  tokens: { prompt: number; completion: number; cached?: number };
   /** Model used (e.g., "claude-opus-4-8"). Last observed model if multiple models used in a run. */
   model: string;
   /** Number of LLM API requests in this run */
@@ -1163,8 +1166,11 @@ export interface SessionCost {
   sessionTag: string;
   /** Total cost across all runs in USD */
   totalCost: number;
-  /** Aggregate token counts */
-  totalTokens: { prompt: number; completion: number };
+  /**
+   * Aggregate token counts. `prompt` INCLUDES the cached share; `cached` is
+   * that share, absent on servers predating the field.
+   */
+  totalTokens: { prompt: number; completion: number; cached?: number };
   /** Per-run breakdown, chronological order */
   runs: RunCost[];
   /** ISO timestamp when this data was fetched */

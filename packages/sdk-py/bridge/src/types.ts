@@ -466,6 +466,9 @@ export interface SessionInfoResponse {
   ended_at: string | null;
   step_count: number;
   tool_stats: Record<string, number> | null;
+  // The one-home usage reading, verbatim from the wire (already snake_case —
+  // its keys are identical on every surface by design).
+  usage: Record<string, unknown> | null;
 }
 
 export interface SessionPageResponse {

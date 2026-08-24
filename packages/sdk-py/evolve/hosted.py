@@ -53,6 +53,7 @@ from typing import (
 
 from . import _http
 from .config import HostedClientConfig
+from .results import UsageReading, _usage_reading_from_data
 
 DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 
@@ -135,6 +136,13 @@ HostedErrorCode = Literal[
     'version_not_activatable',
     'unknown_task_names',
     'no_tasks',
+    # Partial publish: the failure-detail read of a task name with no recorded
+    # build outcome in the version, and a job create that NAMES a task whose
+    # build FAILED (refused typed, quoting the build failure — never a silent
+    # skip of an explicitly requested task; the refusal details carry every
+    # named task with its reason under the failed-tasks key).
+    'task_not_found',
+    'task_failed_to_build',
     'agent_not_found',
     'agent_name_taken',
     'agent_name_reserved',
@@ -426,12 +434,79 @@ class DatasetVersionSource:
 
 
 @dataclass
+class TaskBuildFailure:
+    """Why one task FAILED its independent build — the ONE failure grammar
+    for every step: parse-level refusals (schema/capability) and build-level
+    failures (image build, mirror, compose resolution, image-config read,
+    skills verification) speak it identically.
+    """
+    #: Typed reason. Parse refusals record ``task_parse_failed``; build steps
+    #: record the builder's own family (``image_build_failed``,
+    #: ``builder_unavailable``, ...). Open set — render the string; branch on
+    #: ``step`` for coarse grouping.
+    code: str
+    #: The build step that failed: ``parse``, ``image-build``,
+    #: ``image-config``, ``skills-verify``, ``compose-resolve``,
+    #: ``image-mirror``, or ``store``.
+    step: str
+    #: The failure sentence, naming the task's own defect.
+    message: str
+    #: Bounded tail of the failing step's build log (the failing line and its
+    #: neighbourhood). Served by the per-task build route
+    #: (:meth:`DatasetsClient.get_task_build`); list surfaces omit it. None
+    #: when the step produced no log to excerpt (a parse refusal's message IS
+    #: the whole story).
+    excerpt: Optional[str] = None
+
+
+@dataclass
+class TaskBuild:
+    """One task's build outcome inside one published version — the
+    failure-detail read (:meth:`DatasetsClient.get_task_build`, the
+    partial-publish model). READY tasks answer too (failure and log pointer
+    None), so a poller needs no negative-space reasoning.
+    """
+    task_name: str
+    #: ``"READY"`` or ``"FAILED"`` — the per-task member of the
+    #: DatasetVersionState family. No per-task "building" state exists on the
+    #: wire: outcomes are recorded only when the version settles.
+    state: str
+    #: The typed reason WITH the failing-step excerpt; None on READY.
+    failure: Optional[TaskBuildFailure] = None
+    #: Pointer to the FULL build log of the failing step
+    #: (``cloudwatch://<group>/<stream>`` for image builds), for operators
+    #: and support tooling. None when the failing step kept no separate log
+    #: (parse refusals), and on READY tasks.
+    build_log_ref: Optional[str] = None
+
+
+@dataclass
+class DatasetFailedTask:
+    """One failed task on the dataset detail's ``failed_tasks`` list: the
+    compact typed reason. The failing-step excerpt and build-log pointer live
+    on the per-task build route (:meth:`DatasetsClient.get_task_build`).
+    """
+    task_name: str
+    failure: TaskBuildFailure
+
+
+@dataclass
 class DatasetVersion:
     """One immutable version of a dataset — one shape on every surface."""
     version: str
     state: str
     created_at: str
+    #: The READY (runnable) tasks of this version. Under the partial-publish
+    #: model this is what a whole-dataset job runs.
     task_count: int
+    #: Tasks of the published corpus that FAILED their independent build and
+    #: are therefore not runnable in this version (the partial-publish
+    #: model). 0 on a fully built version — and on servers that predate the
+    #: field. The names and reasons are on the dataset detail's
+    #: ``failed_tasks``; the full per-task detail (excerpt + build-log
+    #: pointer) answers at :meth:`DatasetsClient.get_task_build`. Fixing one
+    #: is a re-publish — versions are immutable.
+    n_failed_tasks: int = 0
     #: The dataset.toml identity/metadata this version imported under.
     #: ``None`` when the corpus carried no manifest, and on servers that
     #: predate the field — absence is "nothing to report", never a crash.
@@ -562,6 +637,15 @@ class Dataset:
     # One page of the selected version's tasks (get() only); pass limit=/cursor=
     # to get() and follow next_cursor.
     tasks: Optional[TaskPage] = None
+    #: The selected version's tasks that FAILED their independent build
+    #: (get() only; the partial-publish model). Always present on the detail
+    #: body — empty on a fully built version. Ordered by task name and capped
+    #: at the task page limit; ``n_failed_tasks`` on the version object is
+    #: always the exact count. Each entry carries the typed reason; the
+    #: failing-step excerpt and build-log pointer live on
+    #: :meth:`DatasetsClient.get_task_build`. None on list rows (and on an
+    #: older server) — never a crash.
+    failed_tasks: Optional[List[DatasetFailedTask]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -1095,6 +1179,33 @@ class JobRetryConfig(TypedDict):
 
 
 @dataclass
+class JobBuildExclusion:
+    """One dataset of a job whose selection excluded tasks that FAILED to
+    build (the partial-publish model). ``note`` is the sentence to show, and
+    the structured fields beside it are the same fact for a UI:
+    ``n_tasks_selected`` is how many READY tasks the caller's filters matched
+    BEFORE any ``n_tasks`` cap, ``n_tasks_ran`` how many the job actually ran
+    from this dataset (fewer than ``n_tasks_selected`` only under an
+    ``n_tasks`` cap), and ``n_tasks_failed_to_build`` what the filters would
+    have taken but the build lost. Uncapped, the note reads "ran N of M tasks
+    — K failed to build" with M = n_tasks_selected + K; capped it reads
+    "selection matched M tasks: K failed to build: …; ran R (n_tasks cap)" —
+    the run was short for two separate reasons and the sentence keeps them
+    apart. ``failed_task_names`` names every one, sorted; the reasons live on
+    the dataset's ``failed_tasks`` and the per-task build route
+    (:meth:`DatasetsClient.get_task_build`). (Jobs recorded before
+    ``n_tasks_selected`` existed answer it as ``n_tasks_ran`` — read as
+    uncapped.)
+    """
+    dataset: DatasetRef
+    n_tasks_ran: int
+    n_tasks_selected: int
+    n_tasks_failed_to_build: int
+    failed_task_names: List[str]
+    note: str
+
+
+@dataclass
 class Job:
     """THE job body — the same shape from start, get, list rows, cancel,
     resume, and regrade responses; no field appears on some responses and not
@@ -1137,6 +1248,14 @@ class Job:
     environment_build_timeout_multiplier: Optional[float]
     sandbox_provider: EvalSandboxProvider
     counts: JobCounts
+    #: THE RESULTS-HONESTY LABEL of the partial-publish model: one entry per
+    #: dataset of this job whose selection excluded tasks that FAILED to
+    #: build — a whole-dataset (or glob) run over a partially built version
+    #: runs the READY tasks, and this field is where the job says so plainly
+    #: instead of silently truncating. Always present; empty when nothing was
+    #: excluded. Recorded at create and immutable; derived jobs
+    #: (resume/retry) answer empty — their honesty lives on the source job.
+    build_exclusions: List[JobBuildExclusion]
     n_total_trials: int
     #: The zeros-included 8-status histogram, beside the coarser counters in
     #: ``stats``.
@@ -1456,6 +1575,16 @@ class Trial:
     #: vocabulary as ``spend_source``, same rules. None exactly when
     #: ``judge_result`` is None: no judge ever ran.
     judge_spend_source: Optional[SpendSource] = None
+    #: THE ONE-HOME USAGE READING: spend so far plus the token breakdown from
+    #: the same gateway records, ``provisional`` saying whether the numbers
+    #: can still grow — present and ticking while the trial runs, settled
+    #: once the lane is ``measured``. The overlapping fields
+    #: (``agent_result`` tokens, ``live_spent_usd``, ``spend_source``) remain
+    #: for their existing readers; this is where a caller reads the whole
+    #: answer at once, with the same keys the managed-agents session surfaces
+    #: serve (:class:`evolve.results.UsageReading`). None = the meter never
+    #: answered, never zero.
+    usage: Optional[UsageReading] = None
 
 
 @dataclass
@@ -2036,14 +2165,47 @@ def _map_version_source(data: Any) -> Optional[DatasetVersionSource]:
 
 
 def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:
+    n_failed = data.get('n_failed_tasks')
     return DatasetVersion(
         version=data['version'],
         state=data.get('state', ''),
         created_at=data.get('created_at', ''),
         task_count=int(data.get('task_count', 0)),
+        # Tasks that FAILED their independent build (partial-publish model).
+        # Absent (an older server) reads as 0 — a fully built version.
+        n_failed_tasks=n_failed if isinstance(n_failed, int) else 0,
         manifest=_map_version_manifest(data.get('manifest')),
         source=_map_version_source(data.get('source')),
     )
+
+
+def _map_task_build_failure(data: Any) -> TaskBuildFailure:
+    """The ONE failure grammar of a task's independent build — compact on
+    the dataset detail's ``failed_tasks`` (no excerpt), full on the per-task
+    build route."""
+    if not isinstance(data, dict):
+        data = {}
+    return TaskBuildFailure(
+        code=data.get('code', ''),
+        step=data.get('step', ''),
+        message=data.get('message', ''),
+        excerpt=data.get('excerpt') if isinstance(data.get('excerpt'), str) else None,
+    )
+
+
+def _map_failed_tasks(data: Any) -> List[DatasetFailedTask]:
+    """The dataset detail's ``failed_tasks`` list (partial-publish model).
+    Absent (an older server) reads as an empty list — never a crash."""
+    if not isinstance(data, list):
+        return []
+    return [
+        DatasetFailedTask(
+            task_name=item.get('task_name', ''),
+            failure=_map_task_build_failure(item.get('failure')),
+        )
+        for item in data
+        if isinstance(item, dict)
+    ]
 
 
 def _map_dataset_summary(data: Dict[str, Any]) -> Dataset:
@@ -2118,6 +2280,9 @@ def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
             next_cursor=task_cursor,
             has_more=task_more,
         ),
+        # Always present on the detail body (empty on a fully built version);
+        # absent only on an older server, which reads the same way.
+        failed_tasks=_map_failed_tasks(raw.get('failed_tasks')),
         created_at=raw.get('created_at'),
         updated_at=raw.get('updated_at'),
     )
@@ -2182,6 +2347,40 @@ def _map_retry_config(data: Any) -> JobRetryConfig:
     }
 
 
+def _map_build_exclusions(data: Any) -> List[JobBuildExclusion]:
+    """The job body's ``build_exclusions`` — "ran N of M" per dataset (the
+    partial-publish model's honesty label). Absent (an older server) reads as
+    an empty list: nothing excluded."""
+    if not isinstance(data, list):
+        return []
+    exclusions: List[JobBuildExclusion] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        dataset = item.get('dataset')
+        names = item.get('failed_task_names')
+        n_ran = item.get('n_tasks_ran', 0) if isinstance(item.get('n_tasks_ran'), int) else 0
+        exclusions.append(JobBuildExclusion(
+            dataset=_map_dataset_ref(dataset if isinstance(dataset, dict) else {}),
+            n_tasks_ran=n_ran,
+            # Absent on a body recorded before the field existed: the
+            # server's own answer for those is n_tasks_ran (read as uncapped).
+            n_tasks_selected=(
+                item.get('n_tasks_selected')
+                if isinstance(item.get('n_tasks_selected'), int)
+                else n_ran
+            ),
+            n_tasks_failed_to_build=(
+                item.get('n_tasks_failed_to_build', 0)
+                if isinstance(item.get('n_tasks_failed_to_build'), int)
+                else 0
+            ),
+            failed_task_names=[str(name) for name in names] if isinstance(names, list) else [],
+            note=item.get('note', '') if isinstance(item.get('note'), str) else '',
+        ))
+    return exclusions
+
+
 def _map_job(data: Dict[str, Any]) -> Job:
     """The ONE job mapper — nothing conditional, because nothing is optional."""
     agents = data.get('agents')
@@ -2220,6 +2419,9 @@ def _map_job(data: Dict[str, Any]) -> Job:
         ),
         sandbox_provider=data.get('sandbox_provider', ''),
         counts=_map_counts(data.get('counts')),
+        # THE RESULTS-HONESTY LABEL (partial-publish model): always a list —
+        # absent (an older server) reads as "nothing was excluded".
+        build_exclusions=_map_build_exclusions(data.get('build_exclusions')),
         n_total_trials=int(data.get('n_total_trials', 0)),
         trials=_map_trial_tally(data.get('trials')),
         stats=data.get('stats') or {},
@@ -2431,6 +2633,9 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         # into it: it lags the gateway and is CLEARED when the trial settles.
         live_spent_usd=data.get('live_spent_usd'),
         live_spend_at=data.get('live_spend_at'),
+        # The one-home usage reading, by the one shared parsing rule — a
+        # malformed or absent object reads None ("the meter never answered").
+        usage=_usage_reading_from_data(data.get('usage')),
         max_trial_spend_usd=data.get('max_trial_spend_usd'),
         sandbox_provider=data.get('sandbox_provider'),
         # Defensive: a malformed degrade object reads as None, never a crash.
@@ -3254,6 +3459,43 @@ class DatasetsClient:
             updated_at=dataset.updated_at,
         )
 
+    async def get_task_build(self, ref: str, task_name: str) -> TaskBuild:
+        """The failure-detail read of the partial-publish model.
+
+        One task's own build outcome inside one published version — its state
+        (READY or FAILED), the typed failure WITH the failing-step excerpt,
+        and the full build-log pointer. The dataset detail's ``failed_tasks``
+        carries the compact reasons for every failed task; this call is where
+        the excerpt and the log pointer live, one task at a time.
+
+        ``ref`` must pin the version: ``"name@version"`` (the outcome is a
+        fact about one immutable version, so there is no active-version
+        reading to guess). A task the build has not settled — or a name the
+        corpus never contained — answers 404 ``task_not_found``.
+        """
+        name, version = _parse_dataset_ref(ref)
+        if version is None:
+            raise ValueError(
+                'get_task_build() needs "name@version" — a task\'s build '
+                f'outcome belongs to one immutable version (got "{ref}")'
+            )
+        raw = await self._http.request_json(
+            f'/api/datasets/{urllib.parse.quote(name)}/versions/'
+            f'{urllib.parse.quote(version)}/tasks/'
+            f'{urllib.parse.quote(task_name)}/build'
+        )
+        failure = raw.get('failure')
+        return TaskBuild(
+            task_name=raw.get('task_name', task_name),
+            state=raw.get('state', ''),
+            failure=_map_task_build_failure(failure) if isinstance(failure, dict) else None,
+            build_log_ref=(
+                raw.get('build_log_ref')
+                if isinstance(raw.get('build_log_ref'), str)
+                else None
+            ),
+        )
+
     async def publish(
         self,
         *,
@@ -3374,9 +3616,10 @@ class DatasetsClient:
         """Watch a publish to its SETTLED end: READY or FAILED.
 
         Polls ``get_import()`` until the import is terminal. COMPLETED means
-        the version is READY under build-then-READY — every task image in the
-        platform registry (each provider builds its boot artifact lazily at
-        the first trial) and, on an owner-stamped dataset, already ACTIVE —
+        the version is READY under build-then-READY — the build settled with
+        at least one task ready (the partial-publish model; each provider
+        builds its boot artifact lazily at the first trial) and, on an
+        owner-stamped dataset, already ACTIVE —
         so the settle phase is normally one confirming dataset-detail read;
         against a mid-deploy OLDER server it keeps polling until the VERSION
         itself lands READY, ARCHIVED, or FAILED (a failure rides the returned

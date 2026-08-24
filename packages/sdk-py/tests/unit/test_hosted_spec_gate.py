@@ -169,6 +169,9 @@ OPERATION_TO_METHOD = {
     # Datasets
     'listDatasets': (DatasetsClient, 'list'),
     'getDataset': (DatasetsClient, 'get'),
+    # Partial publish: the failure-detail read of one task's build outcome
+    # (typed reason + failing-step excerpt + build-log pointer).
+    'getTaskBuild': (DatasetsClient, 'get_task_build'),
     'updateDataset': (DatasetsClient, 'update'),
     'deleteDataset': (DatasetsClient, 'delete'),
     'downloadDataset': (DatasetsClient, 'download'),

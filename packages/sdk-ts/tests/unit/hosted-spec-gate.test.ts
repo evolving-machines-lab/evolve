@@ -213,6 +213,9 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
+  // Partial publish: the failure-detail read of one task's build outcome
+  // (typed reason + failing-step excerpt + build-log pointer).
+  getTaskBuild: "datasets.getTaskBuild",
   updateDataset: "datasets.update",
   deleteDataset: "datasets.delete",
   downloadDataset: "datasets.download",

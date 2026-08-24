@@ -43,6 +43,7 @@ import {
   trialAgentCost,
   trialEvolveRecord,
   trialJudgeCost,
+  trialSpendNow,
   trials,
 } from "../hosted/index";
 import type {
@@ -53,6 +54,7 @@ import type {
   AuthStatus,
   CompareResponse,
   Dataset,
+  DatasetFailedTask,
   DatasetImport,
   DatasetSelector,
   DatasetVersion,
@@ -76,6 +78,7 @@ import type {
   Trial,
   TrialStatus,
   UpstreamStatus,
+  UsageReading,
 } from "../hosted/types";
 import {
   managedSecrets,
@@ -2197,6 +2200,24 @@ function fmtSpend(spend: SpendStatement): string {
   return "-";
 }
 
+/**
+ * The token half of a usage reading, one row wide. Null when the reading
+ * carries no token counts at all (money may land first) — the caller then
+ * prints nothing rather than a row of dashes. The provisional marker rides
+ * inside the cell for the same reason the money lane rides inside fmtSpend:
+ * a count still being written must never read as the total.
+ */
+function fmtUsageTokens(usage: UsageReading): string | null {
+  if (usage.input_tokens === null && usage.output_tokens === null) return null;
+  const count = (n: number | null) => (n === null ? "-" : n.toLocaleString("en-US"));
+  const cached =
+    usage.cached_input_tokens !== null ? ` (${count(usage.cached_input_tokens)} cached)` : "";
+  return (
+    `in ${count(usage.input_tokens)}${cached} · out ${count(usage.output_tokens)}` +
+    (usage.provisional ? " — provisional" : "")
+  );
+}
+
 function fmtAgent(agent: AgentArm | AgentArmInput): string {
   const base = `${agent.name}:${agent.model_name}`;
   return agent.version ? `${base}:${agent.version}` : base;
@@ -2326,6 +2347,15 @@ function jobLines(e: Job): string[] {
     "size",
     `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.n_total_trials} trial(s)`,
   ]);
+  // THE RESULTS-HONESTY LABEL (partial-publish model): a whole-dataset (or
+  // glob) run over a partially built version runs the READY tasks, and this
+  // row is where the job says so plainly — "ran N of M tasks — K failed to
+  // build". The note is the server's own sentence, rendered verbatim;
+  // silent truncation is forbidden, so the row appears whenever the job
+  // recorded an exclusion.
+  for (const exclusion of e.build_exclusions) {
+    rows.push(["build exclusions", exclusion.note]);
+  }
   rows.push(["attempts/task", String(e.n_attempts)]);
   rows.push(["concurrency", String(e.n_concurrent_trials)]);
   rows.push(["max spend/trial", fmtUsd(e.max_trial_spend_usd)]);
@@ -2471,8 +2501,18 @@ export const TRIAL_COLUMNS: ListColumn<Trial>[] = [
   // Same lane law as the detail row (fmtTrialSpend): a column is one cell wide
   // too, so an unmeasured trial shows "-" rather than the zero its column
   // happens to hold. A list of freshly settled trials is exactly where a wall
-  // of "$0.00" would read as a free job.
-  { key: "spent", header: "SPENT", cell: (r) => fmtSpend(trialAgentCost(r)) },
+  // of "$0.00" would read as a free job. trialSpendNow folds in the live
+  // floor from the usage reading, so a RUNNING trial that has demonstrably
+  // spent shows "at least $X" instead of a dash — one idiom for every lower
+  // bound.
+  { key: "spent", header: "SPENT", cell: (r) => fmtSpend(trialSpendNow(r)) },
+  {
+    // The token half of the usage reading — opt-in via --columns; "-" until
+    // the meter answers.
+    key: "tokens",
+    header: "TOKENS",
+    cell: (r) => (r.usage && fmtUsageTokens(r.usage)) || "-",
+  },
   {
     // GPU compute estimate — its own column, never folded into SPENT (lane-5
     // law). Opt-in via --columns; "-" for non-GPU trials and unpriced ones.
@@ -2605,6 +2645,14 @@ export function trialDetailLines(run: Trial): string[] {
   ) {
     const asOf = run.live_spend_at ? ` as of ${run.live_spend_at}` : "";
     rows.push(["spent (live)", `at least $${run.live_spent_usd.toFixed(4)}${asOf}`]);
+  }
+  // THE TOKEN HALF of the meter, from the one-home usage reading — the same
+  // gateway records the money rows above were summed from, ticking while the
+  // trial runs and settling with it. The provisional marker inside the cell
+  // says whether the counts can still grow.
+  if (run.usage) {
+    const tokens = fmtUsageTokens(run.usage);
+    if (tokens) rows.push(["tokens", tokens]);
   }
   if (run.attempt_phase) rows.push(["phase", run.attempt_phase]);
   if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);
@@ -3701,14 +3749,19 @@ function datasetDetailLines(b: Dataset): string[] {
     // shows EVERY version's resolved sha — a FAILED version can never
     // activate, and this column is where its imported bytes stay observable.
     const anySource = b.versions.some((v) => v.source != null);
+    // The FAILED column appears only when some version lost tasks to its
+    // build (partial-publish model) — a fully built catalog keeps its exact
+    // table. TASKS stays the READY (runnable) count.
+    const anyFailed = b.versions.some((v) => v.n_failed_tasks > 0);
     const rows = [
-      ["VERSION", "STATE", "TASKS", "CREATED", ...(anySource ? ["COMMIT"] : [])],
+      ["VERSION", "STATE", "TASKS", ...(anyFailed ? ["FAILED"] : []), "CREATED", ...(anySource ? ["COMMIT"] : [])],
     ];
     for (const v of b.versions) {
       rows.push([
         v.version,
         v.state,
         String(v.task_count),
+        ...(anyFailed ? [v.n_failed_tasks > 0 ? String(v.n_failed_tasks) : "-"] : []),
         v.created_at ?? "-",
         ...(anySource ? [v.source ? v.source.commit.slice(0, 12) : "-"] : []),
       ]);
@@ -3759,6 +3812,43 @@ function datasetDetailLines(b: Dataset): string[] {
       for (const reason of refusals.values()) lines.push(`  ${reason}`);
     }
   }
+  // FAILED TASKS of the shown version (partial-publish model): every name
+  // with its typed reason — the tasks a whole-dataset job will NOT run.
+  // Quiet block on a fully built version. The count line uses the version's
+  // exact n_failed_tasks; the list itself is capped at the task page limit.
+  lines.push(...failedTaskLines(b));
+  return lines;
+}
+
+/**
+ * The failed-tasks block of `dataset show` — the READ of the partial-publish
+ * model's per-task outcomes. One line per failed task: name, typed reason
+ * (code + step), and the failure sentence. The failing-step excerpt and the
+ * full build-log pointer live on the per-task build route
+ * (datasets().getTaskBuild()); fixing a task is a re-publish (immutable
+ * versions), and the trailing line says so.
+ */
+function failedTaskLines(b: Dataset): string[] {
+  const failed: DatasetFailedTask[] = b.failed_tasks ?? [];
+  const version = b.selected_version ?? b.active_version ?? null;
+  const exactCount = version?.n_failed_tasks ?? failed.length;
+  if (failed.length === 0 && exactCount === 0) return [];
+  const lines: string[] = [
+    "",
+    `Failed tasks (version ${version?.version ?? "?"}) — not runnable in this version:`,
+  ];
+  const rows: string[][] = [];
+  for (const entry of failed) {
+    rows.push([
+      `  ${entry.task_name}`,
+      `${entry.failure.code} (${entry.failure.step}): ${entry.failure.message}`,
+    ]);
+  }
+  lines.push(...table(rows));
+  if (exactCount > failed.length) {
+    lines.push(`  … ${exactCount - failed.length} more (${exactCount} failed in total)`);
+  }
+  lines.push("  Fix: re-publish a new version — versions are immutable.");
   return lines;
 }
 
@@ -3859,13 +3949,31 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   // The watch follows the publish to its SETTLED end: the version READY
-  // (every task image in the platform registry — providers build their boot
-  // artifacts lazily at the first trial — and, on an owner dataset,
-  // already ACTIVE) or FAILED. COMPLETED means READY under build-then-READY;
+  // (at least one task built — the partial-publish model; providers build
+  // their boot artifacts lazily at the first trial — and, on an owner
+  // dataset, already ACTIVE) or FAILED. COMPLETED means READY under
+  // build-then-READY;
   // the SDK's settle phase adds one confirming read (and covers a mid-deploy
   // older server), and the exit code is the settled outcome.
   let lastVersion: DatasetVersion | null = null;
   let lastDetail: Dataset | null = null;
+  // Per-task outcomes (partial-publish model): the server records every
+  // task's outcome in ONE transaction when the version settles, so the
+  // detail's failed_tasks stays empty while the build runs and fills in one
+  // burst at settle. Print each entry ONCE whenever it becomes readable,
+  // instead of dying on the first failure.
+  const seenFailedTasks = new Set<string>();
+  const printNewFailedTasks = (dataset: Dataset) => {
+    for (const entry of dataset.failed_tasks ?? []) {
+      if (seenFailedTasks.has(entry.task_name)) continue;
+      seenFailedTasks.add(entry.task_name);
+      io.out(
+        json
+          ? JSON.stringify({ kind: "task.failed", task: entry })
+          : failedTaskOutcomeLine(entry)
+      );
+    }
+  };
   let final: DatasetImport;
   try {
     final = await client.watchImport(created.id, {
@@ -3876,6 +3984,7 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
         lastVersion = version;
         lastDetail = dataset;
         io.out(json ? JSON.stringify({ kind: "import.version", version }) : versionStatusLine(version));
+        printNewFailedTasks(dataset);
       },
     });
   } catch (error) {
@@ -3892,6 +4001,26 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     throw error;
   }
 
+  // THE SETTLED SUMMARY of a partial build ("built N of M tasks — K failed
+  // to build"). A settled build that lost tasks earns ONE confirming detail
+  // read to name any failure the watch's last poll missed. The server caps
+  // the detail's failed_tasks at its own task-page maximum (500) regardless
+  // of the page size a poll requested — never at the poll's page — so this
+  // read gains nothing below that cap; the exact count is the version's own
+  // n_failed_tasks either way.
+  // (cast: TS narrows the closure-assigned variable to its initializer here)
+  const settled = lastVersion as DatasetVersion | null;
+  if (settled !== null && settled.n_failed_tasks > 0) {
+    try {
+      const fullDetail = await client.get(`${final.name}@${final.version}`);
+      lastDetail = fullDetail;
+      printNewFailedTasks(fullDetail);
+    } catch {
+      // The summary below still states the exact counts; the reasons stay
+      // readable with `evolve dataset show name@version`.
+    }
+  }
+
   if (json) {
     io.out(JSON.stringify({ kind: "import.final", datasetImport: final }));
   } else {
@@ -3899,9 +4028,31 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     for (const line of importLines(final)) io.out(line);
     if (lastVersion !== null) {
       for (const line of versionSettleLines(lastVersion, lastDetail)) io.out(line);
+      for (const line of buildSettleSummaryLines(lastVersion, final)) io.out(line);
     }
   }
   return final.status === "FAILED" ? 1 : 0;
+}
+
+/**
+ * The partial-publish model's honest ending for `dataset publish --watch`:
+ * "built N of M tasks — K failed to build", plus where the reasons live and
+ * the one fix (a re-publish — versions are immutable). Empty on a fully
+ * built version, so the common case keeps its exact output.
+ */
+export function buildSettleSummaryLines(version: DatasetVersion, job: DatasetImport): string[] {
+  if (version.n_failed_tasks <= 0) return [];
+  const total = version.task_count + version.n_failed_tasks;
+  return [
+    `built ${version.task_count} of ${total} tasks — ${version.n_failed_tasks} failed to build`,
+    `Reasons: evolve dataset show ${job.name}@${job.version}`,
+    "Fix: re-publish a new version — versions are immutable.",
+  ];
+}
+
+/** One live line per failed task outcome during `dataset publish --watch`. */
+export function failedTaskOutcomeLine(entry: DatasetFailedTask): string {
+  return `task   ${entry.task_name} FAILED — ${entry.failure.code} (${entry.failure.step}): ${truncate(entry.failure.message, 140)}`;
 }
 
 /**
@@ -4354,6 +4505,25 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
       return 1;
     }
     io.err(`Error: ${(error as Error).message}`);
+    // A job create that NAMED a task whose build FAILED refuses typed
+    // (partial-publish model), and the refusal's details.failed_tasks quotes
+    // every named task's own build failure — render each one, so the caller
+    // reads the reason here instead of hunting for it.
+    if (error instanceof EvolveApiError && error.code === "task_failed_to_build") {
+      const details = (error.details ?? {}) as Record<string, unknown>;
+      const failedTasks = Array.isArray(details.failed_tasks) ? details.failed_tasks : [];
+      for (const entry of failedTasks as Record<string, unknown>[]) {
+        if (!entry || typeof entry !== "object") continue;
+        const failure = (entry.failure ?? {}) as Record<string, unknown>;
+        const reason =
+          typeof failure.message === "string" && failure.message
+            ? `${failure.code ?? "?"} (${failure.step ?? "?"}): ${failure.message}`
+            : "build failed (reason not recorded)";
+        io.err(`  ${entry.task_name}: ${reason}`);
+      }
+      io.err("  Fix: re-publish a new version, or drop the failed task(s) from --include-task-name.");
+      return 1;
+    }
     return 1;
   }
 }

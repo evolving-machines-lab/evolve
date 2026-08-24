@@ -139,3 +139,29 @@ export function jobSpend(
     ? { lane: "floor", usd: costUsd }
     : { lane: "measured", usd: costUsd };
 }
+
+/**
+ * The FRESHEST statement of the agent's spend: the settled statement when one
+ * exists, else the live floor from the one-home usage reading while the trial
+ * is still being metered.
+ *
+ * A RUNNING trial has no `agent_result` yet, so trialAgentCost() honestly says
+ * `unmeasured` — but the platform's live poll is already publishing a lower
+ * bound under `usage`, and a list that prints "-" beside a run that has
+ * demonstrably spent money states less than the wire knows. The floor idiom
+ * ("at least $X") is exactly the right sentence for it, and it is the SAME
+ * sentence a `measured_provisional` settle earns — one idiom for every kind of
+ * lower bound. The settled statement always wins the moment it exists; a
+ * usage reading that is not provisional but produced no settled statement
+ * adds nothing (that combination does not occur on the wire) and is refused
+ * rather than promoted.
+ */
+export function trialSpendNow(trial: Trial): SpendStatement {
+  const settled = trialAgentCost(trial);
+  if (settled.lane !== "unmeasured") return settled;
+  const usage = trial.usage;
+  if (usage && usage.provisional && typeof usage.spent_usd === "number") {
+    return { lane: "floor", usd: usage.spent_usd };
+  }
+  return settled;
+}
