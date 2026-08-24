@@ -503,8 +503,20 @@ async function testJobBuildExclusionsMapping() {
         agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
         counts: { agents: 1, tasks: 10 },
         build_exclusions: [
+          // Capped run: n_tasks_selected is the pre-cap matched-READY count,
+          // and the note is the two-reasons capped form.
           {
             dataset: { name: "part-swe", version: "2.0" },
+            n_tasks_ran: 5,
+            n_tasks_selected: 100,
+            n_tasks_failed_to_build: 10,
+            failed_task_names: ["broken-dockerfile", "schema-typo"],
+            note: "selection matched 110 tasks: 10 failed to build: broken-dockerfile, schema-typo, …; ran 5 (n_tasks cap)",
+          },
+          // A body recorded before n_tasks_selected existed (older server
+          // mid-deploy): the mapper answers it as n_tasks_ran — uncapped.
+          {
+            dataset: { name: "old-swe", version: "1.0" },
             n_tasks_ran: 10,
             n_tasks_failed_to_build: 2,
             failed_task_names: ["broken-dockerfile", "schema-typo"],
@@ -525,17 +537,23 @@ async function testJobBuildExclusionsMapping() {
     });
     const client = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await client.get("eval-part");
-    assertEqual(job.build_exclusions.length, 1, "build_exclusions mapped");
+    assertEqual(job.build_exclusions.length, 2, "build_exclusions mapped");
     assertEqual(
       job.build_exclusions[0],
       {
         dataset: { name: "part-swe", version: "2.0" },
-        n_tasks_ran: 10,
-        n_tasks_failed_to_build: 2,
+        n_tasks_ran: 5,
+        n_tasks_selected: 100,
+        n_tasks_failed_to_build: 10,
         failed_task_names: ["broken-dockerfile", "schema-typo"],
-        note: "ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)",
+        note: "selection matched 110 tasks: 10 failed to build: broken-dockerfile, schema-typo, …; ran 5 (n_tasks cap)",
       },
       "the whole exclusion survives the mapping — note verbatim, counts and names intact"
+    );
+    assertEqual(
+      job.build_exclusions[1].n_tasks_selected,
+      10,
+      "a body without n_tasks_selected answers it as n_tasks_ran — read as uncapped"
     );
   } finally {
     restoreFetch();

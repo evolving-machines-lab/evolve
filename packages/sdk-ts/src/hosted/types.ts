@@ -799,17 +799,25 @@ export interface JobFailure {
 
 /**
  * One dataset of a job whose selection excluded tasks that FAILED to build
- * (the partial-publish model). `note` is the sentence to show — "ran N of M
- * tasks — K failed to build" with the failed names — and the structured
- * fields beside it are the same fact for a UI: `n_tasks_ran` is what the job
- * selected from this dataset (N), `n_tasks_failed_to_build` what its filters
- * would have taken but the build lost (K), and N + K = M. `failed_task_names`
+ * (the partial-publish model). `note` is the sentence to show, and the
+ * structured fields beside it are the same fact for a UI: `n_tasks_selected`
+ * is how many READY tasks the caller's filters matched BEFORE any `n_tasks`
+ * cap, `n_tasks_ran` how many the job actually ran from this dataset (fewer
+ * than `n_tasks_selected` only under an `n_tasks` cap), and
+ * `n_tasks_failed_to_build` what the filters would have taken but the build
+ * lost. Uncapped, the note reads "ran N of M tasks — K failed to build" with
+ * M = n_tasks_selected + K; capped it reads "selection matched M tasks:
+ * K failed to build: …; ran R (n_tasks cap)" — the run was short for two
+ * separate reasons and the sentence keeps them apart. `failed_task_names`
  * names every one, sorted; the reasons live on the dataset's `failed_tasks`
- * and the per-task build route (datasets().getTaskBuild()).
+ * and the per-task build route (datasets().getTaskBuild()). (Jobs recorded
+ * before `n_tasks_selected` existed answer it as `n_tasks_ran` — read as
+ * uncapped.)
  */
 export interface JobBuildExclusion {
   dataset: DatasetRef;
   n_tasks_ran: number;
+  n_tasks_selected: number;
   n_tasks_failed_to_build: number;
   failed_task_names: string[];
   note: string;

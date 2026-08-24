@@ -796,16 +796,22 @@ function mapBuildExclusions(raw: unknown): JobBuildExclusion[] {
   if (!Array.isArray(raw)) return [];
   return (raw as Record<string, unknown>[])
     .filter((item) => item && typeof item === "object")
-    .map((item) => ({
-      dataset: mapDatasetRef((item.dataset ?? {}) as Record<string, unknown>),
-      n_tasks_ran: typeof item.n_tasks_ran === "number" ? item.n_tasks_ran : 0,
-      n_tasks_failed_to_build:
-        typeof item.n_tasks_failed_to_build === "number" ? item.n_tasks_failed_to_build : 0,
-      failed_task_names: Array.isArray(item.failed_task_names)
-        ? (item.failed_task_names as unknown[]).map(String)
-        : [],
-      note: (item.note as string) ?? "",
-    }));
+    .map((item) => {
+      const ran = typeof item.n_tasks_ran === "number" ? item.n_tasks_ran : 0;
+      return {
+        dataset: mapDatasetRef((item.dataset ?? {}) as Record<string, unknown>),
+        n_tasks_ran: ran,
+        // Absent on a body recorded before the field existed: the server's
+        // own answer for those is n_tasks_ran (read as uncapped).
+        n_tasks_selected: typeof item.n_tasks_selected === "number" ? item.n_tasks_selected : ran,
+        n_tasks_failed_to_build:
+          typeof item.n_tasks_failed_to_build === "number" ? item.n_tasks_failed_to_build : 0,
+        failed_task_names: Array.isArray(item.failed_task_names)
+          ? (item.failed_task_names as unknown[]).map(String)
+          : [],
+        note: (item.note as string) ?? "",
+      };
+    });
 }
 
 function mapJob(raw: Record<string, unknown>): Job {

@@ -4665,9 +4665,20 @@ async function testPartialPublishCliSurfaces() {
           {
             dataset: { name: "part-swe", version: "2.0" },
             n_tasks_ran: 10,
+            n_tasks_selected: 10,
             n_tasks_failed_to_build: 2,
             failed_task_names: ["broken-dockerfile", "schema-typo"],
             note: "ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)",
+          },
+          // An n_tasks-capped dataset: the note's second, capped form —
+          // rendered verbatim like any other.
+          {
+            dataset: { name: "big-swe", version: "1.0" },
+            n_tasks_ran: 5,
+            n_tasks_selected: 100,
+            n_tasks_failed_to_build: 10,
+            failed_task_names: ["broken-a", "broken-b"],
+            note: "selection matched 110 tasks: 10 failed to build: broken-a, broken-b, …; ran 5 (n_tasks cap)",
           },
         ],
       }),
@@ -4677,6 +4688,10 @@ async function testPartialPublishCliSurfaces() {
     assert(
       showJob.out.some((l) => l.includes("build exclusions") && l.includes("ran 10 of 12 tasks — 2 failed to build")),
       "the job body says ran-N-of-M plainly — silent truncation is forbidden"
+    );
+    assert(
+      showJob.out.some((l) => l.includes("selection matched 110 tasks: 10 failed to build") && l.includes("ran 5 (n_tasks cap)")),
+      "the capped form renders verbatim — the run was short for two separate reasons"
     );
 
     // A fully built job keeps its exact output — no empty row.

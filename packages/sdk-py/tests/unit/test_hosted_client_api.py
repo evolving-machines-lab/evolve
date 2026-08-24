@@ -1955,23 +1955,48 @@ class TestJobs:
         job read; an older server that sends none reads as "nothing was
         excluded" — never a crash."""
         labeled = dict(JOB_SUMMARY)
-        labeled['build_exclusions'] = [{
-            'dataset': {'name': 'part-swe', 'version': '2.0'},
-            'n_tasks_ran': 10,
-            'n_tasks_failed_to_build': 2,
-            'failed_task_names': ['broken-dockerfile', 'schema-typo'],
-            'note': 'ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)',
-        }]
+        labeled['build_exclusions'] = [
+            {
+                # Capped run: n_tasks_selected is the pre-cap matched-READY
+                # count, and the note is the two-reasons capped form.
+                'dataset': {'name': 'part-swe', 'version': '2.0'},
+                'n_tasks_ran': 5,
+                'n_tasks_selected': 100,
+                'n_tasks_failed_to_build': 10,
+                'failed_task_names': ['broken-dockerfile', 'schema-typo'],
+                'note': 'selection matched 110 tasks: 10 failed to build: broken-dockerfile, schema-typo, …; ran 5 (n_tasks cap)',
+            },
+            {
+                # Recorded before n_tasks_selected existed (older server
+                # mid-deploy): answered as n_tasks_ran — read as uncapped.
+                'dataset': {'name': 'old-swe', 'version': '1.0'},
+                'n_tasks_ran': 10,
+                'n_tasks_failed_to_build': 2,
+                'failed_task_names': ['broken-dockerfile', 'schema-typo'],
+                'note': 'ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)',
+            },
+        ]
         fake = FakeUrlopen([('/api/jobs/job-1', labeled)])
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).get('job-1')
-        assert job.build_exclusions == [JobBuildExclusion(
-            dataset=DatasetRef(name='part-swe', version='2.0'),
-            n_tasks_ran=10,
-            n_tasks_failed_to_build=2,
-            failed_task_names=['broken-dockerfile', 'schema-typo'],
-            note='ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)',
-        )]
+        assert job.build_exclusions == [
+            JobBuildExclusion(
+                dataset=DatasetRef(name='part-swe', version='2.0'),
+                n_tasks_ran=5,
+                n_tasks_selected=100,
+                n_tasks_failed_to_build=10,
+                failed_task_names=['broken-dockerfile', 'schema-typo'],
+                note='selection matched 110 tasks: 10 failed to build: broken-dockerfile, schema-typo, …; ran 5 (n_tasks cap)',
+            ),
+            JobBuildExclusion(
+                dataset=DatasetRef(name='old-swe', version='1.0'),
+                n_tasks_ran=10,
+                n_tasks_selected=10,
+                n_tasks_failed_to_build=2,
+                failed_task_names=['broken-dockerfile', 'schema-typo'],
+                note='ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)',
+            ),
+        ]
 
         fake = FakeUrlopen([('/api/jobs/job-1', JOB_SUMMARY)])
         with patch('evolve._http.urlopen', fake):

@@ -1181,17 +1181,25 @@ class JobRetryConfig(TypedDict):
 @dataclass
 class JobBuildExclusion:
     """One dataset of a job whose selection excluded tasks that FAILED to
-    build (the partial-publish model). ``note`` is the sentence to show —
-    "ran N of M tasks — K failed to build" with the failed names — and the
-    structured fields beside it are the same fact for a UI: ``n_tasks_ran``
-    is what the job selected from this dataset (N),
-    ``n_tasks_failed_to_build`` what its filters would have taken but the
-    build lost (K), and N + K = M. ``failed_task_names`` names every one,
-    sorted; the reasons live on the dataset's ``failed_tasks`` and the
-    per-task build route (:meth:`DatasetsClient.get_task_build`).
+    build (the partial-publish model). ``note`` is the sentence to show, and
+    the structured fields beside it are the same fact for a UI:
+    ``n_tasks_selected`` is how many READY tasks the caller's filters matched
+    BEFORE any ``n_tasks`` cap, ``n_tasks_ran`` how many the job actually ran
+    from this dataset (fewer than ``n_tasks_selected`` only under an
+    ``n_tasks`` cap), and ``n_tasks_failed_to_build`` what the filters would
+    have taken but the build lost. Uncapped, the note reads "ran N of M tasks
+    — K failed to build" with M = n_tasks_selected + K; capped it reads
+    "selection matched M tasks: K failed to build: …; ran R (n_tasks cap)" —
+    the run was short for two separate reasons and the sentence keeps them
+    apart. ``failed_task_names`` names every one, sorted; the reasons live on
+    the dataset's ``failed_tasks`` and the per-task build route
+    (:meth:`DatasetsClient.get_task_build`). (Jobs recorded before
+    ``n_tasks_selected`` existed answer it as ``n_tasks_ran`` — read as
+    uncapped.)
     """
     dataset: DatasetRef
     n_tasks_ran: int
+    n_tasks_selected: int
     n_tasks_failed_to_build: int
     failed_task_names: List[str]
     note: str
@@ -2351,9 +2359,17 @@ def _map_build_exclusions(data: Any) -> List[JobBuildExclusion]:
             continue
         dataset = item.get('dataset')
         names = item.get('failed_task_names')
+        n_ran = item.get('n_tasks_ran', 0) if isinstance(item.get('n_tasks_ran'), int) else 0
         exclusions.append(JobBuildExclusion(
             dataset=_map_dataset_ref(dataset if isinstance(dataset, dict) else {}),
-            n_tasks_ran=item.get('n_tasks_ran', 0) if isinstance(item.get('n_tasks_ran'), int) else 0,
+            n_tasks_ran=n_ran,
+            # Absent on a body recorded before the field existed: the
+            # server's own answer for those is n_tasks_ran (read as uncapped).
+            n_tasks_selected=(
+                item.get('n_tasks_selected')
+                if isinstance(item.get('n_tasks_selected'), int)
+                else n_ran
+            ),
             n_tasks_failed_to_build=(
                 item.get('n_tasks_failed_to_build', 0)
                 if isinstance(item.get('n_tasks_failed_to_build'), int)
