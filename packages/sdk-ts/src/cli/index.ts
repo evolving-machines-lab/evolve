@@ -3957,9 +3957,11 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   // older server), and the exit code is the settled outcome.
   let lastVersion: DatasetVersion | null = null;
   let lastDetail: Dataset | null = null;
-  // Per-task outcomes as they land (partial-publish model): each poll's
-  // detail carries the failed tasks recorded so far — print every one ONCE,
-  // as it appears, instead of dying on the first failure.
+  // Per-task outcomes (partial-publish model): the server records every
+  // task's outcome in ONE transaction when the version settles, so the
+  // detail's failed_tasks stays empty while the build runs and fills in one
+  // burst at settle. Print each entry ONCE whenever it becomes readable,
+  // instead of dying on the first failure.
   const seenFailedTasks = new Set<string>();
   const printNewFailedTasks = (dataset: Dataset) => {
     for (const entry of dataset.failed_tasks ?? []) {
@@ -4000,10 +4002,12 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   }
 
   // THE SETTLED SUMMARY of a partial build ("built N of M tasks — K failed
-  // to build"). The watch polls with the smallest task page, which caps the
-  // detail's failed_tasks list, so a settled build that lost tasks earns ONE
-  // fuller detail read to name every failure it can — the exact count is the
-  // version's own n_failed_tasks either way.
+  // to build"). A settled build that lost tasks earns ONE confirming detail
+  // read to name any failure the watch's last poll missed. The server caps
+  // the detail's failed_tasks at its own task-page maximum (500) regardless
+  // of the page size a poll requested — never at the poll's page — so this
+  // read gains nothing below that cap; the exact count is the version's own
+  // n_failed_tasks either way.
   // (cast: TS narrows the closure-assigned variable to its initializer here)
   const settled = lastVersion as DatasetVersion | null;
   if (settled !== null && settled.n_failed_tasks > 0) {

@@ -4537,10 +4537,11 @@ async function testDatasetPublishFailedAndErrors() {
  *
  *   1. `dataset show` renders the per-task states — the FAILED column and
  *      the failed-tasks block with each typed reason.
- *   2. `dataset publish --watch` prints per-task outcomes as they settle and
- *      ends with "built N of M tasks — K failed to build" instead of dying
- *      on the first failure — and still exits 0, because READY (>= 1 task
- *      built) is the settled success.
+ *   2. `dataset publish --watch` prints every task's outcome once the build
+ *      settles (outcomes land in one transaction at settle, not mid-build)
+ *      and ends with "built N of M tasks — K failed to build" instead of
+ *      dying on the first failure — and still exits 0, because READY (>= 1
+ *      task built) is the settled success.
  *   3. `job show` renders the job's ran-N-of-M honesty note verbatim.
  *   4. `job start` naming a failed task surfaces the typed refusal with
  *      every quoted reason on stderr, and the full envelope under --json.
@@ -4610,7 +4611,7 @@ async function testPartialPublishCliSurfaces() {
     restoreFetch();
   }
 
-  // 2. dataset publish --watch — outcomes as they settle + the honest summary.
+  // 2. dataset publish --watch — outcomes at settle + the honest summary.
   installMockFetch();
   try {
     const job = { id: "imp-9", name: "part-swe", version: "2.0", failure: null };
@@ -4635,7 +4636,7 @@ async function testPartialPublishCliSurfaces() {
     const text = watch.out.join("\n");
     assert(
       text.includes("broken-dockerfile FAILED — image_build_failed (image-build)"),
-      "per-task outcomes are printed as they settle"
+      "per-task outcomes are printed once the build settles"
     );
     assert(
       watch.out.filter((l) => l.includes("broken-dockerfile FAILED")).length === 1,
@@ -4689,6 +4690,12 @@ async function testPartialPublishCliSurfaces() {
   }
 
   // 4. job start naming a FAILED task — the typed refusal, reasons quoted.
+  //
+  // The details.failed_tasks entries here pin the SERVER's wire contract
+  // (spec/openapi.yaml's 409 description; api-errors.ts on the platform):
+  // the same nested {task_name, failure: {code, step, message}} grammar as
+  // the dataset detail's failed_tasks. An entry whose failure was never
+  // recorded must still render honestly — the fallback line, never a crash.
   installMockFetch();
   try {
     const sentence = 'task "broken-dockerfile" failed to build in part-swe@2.0';
@@ -4705,6 +4712,8 @@ async function testPartialPublishCliSurfaces() {
                 task_name: "broken-dockerfile",
                 failure: { code: "image_build_failed", step: "image-build", message: "RUN apt-get install nonexistent-pkg exited 100" },
               },
+              // No failure object recorded — the honest-fallback case.
+              { task_name: "orphaned-outcome" },
             ],
           },
         },
@@ -4718,7 +4727,11 @@ async function testPartialPublishCliSurfaces() {
     assert(human.err[0] === `Error: ${sentence}`, "stderr leads with the server's sentence");
     assert(
       human.err.some((l) => l.includes("broken-dockerfile: image_build_failed (image-build): RUN apt-get install nonexistent-pkg exited 100")),
-      "every named task's build failure is quoted on stderr"
+      "every named task's build failure is quoted on stderr as code (step): message"
+    );
+    assert(
+      human.err.some((l) => l.includes("orphaned-outcome: build failed (reason not recorded)")),
+      "an entry with no recorded failure renders the honest fallback"
     );
     assert(
       human.err.some((l) => l.includes("re-publish a new version")),
