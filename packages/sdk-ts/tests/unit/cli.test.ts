@@ -4468,6 +4468,213 @@ async function testDatasetPublishFailedAndErrors() {
   }
 }
 
+/**
+ * The partial-publish model's CLI surfaces, all four reads:
+ *
+ *   1. `dataset show` renders the per-task states — the FAILED column and
+ *      the failed-tasks block with each typed reason.
+ *   2. `dataset publish --watch` prints per-task outcomes as they settle and
+ *      ends with "built N of M tasks — K failed to build" instead of dying
+ *      on the first failure — and still exits 0, because READY (>= 1 task
+ *      built) is the settled success.
+ *   3. `job show` renders the job's ran-N-of-M honesty note verbatim.
+ *   4. `job start` naming a failed task surfaces the typed refusal with
+ *      every quoted reason on stderr, and the full envelope under --json.
+ */
+async function testPartialPublishCliSurfaces() {
+  console.log("\n--- runCli: partial-publish surfaces (dataset show / publish --watch / job show / job start refusal) ---");
+
+  const partialDetail = (name: string, version: string): Record<string, unknown> => {
+    const versionBody = {
+      version,
+      state: "READY",
+      created_at: "2026-08-21T00:00:00Z",
+      task_count: 10,
+      n_failed_tasks: 2,
+      manifest: null,
+      source: null,
+    };
+    return {
+      name,
+      title: null,
+      description: null,
+      active_version: versionBody,
+      versions: [versionBody],
+      selected_version: versionBody,
+      tasks: {
+        items: [
+          { task_name: "good-task", agent_timeout_sec: 600, verifier_timeout_sec: 120, providers: { e2b: { ok: true } } },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+      failed_tasks: [
+        {
+          task_name: "broken-dockerfile",
+          failure: { code: "image_build_failed", step: "image-build", message: "RUN apt-get install nonexistent-pkg exited 100" },
+        },
+        {
+          task_name: "schema-typo",
+          failure: { code: "task_parse_failed", step: "parse", message: "instruction.md is missing" },
+        },
+      ],
+      upstream: null,
+      created_at: "2026-08-21T00:00:00Z",
+      updated_at: "2026-08-21T00:00:00Z",
+    };
+  };
+
+  // 1. dataset show — the per-task states and their typed reasons.
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/part-swe", { status: 200, body: partialDetail("part-swe", "2.0") });
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "part-swe@2.0", ...AUTH], show.io), 0, "show exits 0 on a partially built version");
+    const text = show.out.join("\n");
+    assert(/VERSION\s+STATE\s+TASKS\s+FAILED/.test(text), "the versions table gains a FAILED column");
+    assert(text.includes("Failed tasks (version 2.0)"), "the failed-tasks block names the shown version");
+    assert(
+      text.includes("broken-dockerfile") && text.includes("image_build_failed (image-build): RUN apt-get install nonexistent-pkg exited 100"),
+      "each failed task carries its typed reason"
+    );
+    assert(
+      text.includes("schema-typo") && text.includes("task_parse_failed (parse): instruction.md is missing"),
+      "parse-level refusals speak the same per-task vocabulary"
+    );
+    assert(text.includes("re-publish a new version"), "the fix is named: a re-publish (immutable versions)");
+  } finally {
+    restoreFetch();
+  }
+
+  // 2. dataset publish --watch — outcomes as they settle + the honest summary.
+  installMockFetch();
+  try {
+    const job = { id: "imp-9", name: "part-swe", version: "2.0", failure: null };
+    setMockResponse("/api/datasets/publish", { status: 202, body: { ...job, status: "QUEUED", warnings: [] } });
+    setMockResponse("/api/datasets/imports/imp-9", {
+      status: 200,
+      body: {
+        ...job,
+        status: "COMPLETED",
+        task_count: 10,
+        warnings: [{ code: "tasks_failed_to_build", message: "2 task(s) failed to build" }],
+      },
+    });
+    setMockResponse("/api/datasets/part-swe?", { status: 200, body: partialDetail("part-swe", "2.0") });
+
+    const watch = captureIO();
+    const code = await runCli(
+      ["dataset", "publish", "--git", "g", "--ref", "main", "--name", "part-swe", "--version", "2.0", "--watch", ...AUTH],
+      watch.io
+    );
+    assertEqual(code, 0, "exit 0 — READY (at least one task built) is the settled success, not a death on first failure");
+    const text = watch.out.join("\n");
+    assert(
+      text.includes("broken-dockerfile FAILED — image_build_failed (image-build)"),
+      "per-task outcomes are printed as they settle"
+    );
+    assert(
+      watch.out.filter((l) => l.includes("broken-dockerfile FAILED")).length === 1,
+      "each task's outcome is printed exactly once"
+    );
+    assert(
+      text.includes("built 10 of 12 tasks — 2 failed to build"),
+      "the final block states the summary plainly"
+    );
+    assert(text.includes("2 task(s) failed to build"), "the import warning renders too");
+    assert(
+      text.includes("dataset show part-swe@2.0"),
+      "the summary points at where the reasons live"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  // 3. job show — the ran-N-of-M honesty label, verbatim.
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        build_exclusions: [
+          {
+            dataset: { name: "part-swe", version: "2.0" },
+            n_tasks_ran: 10,
+            n_tasks_failed_to_build: 2,
+            failed_task_names: ["broken-dockerfile", "schema-typo"],
+            note: "ran 10 of 12 tasks — 2 failed to build (broken-dockerfile, schema-typo)",
+          },
+        ],
+      }),
+    });
+    const showJob = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], showJob.io), 0, "job show exits 0");
+    assert(
+      showJob.out.some((l) => l.includes("build exclusions") && l.includes("ran 10 of 12 tasks — 2 failed to build")),
+      "the job body says ran-N-of-M plainly — silent truncation is forbidden"
+    );
+
+    // A fully built job keeps its exact output — no empty row.
+    installMockFetch();
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob() });
+    const clean = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], clean.io);
+    assert(!clean.out.some((l) => l.includes("build exclusions")), "no exclusions row when nothing was excluded");
+  } finally {
+    restoreFetch();
+  }
+
+  // 4. job start naming a FAILED task — the typed refusal, reasons quoted.
+  installMockFetch();
+  try {
+    const sentence = 'task "broken-dockerfile" failed to build in part-swe@2.0';
+    setMockResponse("/api/jobs", {
+      status: 409,
+      body: {
+        error: {
+          code: "task_failed_to_build",
+          message: sentence,
+          param: "datasets[0].task_names",
+          details: {
+            failed_tasks: [
+              {
+                task_name: "broken-dockerfile",
+                failure: { code: "image_build_failed", step: "image-build", message: "RUN apt-get install nonexistent-pkg exited 100" },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const startArgs = ["job", "start", "-d", "part-swe@2.0", "-i", "broken-dockerfile", "-a", "codex", "-m", "gpt-5.5"];
+
+    const human = captureIO();
+    assertEqual(await runCli([...startArgs, ...AUTH], human.io), 1, "the typed refusal exits 1");
+    assertEqual(human.out, [], "nothing on stdout in human mode");
+    assert(human.err[0] === `Error: ${sentence}`, "stderr leads with the server's sentence");
+    assert(
+      human.err.some((l) => l.includes("broken-dockerfile: image_build_failed (image-build): RUN apt-get install nonexistent-pkg exited 100")),
+      "every named task's build failure is quoted on stderr"
+    );
+    assert(
+      human.err.some((l) => l.includes("re-publish a new version")),
+      "the fix is named beside the refusal"
+    );
+
+    const json = captureIO();
+    assertEqual(await runCli([...startArgs, "--json", ...AUTH], json.io), 1, "--json keeps exit 1");
+    const parsed = JSON.parse(json.out[0]);
+    assertEqual(parsed.error.code, "task_failed_to_build", "--json carries the typed code");
+    assertEqual(
+      parsed.error.details.failed_tasks[0].failure.code,
+      "image_build_failed",
+      "--json carries details.failed_tasks verbatim for machines"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testDatasetDownloadAndActivate() {
   console.log("\n--- runCli: dataset download + activate ---");
   installMockFetch();
@@ -5214,6 +5421,7 @@ async function main() {
   await testDatasetPublishWatch();
   await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
+  await testPartialPublishCliSurfaces();
   await testDatasetDownloadAndActivate();
   await testAgentAdd();
   await testAgentListShowRemove();
