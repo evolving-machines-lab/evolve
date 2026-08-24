@@ -729,7 +729,7 @@ const replay = await session.browserReplay(info.id);
 ```
 
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
-- `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc.
+- `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
 - `browserReplay()` waits for the managed browser replay and returns `replayUrl` plus `downloadUrl`
@@ -775,7 +775,7 @@ const r2 = await evolve.run({ prompt: "Write tests" });
 // Session cost — all runs
 const session = await evolve.getSessionCost();
 console.log(session.totalCost);       // 0.42 (USD)
-console.log(session.totalTokens);     // { prompt: 5000, completion: 2000 }
+console.log(session.totalTokens);     // { prompt: 5000, completion: 2000, cached: 3200 }
 console.log(session.runs.length);     // 2
 
 // Run cost — by ID (single API call)
@@ -800,7 +800,7 @@ interface RunCost {
   runId: string;        // Matches AgentResponse.runId
   index: number;        // 1-based chronological position
   cost: number;         // USD as billed to your Evolve account
-  tokens: { prompt: number; completion: number };
+  tokens: { prompt: number; completion: number; cached?: number };  // prompt INCLUDES cached
   model: string;        // Last observed model for this run
   requests: number;     // Number of LLM API requests
   asOf: string;         // ISO timestamp of query
@@ -811,7 +811,7 @@ interface RunCost {
 interface SessionCost {
   sessionTag: string;   // Matches evolve.getSessionTag()
   totalCost: number;    // USD across all runs
-  totalTokens: { prompt: number; completion: number };
+  totalTokens: { prompt: number; completion: number; cached?: number };
   runs: RunCost[];      // Chronological order
   asOf: string;
   isComplete: boolean;

@@ -270,6 +270,18 @@ Read the pair together or not at all, and hold on to the rules that follow from 
 
 The same reading reaches a watcher as a `trial.spend` event carrying `trial_id`, `task_name` and `live_spent_usd` — and, when the ledger sample carried them, the token sums. It is emitted only when a sample actually landed on a live trial, so a poll that raced the settle never fires one.
 
+### The one-home `usage` reading
+
+The pair above answers the money half; `trial.usage` answers the whole question in one object — spend so far plus the token breakdown, from the same ledger records, with a `provisional` flag saying whether the numbers can still grow:
+
+```python
+print(trial.usage)
+# UsageReading(provisional=True, spent_usd=3.41, input_tokens=2181733,
+#              cached_input_tokens=1965214, output_tokens=8177, as_of='2026-07-31T18:22:05.113Z')
+```
+
+While the trial runs the reading is `provisional: true` and ticks as the ledger batches in; at settle the settled figures replace the live ones under the same keys, and `provisional` flips to `false` once the lane is confirmed (`spend_source` `"measured"`). `None` means the meter never answered — never a fabricated zero. The object's keys are identical on the managed-agents session surfaces (`sessions()` `SessionInfo.usage`), so one renderer covers a trial and a session unchanged. The CLI reads it too: `evolve trial show` prints a `tokens` row and the trial list's `SPENT` column states a running trial's floor as `at least $X`.
+
 ---
 
 ## Read the results
@@ -1164,10 +1176,10 @@ local_publish = await catalog.publish(
 # tarball's sha256 — the version's source identity on the server — is
 # reproducible.
 
-# Block until the publish SETTLES: the version READY (every task image in
-# the platform registry — and, on a dataset you own, already the ACTIVE
-# one) or FAILED. COMPLETED means READY: the import IS the whole platform
-# build, so the settle phase is one confirming read.
+# Block until the publish SETTLES: the version READY (at least one task
+# built — and, on a dataset you own, already the ACTIVE one) or FAILED.
+# COMPLETED means READY: the import IS the whole platform build, so the
+# settle phase is one confirming read.
 done = await catalog.watch_import(
     publish_job.id,
     on_status=lambda imp: print(imp.status, imp.task_count),
@@ -1235,11 +1247,15 @@ A **git** publish still requires both: the repository is only cloned server-side
 
 What happens next:
 
-- **All-or-nothing parse.** Every task is parsed before anything lands; one bad task fails the whole publish, with each failure named in `failure.failures`. No partial corpus ever exists.
+- **Every task builds independently — the partial-publish model.** The publish accepts the whole corpus, and each task parses and builds on its own: a task that survives ends `READY`, a task that does not ends `FAILED` with a typed reason, and the other tasks are unaffected. This deliberately **supersedes the earlier all-or-nothing law**, under which one bad task failed the whole publish and no partial corpus ever existed — one broken Dockerfile no longer holds the other hundred tasks hostage. Parse-level refusals (schema/capability) land as per-task marks in the same vocabulary as build failures. The version fails wholesale only when **no** task survived (`all_tasks_failed_to_build`), on a corpus-level refusal (the manifest gates above), or on a platform-infrastructure failure.
 - **Strict by design.** Every task-config field is either honored or the publish is refused with the field and reason named — a task never silently runs on weaker semantics than it declares. GPU declarations (`gpus`, `gpu_types`) are honored — see [GPU tasks](#gpu-tasks); a GPU count no provider can allocate is refused at import with the numbers. Multi-step `[[steps]]` tasks, `[environment.env]` variables, MCP servers, readiness healthchecks, and `[agent] user` all import and run — see [What runs](#what-runs).
 - **Task images are built at import — the import is the whole platform build.** Dockerfile-defined environments are built once into the platform registry and multi-container service images are resolved and pinned — all before the version can complete, which is exactly why job creation refuses any version short of `READY`. Each sandbox provider builds its own boot artifact from those images lazily, at the first trial on it (cached provider-side for every trial after) — so the first trial on a new image legitimately takes 1–3 minutes longer. That is the provider build, not a hang.
 
-`COMPLETED` is the import's terminal success, and it means `READY`: every task image is in the platform registry, the version is runnable, visible in the catalog (`catalog.get('my-swe@1.0')`), and — on a dataset you own — already the dataset's **active** version. A publish is finished when its import completes: nothing else to call, and `{'name': 'my-swe'}` in a job already resolves to what you just published. A publish that fails anywhere in that build — parse, or an image build — lands the version in state `FAILED` with the structured reason on the import's `failure`, and changes nothing else: the dataset keeps serving whatever it served before. `evals.start()` against any state short of `READY` is rejected with a `409 version_not_ready` naming it.
+`COMPLETED` is the import's terminal success, and it means `READY`: the build settled with **at least one task ready** — the version is runnable, visible in the catalog (`catalog.get('my-swe@1.0')`), and — on a dataset you own — already the dataset's **active** version. A publish is finished when its import completes: nothing else to call, and the bare name in a job already resolves to what you just published. On the version object, `task_count` counts the READY (runnable) tasks and `n_failed_tasks` the rest; when any task failed, the import carries the `tasks_failed_to_build` warning. A publish that fails wholesale — no task survived, a corpus-level refusal, or an infrastructure failure — lands the version in state `FAILED` with the structured reason on the import's `failure`, and changes nothing else: the dataset keeps serving whatever it served before. Job creation against any state short of `READY` is rejected with a `409 version_not_ready` naming it.
+
+**Reading the per-task outcomes.** The dataset detail's `failed_tasks` lists every failed task of the shown version with its typed reason (`{code, step, message}` — the one failure grammar for parse refusals and build failures alike), and the per-task build route answers the full detail: the failing-step excerpt and the full build-log pointer. `evolve dataset show name@version` renders both the counts and the reasons; `evolve dataset publish --watch` prints every task's outcome once the build settles (outcomes are recorded in one step when the version settles, not streamed mid-build) and ends with the plain summary — `built N of M tasks — K failed to build` — instead of dying on the first failure.
+
+**Running a partially built version.** A whole-dataset (or glob) job runs the READY tasks, and the job body says so plainly in `build_exclusions` — one entry per affected dataset with the sentence to show (`note`), the counts, and the sorted failed names; silent truncation is forbidden. `n_tasks_selected` is what the filters matched before any `n_tasks` cap and `n_tasks_ran` what actually ran, so the note has two forms: uncapped, "ran N of M tasks — K failed to build"; under an `n_tasks` cap, "selection matched M tasks: K failed to build: …; ran R (n_tasks cap)" — the run was short for two separate reasons and the sentence keeps them apart. Explicitly **naming** a failed task at job create refuses typed (`task_failed_to_build`), quoting the task's own build failure: the refusal's `details.failed_tasks` carries every named one as `{task_name, failure: {code, step, message}}` — the same entry shape as the dataset detail's `failed_tasks` — never a silent skip of a task you asked for by name. Fixing a failed task is a re-publish: versions are immutable, so the fix is a new version.
 
 Reference solutions (`solution/`) are archived at publish when the corpus ships them — they are the version's permanent reference-solution record (the checkout is deleted after import), used by operator verification tooling. They gate nothing: a corpus that ships none, or only some, still publishes and activates, and the import's `warnings` say exactly which record the version will permanently lack (`no_solutions_archived`, `partial_solutions_archived`, or `solutions_archiving_disabled`).
 
@@ -1584,7 +1600,7 @@ A terminal import stays readable. A successful import used to start answering `4
 DRAFT → IMPORTING → BUILDING → READY
 ```
 
-with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or image build lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry — so `READY` means every task image is in the registry; it is the only state that accepts jobs, and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. Each sandbox provider builds its own boot artifact from that image at the first trial on it (cached provider-side for every trial after), so nothing per-provider is built at publish. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move.
+with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or image build lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry — and every task builds independently (the partial-publish model, which supersedes the earlier all-or-nothing law where `READY` meant every task image was in the registry): `READY` now means the build settled with at least one task ready, `task_count` counting the runnable tasks and `n_failed_tasks` the rest. It is the only state that accepts jobs — a job on a partially built version runs the READY tasks and says so in `build_exclusions`; and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. Each sandbox provider builds its own boot artifact from that image at the first trial on it (cached provider-side for every trial after), so nothing per-provider is built at publish. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move.
 
 All four vocabularies, with their terminal members marked, are published under `statuses` in the [capability document](#what-the-platform-supports) — render from there, not from these tables.
 
@@ -1600,6 +1616,15 @@ TrialStatus = Literal['QUEUED', 'RUNNING', 'SCORING', 'SCORED',
                       'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED']
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 SpendSource = Literal['measured', 'measured_provisional', 'assumed_cap']
+
+@dataclass
+class UsageReading:                               # the one-home usage reading — same keys on session surfaces
+    provisional: bool                             # True while every number can still grow
+    spent_usd: Optional[float]                    # None = the money was never measured
+    input_tokens: Optional[int]                   # INCLUDES the cached share
+    cached_input_tokens: Optional[int]
+    output_tokens: Optional[int]
+    as_of: Optional[str]                          # when the reading was taken
 VerifierEnvironmentMode = Literal['shared', 'separate']
 AttemptPhase = Literal['prepare', 'build', 'boot', 'install', 'agent', 'verify', 'persist']
 
@@ -1766,6 +1791,7 @@ class Trial:                        # list rows and detail, one shape
     spend_source: Optional[SpendSource]
     judge_spend_source: Optional[SpendSource]     # the judge figure's lane; None == no judge ever ran
     live_spent_usd: Optional[float]               # mid-run LOWER BOUND; cleared at settle
+    usage: Optional[UsageReading]                 # the one-home reading — see Live cost and live tokens
     live_spend_at: Optional[str]
     max_trial_spend_usd: Optional[float]          # the cap THIS trial's key carried
     sandbox_provider: Optional[EvalSandboxProvider]

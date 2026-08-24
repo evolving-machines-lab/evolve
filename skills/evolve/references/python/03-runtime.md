@@ -773,7 +773,10 @@ replay = await session.browser_replay(
 
 - `list()` returns `SessionPage(items, next_cursor, has_more)`
 - `get()` returns `SessionInfo` with snake_case fields such as `sandbox_id`,
-  `runtime_status`, `created_at`, and `tool_stats`
+  `runtime_status`, `created_at`, and `tool_stats` — plus `usage`, the
+  one-home reading (spend so far + token breakdown from the same gateway
+  records, `provisional` marking numbers that can still grow); it carries the
+  same keys a trial's `usage` does, and `None` means the meter never answered
 - `events()` returns parsed JSONL objects for programmatic inspection
 - `download()` saves the raw `.jsonl` trace file to disk and returns the path
 - `browser_replay()` waits for the managed browser replay and returns
@@ -810,7 +813,7 @@ r2 = await evolve.run(prompt="Write tests")
 # Session cost — all runs
 session = await evolve.get_session_cost()
 print(session.total_cost)        # 0.42 (USD)
-print(session.total_tokens)      # {'prompt': 5000, 'completion': 2000}
+print(session.total_tokens)      # {'prompt': 5000, 'completion': 2000, 'cached': 3200}
 print(len(session.runs))         # 2
 
 # Run cost — by ID
@@ -834,7 +837,7 @@ class RunCost:
     run_id: str          # Matches AgentResponse.run_id
     index: int           # 1-based chronological position
     cost: float          # USD as billed to your Evolve account
-    tokens: Dict[str, int]  # {'prompt': N, 'completion': N}
+    tokens: Dict[str, int]  # {'prompt': N, 'completion': N, 'cached': N} — prompt INCLUDES cached
     model: str           # Last observed model for this run
     requests: int        # Number of LLM API requests
     as_of: str           # ISO timestamp of query
@@ -845,7 +848,7 @@ class RunCost:
 class SessionCost:
     session_tag: str     # Matches get_session_tag()
     total_cost: float    # USD across all runs
-    total_tokens: Dict[str, int]  # {'prompt': N, 'completion': N}
+    total_tokens: Dict[str, int]  # {'prompt': N, 'completion': N, 'cached': N}
     runs: List[RunCost]  # Chronological order
     as_of: str
     is_complete: bool
