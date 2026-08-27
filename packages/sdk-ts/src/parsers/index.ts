@@ -13,6 +13,7 @@ import { createDroidParser } from "./droid";
 import { createGeminiParser } from "./gemini";
 import { createKimiParser } from "./kimi";
 import { createOpenCodeParser } from "./opencode";
+import { createPiParser } from "./pi";
 import { createQwenParser } from "./qwen";
 
 // Re-export types for convenience
@@ -50,6 +51,11 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "droid":
       return createDroidParser();
+
+    // prime-agent is a hard fork of pi and emits the same event vocabulary.
+    case "pi":
+    case "prime-agent":
+      return createPiParser();
 
     default:
       return () => null;
@@ -113,4 +119,5 @@ export { createDroidParser } from "./droid";
 export { createGeminiParser } from "./gemini";
 export { createKimiParser } from "./kimi";
 export { createOpenCodeParser } from "./opencode";
+export { createPiParser } from "./pi";
 export { createQwenParser, parseQwenOutput } from "./qwen";

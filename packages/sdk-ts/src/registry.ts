@@ -109,6 +109,22 @@ export interface AgentRegistryEntry {
     provider: "generic-chat-completion-api" | "openai" | "anthropic";
     maxOutputTokens?: number;
   };
+  /**
+   * Generated models.json routing for CLIs that take the provider base URL and
+   * custom headers from a JSON models config rather than env vars (pi,
+   * prime-agent). Rewritten before each run so spend headers stay current.
+   *
+   * Source-verified: neither CLI exposes a generic base-URL env var, so
+   * baseUrlEnv cannot be used to point them at the Evolve gateway.
+   */
+  gatewayModelsJson?: {
+    /** models.json path (e.g., "~/.pi/agent/models.json") */
+    modelsPath: string;
+    /** Built-in provider key whose baseUrl and headers get overridden */
+    providerKey: string;
+    /** Wire protocol the gateway speaks for this provider */
+    api: "openai-completions" | "openai-responses" | "anthropic-messages";
+  };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -178,6 +194,82 @@ function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   const variant = getOpenCodeReasoningVariant(reasoningEffort);
   return variant ? ` --variant ${variant} --thinking` : "";
 }
+
+/** Thinking levels accepted by `--thinking` on pi and its prime-agent fork. */
+const PI_THINKING_LEVELS = new Set([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+/**
+ * Map an Evolve reasoning effort onto a pi-family `--thinking` level.
+ * Returns undefined when the CLI default should stand.
+ */
+export function getPiThinkingLevel(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "thinking") return "medium";
+  if (reasoningEffort === "no-thinking" || reasoningEffort === "none") return "off";
+  return PI_THINKING_LEVELS.has(reasoningEffort) ? reasoningEffort : undefined;
+}
+
+const OPENROUTER_MODEL_PREFIX = "openrouter/";
+
+/**
+ * Build the headless JSON-streaming command for a pi-family CLI (pi and the
+ * prime-agent fork it was forked into). They share an argument surface and an
+ * event vocabulary, so one builder and one parser cover both.
+ *
+ * Two things differ from the other agents:
+ * - No approval flag. Neither CLI has a permission system: pi's README says
+ *   "No permission popups. Run in a container", and prime-agent gates tools
+ *   only through optional extensions. Sandboxing is the intended containment,
+ *   so there is nothing to bypass.
+ * - Provider is passed separately from the model. `--provider openrouter
+ *   --model <slug>` is accepted by both; the three-segment
+ *   `--model openrouter/vendor/slug` form is only verified on pi.
+ */
+function buildPiFamilyCommand(bin: string, opts: BuildCommandOptions): string {
+  const { prompt, model, isResume, reasoningEffort } = opts;
+  const continueFlag = isResume ? "--continue " : "";
+  const providerModel = model.startsWith(OPENROUTER_MODEL_PREFIX)
+    ? model.slice(OPENROUTER_MODEL_PREFIX.length)
+    : model;
+  const thinking = getPiThinkingLevel(reasoningEffort);
+  const thinkingFlag = thinking ? ` --thinking ${thinking}` : "";
+  // `--` ends option parsing so a prompt starting with "-" stays a message.
+  return `${bin} ${continueFlag}--mode json --provider openrouter --model ${providerModel}${thinkingFlag} -- "${prompt}"`;
+}
+
+/**
+ * OpenRouter catalog shared by the OpenRouter-routed CLIs (opencode, pi,
+ * prime-agent). All three are model-agnostic and resolve the same slugs.
+ */
+const OPENROUTER_MODELS: ModelInfo[] = [
+  { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-sonnet-4.6", modelId: "openrouter/anthropic/claude-sonnet-4.6", description: "Anthropic Sonnet via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-opus-4.8", modelId: "openrouter/anthropic/claude-opus-4.8", description: "Anthropic Opus via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.5", modelId: "openrouter/openai/gpt-5.5", description: "OpenAI GPT-5.5 via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.4", modelId: "openrouter/openai/gpt-5.4", description: "OpenAI GPT-5.4 via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.4-mini", modelId: "openrouter/openai/gpt-5.4-mini", description: "OpenAI GPT-5.4 Mini via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.3-codex", modelId: "openrouter/openai/gpt-5.3-codex", description: "OpenAI Codex via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.2", modelId: "openrouter/openai/gpt-5.2", description: "OpenAI GPT-5.2 via OpenRouter" },
+  { alias: "openrouter/google/gemini-3.1-pro-preview", modelId: "openrouter/google/gemini-3.1-pro-preview", description: "Gemini 3.1 Pro via OpenRouter" },
+  { alias: "openrouter/google/gemini-3.5-flash", modelId: "openrouter/google/gemini-3.5-flash", description: "Gemini 3.5 Flash via OpenRouter" },
+  { alias: "openrouter/google/gemini-3-flash-preview", modelId: "openrouter/google/gemini-3-flash-preview", description: "Gemini 3 Flash via OpenRouter" },
+  { alias: "openrouter/qwen/qwen3-coder-next", modelId: "openrouter/qwen/qwen3-coder-next", description: "Qwen Coder Next via OpenRouter" },
+  { alias: "openrouter/qwen/qwen3-coder-plus", modelId: "openrouter/qwen/qwen3-coder-plus", description: "Qwen Coder via OpenRouter" },
+  { alias: "openrouter/moonshotai/kimi-k2.6", modelId: "openrouter/moonshotai/kimi-k2.6", description: "Kimi K2.6 via OpenRouter" },
+  { alias: "openrouter/moonshotai/kimi-k2.5", modelId: "openrouter/moonshotai/kimi-k2.5", description: "Kimi K2.5 via OpenRouter" },
+  { alias: "openrouter/z-ai/glm-5", modelId: "openrouter/z-ai/glm-5", description: "Zhipu GLM-5 via OpenRouter" },
+];
+
+const DEFAULT_OPENROUTER_MODEL = "openrouter/anthropic/claude-sonnet-4.6";
 
 // =============================================================================
 // AGENT REGISTRY
@@ -400,31 +492,13 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "OPENROUTER_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "openrouter/anthropic/claude-sonnet-4.6",
+    defaultModel: DEFAULT_OPENROUTER_MODEL,
     // OpenRouter-only: all models route through OpenRouter (direct or via LiteLLM gateway)
     providerEnvMap: {
       openrouter: { keyEnv: "OPENROUTER_API_KEY" },
     },
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
-    models: [
-      { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-sonnet-4.6", modelId: "openrouter/anthropic/claude-sonnet-4.6", description: "Anthropic Sonnet via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-opus-4.8", modelId: "openrouter/anthropic/claude-opus-4.8", description: "Anthropic Opus via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.5", modelId: "openrouter/openai/gpt-5.5", description: "OpenAI GPT-5.5 via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.4", modelId: "openrouter/openai/gpt-5.4", description: "OpenAI GPT-5.4 via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.4-mini", modelId: "openrouter/openai/gpt-5.4-mini", description: "OpenAI GPT-5.4 Mini via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.3-codex", modelId: "openrouter/openai/gpt-5.3-codex", description: "OpenAI Codex via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.2", modelId: "openrouter/openai/gpt-5.2", description: "OpenAI GPT-5.2 via OpenRouter" },
-      { alias: "openrouter/google/gemini-3.1-pro-preview", modelId: "openrouter/google/gemini-3.1-pro-preview", description: "Gemini 3.1 Pro via OpenRouter" },
-      { alias: "openrouter/google/gemini-3.5-flash", modelId: "openrouter/google/gemini-3.5-flash", description: "Gemini 3.5 Flash via OpenRouter" },
-      { alias: "openrouter/google/gemini-3-flash-preview", modelId: "openrouter/google/gemini-3-flash-preview", description: "Gemini 3 Flash via OpenRouter" },
-      { alias: "openrouter/qwen/qwen3-coder-next", modelId: "openrouter/qwen/qwen3-coder-next", description: "Qwen Coder Next via OpenRouter" },
-      { alias: "openrouter/qwen/qwen3-coder-plus", modelId: "openrouter/qwen/qwen3-coder-plus", description: "Qwen Coder via OpenRouter" },
-      { alias: "openrouter/moonshotai/kimi-k2.6", modelId: "openrouter/moonshotai/kimi-k2.6", description: "Kimi K2.6 via OpenRouter" },
-      { alias: "openrouter/moonshotai/kimi-k2.5", modelId: "openrouter/moonshotai/kimi-k2.5", description: "Kimi K2.5 via OpenRouter" },
-      { alias: "openrouter/z-ai/glm-5", modelId: "openrouter/z-ai/glm-5", description: "Zhipu GLM-5 via OpenRouter" },
-    ],
+    models: OPENROUTER_MODELS,
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
       settingsDir: ".",
@@ -522,6 +596,70 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd /home/user/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
     },
+  },
+
+  pi: {
+    image: "evolve-all",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    // No baseUrlEnv on purpose: pi has no generic base-URL env var (only
+    // Azure/Bedrock-specific ones), so gateway routing goes through
+    // gatewayModelsJson instead.
+    defaultModel: DEFAULT_OPENROUTER_MODEL,
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    models: OPENROUTER_MODELS,
+    systemPromptFile: "AGENTS.md",
+    // pi has no MCP client by design, so this path is used only for OAuth and
+    // checkpoint fallbacks. writeMcpConfig rejects MCP servers for pi.
+    mcpConfig: {
+      settingsDir: "~/.pi/agent",
+      filename: "settings.json",
+      format: "json",
+    },
+    skillsConfig: {
+      sourceDir: "/home/user/.evolve/skills",
+      targetDir: "/home/user/.pi/agent/skills",
+    },
+    gatewayModelsJson: {
+      modelsPath: "~/.pi/agent/models.json",
+      providerKey: "openrouter",
+      api: "openai-completions",
+    },
+    checkpointDirs: [
+      "~/.pi/agent",
+    ],
+    buildCommand: (opts) => buildPiFamilyCommand("pi", opts),
+  },
+
+  "prime-agent": {
+    image: "evolve-all",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    // No baseUrlEnv: same as pi, which prime-agent was forked from.
+    defaultModel: DEFAULT_OPENROUTER_MODEL,
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    models: OPENROUTER_MODELS,
+    systemPromptFile: "AGENTS.md",
+    mcpConfig: {
+      settingsDir: "~/.prime/agent",
+      filename: "settings.json",
+      format: "json",
+    },
+    skillsConfig: {
+      sourceDir: "/home/user/.evolve/skills",
+      targetDir: "/home/user/.prime/agent/skills",
+    },
+    gatewayModelsJson: {
+      modelsPath: "~/.prime/agent/models.json",
+      providerKey: "openrouter",
+      api: "openai-completions",
+    },
+    checkpointDirs: [
+      "~/.prime/agent",
+    ],
+    buildCommand: (opts) => buildPiFamilyCommand("prime-agent", opts),
   },
 };
 

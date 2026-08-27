@@ -15,7 +15,7 @@ evolve/
 │   │       ├── types.ts         # Shared types
 │   │       ├── constants.ts     # Constants
 │   │       ├── index.ts         # Public exports
-│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode)
+│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid, pi)
 │   │       ├── integrations.ts  # Managed integration helpers
 │   │       ├── mcp/             # MCP server config (json, toml, validation)
 │   │       ├── swarm/           # Swarm (map/filter/reduce/bestOf/verify, semaphore)

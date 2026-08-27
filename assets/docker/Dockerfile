@@ -72,7 +72,8 @@ RUN npm install -g \
     @zed-industries/codex-acp@latest \
     @google/gemini-cli@latest \
     @qwen-code/qwen-code@latest \
-    opencode-ai@latest
+    opencode-ai@latest \
+    @earendil-works/pi-coding-agent@latest
 
 # ---------------------------------------------------------------------------
 # Kimi Code
@@ -118,6 +119,8 @@ RUN mkdir -p /home/user/.evolve/skills \
              /home/user/.kimi-code/skills \
              /home/user/.agents/skills \
              /home/user/.factory/skills \
+             /home/user/.pi/agent/skills \
+             /home/user/.prime/agent/skills \
     && chown -R user:user /home/user
 
 # ---------------------------------------------------------------------------
@@ -139,6 +142,23 @@ RUN curl -fsSL https://app.factory.ai/cli | sh
 USER root
 RUN ln -sf /home/user/.local/bin/droid /usr/local/bin/droid \
     && chown -R user:user /home/user/.factory /home/user/.local
+USER user
+
+# ---------------------------------------------------------------------------
+# Prime Agent CLI
+# ---------------------------------------------------------------------------
+# Installed from the vendor script: Prime Agent ships release tarballs and its
+# docs state the inherited npm package is not a supported install path.
+RUN curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh
+
+# Make Prime Agent available to non-login shell commands. The installer does not
+# document its target directory, so resolve the binary instead of assuming it.
+USER root
+RUN PRIME_BIN="$(command -v prime-agent || find /home/user -maxdepth 5 -type f -name prime-agent -perm -u+x 2>/dev/null | head -n1)" \
+    && test -n "$PRIME_BIN" \
+    && ln -sf "$PRIME_BIN" /usr/local/bin/prime-agent \
+    && prime-agent --version \
+    && chown -R user:user /home/user
 USER user
 
 # ---------------------------------------------------------------------------

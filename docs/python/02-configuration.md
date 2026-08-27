@@ -142,7 +142,7 @@ evolve = Evolve(
 
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     config=AgentConfig(
-        type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' - defaults to 'claude'
+        type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'pi' | 'prime-agent' - defaults to 'claude'
         model='gpt-5.3-codex',               # (optional) Uses default if omitted. Use 'fable' for Claude Fable 5 or 'sonnet[1m]' / 'opus[1m]' for 1M context (Claude only)
         reasoning_effort='medium',           # (optional) Native reasoning/thinking control; valid values vary by agent/model
         api_key=os.getenv('EVOLVE_API_KEY'), # (optional) Gateway mode - auto-resolves from env
@@ -227,6 +227,10 @@ evolve = Evolve(
 - Context files, workspace files, MCP servers, and system prompt are set up once on the first call.
 - Using `sandbox_id` parameter to reconnect skips setup since the sandbox already exists.
 - `schema` accepts both Pydantic model classes and JSON Schema dicts.
+
+**Agent MCP support:**
+- `'pi'` ships no MCP client — that is a deliberate upstream design choice, not a gap. Passing `mcp_servers` (or `browser='browser-use'`, which needs MCP) with `type='pi'` raises.
+- `'prime-agent'` supports MCP, with two upstream constraints: config is written to the user-global `~/.prime/agent/settings.json` because project-level MCP entries are ignored, and STDIO servers only accept environment-variable references, so pass `envVars: ['NAME']` rather than literal `env` values.
 
 **McpServerConfig** — MCP server connection (STDIO or HTTP/SSE):
 

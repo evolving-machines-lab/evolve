@@ -1,6 +1,6 @@
 # Evolve TypeScript SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [Pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -300,6 +300,8 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | `"kimi"` | `"kimi-k2.6"` `"kimi-k2p6-raptor"` `"kimi-k2p7-code-raptor"` `"kimi-k2.5"` | `"kimi-k2.6"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
 | `"opencode"` | `"openrouter/anthropic/claude-fable-5"` `"openrouter/anthropic/claude-opus-4.8"` `"openrouter/anthropic/claude-sonnet-4.6"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.5"` `"openrouter/openai/gpt-5.4"` `"openrouter/openai/gpt-5.4-mini"` `"openrouter/openai/gpt-5.3-codex"` `"openrouter/openai/gpt-5.2"` `"openrouter/google/gemini-3.1-pro-preview"` `"openrouter/google/gemini-3.5-flash"` `"openrouter/google/gemini-3-flash-preview"` `"openrouter/qwen/qwen3-coder-next"` `"openrouter/qwen/qwen3-coder-plus"` `"openrouter/moonshotai/kimi-k2.6"` `"openrouter/moonshotai/kimi-k2.5"` `"openrouter/z-ai/glm-5"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"droid"` | `"claude-opus-4-8"` `"claude-opus-4-8-fast"` `"claude-sonnet-4-6"` `"claude-opus-4-6"` `"claude-opus-4-6-fast"` `"claude-opus-4-5"` `"claude-sonnet-4-5"` `"claude-haiku-4-5"` `"gpt-5.5"` `"gpt-5.5-fast"` `"gpt-5.5-pro"` `"gpt-5.4"` `"gpt-5.4-fast"` `"gpt-5.4-mini"` `"gpt-5.3-codex"` `"gpt-5.3-codex-fast"` `"gpt-5.2"` `"gpt-5.2-codex"` `"gemini-3.1-pro-preview"` `"gemini-3-pro-preview"` `"gemini-3-flash-preview"` `"kimi-k2.6"` `"kimi-k2.5"` `"deepseek-v4-pro"` `"minimax-m2.7"` `"minimax-m2.5"` `"glm-5.1"` | `"gpt-5.5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
+| `"pi"` | same OpenRouter catalog as `"opencode"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"prime-agent"` | same OpenRouter catalog as `"opencode"` | `"openrouter/anthropic/claude-sonnet-4.6"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 
 Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
 
@@ -312,6 +314,8 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"kimi"` | `"thinking"` | `"thinking"` `"no-thinking"` |
 | `"opencode"` | `"thinking"` + `"medium"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"droid"` | Droid/model default | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
+| `"pi"` | pi default (`"xhigh"`) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` (`"thinking"` maps to `"medium"`, `"no-thinking"` to `"off"`) |
+| `"prime-agent"` | prime-agent default (`"xhigh"`) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` (`"thinking"` maps to `"medium"`, `"no-thinking"` to `"off"`) |
 
 Kimi Code has provider-dependent internal effort settings, but the Moonshot/Kimi API documents thinking on/off and preserved-thinking controls, not public effort levels.
 
@@ -334,7 +338,7 @@ ANTHROPIC_API_KEY=sk-...   # claude
 OPENAI_API_KEY=sk-...      # codex, qwen
 GEMINI_API_KEY=...         # gemini
 KIMI_API_KEY=...           # kimi
-OPENROUTER_API_KEY=sk-...  # opencode
+OPENROUTER_API_KEY=sk-...  # opencode, pi, prime-agent
 FACTORY_API_KEY=...        # droid
 E2B_API_KEY=e2b_...        # sandbox
 ```
@@ -422,6 +426,27 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "opencode", reasoningEffort: "xhigh" });
+```
+
+```ts
+// pi — OpenRouter (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "pi" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "pi", model: "openrouter/openai/gpt-5.2" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "pi", reasoningEffort: "high" });
+```
+
+```ts
+// prime-agent — OpenRouter (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "prime-agent" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "prime-agent", model: "openrouter/anthropic/claude-opus-4.8" });
 ```
 
 ```ts

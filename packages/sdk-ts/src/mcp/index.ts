@@ -6,7 +6,7 @@
  */
 
 import type { AgentType, SandboxInstance, McpServerConfig } from "../types";
-import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig } from "./json";
+import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writePrimeAgentMcpConfig } from "./json";
 import { writeCodexMcpConfig } from "./toml";
 
 /**
@@ -19,6 +19,8 @@ import { writeCodexMcpConfig } from "./toml";
  * - Qwen: JSON to ~/.qwen/settings.json
  * - Droid: JSON to ${workingDir}/.factory/mcp.json
  * - OpenCode: JSON to ${workingDir}/opencode.json (mcp key)
+ * - prime-agent: JSON to ~/.prime/agent/settings.json (user-global only)
+ * - pi: unsupported — pi ships no MCP client
  */
 export async function writeMcpConfig(
   agentType: AgentType,
@@ -59,11 +61,23 @@ export async function writeMcpConfig(
       await writeDroidMcpConfig(sandbox, workingDir, servers);
       break;
 
+    case "prime-agent":
+      await writePrimeAgentMcpConfig(sandbox, servers);
+      break;
+
+    case "pi":
+      // pi has no MCP client and treats that as a design decision, not a gap.
+      // Fail loudly rather than writing config the CLI will never read.
+      throw new Error(
+        "pi does not support MCP servers. Remove .withMcpServers() (and the " +
+          'browser-use browser provider, which needs MCP) or pick another agent.'
+      );
+
     default:
       throw new Error(`Unknown agent type for MCP config: ${agentType}`);
   }
 }
 
 // Re-export individual writers for direct use if needed
-export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writeJsonSpendHeaders, writeQwenThinkingConfig, writeDroidGatewaySettings } from "./json";
+export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writePrimeAgentMcpConfig, writeJsonSpendHeaders, writeQwenThinkingConfig, writeDroidGatewaySettings, writeGatewayModelsJson } from "./json";
 export { writeCodexMcpConfig, writeCodexSpendProvider, writeKimiSpendConfig } from "./toml";
