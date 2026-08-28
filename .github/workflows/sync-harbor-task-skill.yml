@@ -1,0 +1,43 @@
+name: Sync harbor-task skill mirror
+
+# skills/harbor-task/ is hand-written (unlike skills/evolve/, which is generated
+# from docs/). This job only mirrors it into .claude/skills/, which is where
+# agents working in this repository read skills from. Edit skills/harbor-task/;
+# the mirror follows.
+
+on:
+  push:
+    branches: [main, project-sable]
+    paths:
+      - 'skills/harbor-task/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mirror skills/harbor-task into .claude/skills
+        run: |
+          rm -rf .claude/skills/harbor-task
+          mkdir -p .claude/skills
+          cp -r skills/harbor-task .claude/skills/harbor-task
+
+      - name: Check for changes
+        id: diff
+        run: |
+          git diff --quiet .claude/skills/harbor-task/ && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .claude/skills/harbor-task/
+          git commit -m "chore: sync harbor-task skill mirror"
+          git pull --rebase origin "${{ github.ref_name }}"
+          git push origin HEAD:"${{ github.ref_name }}"
