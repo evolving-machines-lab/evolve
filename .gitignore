@@ -53,3 +53,4 @@ cookbooks/python/agent-builder/
 docs-site/.next/
 docs-site/out/
 docs-site/content
+output_browser_use/
