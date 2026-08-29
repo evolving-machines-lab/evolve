@@ -2773,7 +2773,10 @@ export interface JobsClient {
    * `stats.analysis` reports nothing pending, and resolves with the final
    * Job. `onStats` fires on every observed change of the analysis tally
    * (including the first one seen). Per-trial results then ride the job's
-   * trials (`Trial.analysis`).
+   * trials (`Trial.analysis`). A null tally is tolerated and watched
+   * through — it is the enqueue race right after an accepted analyze() —
+   * so on a job that was NEVER analyzed this polls indefinitely: call it
+   * after analyze(), as the CLI always does.
    */
   watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job>;
   /**

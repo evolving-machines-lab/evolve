@@ -1855,8 +1855,10 @@ function loadAgentConfigFile(
  * Read and parse a local rubric file for `analyze -r` / `run --analyze-rubric`
  * into the spec's Rubric shape — Harbor's own loader law (their
  * cli/quality_checker/models.py load_rubric): TOML, YAML, or JSON by
- * extension, anything else refused by name. Only the SHAPE is ruled here, and
- * unknown fields are refused naming them — the server owns the bounds (count,
+ * extension, anything else refused by name. Ruled here: the shape, unknown
+ * fields refused naming them, and the two spec MINIMUMS — a non-empty
+ * criteria list, and each criterion's three fields present as non-empty
+ * strings. The server owns the rest of the bounds (criteria count, field
  * lengths, the snake_case name grammar) and refuses them typed
  * (`invalid_rubric`).
  */

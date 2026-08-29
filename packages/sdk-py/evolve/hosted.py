@@ -5161,7 +5161,9 @@ class JobsClient:
         the analysis tally (including the first non-None one seen), with the
         job body the observation came from. A still-None tally is the
         enqueue race after an accepted :meth:`analyze` and is watched
-        through, never misread as "never analyzed".
+        through, never misread as "never analyzed" — so on a job that was
+        NEVER analyzed this polls indefinitely (until ``timeout_s``): call
+        it after :meth:`analyze`, as the CLI always does.
 
         ``timeout_s`` bounds the whole watch and raises
         :class:`TimeoutError`. A rate limit or transient outage mid-watch is
