@@ -51,6 +51,7 @@ import type {
   AgentArm,
   AgentArmInput,
   AgentInput,
+  AnalyzeConfigInput,
   AuthStatus,
   CompareResponse,
   Dataset,
@@ -62,6 +63,7 @@ import type {
   GrepJobOptions,
   HostedClientConfig,
   Job,
+  JobAnalysisStats,
   JobCreate,
   JobEvent,
   JobSecretRef,
@@ -70,12 +72,14 @@ import type {
   PublishDatasetInput,
   RetryConfigInput,
   RetryRequest,
+  Rubric,
   SkillUpload,
   StopResponse,
   Task,
   TraceEvent,
   TraceOptions,
   Trial,
+  TrialAnalysis,
   TrialStatus,
   UpstreamStatus,
   UsageReading,
@@ -279,6 +283,22 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     help:
       "Exception types to NOT retry on (repeatable; wins over --retry-include; " +
       "default: Harbor's non-retryable set)",
+  },
+  analyze: {
+    kind: "boolean",
+    help:
+      "Analyze each trial's trace server-side as it settles (Harbor's analyze, embedded; " +
+      "CANCELLED trials are skipped). Bare = the defaults: claude-haiku-4-5, Harbor's default rubric",
+  },
+  "analyze-model": {
+    kind: "string",
+    value: "<name>",
+    help: "Model the analyzer agent runs (implies --analyze; must be on the claude roster, GET /api/meta)",
+  },
+  "analyze-rubric": {
+    kind: "string",
+    value: "<path>",
+    help: "Rubric file for the analyzer (TOML/YAML/JSON, Harbor's {criteria} shape; implies --analyze)",
   },
   "timeout-multiplier": {
     kind: "number",
@@ -820,6 +840,41 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     minPositionals: 0,
     maxPositionals: 0,
     example: "evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch",
+  },
+  // Harbor registers `analyze` at the top level too (their cli/main.py binds
+  // analyze_command as its own command); theirs takes a local job directory,
+  // ours the hosted job id — the platform's one recorded deviation, analysis
+  // running server-side.
+  analyze: {
+    summary:
+      "Analyze a terminal job's trial traces against a rubric (server-side; follows the wave to its settled end)",
+    flags: {
+      model: {
+        kind: "string",
+        short: "m",
+        value: "<name>",
+        help:
+          "Model the analyzer agent runs (default: claude-haiku-4-5, Harbor's own; " +
+          "must be on the claude roster, GET /api/meta)",
+      },
+      rubric: {
+        kind: "string",
+        short: "r",
+        value: "<path>",
+        help:
+          "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} " +
+          "shape; default: Harbor's default rubric — reward_hacking, task_specification)",
+      },
+      quiet: {
+        kind: "boolean",
+        short: "q",
+        help: "Suppress the progress lines; print the final block only",
+      },
+    },
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<job-id>",
+    example: "evolve analyze cme12ab34 -r rubric.toml",
   },
 };
 
@@ -1797,6 +1852,92 @@ function loadAgentConfigFile(
 }
 
 /**
+ * Read and parse a local rubric file for `analyze -r` / `run --analyze-rubric`
+ * into the spec's Rubric shape — Harbor's own loader law (their
+ * cli/quality_checker/models.py load_rubric): TOML, YAML, or JSON by
+ * extension, anything else refused by name. Only the SHAPE is ruled here, and
+ * unknown fields are refused naming them — the server owns the bounds (count,
+ * lengths, the snake_case name grammar) and refuses them typed
+ * (`invalid_rubric`).
+ */
+export function loadRubricFile(
+  path: string,
+  read: (path: string) => string = (p) => readFileSync(p, "utf-8")
+): Rubric {
+  let text: string;
+  try {
+    text = read(path);
+  } catch (error) {
+    throw new CliUsageError(`--rubric: cannot read ${path}: ${(error as Error).message}`);
+  }
+  let parsed: unknown;
+  if (path.endsWith(".toml")) {
+    try {
+      parsed = parseToml(text);
+    } catch (error) {
+      throw new CliUsageError(`--rubric: ${path} is not valid TOML: ${(error as Error).message}`);
+    }
+  } else if (path.endsWith(".yaml") || path.endsWith(".yml")) {
+    parsed = parseYamlConfig(text, path);
+  } else if (path.endsWith(".json")) {
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      throw new CliUsageError(`--rubric: ${path} is not valid JSON: ${(error as Error).message}`);
+    }
+  } else {
+    throw new CliUsageError(
+      `--rubric: unsupported rubric format "${path}" — use a .toml, .yaml, .yml, or .json file (Harbor's own set)`
+    );
+  }
+  if (!isPlainObject(parsed)) {
+    throw new CliUsageError(`--rubric: ${path} must contain a {criteria: [...]} object`);
+  }
+  const unknownKeys = Object.keys(parsed).filter((key) => key !== "criteria");
+  if (unknownKeys.length > 0) {
+    throw new CliUsageError(
+      `--rubric: unknown key${unknownKeys.length === 1 ? "" : "s"} ${unknownKeys
+        .map((key) => `"${key}"`)
+        .join(", ")} in ${path} — a rubric is {criteria: [{name, description, guidance}]}`
+    );
+  }
+  const criteria = parsed.criteria;
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    throw new CliUsageError(
+      `--rubric: ${path} needs a non-empty criteria list ([[criteria]] entries in TOML)`
+    );
+  }
+  return {
+    criteria: criteria.map((entry, index) => {
+      const where = `criteria[${index}] in ${path}`;
+      if (!isPlainObject(entry)) {
+        throw new CliUsageError(`--rubric: ${where} must be a {name, description, guidance} object`);
+      }
+      const extras = Object.keys(entry).filter(
+        (key) => key !== "name" && key !== "description" && key !== "guidance"
+      );
+      if (extras.length > 0) {
+        throw new CliUsageError(
+          `--rubric: unknown key${extras.length === 1 ? "" : "s"} ${extras
+            .map((key) => `"${key}"`)
+            .join(", ")} in ${where} — a criterion is {name, description, guidance}`
+        );
+      }
+      for (const field of ["name", "description", "guidance"] as const) {
+        if (typeof entry[field] !== "string" || entry[field].length === 0) {
+          throw new CliUsageError(`--rubric: ${where} needs a non-empty string "${field}"`);
+        }
+      }
+      return {
+        name: entry.name as string,
+        description: entry.description as string,
+        guidance: entry.guidance as string,
+      };
+    }),
+  };
+}
+
+/**
  * Parse repeatable --secret NAME[@LABEL][=ENVNAME] references into the wire's
  * secrets[] objects. The grammar splits on the FIRST '=' (everything after it
  * is the in-sandbox env name) and then the FIRST '@' (everything after it is
@@ -2026,6 +2167,21 @@ export function buildJobInput(
   if (f["retry-include"] !== undefined) retry.include_exceptions = f["retry-include"] as string[];
   if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
 
+  // Embedded analysis: PRESENCE of the object is the switch (the spec's
+  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the three
+  // flags arms it — --analyze bare means "all defaults" — and the sub-flags
+  // override the file's fields one by one, the same merge rule as retry.
+  const analyzeArmed =
+    f.analyze === true ||
+    f["analyze-model"] !== undefined ||
+    f["analyze-rubric"] !== undefined ||
+    base.analyze !== undefined;
+  const analyze: AnalyzeConfigInput = { ...(base.analyze ?? {}) };
+  if (f["analyze-model"] !== undefined) analyze.model_name = String(f["analyze-model"]);
+  if (f["analyze-rubric"] !== undefined) {
+    analyze.rubric = loadRubricFile(String(f["analyze-rubric"]), read);
+  }
+
   // Timeout multipliers: Harbor's five flags verbatim (their
   // cli/jobs.py:378-424), flat on the body exactly as their JobConfig
   // carries them. The config file's fields are the base and each flag
@@ -2053,6 +2209,7 @@ export function buildJobInput(
     ...(maxSpend !== undefined ? { max_trial_spend_usd: maxSpend } : {}),
     ...(provider !== undefined ? { sandbox_provider: provider } : {}),
     ...(Object.keys(retry).length > 0 ? { retry } : {}),
+    ...(analyzeArmed ? { analyze } : {}),
     ...timeoutMultipliers,
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
@@ -2223,6 +2380,22 @@ function fmtAgent(agent: AgentArm | AgentArmInput): string {
   return agent.version ? `${base}:${agent.version}` : base;
 }
 
+/**
+ * The one-line analysis tally — the job detail's "analysis" row and the
+ * analyze verb's progress/final lines share it, so the same numbers always
+ * read the same way. Four decimals like the other analyzer-spend figures:
+ * an analysis costs cents, and "$0.00" would say nothing.
+ */
+function analysisTally(analysis: JobAnalysisStats): string {
+  const parts = [
+    `${analysis.n_completed} completed`,
+    `${analysis.n_failed} failed`,
+    `${analysis.n_pending} pending`,
+  ];
+  if (analysis.cost_usd != null) parts.push(`spent $${analysis.cost_usd.toFixed(4)}`);
+  return parts.join(" · ");
+}
+
 function fmtDatasets(refs: { name: string; version: string }[]): string {
   return refs.map((ref) => `${ref.name}@${ref.version}`).join(", ") || "-";
 }
@@ -2367,6 +2540,16 @@ function jobLines(e: Job): string[] {
     `${e.retry.max_retries}/trial on infrastructure errors` +
       ((e.stats.n_retries ?? 0) > 0 ? ` (${e.stats.n_retries} used)` : ""),
   ]);
+  // The embedded-analysis policy, only when the create named one — the
+  // resolved pair, so the row states what every settling trial is analyzed
+  // under.
+  if (e.analyze) {
+    rows.push([
+      "analyze",
+      `${e.analyze.model_name} · ${e.analyze.rubric.criteria.length} ` +
+        `criteri${e.analyze.rubric.criteria.length === 1 ? "on" : "a"}`,
+    ]);
+  }
   // Timeout multipliers, only when the job stretches (or shrinks) anything —
   // a row saying "x1" on every default job would be noise. Phase overrides
   // are named beside the global so the row states the whole policy.
@@ -2419,6 +2602,20 @@ function jobLines(e: Job): string[] {
       "spent (judge)",
       fmtSpend(jobSpend(e.stats.judge_cost_usd, judgeUnmeasured)),
     ]);
+  }
+  // The trace-analysis aggregate, only when the job has ever been analyzed —
+  // null means never, and absence of analysis is stated as absence, not a
+  // zero row. The analyzer's spend is its own metered line, never folded
+  // into "spent" above; per-criterion tallies get a row each, like skill
+  // locks.
+  if (e.stats.analysis) {
+    rows.push(["analysis", analysisTally(e.stats.analysis)]);
+    for (const [name, tally] of Object.entries(e.stats.analysis.checks)) {
+      rows.push([
+        `  ${name}`,
+        `${tally.n_pass} pass · ${tally.n_fail} fail · ${tally.n_not_applicable} n/a`,
+      ]);
+    }
   }
   // Only the statuses actually present: the response names all of them (so a
   // client never hardcodes the enum), but a row of eight zeros helps nobody.
@@ -2703,6 +2900,25 @@ export function trialDetailLines(run: Trial): string[] {
           ` · spent ${fmtUsd(attempt.cost_usd)}` +
           (attempt.settled_at ? ` · settled ${attempt.settled_at}` : ""),
       ]);
+    }
+  }
+  // The trial's LATEST trace analysis (Harbor's analyze result verbatim):
+  // status and the exact model THIS analysis ran under, one row per criterion
+  // verdict, the summary, and the analyzer's own metered spend — its own
+  // line by law, never part of the trial's bill above. A failed analysis
+  // shows its typed failure, never a silent absence.
+  if (run.analysis) {
+    const analysis = run.analysis;
+    rows.push(["analysis", `${analysis.status} · ${analysis.model_name}`]);
+    for (const [name, check] of Object.entries(analysis.checks ?? {})) {
+      rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
+    }
+    if (analysis.summary) rows.push(["  summary", analysis.summary]);
+    if (analysis.estimated_cost_usd !== null) {
+      rows.push(["  analyzer spend", `$${analysis.estimated_cost_usd.toFixed(4)}`]);
+    }
+    if (analysis.failure) {
+      rows.push(["  failure", `${analysis.failure.phase}: ${analysis.failure.message}`]);
     }
   }
   if (run.session_ref) rows.push(["session", run.session_ref]);
@@ -3373,6 +3589,102 @@ async function cmdJobRetry(inv: Invocation, io: CliIO): Promise<number> {
     io.out(`Follow it with: evolve job show ${job.id}`);
   }
   return 0;
+}
+
+/**
+ * The settled wave, one row per analyzed trial — Harbor's "Trial Analyses"
+ * table carried over: the criterion verdicts, the analyzer's own cost, and a
+ * summary excerpt. A failed analysis renders its typed failure in place of
+ * verdicts and repeats it in full below the table — never a silent absence.
+ * Exported for its test, like the other line renderers.
+ */
+export function analysisResultLines(runs: Trial[]): string[] {
+  if (runs.length === 0) return ["No analyzed trials."];
+  const rows: string[][] = [["TRIAL", "TASK", "CHECKS", "COST", "SUMMARY"]];
+  const failures: string[] = [];
+  for (const run of runs) {
+    const analysis = run.analysis as TrialAnalysis;
+    let checks: string;
+    if (analysis.status === "failed") {
+      checks = `FAILED${analysis.failure ? ` (${analysis.failure.phase})` : ""}`;
+      if (analysis.failure) {
+        failures.push(
+          `analysis failed ${run.id} (${run.task_name}) — ` +
+            `${analysis.failure.phase}: ${oneLine(analysis.failure.message)}`
+        );
+      }
+    } else {
+      checks =
+        Object.entries(analysis.checks ?? {})
+          .map(([name, check]) => `${name} ${check.outcome}`)
+          .join(" · ") || analysis.status;
+    }
+    rows.push([
+      run.id,
+      run.task_name,
+      checks,
+      analysis.estimated_cost_usd !== null
+        ? `$${analysis.estimated_cost_usd.toFixed(4)}`
+        : "-",
+      analysis.summary ? truncate(oneLine(analysis.summary), 60) : "-",
+    ]);
+  }
+  return [...table(rows), ...failures];
+}
+
+async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
+  const json = inv.flags.json === true;
+  const quiet = inv.flags.quiet === true;
+  const client = jobs(clientConfig(inv));
+  const id = await resolveJobId(inv, inv.positionals[0]);
+  // The config, parsed at the keyboard ({} = Harbor's defaults); the server
+  // owns every acceptance refusal — the rubric bounds, the model roster, the
+  // one-wave-at-a-time law.
+  const req: AnalyzeConfigInput = {};
+  if (inv.flags.model !== undefined) req.model_name = String(inv.flags.model);
+  if (inv.flags.rubric !== undefined) req.rubric = loadRubricFile(String(inv.flags.rubric));
+  const accepted = await client.analyze(id, req);
+  if (json) {
+    io.out(JSON.stringify({ kind: "analysis.accepted", job: accepted }));
+  } else if (!quiet) {
+    io.out(`Job ${accepted.id} — analyses enqueued, watching…`);
+  }
+
+  // Analyses have no event stream (the contract's own words: poll the job's
+  // trials to watch them settle), so the follow is the SDK's poll —
+  // -q keeps it silent and prints the final block only, like job start.
+  const final = await client.watchAnalysis(accepted.id, {
+    onStats: (job) => {
+      if (quiet) return;
+      if (!job.stats.analysis) return;
+      io.out(
+        json
+          ? JSON.stringify({ kind: "analysis.stats", analysis: job.stats.analysis })
+          : `analyses ${analysisTally(job.stats.analysis)}`
+      );
+    },
+  });
+
+  // The per-trial results ride the trials, not the job body.
+  const analyzed: Trial[] = [];
+  for await (const run of client.trials(final.id)) {
+    if (run.analysis) analyzed.push(run);
+  }
+
+  if (json) {
+    io.out(JSON.stringify({ kind: "analysis.final", job: final, trials: analyzed }));
+  } else {
+    io.out("");
+    for (const line of analysisResultLines(analyzed)) io.out(line);
+    if (final.stats.analysis) {
+      io.out("");
+      io.out(`analyses ${analysisTally(final.stats.analysis)}`);
+    }
+    io.out(`Details: evolve trial show <trial-id>`);
+  }
+  // Harbor's own exit law: any failed analysis is exit 1 — a wave that lost
+  // trials never reads as a clean pass.
+  return (final.stats.analysis?.n_failed ?? 0) > 0 ? 1 : 0;
 }
 
 async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
@@ -4389,6 +4701,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   // `run` and `job start` are one command reached by two names — same spec,
   // same handler — so neither can drift into a second implementation.
   run: cmdJobStart,
+  analyze: cmdAnalyze,
   "job start": cmdJobStart,
   "job list": cmdJobList,
   "job show": cmdJobShow,

@@ -199,6 +199,7 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   resumeJob: "jobs.resume",
   retryJob: "jobs.retry",
   regradeJob: "jobs.regrade",
+  analyzeJob: "jobs.analyze",
   grepJob: "jobs.grep",
   listJobTrials: "jobs.trials",
   listJobTasks: "jobs.tasks",

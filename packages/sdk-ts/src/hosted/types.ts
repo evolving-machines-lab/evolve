@@ -424,6 +424,78 @@ export interface RetryConfig {
   max_wait_sec: number;
 }
 
+/**
+ * One analysis criterion — Harbor's RubricCriterion verbatim (their
+ * cli/quality_checker/models.py `{name, description, guidance}`). The name
+ * becomes the key of the matching entry in `checks`; the guidance is what the
+ * analyzer agent is instructed with.
+ */
+export interface RubricCriterion {
+  /**
+   * Criterion identifier, snake_case (it keys the result's `checks` object).
+   * Harbor's defaults are `reward_hacking` and `task_specification`.
+   */
+  name: string;
+  /** What the criterion evaluates, one sentence. */
+  description: string;
+  /**
+   * Evaluation guidance handed to the analyzer agent — what evidence to read
+   * and what PASS / FAIL / NOT_APPLICABLE mean for this criterion.
+   */
+  guidance: string;
+}
+
+/**
+ * An analysis rubric — Harbor's Rubric shape (`{criteria: [...]}`, their
+ * cli/quality_checker/models.py). The criteria set is FROZEN into each
+ * analysis at enqueue: the stored result is validated against exactly this
+ * set, a missing or extra criterion is a stored typed failure, never a
+ * partial pass.
+ */
+export interface Rubric {
+  criteria: RubricCriterion[];
+}
+
+/**
+ * Trace-analysis configuration — Harbor's `harbor analyze` vocabulary (their
+ * cli/analyze.py: `--model`, `--rubric`). PRESENCE of this object is the
+ * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
+ * analyzed server-side right after it settles; CANCELLED trials are skipped);
+ * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
+ * wave. `{}` is legal and means "all defaults": claude-haiku-4-5 over
+ * Harbor's default rubric (reward_hacking, task_specification — their
+ * analyze/prompts/analyze-rubric.toml, ported verbatim).
+ *
+ * The analyzer always runs the claude-code harness (Harbor's default analyze
+ * agent) in its own sealed sandbox on the platform's default eval provider;
+ * its spend is capped per analysis and metered as its own line, never blended
+ * into the trial's own bill.
+ */
+export interface AnalyzeConfigInput {
+  /**
+   * Model the analyzer agent runs — Harbor's `--model`. The default is
+   * Harbor's own default model (cli/analyze.py `claude-haiku-4-5`) under its
+   * wire id on this platform's claude roster. Must be on that roster
+   * (`GET /api/meta`, `harnesses[].models`, either spelling); anything else
+   * is refused at accept (`invalid_input`, roster in the message).
+   */
+  model_name?: string;
+  rubric?: Rubric;
+}
+
+/**
+ * The RESOLVED trace-analysis policy — the caller's values or the defaults of
+ * the day, resolved at accept and stored, so the record always states the
+ * policy it executes (same law as RetryConfig). Echoed on the job body when
+ * the job was created with `analyze`; each analysis additionally carries the
+ * exact pair IT ran under (`Trial.analysis.model_name` / `.rubric`), which a
+ * later manual re-analysis may have changed.
+ */
+export interface AnalyzeConfig {
+  model_name: string;
+  rubric: Rubric;
+}
+
 /** The job-creation body — POST /api/jobs. */
 export interface JobCreate {
   /** User-facing label; server-generated when omitted. */
@@ -446,6 +518,14 @@ export interface JobCreate {
   sandbox_provider?: EvalSandboxProvider;
   /** Auto-retry policy (Harbor RetryConfig grammar); omitted = the fleet defaults. */
   retry?: RetryConfigInput;
+  /**
+   * Trace-analysis policy (Harbor's `harbor analyze` vocabulary). PRESENCE
+   * arms the embedded trigger: each trial is analyzed server-side right after
+   * it settles (CANCELLED trials are skipped — withdrawn work is not billed
+   * an uninvited analysis). `{}` means "analyze with all defaults"; omitted
+   * means no embedded analysis — `jobs().analyze()` remains the manual door.
+   */
+  analyze?: AnalyzeConfigInput;
   /**
    * Multiplier for task timeouts — Harbor's `--timeout-multiplier`, all five
    * fields flat on this body exactly as Harbor's JobConfig carries them. The
@@ -702,6 +782,49 @@ export interface JobStats {
    * judge-enabled tasks.
    */
   n_unmeasured_judge_trials?: number;
+  /**
+   * Aggregate of the job's trace analyses; null when no trial of this job has
+   * ever been analyzed. Never a fabricated empty object — absence of analysis
+   * is stated as null, here and on each trial.
+   */
+  analysis?: JobAnalysisStats | null;
+}
+
+/**
+ * The job-level analysis aggregate — Harbor's job `analysis.json` is a flat
+ * list of per-trial results (their analyze/models.py AnalyzeReport); each
+ * trial's own result rides `Trial.analysis`, and this object aggregates them.
+ * LATEST-per-trial: a re-analyzed trial contributes only its newest analysis,
+ * matching Harbor, where a re-run overwrites the trial directory's
+ * `analysis.json`.
+ */
+export interface JobAnalysisStats {
+  /** Trials whose latest analysis produced a valid result. */
+  n_completed: number;
+  /**
+   * Trials whose latest analysis is a stored typed failure (invalid result,
+   * or an infrastructure failure of the analyzer run).
+   */
+  n_failed: number;
+  /** Trials whose latest analysis is still queued or running. */
+  n_pending: number;
+  /**
+   * Measured spend of the LATEST analyses summed — the analyzer's own metered
+   * line, never part of `stats.cost_usd`. Null when no analysis recorded
+   * measured spend (mirrors Harbor's estimated_total_cost_usd, which is None
+   * when nothing was recorded).
+   */
+  cost_usd: number | null;
+  /**
+   * Per-criterion outcome tally over the completed latest analyses, keyed by
+   * criterion name. Criteria are whatever the contributing rubrics named —
+   * after a re-analysis under a different rubric, keys from both may appear,
+   * each counting only analyses that carried it.
+   */
+  checks: Record<
+    string,
+    { n_pass: number; n_fail: number; n_not_applicable: number }
+  >;
 }
 
 /**
@@ -850,6 +973,13 @@ export interface Job {
   /** The RESOLVED auto-retry policy this job runs under. */
   retry: RetryConfig;
   /**
+   * The resolved embedded-analysis policy the job was created with; null when
+   * the create named none (a later manual `analyze()` does not rewrite it —
+   * the job row states what the CREATE asked for, each analysis states what
+   * IT ran under). Always null on a regrade job.
+   */
+  analyze: AnalyzeConfig | null;
+  /**
    * The RESOLVED timeout multipliers this job's phases arm under — Harbor's
    * five flat JobConfig fields, echoed on every job body. The global one is
    * always a number (1.0 when the create request named none); each phase
@@ -965,6 +1095,76 @@ export interface JudgeResult {
 }
 
 /**
+ * One criterion's verdict — Harbor's QualityCheckModel verbatim (their
+ * cli/quality_checker/models.py `{explanation, outcome}`).
+ */
+export interface AnalysisCheck {
+  outcome: "pass" | "fail" | "not_applicable";
+  /** The analyzer's rationale, citing trial evidence. */
+  explanation: string;
+}
+
+/**
+ * Why an analysis FAILED — a stored typed failure, never a silent absence and
+ * never a fake pass. NOT under the key `error` for the same reason JobFailure
+ * is not.
+ */
+export interface AnalysisFailure {
+  /**
+   * Which part failed: `invalid_result` (the analyzer ran but its
+   * analysis.json failed validation — the message preserves every validator
+   * reason, one per line), `inputs` (the trial tree or task content could not
+   * be assembled), or an infrastructure stage of the analyzer run
+   * (`mint_key`, `boot`, `harness_install`, `agent`, `artifact_read`,
+   * `lease_expired`, ...).
+   */
+  phase: string;
+  message: string;
+}
+
+/**
+ * One trace analysis of a trial. The result half is Harbor's AnalyzeResult
+ * verbatim (their analyze/models.py: `summary`, `checks` keyed by criterion,
+ * `estimated_cost_usd`; the enclosing trial is Harbor's `trial_name`); the
+ * rest is provenance — which model and rubric THIS analysis ran under, its
+ * lifecycle status, and its typed failure when it failed.
+ *
+ * `estimated_cost_usd` is the analyzer agent's OWN metered spend (its sealed
+ * sandbox runs on its own capped gateway key) — its own line, never part of
+ * the trial's `agent_result.cost_usd` or the job's `stats.cost_usd`; the job
+ * aggregate is `stats.analysis.cost_usd`. Null when nothing was measured,
+ * never a fabricated 0.
+ */
+export interface TrialAnalysis {
+  id: string;
+  /**
+   * Lifecycle of this analysis. Every non-terminal analysis reaches
+   * `completed` or `failed`; a worker death mid-run is reaped to a typed
+   * `failed`, never left `running` forever.
+   */
+  status: "queued" | "running" | "completed" | "failed";
+  model_name: string;
+  rubric: Rubric;
+  /**
+   * 3–5 sentence overview of what happened during the trial (Harbor's
+   * summary contract, analyze/prompts/analyze.txt). Null until completed.
+   */
+  summary: string | null;
+  /**
+   * One entry per rubric criterion, keys exactly the rubric's criterion names
+   * (the frozen-criteria law). Null until completed.
+   */
+  checks: Record<string, AnalysisCheck> | null;
+  estimated_cost_usd: number | null;
+  /** Non-null exactly when status is `failed`. */
+  failure: AnalysisFailure | null;
+  /** When this analysis was enqueued. */
+  created_at: string;
+  /** When it settled; null while queued or running. */
+  finished_at: string | null;
+}
+
+/**
  * The verifier's rewards map. The primary-reward convention: the value under
  * the key "reward"; else, when exactly one key exists, that value; else no
  * primary reward. Zero is a reward.
@@ -1050,6 +1250,14 @@ export interface Trial {
    * its verify phase. Null never means "$0 of judging".
    */
   judge_result?: JudgeResult | null;
+  /**
+   * The trial's LATEST trace analysis; null when the trial has never been
+   * analyzed — never a fabricated empty object. A re-analysis (same job,
+   * different rubric or model) replaces what this field serves, matching
+   * Harbor, where a re-run overwrites the trial directory's analysis.json;
+   * earlier analyses stay stored as the audit record.
+   */
+  analysis?: TrialAnalysis | null;
   environment_setup: TimingInfo | null;
   agent_setup: TimingInfo | null;
   agent_execution: TimingInfo | null;
@@ -2230,6 +2438,20 @@ export interface WatchImportOptions {
   settleTimeoutMs?: number;
 }
 
+/** Options for jobs().watchAnalysis() */
+export interface WatchAnalysisOptions {
+  /**
+   * Called on every observed change of the job's analysis tally (including
+   * the first non-null one seen), with the job body the observation came
+   * from.
+   */
+  onStats?: (job: Job) => void;
+  /** Abort the watch (rejects with the abort reason) */
+  signal?: AbortSignal;
+  /** Poll interval between polls (default: 2000ms) */
+  pollIntervalMs?: number;
+}
+
 /** Options for jobs().watch() */
 export interface WatchJobOptions {
   /** Called for every event (replayed + live) */
@@ -2533,6 +2755,28 @@ export interface JobsClient {
    */
   regrade(id: string, request?: RegradeRequest): Promise<Job>;
   /**
+   * Analyze a terminal job's trial traces (rubric-driven, Harbor's `harbor
+   * analyze`), server-side: for each trial the analyzer agent reads the
+   * trial's Harbor-shape tree plus its original task and rules every rubric
+   * criterion, storing the result on the trial (`Trial.analysis`) and the
+   * aggregate on the job (`stats.analysis`). THE RESPONSE IS THE JOB, its
+   * analyses enqueued — analyses are not a separate resource; follow them
+   * with watchAnalysis(), or poll the job's trials. This is also the
+   * RE-analysis path: calling again (same job, different rubric or model)
+   * runs a fresh wave once the previous one has settled. `request` omitted
+   * (or `{}`) means the defaults: claude-haiku-4-5 over Harbor's default
+   * rubric. CANCELLED trials are never analyzed.
+   */
+  analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
+  /**
+   * Follow a job's analysis wave to its settled end: polls the job until
+   * `stats.analysis` reports nothing pending, and resolves with the final
+   * Job. `onStats` fires on every observed change of the analysis tally
+   * (including the first one seen). Per-trial results then ride the job's
+   * trials (`Trial.analysis`).
+   */
+  watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job>;
+  /**
    * Side-by-side comparison of 2-10 owned jobs: per-job
    * aggregates plus a per-task matrix with disagreement rows first.
    */
@@ -2783,6 +3027,13 @@ export const HOSTED_ERROR_CODES = [
   "concurrent_update",
   "regrade_source_ineligible",
   "no_regradable_trials",
+  // Analyze: a rubric that cannot rule an analysis (unknown keys, empty or
+  // duplicate criteria, bounds exceeded); one wave at a time (re-analysis is
+  // legal once the previous wave settles); a terminal job with no analyzable
+  // trial (every trial CANCELLED).
+  "invalid_rubric",
+  "analysis_already_running",
+  "no_analyzable_trials",
   "import_not_found",
   "import_too_large",
   "invalid_archive",
