@@ -3,10 +3,10 @@
  * evolve — the CLI for Evolve hosted datasets & jobs.
  *
  * Noun-verb grammar over the hosted client: `evolve <noun> <verb>`, plus
- * first-class top-level commands that need no noun — today that is `run`,
- * which takes `job start`'s flags and is spelled, helped and dispatched as a
- * command in its own right (Harbor registers their `run` the same way, as the
- * `job start` function bound at the top level: cli/main.py:164). Singular
+ * first-class top-level commands that need no noun — `run` (which takes
+ * `job start`'s flags), `analyze`, and `upload`, each spelled, helped and
+ * dispatched as a command in its own right (Harbor registers all three the
+ * same way, as top-level commands: their cli/main.py). Singular
  * nouns are canonical; `job`/`trial`/`dataset`/`skill` also answer to their
  * plurals as hidden aliases, but `agents` does NOT — that word is reserved for
  * the managed-agents CLI and refuses with the reason. The CLI speaks ONLY
@@ -875,6 +875,28 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     maxPositionals: 1,
     positionalUsage: "<job-id>",
     example: "evolve analyze cme12ab34 -r rubric.toml",
+  },
+  // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
+  // cli/main.py); ours is a deliberate subset — no --public/--share-org/
+  // --share-user/--org (no sharing surface yet; the flags adopt Harbor's exact
+  // names when Teams lands) and no --concurrency (their protocol uploads
+  // per-trial in parallel; ours is ONE archive POST, so the flag would have
+  // nothing real to do).
+  upload: {
+    summary:
+      "Upload a Harbor job directory (or its .tar.gz) as a terminal job — Harbor's upload, in reverse",
+    flags: {
+      dataset: {
+        kind: "string",
+        short: "d",
+        value: "<name[@version]>",
+        help: "Link the uploaded trials to a published dataset version by task name",
+      },
+    },
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<job_dir>",
+    example: "evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1",
   },
 };
 
@@ -2637,6 +2659,15 @@ function jobLines(e: Job): string[] {
       source.job_id,
     ]);
   }
+  // Upload provenance, beside the derived-job rows it is the sibling of: when
+  // this job is an ingested record, say when — and what the archive's own
+  // record files called themselves, when they said anything.
+  if (e.upload) {
+    const origin = [e.upload.original_job_name, e.upload.original_job_id]
+      .filter((part): part is string => part !== null)
+      .join(" · ");
+    rows.push(["uploaded", `${e.upload.uploaded_at}${origin ? ` — originally ${origin}` : ""}`]);
+  }
   if (e.idempotent_replay) rows.push(["note", "idempotent replay of an existing job"]);
   if (e.failure) rows.push(["failure", `${e.failure.code}: ${e.failure.message}`]);
   rows.push(["started", e.started_at]);
@@ -3789,6 +3820,28 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   }
 }
 
+/**
+ * `evolve upload <job_dir>` — Harbor's top-level upload verb, in reverse: the
+ * SDK validates the directory gate (their sentences), packs, and POSTs; this
+ * handler only renders the created record. The next step for an uploaded job
+ * is analysis — it is already terminal, so there is nothing to watch.
+ */
+async function cmdUpload(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const dataset = inv.flags.dataset as string | undefined;
+  const created = await client.upload(inv.positionals[0], {
+    ...(dataset !== undefined ? { dataset } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(created));
+    return 0;
+  }
+  for (const line of jobLines(created)) io.out(line);
+  io.out("");
+  io.out(`Analyze it with: evolve analyze ${created.id}`);
+  return 0;
+}
+
 async function cmdTrialShow(inv: Invocation, io: CliIO): Promise<number> {
   const client = trials(clientConfig(inv));
   const run = await client.get(inv.positionals[0]);
@@ -4704,6 +4757,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   // same handler — so neither can drift into a second implementation.
   run: cmdJobStart,
   analyze: cmdAnalyze,
+  upload: cmdUpload,
   "job start": cmdJobStart,
   "job list": cmdJobList,
   "job show": cmdJobShow,

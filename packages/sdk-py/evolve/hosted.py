@@ -187,6 +187,18 @@ HostedErrorCode = Literal[
     'invalid_rubric',
     'analysis_already_running',
     'no_analyzable_trials',
+    # Job upload (POST /api/jobs/upload): the archive is not a Harbor job
+    # directory (no result.json / config.json at its root, or they do not
+    # parse); one trial directory that cannot be ingested (the refusal names
+    # the trial and the reason, 422); the archive over the byte cap (413,
+    # distinct from import_too_large — that one belongs to dataset corpora);
+    # and a run-lifecycle verb (resume / retry / regrade) on an UPLOADED job —
+    # a terminal record of a run that happened elsewhere, never runnable here
+    # (409; analyze is deliberately not among the refusers).
+    'not_a_job_dir',
+    'invalid_trial',
+    'upload_too_large',
+    'job_uploaded',
     'import_not_found',
     'import_too_large',
     'invalid_archive',
@@ -946,6 +958,23 @@ class AgentArm:
 
 
 @dataclass
+class UploadProvenance:
+    """Provenance of an UPLOADED job (:meth:`JobsClient.upload`) — what the
+    archive's own record files said about themselves: the job id its
+    result.json carried and the job_name its config.json carried (each None
+    when the file did not state one — never fabricated), plus when the
+    platform ingested it. The platform-minted row ids replace the archive's
+    ids everywhere else on the surface; these fields are where the originals
+    remain readable. ``Job.upload`` is None on every job this platform
+    executed; non-None marks a terminal RECORD — resume, retry and regrade
+    refuse it (``job_uploaded``), analyze works on it unchanged.
+    """
+    original_job_id: Optional[str]
+    original_job_name: Optional[str]
+    uploaded_at: str
+
+
+@dataclass
 class SourceJob:
     """Provenance of a derived job.
 
@@ -1434,6 +1463,9 @@ class Job:
     source_jobs: List[SourceJob]
     #: Derived: any source_jobs entry with action "regrade".
     is_regrade: bool
+    #: The upload provenance echo — None for every job this platform
+    #: executed, non-None only on a job ingested by :meth:`JobsClient.upload`.
+    upload: Optional[UploadProvenance]
     #: True when the server replayed an existing job for this Idempotency-Key.
     idempotent_replay: bool
     started_at: str
@@ -2547,6 +2579,27 @@ def _map_build_exclusions(data: Any) -> List[JobBuildExclusion]:
     return exclusions
 
 
+def _map_upload_provenance(data: Any) -> Optional[UploadProvenance]:
+    """The upload provenance echo, defensively: absent (a job this platform
+    executed, or an older server) and malformed both read None — "not an
+    uploaded job", never a crash. ``uploaded_at`` is the one required member;
+    an echo without it reads None whole rather than as a fabricated
+    half-provenance, and the two originals pass through as the None the
+    archive stated when it stated nothing."""
+    if not isinstance(data, dict):
+        return None
+    uploaded_at = data.get('uploaded_at')
+    if not isinstance(uploaded_at, str):
+        return None
+    original_id = data.get('original_job_id')
+    original_name = data.get('original_job_name')
+    return UploadProvenance(
+        original_job_id=original_id if isinstance(original_id, str) else None,
+        original_job_name=original_name if isinstance(original_name, str) else None,
+        uploaded_at=uploaded_at,
+    )
+
+
 def _map_job(data: Dict[str, Any]) -> Job:
     """The ONE job mapper — nothing conditional, because nothing is optional."""
     agents = data.get('agents')
@@ -2604,6 +2657,7 @@ def _map_job(data: Dict[str, Any]) -> Job:
             else []
         ),
         is_regrade=data.get('is_regrade') is True,
+        upload=_map_upload_provenance(data.get('upload')),
         idempotent_replay=bool(data.get('idempotent_replay', False)),
         started_at=data.get('started_at', ''),
         updated_at=data.get('updated_at', ''),
@@ -5255,6 +5309,65 @@ class JobsClient:
             if actual != expected:
                 raise EvolveDigestMismatchError(expected, actual)
         return payload
+
+    async def upload(
+        self,
+        dir_or_archive: str,
+        *,
+        dataset: Optional[str] = None,
+    ) -> Job:
+        """Upload a Harbor job directory as a first-class TERMINAL job —
+        Harbor's ``harbor upload`` in reverse, taking their CLI's own input
+        (a ``job_dir`` with result.json + config.json at its root, one
+        subdirectory per trial; the same gate applies here, client-side,
+        with their refusal sentences).
+
+        ``dir_or_archive`` is that directory — packed into a gzipped tar with
+        the same deterministic packer every upload route here uses — or a
+        ready-packed ``.tar.gz`` of one, uploaded byte-for-byte: the
+        platform's own :meth:`download` produces exactly this format, so a
+        downloaded job re-uploads as-is, and any real ``harbor run`` job dir
+        works the same way.
+
+        Trial facts land verbatim: rewards are never re-scored, a trial
+        without a verdict lands INDETERMINATE, exceptions are carried, and
+        the trajectory / raw streams / verifier log / reward.txt are stored
+        byte-for-byte in the native trial slots. THE RESPONSE IS THE JOB —
+        COMPLETED on creation, with ``upload`` carrying the provenance echo.
+        It is a record, not a run: resume, retry and regrade refuse it
+        (``job_uploaded``); :meth:`analyze` works on it unchanged.
+        ``dataset`` (``"name"`` or ``"name@version"``) links the uploaded
+        trials to a published dataset version by task name. The caps live on
+        ``GET /api/meta`` under ``limits['uploads']`` (``job_archive_bytes``,
+        ``job_trials``, ``job_trial_file_bytes``).
+        """
+        if not isinstance(dir_or_archive, str) or not dir_or_archive.strip():
+            raise ValueError(
+                'jobs().upload() requires a job directory (or .tar.gz archive) path'
+            )
+        path = os.path.abspath(dir_or_archive)
+        if os.path.isfile(path):
+            # A regular file is a ready-packed archive and rides verbatim.
+            archive = await asyncio.to_thread(Path(path).read_bytes)
+        else:
+            # Harbor's own gate (their cli/upload.py checks result.json, then
+            # config.json), applied client-side with their sentences — the
+            # cheap refusal that saves tarring and shipping a tree the server
+            # would refuse the same way (``not_a_job_dir``). A nonexistent
+            # path lands here too and reads as the first refusal, exactly as
+            # their CLI does.
+            for required in ('result.json', 'config.json'):
+                if not os.path.exists(os.path.join(path, required)):
+                    raise ValueError(f'{path} does not contain {required}')
+            archive = await asyncio.to_thread(_tar_gzip_directory, path)
+        fields: Dict[str, Optional[str]] = {}
+        if dataset is not None:
+            fields['dataset'] = dataset
+        body, content_type = _multipart_body(fields, ('job.tar.gz', archive))
+        raw = await self._http.request_upload(
+            '/api/jobs/upload', body, {'Content-Type': content_type}
+        )
+        return _map_job(raw)
 
     async def grep(
         self,

@@ -65,6 +65,7 @@ from evolve import (
     NoActiveVersionError,
     SourceJob,
     TaskProviderVerdict,
+    UploadProvenance,
     agents as agents_factory,
     auth as auth_factory,
     datasets as datasets_factory,
@@ -2107,6 +2108,7 @@ class TestJobs:
             'timeout_multiplier',
             'trials',
             'updated_at',
+            'upload',
             'verifier_timeout_multiplier',
             'worst_case_spend_usd',
         ]
@@ -2830,6 +2832,130 @@ class TestJobs:
         ):
             with pytest.raises(EvolveIncompleteDownloadError):
                 await jobs_factory(CONFIG).download('job-1')
+
+    def _write_job_dir(self, root):
+        """A minimal Harbor job directory: the two root record files + one trial."""
+        root.mkdir(exist_ok=True)
+        (root / 'result.json').write_text(json.dumps({'id': 'orig-123'}))
+        (root / 'config.json').write_text(json.dumps({'job_name': '2026-08-27__12-00-00'}))
+        (root / 'trial-1').mkdir()
+        (root / 'trial-1' / 'result.json').write_text(json.dumps({'trial_name': 'trial-1'}))
+
+    @pytest.mark.asyncio
+    async def test_upload_packs_a_job_directory_and_posts_multipart(self, tmp_path):
+        from evolve.hosted import _tar_gzip_directory
+
+        job_dir = tmp_path / 'job'
+        self._write_job_dir(job_dir)
+        uploaded_body = {
+            **JOB_SUMMARY,
+            'id': 'job-up1',
+            'status': 'COMPLETED',
+            'upload': {
+                'original_job_id': 'orig-123',
+                'original_job_name': '2026-08-27__12-00-00',
+                'uploaded_at': '2026-08-28T10:00:00.000Z',
+            },
+            'finished_at': '2026-08-28T10:00:00.000Z',
+        }
+        fake = FakeUrlopen([('/api/jobs/upload', uploaded_body)])
+        with patch('evolve._http.urlopen', fake):
+            job = await jobs_factory(CONFIG).upload(str(job_dir))
+
+        request = fake.requests[0]
+        assert request.full_url.endswith('/api/jobs/upload')
+        assert request.get_method() == 'POST'
+        parts = _multipart_parts(request)
+        # No hint = the archive part alone, and it is exactly the deterministic
+        # packer's bytes — packed once, never re-compressed.
+        assert list(parts) == ['archive']
+        assert parts['archive'][:2] == b'\x1f\x8b'
+        assert parts['archive'] == _tar_gzip_directory(str(job_dir))
+
+        assert job.id == 'job-up1'
+        assert job.status == 'COMPLETED'
+        assert job.upload == UploadProvenance(
+            original_job_id='orig-123',
+            original_job_name='2026-08-27__12-00-00',
+            uploaded_at='2026-08-28T10:00:00.000Z',
+        )
+
+    @pytest.mark.asyncio
+    async def test_upload_sends_the_dataset_hint_before_the_archive(self, tmp_path):
+        job_dir = tmp_path / 'job'
+        self._write_job_dir(job_dir)
+        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_SUMMARY, 'id': 'job-up1'})])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).upload(str(job_dir), dataset='deep-swe@1.1')
+
+        parts = _multipart_parts(fake.requests[0])
+        # Metadata first, so the server can refuse a bad hint before receiving
+        # the upload — the same order every multipart route here keeps.
+        assert list(parts) == ['dataset', 'archive']
+        assert parts['dataset'] == b'deep-swe@1.1'
+
+    @pytest.mark.asyncio
+    async def test_upload_refuses_a_non_job_directory_with_harbors_sentences(self, tmp_path):
+        fake = FakeUrlopen([])
+        with patch('evolve._http.urlopen', fake):
+            client = jobs_factory(CONFIG)
+
+            # Harbor's first sentence: result.json is checked first.
+            empty = tmp_path / 'empty'
+            empty.mkdir()
+            with pytest.raises(ValueError) as exc:
+                await client.upload(str(empty))
+            assert str(exc.value) == f'{empty} does not contain result.json'
+
+            # Their second: config.json, once result.json exists.
+            (empty / 'result.json').write_text('{}')
+            with pytest.raises(ValueError) as exc:
+                await client.upload(str(empty))
+            assert str(exc.value) == f'{empty} does not contain config.json'
+
+            # A path that exists nowhere lands in the directory branch and
+            # refuses with the same first sentence — exactly Harbor's behavior.
+            ghost = tmp_path / 'no-such-dir'
+            with pytest.raises(ValueError) as exc:
+                await client.upload(str(ghost))
+            assert str(exc.value) == f'{ghost} does not contain result.json'
+
+        assert fake.requests == []  # nothing packed or uploaded for a refusal
+
+    @pytest.mark.asyncio
+    async def test_upload_sends_a_packed_archive_verbatim(self, tmp_path):
+        packed = gzip.compress(b'the archive the server built')
+        archive_path = tmp_path / 'job-job-1-results.tar.gz'
+        archive_path.write_bytes(packed)
+        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_SUMMARY, 'id': 'job-up2'})])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).upload(str(archive_path))
+
+        parts = _multipart_parts(fake.requests[0])
+        assert parts['archive'] == packed  # byte-for-byte, never re-packed
+
+    @pytest.mark.asyncio
+    async def test_upload_surfaces_typed_refusals(self, tmp_path):
+        import io
+        import urllib.error
+
+        job_dir = tmp_path / 'job'
+        self._write_job_dir(job_dir)
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 413, 'Payload Too Large', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'upload_too_large',
+                    'message': 'Archive exceeds the cap',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await jobs_factory(CONFIG).upload(str(job_dir))
+        assert exc.value.status == 413
+        assert exc.value.code == 'upload_too_large'
 
     @pytest.mark.asyncio
     async def test_compare_maps_aggregates_and_matrix(self):

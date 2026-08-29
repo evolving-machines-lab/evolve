@@ -655,6 +655,7 @@ class TestPassAtK:
             failure=None,
             source_jobs=[],
             is_regrade=False,
+            upload=None,
             idempotent_replay=False,
             started_at='',
             updated_at='',

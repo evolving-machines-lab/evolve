@@ -910,6 +910,22 @@ export function passAtK(job: Job): PassAtKGroup[] {
 }
 
 /**
+ * Provenance of an UPLOADED job (`jobs().upload()`) — what the archive's own
+ * record files said about themselves: the job id its result.json carried and
+ * the job_name its config.json carried (each null when the file did not state
+ * one — never fabricated), plus when the platform ingested it. The
+ * platform-minted row ids replace the archive's ids everywhere else on the
+ * surface; these fields are where the originals remain readable. Null on
+ * every job this platform executed; non-null marks a terminal RECORD — resume,
+ * retry and regrade refuse it (`job_uploaded`), analyze works on it unchanged.
+ */
+export interface UploadProvenance {
+  original_job_id: string | null;
+  original_job_name: string | null;
+  uploaded_at: string;
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -1015,6 +1031,11 @@ export interface Job {
   source_jobs: SourceJob[];
   /** Derived: any source_jobs entry with action "regrade". */
   is_regrade: boolean;
+  /**
+   * The upload provenance echo — null for every job this platform executed,
+   * non-null only on a job ingested by jobs().upload(). See UploadProvenance.
+   */
+  upload: UploadProvenance | null;
   /** True only on a response that replayed an existing job for an Idempotency-Key. */
   idempotent_replay: boolean;
   started_at: string;
@@ -2480,6 +2501,19 @@ export interface DownloadJobOptions {
   stream?: boolean;
 }
 
+/** Options for jobs().upload() */
+export interface UploadJobOptions {
+  /**
+   * "name" or "name@version" of a published dataset — links the uploaded
+   * trials to that version's tasks by task name (a bare name resolves to the
+   * active version). Matched trials analyze against the real task content;
+   * unmatched or unhinted trials analyze through the task-not-available
+   * branch, exactly Harbor's fallback for a trial without a local task
+   * directory.
+   */
+  dataset?: string;
+}
+
 // =============================================================================
 // CLIENTS
 // =============================================================================
@@ -2812,6 +2846,29 @@ export interface JobsClient {
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
   /**
+   * Upload a Harbor job directory as a first-class TERMINAL job — Harbor's
+   * `harbor upload` in reverse, taking their CLI's own input (a `job_dir`
+   * with result.json + config.json at its root, one subdirectory per trial;
+   * the same gate applies here, client-side, with their refusal sentences).
+   * `dirOrArchive` is that directory — packed into a gzipped tar with the
+   * same deterministic packer every upload route here uses — or a
+   * ready-packed `.tar.gz` of one, uploaded byte-for-byte: the platform's own
+   * download() produces exactly this format, so a downloaded job re-uploads
+   * as-is, and any real `harbor run` job dir works the same way.
+   *
+   * Trial facts land verbatim: rewards are never re-scored, a trial without a
+   * verdict lands INDETERMINATE, exceptions are carried, and the trajectory /
+   * raw streams / verifier log / reward.txt are stored byte-for-byte in the
+   * native trial slots. THE RESPONSE IS THE JOB — COMPLETED on creation, with
+   * `upload` carrying the provenance echo. It is a record, not a run: resume,
+   * retry and regrade refuse it (`job_uploaded`); analyze() works on it
+   * unchanged. `{ dataset }` links the uploaded trials to a published dataset
+   * version by task name. The caps live on `GET /api/meta` under
+   * `limits.uploads` (`job_archive_bytes`, `job_trials`,
+   * `job_trial_file_bytes`).
+   */
+  upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job>;
+  /**
    * Grep the parsed trace of EVERY trial of the job in one server-side pass.
    * `q` is the trace filter's grammar: a case-insensitive POSIX regex over
    * each event's type and serialized content, where a plain string is a
@@ -3044,6 +3101,18 @@ export const HOSTED_ERROR_CODES = [
   "invalid_rubric",
   "analysis_already_running",
   "no_analyzable_trials",
+  // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
+  // directory (no result.json / config.json at its root, or they do not
+  // parse); one trial directory that cannot be ingested (the refusal names
+  // the trial and the reason, 422); the archive over the byte cap (413,
+  // distinct from import_too_large — that one belongs to dataset corpora);
+  // and a run-lifecycle verb (resume / retry / regrade) on an UPLOADED job —
+  // a terminal record of a run that happened elsewhere, never runnable here
+  // (409; analyze is deliberately not among the refusers).
+  "not_a_job_dir",
+  "invalid_trial",
+  "upload_too_large",
+  "job_uploaded",
   "import_not_found",
   "import_too_large",
   "invalid_archive",
@@ -3281,6 +3350,12 @@ export interface CapabilityDocument {
       skill_archive_bytes: number;
       /** Uploaded-skill records one caller may hold (`skill_limit_reached` past it). */
       skill_uploads_per_user: number;
+      /** Compressed cap on one uploaded job archive (`upload_too_large` past it). */
+      job_archive_bytes: number;
+      /** Most trials one uploaded job archive may carry (`job_too_large` past it). */
+      job_trials: number;
+      /** Per-file cap on the trial artifacts an upload stores (`invalid_trial` past it). */
+      job_trial_file_bytes: number;
     };
     dataset_names: {
       pattern: string;

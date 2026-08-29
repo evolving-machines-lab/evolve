@@ -111,6 +111,7 @@ import type {
   TrialRetry,
   TrialStatus,
   TrialsClient,
+  UploadJobOptions,
   UpstreamStatus,
   UsageReading,
   VerifierEnvironmentMode,
@@ -267,6 +268,8 @@ export type {
   TrialStatus,
   TrialStatusTally,
   TrialsClient,
+  UploadJobOptions,
+  UploadProvenance,
   UpstreamStatus,
   UsageReading,
   VerifierEnvironmentMode,
@@ -827,6 +830,27 @@ function mapBuildExclusions(raw: unknown): JobBuildExclusion[] {
     });
 }
 
+/**
+ * The upload provenance echo — what an uploaded archive's own record files
+ * said about themselves. Defensive like every mapper here: absent (a job this
+ * platform executed, or an older server) and malformed both read null — "not
+ * an uploaded job", never a crash. `uploaded_at` is the one required member;
+ * an echo without it reads null whole rather than as a fabricated
+ * half-provenance, and the two originals pass through as the null the archive
+ * stated when it stated nothing.
+ */
+function mapUploadProvenance(raw: unknown): Job["upload"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (typeof blob.uploaded_at !== "string") return null;
+  return {
+    original_job_id: typeof blob.original_job_id === "string" ? blob.original_job_id : null,
+    original_job_name:
+      typeof blob.original_job_name === "string" ? blob.original_job_name : null,
+    uploaded_at: blob.uploaded_at,
+  };
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
@@ -873,6 +897,7 @@ function mapJob(raw: Record<string, unknown>): Job {
     failure: (raw.failure as JobFailure | null) ?? null,
     source_jobs: ((raw.source_jobs as Record<string, unknown>[]) ?? []).map(mapSourceJob),
     is_regrade: raw.is_regrade === true,
+    upload: mapUploadProvenance(raw.upload),
     idempotent_replay: raw.idempotent_replay === true,
     started_at: raw.started_at as string,
     updated_at: raw.updated_at as string,
@@ -2604,6 +2629,46 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       await verifyPackageDigest(res, bytes);
       return bytes;
     }) as JobsClient["download"],
+
+    async upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job> {
+      // download()'s inverse: a Harbor job directory in, the ordinary Job
+      // shape out. A path to a regular file is a ready-packed .tar.gz (our
+      // own download() output, or Harbor's) and rides the wire byte-for-byte;
+      // anything else is treated as the job directory Harbor's CLI takes.
+      if (typeof dirOrArchive !== "string" || !dirOrArchive.trim()) {
+        throw new Error("jobs().upload() requires a job directory (or .tar.gz archive) path");
+      }
+      const { readFile, stat } = await import("node:fs/promises");
+      const target = await stat(dirOrArchive).catch(() => null);
+      let archive: Buffer;
+      if (target?.isFile()) {
+        archive = await readFile(dirOrArchive);
+      } else {
+        // Harbor's own gate (their cli/upload.py checks result.json, then
+        // config.json), applied client-side with their sentences — the cheap
+        // refusal that saves tarring and shipping a tree the server would
+        // refuse the same way (`not_a_job_dir`). A nonexistent path lands
+        // here too and reads as the first refusal, exactly as their CLI does.
+        const { existsSync } = await import("node:fs");
+        const { join, resolve } = await import("node:path");
+        const root = resolve(dirOrArchive);
+        for (const required of ["result.json", "config.json"]) {
+          if (!existsSync(join(root, required))) {
+            throw new Error(`${root} does not contain ${required}`);
+          }
+        }
+        const { tarGzipDirectory } = await import("./tar");
+        archive = await tarGzipDirectory(root);
+      }
+      const res = await request(cfg, "/api/jobs/upload", {
+        method: "POST",
+        body: uploadForm(
+          { dataset: options?.dataset },
+          { bytes: archive, filename: "job.tar.gz" }
+        ),
+      });
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
 
     async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {
       const res = await request(
