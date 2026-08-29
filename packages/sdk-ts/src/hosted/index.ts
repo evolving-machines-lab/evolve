@@ -111,6 +111,7 @@ import type {
   TrialRetry,
   TrialStatus,
   TrialsClient,
+  UploadJobOptions,
   UpstreamStatus,
   UsageReading,
   VerifierEnvironmentMode,
@@ -266,7 +267,10 @@ export type {
   TrialRetry,
   TrialStatus,
   TrialStatusTally,
+  TrialUploadProvenance,
   TrialsClient,
+  UploadJobOptions,
+  UploadProvenance,
   UpstreamStatus,
   UsageReading,
   VerifierEnvironmentMode,
@@ -827,6 +831,50 @@ function mapBuildExclusions(raw: unknown): JobBuildExclusion[] {
     });
 }
 
+/**
+ * The upload provenance echo — what an uploaded archive's own record files
+ * said about themselves. Defensive like every mapper here: absent (a job this
+ * platform executed, or an older server) and malformed both read null — "not
+ * an uploaded job", never a crash. `uploaded_at` is the one required member;
+ * an echo without it reads null whole rather than as a fabricated
+ * half-provenance, and the two originals pass through as the null the archive
+ * stated when it stated nothing.
+ */
+function mapUploadProvenance(raw: unknown): Job["upload"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (typeof blob.uploaded_at !== "string") return null;
+  // The job-level sum of the trials' REPORTED figures. Null when absent (a
+  // pre-field ingest) or malformed — n_trials_reporting is the one member
+  // the shape cannot stand without, since the figures only mean anything
+  // against how many trials claimed them.
+  const totals = blob.reported_totals;
+  const reportedNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  const reportedTotals =
+    totals &&
+    typeof totals === "object" &&
+    !Array.isArray(totals) &&
+    // A genuine integer, as the contract states — a fractional count is a
+    // malformed object and voids the totals whole (the Python mapper's rule).
+    Number.isInteger((totals as Record<string, unknown>).n_trials_reporting)
+      ? {
+          cost_usd: reportedNumber((totals as Record<string, unknown>).cost_usd),
+          n_input_tokens: reportedNumber((totals as Record<string, unknown>).n_input_tokens),
+          n_cache_tokens: reportedNumber((totals as Record<string, unknown>).n_cache_tokens),
+          n_output_tokens: reportedNumber((totals as Record<string, unknown>).n_output_tokens),
+          n_trials_reporting: (totals as Record<string, unknown>).n_trials_reporting as number,
+        }
+      : null;
+  return {
+    original_job_id: typeof blob.original_job_id === "string" ? blob.original_job_id : null,
+    original_job_name:
+      typeof blob.original_job_name === "string" ? blob.original_job_name : null,
+    uploaded_at: blob.uploaded_at,
+    reported_totals: reportedTotals,
+  };
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
@@ -858,7 +906,9 @@ function mapJob(raw: Record<string, unknown>): Job {
     environment_build_timeout_multiplier: optionalNumber(
       raw.environment_build_timeout_multiplier
     ),
-    sandbox_provider: raw.sandbox_provider as EvalSandboxProvider,
+    // Null exactly on an uploaded job — the record executed on no platform
+    // sandbox, so naming a provider would be an execution claim.
+    sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
     counts: raw.counts as Job["counts"],
     // THE RESULTS-HONESTY LABEL (partial-publish model): always an array —
     // absent (an older server) reads as "nothing was excluded".
@@ -873,6 +923,7 @@ function mapJob(raw: Record<string, unknown>): Job {
     failure: (raw.failure as JobFailure | null) ?? null,
     source_jobs: ((raw.source_jobs as Record<string, unknown>[]) ?? []).map(mapSourceJob),
     is_regrade: raw.is_regrade === true,
+    upload: mapUploadProvenance(raw.upload),
     idempotent_replay: raw.idempotent_replay === true,
     started_at: raw.started_at as string,
     updated_at: raw.updated_at as string,
@@ -1019,8 +1070,44 @@ function mapTrial(raw: Record<string, unknown>): Trial {
       ? (raw.retries as Record<string, unknown>[]).map(mapTrialRetry)
       : [],
     session_ref: (raw.session_ref as string | null) ?? null,
+    upload: mapTrialUploadProvenance(raw.upload),
     started_at: (raw.started_at as string | null) ?? null,
     finished_at: (raw.finished_at as string | null) ?? null,
+  };
+}
+
+/**
+ * The trial-level upload provenance, defensively: absent (a native trial, or
+ * an older server) and malformed both read null. The two names are the
+ * spec's required strings — an echo missing either reads null whole rather
+ * than as a fabricated half-identity — and `reported_agent_result` is the
+ * archive's OWN claim: present it maps its four figures (each null when
+ * unstated), absent or malformed it is null, and it never leaks into the
+ * platform-metered fields beside it.
+ */
+function mapTrialUploadProvenance(raw: unknown): Trial["upload"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (typeof blob.original_trial_name !== "string" || typeof blob.original_task_name !== "string") {
+    return null;
+  }
+  const reported = blob.reported_agent_result;
+  const reportedNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    original_trial_id:
+      typeof blob.original_trial_id === "string" ? blob.original_trial_id : null,
+    original_trial_name: blob.original_trial_name,
+    original_task_name: blob.original_task_name,
+    reported_agent_result:
+      reported && typeof reported === "object" && !Array.isArray(reported)
+        ? {
+            n_input_tokens: reportedNumber((reported as Record<string, unknown>).n_input_tokens),
+            n_cache_tokens: reportedNumber((reported as Record<string, unknown>).n_cache_tokens),
+            n_output_tokens: reportedNumber((reported as Record<string, unknown>).n_output_tokens),
+            cost_usd: reportedNumber((reported as Record<string, unknown>).cost_usd),
+          }
+        : null,
   };
 }
 
@@ -2604,6 +2691,46 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       await verifyPackageDigest(res, bytes);
       return bytes;
     }) as JobsClient["download"],
+
+    async upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job> {
+      // download()'s inverse: a Harbor job directory in, the ordinary Job
+      // shape out. A path to a regular file is a ready-packed .tar.gz (our
+      // own download() output, or Harbor's) and rides the wire byte-for-byte;
+      // anything else is treated as the job directory Harbor's CLI takes.
+      if (typeof dirOrArchive !== "string" || !dirOrArchive.trim()) {
+        throw new Error("jobs().upload() requires a job directory (or .tar.gz archive) path");
+      }
+      const { readFile, stat } = await import("node:fs/promises");
+      const target = await stat(dirOrArchive).catch(() => null);
+      let archive: Buffer;
+      if (target?.isFile()) {
+        archive = await readFile(dirOrArchive);
+      } else {
+        // Harbor's own gate (their cli/upload.py checks result.json, then
+        // config.json), applied client-side with their sentences — the cheap
+        // refusal that saves tarring and shipping a tree the server would
+        // refuse the same way (`not_a_job_dir`). A nonexistent path lands
+        // here too and reads as the first refusal, exactly as their CLI does.
+        const { existsSync } = await import("node:fs");
+        const { join, resolve } = await import("node:path");
+        const root = resolve(dirOrArchive);
+        for (const required of ["result.json", "config.json"]) {
+          if (!existsSync(join(root, required))) {
+            throw new Error(`${root} does not contain ${required}`);
+          }
+        }
+        const { tarGzipDirectory } = await import("./tar");
+        archive = await tarGzipDirectory(root);
+      }
+      const res = await request(cfg, "/api/jobs/upload", {
+        method: "POST",
+        body: uploadForm(
+          { dataset: options?.dataset },
+          { bytes: archive, filename: "job.tar.gz" }
+        ),
+      });
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
 
     async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {
       const res = await request(

@@ -187,6 +187,25 @@ HostedErrorCode = Literal[
     'invalid_rubric',
     'analysis_already_running',
     'no_analyzable_trials',
+    # Job upload (POST /api/jobs/upload): the archive is not a Harbor job
+    # directory (no result.json / config.json at its root, or they do not
+    # parse); one trial directory that cannot be ingested (the refusal names
+    # the trial and the reason, 422); the archive over the byte cap (413,
+    # distinct from import_too_large — that one belongs to dataset corpora);
+    # and a run-lifecycle verb (resume / retry / regrade) on an UPLOADED job —
+    # a terminal record of a run that happened elsewhere, never runnable here
+    # (409; analyze is deliberately not among the refusers).
+    'not_a_job_dir',
+    'invalid_trial',
+    'upload_too_large',
+    'job_uploaded',
+    # Re-uploading an archive whose job this caller already uploaded (409),
+    # detected by (uploading user, the archive result.json's own job id);
+    # details name the existing job. Deliberately NOT Harbor's
+    # update-in-place: our trial rows carry analyses and analysis history —
+    # silently replacing trials would destroy them; Harbor's hub rows have no
+    # such children.
+    'job_already_uploaded',
     'import_not_found',
     'import_too_large',
     'invalid_archive',
@@ -946,6 +965,45 @@ class AgentArm:
 
 
 @dataclass
+class ReportedTotals:
+    """The job-level sum of the trials' ``upload.reported_agent_result``
+    figures — the uploader's own claims aggregated once at ingest, REPORTED
+    like their per-trial parts and never entering the platform-metered
+    fields (``stats['cost_usd']`` and the token stats stay None for an
+    uploaded job). Each total sums the trials that reported that field and
+    is None when none did (a zero would be a claim); ``n_trials_reporting``
+    counts the trials that carried any reported figure, against the job's
+    ``n_total_trials`` — the honesty note for a partially reporting
+    archive."""
+    cost_usd: Optional[float]
+    n_input_tokens: Optional[int]
+    n_cache_tokens: Optional[int]
+    n_output_tokens: Optional[int]
+    n_trials_reporting: int
+
+
+@dataclass
+class UploadProvenance:
+    """Provenance of an UPLOADED job (:meth:`JobsClient.upload`) — what the
+    archive's own record files said about themselves: the job id its
+    result.json carried and the job_name its config.json carried (each None
+    when the file did not state one — never fabricated), when the platform
+    ingested it, and the job-level sum of the trials' REPORTED figures
+    (:class:`ReportedTotals`). The platform-minted row ids replace the
+    archive's ids everywhere else on the surface; these fields are where the
+    originals remain readable. ``Job.upload`` is None on every job this
+    platform executed; non-None marks a terminal RECORD — resume, retry and
+    regrade refuse it (``job_uploaded``), analyze works on it unchanged.
+    """
+    original_job_id: Optional[str]
+    original_job_name: Optional[str]
+    uploaded_at: str
+    #: The aggregated REPORTED figures, or None on jobs ingested before the
+    #: field existed.
+    reported_totals: Optional[ReportedTotals]
+
+
+@dataclass
 class SourceJob:
     """Provenance of a derived job.
 
@@ -1405,7 +1463,11 @@ class Job:
     verifier_timeout_multiplier: Optional[float]
     agent_setup_timeout_multiplier: Optional[float]
     environment_build_timeout_multiplier: Optional[float]
-    sandbox_provider: EvalSandboxProvider
+    #: Where this job's trials execute. None exactly on an UPLOADED job
+    #: (``upload`` non-None): an ingested record never executed on any
+    #: platform sandbox, and naming a provider would be an execution claim.
+    #: Never None on a job this platform ran.
+    sandbox_provider: Optional[EvalSandboxProvider]
     counts: JobCounts
     #: THE RESULTS-HONESTY LABEL of the partial-publish model: one entry per
     #: dataset of this job whose selection excluded tasks that FAILED to
@@ -1434,6 +1496,9 @@ class Job:
     source_jobs: List[SourceJob]
     #: Derived: any source_jobs entry with action "regrade".
     is_regrade: bool
+    #: The upload provenance echo — None for every job this platform
+    #: executed, non-None only on a job ingested by :meth:`JobsClient.upload`.
+    upload: Optional[UploadProvenance]
     #: True when the server replayed an existing job for this Idempotency-Key.
     idempotent_replay: bool
     started_at: str
@@ -1601,6 +1666,36 @@ class ExceptionInfo:
 
 
 @dataclass
+class ReportedAgentResult:
+    """The uploaded ``agent_result``'s own token and cost figures — the
+    archive's claim, served for the reader. Uploader-reported, never
+    platform-measured; each field is None when the archive stated nothing."""
+    n_input_tokens: Optional[int]
+    n_cache_tokens: Optional[int]
+    n_output_tokens: Optional[int]
+    cost_usd: Optional[float]
+
+
+@dataclass
+class TrialUploadProvenance:
+    """What the uploaded archive said about THIS trial: its own ids, the full
+    task name verbatim, and the uploader's own usage figures. REPORTED means
+    exactly that — ``reported_agent_result`` is the archive's claim; it never
+    populates the platform-metered fields (``agent_result``, ``usage``,
+    ``spend_source``), which stay None because this platform's meter never
+    saw the run."""
+    #: The archive trial result.json's own ``id``; None when it stated none.
+    original_trial_id: Optional[str]
+    #: The archive's own ``trial_name`` (the trial directory).
+    original_trial_name: str
+    #: The archive's task name VERBATIM — possibly registry-qualified
+    #: (``org/name``); the trial's ``task_name`` serves the parsed leaf.
+    original_task_name: str
+    #: The uploaded figures, or None when the archive carried none.
+    reported_agent_result: Optional[ReportedAgentResult]
+
+
+@dataclass
 class Trial:
     """The ONE public trial shape, shared verbatim by list rows and the detail
     route (detail returns ``exception_info.exception_message`` untruncated —
@@ -1610,7 +1705,10 @@ class Trial:
     Execution facts (``sandbox_provider``, ``verifier_environment_mode``,
     ``agent_result.cost_usd``, ``spend_source``) are None until the trial has
     actually executed: a QUEUED or CANCELLED trial never ran, so None means
-    "did not run" and never zero.
+    "did not run" and never zero. An UPLOADED trial (``upload`` non-None)
+    keeps them None forever — this platform's meter never saw the run; the
+    archive's own reported figures are served under
+    ``upload.reported_agent_result`` and nowhere else.
     """
     id: str
     job_id: str
@@ -1716,6 +1814,11 @@ class Trial:
     #: build from a slow agent. None when not mid-phase.
     attempt_phase: Optional[AttemptPhase]
     session_ref: Optional[str]
+    #: Provenance of an UPLOADED trial (its job's ``upload`` is non-None):
+    #: the identity and reported figures the archive's own record files
+    #: carried (:class:`TrialUploadProvenance`). None for every trial this
+    #: platform executed.
+    upload: Optional['TrialUploadProvenance']
     started_at: Optional[str]
     finished_at: Optional[str]
     #: Automatic retries this trial consumed (0 = never retried). The trial
@@ -2547,6 +2650,57 @@ def _map_build_exclusions(data: Any) -> List[JobBuildExclusion]:
     return exclusions
 
 
+def _map_upload_provenance(data: Any) -> Optional[UploadProvenance]:
+    """The upload provenance echo, defensively: absent (a job this platform
+    executed, or an older server) and malformed both read None — "not an
+    uploaded job", never a crash. ``uploaded_at`` is the one required member;
+    an echo without it reads None whole rather than as a fabricated
+    half-provenance, and the two originals pass through as the None the
+    archive stated when it stated nothing."""
+    if not isinstance(data, dict):
+        return None
+    uploaded_at = data.get('uploaded_at')
+    if not isinstance(uploaded_at, str):
+        return None
+    original_id = data.get('original_job_id')
+    original_name = data.get('original_job_name')
+    # The job-level sum of the trials' REPORTED figures. None when absent (a
+    # pre-field ingest) or malformed — n_trials_reporting is the one member
+    # the shape cannot stand without, since the figures only mean anything
+    # against how many trials claimed them.
+    totals = data.get('reported_totals')
+
+    def _total_int(value: Any) -> Optional[int]:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def _total_number(value: Any) -> Optional[float]:
+        return (
+            float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else None
+        )
+
+    reported_totals = None
+    if (
+        isinstance(totals, dict)
+        and isinstance(totals.get('n_trials_reporting'), int)
+        and not isinstance(totals.get('n_trials_reporting'), bool)
+    ):
+        reported_totals = ReportedTotals(
+            cost_usd=_total_number(totals.get('cost_usd')),
+            n_input_tokens=_total_int(totals.get('n_input_tokens')),
+            n_cache_tokens=_total_int(totals.get('n_cache_tokens')),
+            n_output_tokens=_total_int(totals.get('n_output_tokens')),
+            n_trials_reporting=totals['n_trials_reporting'],
+        )
+    return UploadProvenance(
+        original_job_id=original_id if isinstance(original_id, str) else None,
+        original_job_name=original_name if isinstance(original_name, str) else None,
+        uploaded_at=uploaded_at,
+        reported_totals=reported_totals,
+    )
+
+
 def _map_job(data: Dict[str, Any]) -> Job:
     """The ONE job mapper — nothing conditional, because nothing is optional."""
     agents = data.get('agents')
@@ -2589,7 +2743,13 @@ def _map_job(data: Dict[str, Any]) -> Job:
         environment_build_timeout_multiplier=_optional_float(
             data.get('environment_build_timeout_multiplier')
         ),
-        sandbox_provider=data.get('sandbox_provider', ''),
+        # None exactly on an uploaded job — the record executed on no
+        # platform sandbox, so naming a provider would be an execution claim.
+        sandbox_provider=(
+            data['sandbox_provider']
+            if isinstance(data.get('sandbox_provider'), str)
+            else None
+        ),
         counts=_map_counts(data.get('counts')),
         # THE RESULTS-HONESTY LABEL (partial-publish model): always a list —
         # absent (an older server) reads as "nothing was excluded".
@@ -2604,6 +2764,7 @@ def _map_job(data: Dict[str, Any]) -> Job:
             else []
         ),
         is_regrade=data.get('is_regrade') is True,
+        upload=_map_upload_provenance(data.get('upload')),
         idempotent_replay=bool(data.get('idempotent_replay', False)),
         started_at=data.get('started_at', ''),
         updated_at=data.get('updated_at', ''),
@@ -2828,6 +2989,7 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         verifier_environment_mode=data.get('verifier_environment_mode'),
         attempt_phase=data.get('attempt_phase'),
         session_ref=data.get('session_ref'),
+        upload=_map_trial_upload_provenance(data.get('upload')),
         started_at=data.get('started_at'),
         finished_at=data.get('finished_at'),
         # Auto-retry lineage. An older server sends neither key; 0 / [] is
@@ -2837,6 +2999,50 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
             [_map_trial_retry(item) for item in retries if isinstance(item, dict)]
             if isinstance(retries, list)
             else []
+        ),
+    )
+
+
+def _map_trial_upload_provenance(data: Any) -> Optional[TrialUploadProvenance]:
+    """The trial-level upload provenance, defensively: absent (a native
+    trial, or an older server) and malformed both read None. The two names
+    are the contract's required strings — an echo missing either reads None
+    whole rather than as a fabricated half-identity — and the reported
+    figures are the archive's OWN claim: present they map (each None when
+    unstated), absent or malformed they are None, and they never leak into
+    the platform-metered fields beside them."""
+    if not isinstance(data, dict):
+        return None
+    trial_name = data.get('original_trial_name')
+    task_name = data.get('original_task_name')
+    if not isinstance(trial_name, str) or not isinstance(task_name, str):
+        return None
+    trial_id = data.get('original_trial_id')
+    reported = data.get('reported_agent_result')
+
+    def _reported_int(value: Any) -> Optional[int]:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def _reported_number(value: Any) -> Optional[float]:
+        return (
+            float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else None
+        )
+
+    return TrialUploadProvenance(
+        original_trial_id=trial_id if isinstance(trial_id, str) else None,
+        original_trial_name=trial_name,
+        original_task_name=task_name,
+        reported_agent_result=(
+            ReportedAgentResult(
+                n_input_tokens=_reported_int(reported.get('n_input_tokens')),
+                n_cache_tokens=_reported_int(reported.get('n_cache_tokens')),
+                n_output_tokens=_reported_int(reported.get('n_output_tokens')),
+                cost_usd=_reported_number(reported.get('cost_usd')),
+            )
+            if isinstance(reported, dict)
+            else None
         ),
     )
 
@@ -5255,6 +5461,65 @@ class JobsClient:
             if actual != expected:
                 raise EvolveDigestMismatchError(expected, actual)
         return payload
+
+    async def upload(
+        self,
+        dir_or_archive: str,
+        *,
+        dataset: Optional[str] = None,
+    ) -> Job:
+        """Upload a Harbor job directory as a first-class TERMINAL job —
+        Harbor's ``harbor upload`` in reverse, taking their CLI's own input
+        (a ``job_dir`` with result.json + config.json at its root, one
+        subdirectory per trial; the same gate applies here, client-side,
+        with their refusal sentences).
+
+        ``dir_or_archive`` is that directory — packed into a gzipped tar with
+        the same deterministic packer every upload route here uses — or a
+        ready-packed ``.tar.gz`` of one, uploaded byte-for-byte: the
+        platform's own :meth:`download` produces exactly this format, so a
+        downloaded job re-uploads as-is, and any real ``harbor run`` job dir
+        works the same way.
+
+        Trial facts land verbatim: rewards are never re-scored, a trial
+        without a verdict lands INDETERMINATE, exceptions are carried, and
+        the trajectory / raw streams / verifier log / reward.txt are stored
+        byte-for-byte in the native trial slots. THE RESPONSE IS THE JOB —
+        COMPLETED on creation, with ``upload`` carrying the provenance echo.
+        It is a record, not a run: resume, retry and regrade refuse it
+        (``job_uploaded``); :meth:`analyze` works on it unchanged.
+        ``dataset`` (``"name"`` or ``"name@version"``) links the uploaded
+        trials to a published dataset version by task name. The caps live on
+        ``GET /api/meta`` under ``limits['uploads']`` (``job_archive_bytes``,
+        ``job_trials``, ``job_trial_file_bytes``).
+        """
+        if not isinstance(dir_or_archive, str) or not dir_or_archive.strip():
+            raise ValueError(
+                'jobs().upload() requires a job directory (or .tar.gz archive) path'
+            )
+        path = os.path.abspath(dir_or_archive)
+        if os.path.isfile(path):
+            # A regular file is a ready-packed archive and rides verbatim.
+            archive = await asyncio.to_thread(Path(path).read_bytes)
+        else:
+            # Harbor's own gate (their cli/upload.py checks result.json, then
+            # config.json), applied client-side with their sentences — the
+            # cheap refusal that saves tarring and shipping a tree the server
+            # would refuse the same way (``not_a_job_dir``). A nonexistent
+            # path lands here too and reads as the first refusal, exactly as
+            # their CLI does.
+            for required in ('result.json', 'config.json'):
+                if not os.path.exists(os.path.join(path, required)):
+                    raise ValueError(f'{path} does not contain {required}')
+            archive = await asyncio.to_thread(_tar_gzip_directory, path)
+        fields: Dict[str, Optional[str]] = {}
+        if dataset is not None:
+            fields['dataset'] = dataset
+        body, content_type = _multipart_body(fields, ('job.tar.gz', archive))
+        raw = await self._http.request_upload(
+            '/api/jobs/upload', body, {'Content-Type': content_type}
+        )
+        return _map_job(raw)
 
     async def grep(
         self,

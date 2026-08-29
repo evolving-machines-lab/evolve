@@ -4178,6 +4178,61 @@ async function testTrialShow() {
   }
 }
 
+async function testTrialShowUploaded() {
+  console.log("\n--- runCli: trial show renders an uploaded trial's REPORTED record beside empty meters ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/run-up1", {
+      status: 200,
+      body: trialFixture({
+        id: "run-up1",
+        status: "SCORED",
+        reward: 1,
+        // The platform-metered facts stay empty for an upload: the meter
+        // never saw the run.
+        agent_result: null,
+        usage: null,
+        sandbox_provider: null,
+        upload: {
+          original_trial_id: "orig-t1",
+          original_trial_name: "trial-1",
+          original_task_name: "laude/hello-world",
+          reported_agent_result: {
+            n_input_tokens: 1200,
+            n_cache_tokens: 300,
+            n_output_tokens: 800,
+            cost_usd: 1.25,
+          },
+        },
+      }),
+    });
+    const { io, out } = captureIO();
+    assertEqual(await runCli(["trial", "show", "run-up1", ...AUTH], io), 0, "exit 0");
+    const text = out.join("\n");
+    // Metered spend is honestly absent, and the archive's claim sits beside
+    // it clearly labeled REPORTED — never folded into the platform's rows.
+    assert(out.some((l) => l.includes("spent") && l.trim().endsWith("-")), "metered spend renders '-'");
+    assert(
+      text.includes("reported cost") && text.includes("$1.2500") && text.includes("not platform-metered"),
+      "reported cost row carries the figure and the label"
+    );
+    assert(
+      out.some((l) => l.includes("reported tokens") && l.includes("in 1200") && l.includes("out 800")),
+      "reported tokens row carries the archive's counts"
+    );
+    assert(
+      out.some((l) => l.includes("uploaded from") && l.includes("trial-1") && l.includes("laude/hello-world")),
+      "the provenance identity row names the original trial and full task name"
+    );
+    assert(
+      out.some((l) => l.includes("provider") && l.includes("ported")),
+      "the provider cell renders ported"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testGpuSurfaces() {
   console.log("\n--- runCli: GPU tasks — requirement column, degrade verdicts, trial degrade row ---");
   installMockFetch();
@@ -5506,6 +5561,161 @@ async function testSkillNamePassThroughOnStart() {
 // AUTH
 // =============================================================================
 
+async function testUploadVerb() {
+  console.log("\n--- runCli: evolve upload posts a job directory and renders the created record ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-"));
+  const jobDir = join(dir, "2026-08-27__12-00-00");
+  try {
+    await mkdir(join(jobDir, "trial-1"), { recursive: true });
+    await writeFile(join(jobDir, "result.json"), JSON.stringify({ id: "orig-123" }));
+    await writeFile(join(jobDir, "config.json"), JSON.stringify({ job_name: "2026-08-27__12-00-00" }));
+    await writeFile(join(jobDir, "trial-1", "result.json"), JSON.stringify({ trial_name: "trial-1" }));
+    const uploaded = wireJob({
+      id: "eval-up1",
+      job_name: "2026-08-27__12-00-00",
+      status: "COMPLETED",
+      // Null exactly on an uploaded job: nothing executed here.
+      sandbox_provider: null,
+      trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
+      upload: {
+        original_job_id: "orig-123",
+        original_job_name: "2026-08-27__12-00-00",
+        uploaded_at: "2026-08-28T10:00:00.000Z",
+        reported_totals: {
+          cost_usd: 2.5,
+          n_input_tokens: 2400,
+          n_cache_tokens: 600,
+          n_output_tokens: 1600,
+          n_trials_reporting: 1,
+        },
+      },
+      finished_at: "2026-08-28T10:00:00.000Z",
+    });
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploaded });
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(["upload", jobDir, "-d", "deep-swe@1.1", ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/jobs/upload"), "POSTs /api/jobs/upload");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("dataset"), "deep-swe@1.1", "-d rides as the dataset part");
+    assert(form.get("archive") instanceof Blob, "the packed tree is the archive part");
+
+    const text = out.join("\n");
+    assert(text.includes("eval-up1"), "prints the minted job id");
+    assert(text.includes("COMPLETED"), "prints the terminal status");
+    assert(text.includes("2 trial(s)"), "prints the trial count");
+    assert(
+      text.includes("2026-08-28T10:00:00.000Z") && text.includes("orig-123"),
+      "prints the upload provenance (when + the archive's own identity)"
+    );
+    // The provider cell: the wire is null (nothing executed), and the render
+    // says `ported` — derived from the provenance, never a stored value.
+    assert(
+      out.some((l) => l.includes("provider") && l.includes("ported")),
+      "the provider cell renders ported for an ingested record"
+    );
+    // THE RULED MONEY SLOT: the spent row itself carries the archive's
+    // aggregated REPORTED figure, labeled, with the completeness count —
+    // never blended with metered spend, which is null for uploads.
+    assert(
+      out.some(
+        (l) =>
+          l.includes("spent") &&
+          l.includes("reported $2.50") &&
+          l.includes("(1/2 trials reporting)")
+      ),
+      "the spent slot renders `reported $X.XX (N/M trials reporting)`"
+    );
+    assert(
+      out.some((l) => l.includes("reported tokens") && l.includes("in 2400") && l.includes("out 1600")),
+      "the reported-tokens row carries the archive's counts"
+    );
+
+    // The list's SPENT cell follows the same law, compactly labeled.
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [uploaded], nextCursor: null, hasMore: false },
+    });
+    const list = captureIO();
+    assertEqual(await runCli(["job", "list", ...AUTH], list.io), 0, "job list exits 0");
+    assert(
+      list.out.some((l) => l.includes("eval-up1") && l.includes("reported $2.50")),
+      "the SPENT cell renders the reported figure with the label"
+    );
+    assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadVerbJsonAndGate() {
+  console.log("\n--- runCli: evolve upload --json, the dir gate, and usage errors ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-gate-"));
+  const jobDir = join(dir, "job");
+  try {
+    await mkdir(jobDir, { recursive: true });
+
+    // The dir gate refuses client-side with Harbor's own sentence — exit 1,
+    // nothing uploaded.
+    const gate = captureIO();
+    assertEqual(await runCli(["upload", jobDir, ...AUTH], gate.io), 1, "a non-job dir exits 1");
+    assertEqual(
+      gate.err[0],
+      `Error: ${jobDir} does not contain result.json`,
+      "Harbor's refusal sentence, verbatim"
+    );
+    assertEqual(fetchCalls.length, 0, "nothing is uploaded for a refused directory");
+
+    // --json prints the created job as one document.
+    await writeFile(join(jobDir, "result.json"), "{}");
+    await writeFile(join(jobDir, "config.json"), "{}");
+    const uploaded = wireJob({
+      id: "eval-up2",
+      status: "COMPLETED",
+      upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+    });
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploaded });
+    const json = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--json", ...AUTH], json.io), 0, "--json exits 0");
+    const doc = JSON.parse(json.out[0]);
+    assertEqual(doc.id, "eval-up2", "--json prints the job document");
+    assertEqual(doc.upload.uploaded_at, "2026-08-28T10:00:00.000Z", "--json carries the provenance");
+
+    // A typed refusal renders like every other API error, and --json wraps it.
+    setMockResponse("/api/jobs/upload", {
+      status: 400,
+      body: { error: { code: "not_a_job_dir", message: "Archive holds no result.json at its root" } },
+    });
+    const refused = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--json", ...AUTH], refused.io), 1, "a typed refusal exits 1");
+    assertEqual(
+      JSON.parse(refused.out[0]).error.code,
+      "not_a_job_dir",
+      "--json error envelope carries the server's code"
+    );
+    assert(refused.err[0].includes("no result.json"), "stderr carries the server's sentence");
+
+    // Usage: the positional is required; help documents the top-level verb.
+    const usage = captureIO();
+    assertEqual(await runCli(["upload", ...AUTH], usage.io), 2, "no positional is a usage error");
+    const help = captureIO();
+    assertEqual(await runCli(["upload", "--help"], help.io), 0, "upload --help exits 0");
+    assert(help.out.join("\n").includes("Usage: evolve upload <job_dir>"), "help documents evolve upload");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function testAuthStatus() {
   console.log("\n--- runCli: auth status identifies the caller ---");
   installMockFetch();
@@ -5924,6 +6134,7 @@ async function main() {
   await testCompareCancelDownload();
   await testJobDownloadUnpackGuards();
   await testTrialShow();
+  await testTrialShowUploaded();
   await testGpuSurfaces();
   await testTrialDownloadStream();
   await testTrialDownloadTrajectoryRefused();
@@ -5944,6 +6155,8 @@ async function main() {
   await testSkillListShowDelete();
   await testSkillDeleteInUseVerbatim();
   await testSkillNamePassThroughOnStart();
+  await testUploadVerb();
+  await testUploadVerbJsonAndGate();
   await testAuthStatus();
   await testSecretsVerbs();
 

@@ -3,10 +3,10 @@
  * evolve — the CLI for Evolve hosted datasets & jobs.
  *
  * Noun-verb grammar over the hosted client: `evolve <noun> <verb>`, plus
- * first-class top-level commands that need no noun — today that is `run`,
- * which takes `job start`'s flags and is spelled, helped and dispatched as a
- * command in its own right (Harbor registers their `run` the same way, as the
- * `job start` function bound at the top level: cli/main.py:164). Singular
+ * first-class top-level commands that need no noun — `run` (which takes
+ * `job start`'s flags), `analyze`, and `upload`, each spelled, helped and
+ * dispatched as a command in its own right (Harbor registers all three the
+ * same way, as top-level commands: their cli/main.py). Singular
  * nouns are canonical; `job`/`trial`/`dataset`/`skill` also answer to their
  * plurals as hidden aliases, but `agents` does NOT — that word is reserved for
  * the managed-agents CLI and refuses with the reason. The CLI speaks ONLY
@@ -875,6 +875,28 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     maxPositionals: 1,
     positionalUsage: "<job-id>",
     example: "evolve analyze cme12ab34 -r rubric.toml",
+  },
+  // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
+  // cli/main.py); ours is a deliberate subset — no --public/--share-org/
+  // --share-user/--org (no sharing surface yet; the flags adopt Harbor's exact
+  // names when Teams lands) and no --concurrency (their protocol uploads
+  // per-trial in parallel; ours is ONE archive POST, so the flag would have
+  // nothing real to do).
+  upload: {
+    summary:
+      "Upload a Harbor job directory (or its .tar.gz) as a terminal job — Harbor's upload, in reverse",
+    flags: {
+      dataset: {
+        kind: "string",
+        short: "d",
+        value: "<name[@version]>",
+        help: "Link the uploaded trials to a published dataset version by task name",
+      },
+    },
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<job_dir>",
+    example: "evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1",
   },
 };
 
@@ -2360,6 +2382,25 @@ function fmtSpend(spend: SpendStatement): string {
 }
 
 /**
+ * THE UPLOADED JOB'S MONEY SLOT — the ruled render: an ingested record's
+ * spent cell carries the archive's aggregated REPORTED figure, spelled
+ * `reported $X.XX`, with `(N/M trials reporting)` where the detail view has
+ * room — clearly labeled, never blended with metered spend, which is null
+ * for uploads by law (the meter never saw the run). Null when the job is not
+ * an upload (the metered lane rules the slot then); "-" when the archive
+ * reported no cost — nothing is invented.
+ */
+function reportedSpent(e: Job, withCount: boolean): string | null {
+  if (!e.upload) return null;
+  const totals = e.upload.reported_totals;
+  if (!totals || totals.cost_usd === null) return "-";
+  const count = withCount
+    ? ` (${totals.n_trials_reporting}/${e.n_total_trials} trials reporting)`
+    : "";
+  return `reported ${fmtUsd(totals.cost_usd)}${count}`;
+}
+
+/**
  * The token half of a usage reading, one row wide. Null when the reading
  * carries no token counts at all (money may land first) — the caller then
  * prints nothing rather than a row of dashes. The provisional marker rides
@@ -2573,12 +2614,21 @@ function jobLines(e: Job): string[] {
       ]);
     }
   }
-  rows.push(["provider", e.sandbox_provider]);
+  // The provider cell: a real provider, or — for an ingested record — the
+  // word `ported`, RENDERED from the upload provenance, never a stored
+  // value: the wire's sandbox_provider is null there because nothing
+  // executed, and the closed provider vocabulary gains no fake member.
+  rows.push(["provider", e.upload ? "ported" : (e.sandbox_provider ?? "-")]);
   // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
   // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
   // _usd comes out LOWER than what was really spent"). A freshly finished job
-  // is normally in that state for its first few minutes.
-  rows.push(["spent", fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials))]);
+  // is normally in that state for its first few minutes. For an ingested
+  // record the slot carries the archive's REPORTED figure instead — see
+  // reportedSpent.
+  rows.push([
+    "spent",
+    reportedSpent(e, true) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+  ]);
   // GPU compute is a SEPARATE labeled estimate (lane 5) — never summed into
   // the spent row above, and absent entirely for a job with no GPU trials.
   if (e.stats.gpu_cost_usd != null) {
@@ -2604,6 +2654,20 @@ function jobLines(e: Job): string[] {
       "spent (judge)",
       fmtSpend(jobSpend(e.stats.judge_cost_usd, judgeUnmeasured)),
     ]);
+  }
+  // The token half of the archive's claim, beside the reported spent slot
+  // above — REPORTED like it, never the platform's counters (those stay
+  // null for an upload).
+  if (e.upload?.reported_totals) {
+    const totals = e.upload.reported_totals;
+    const reportedTokens = [
+      totals.n_input_tokens !== null ? `in ${totals.n_input_tokens}` : null,
+      totals.n_cache_tokens !== null ? `cache ${totals.n_cache_tokens}` : null,
+      totals.n_output_tokens !== null ? `out ${totals.n_output_tokens}` : null,
+    ].filter((part): part is string => part !== null);
+    if (reportedTokens.length > 0) {
+      rows.push(["reported tokens", reportedTokens.join(" · ")]);
+    }
   }
   // The trace-analysis aggregate, only when the job has ever been analyzed —
   // null means never, and absence of analysis is stated as absence, not a
@@ -2636,6 +2700,15 @@ function jobLines(e: Job): string[] {
           : "resume of",
       source.job_id,
     ]);
+  }
+  // Upload provenance, beside the derived-job rows it is the sibling of: when
+  // this job is an ingested record, say when — and what the archive's own
+  // record files called themselves, when they said anything.
+  if (e.upload) {
+    const origin = [e.upload.original_job_name, e.upload.original_job_id]
+      .filter((part): part is string => part !== null)
+      .join(" · ");
+    rows.push(["uploaded", `${e.upload.uploaded_at}${origin ? ` — originally ${origin}` : ""}`]);
   }
   if (e.idempotent_replay) rows.push(["note", "idempotent replay of an existing job"]);
   if (e.failure) rows.push(["failure", `${e.failure.code}: ${e.failure.message}`]);
@@ -2674,7 +2747,10 @@ const JOB_COLUMNS: ListColumn<Job>[] = [
   {
     key: "spent",
     header: "SPENT",
-    cell: (e) => fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+    // One law with the detail row: an uploaded job's cell carries the
+    // archive's REPORTED figure, labeled; a native job the metered lane.
+    cell: (e) =>
+      reportedSpent(e, false) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
   },
   { key: "started", header: "STARTED", cell: (e) => e.started_at },
 ];
@@ -2853,8 +2929,40 @@ export function trialDetailLines(run: Trial): string[] {
     const tokens = fmtUsageTokens(run.usage);
     if (tokens) rows.push(["tokens", tokens]);
   }
+  // THE UPLOADED TRIAL'S OWN RECORD, labeled REPORTED and kept visually
+  // apart from the metered rows above: those stay empty for an upload —
+  // this platform's meter never saw the run — while these are the archive's
+  // own claim, served for the reader and never folded into any total.
+  if (run.upload) {
+    const reported = run.upload.reported_agent_result;
+    if (reported && reported.cost_usd !== null) {
+      rows.push([
+        "reported cost",
+        `$${reported.cost_usd.toFixed(4)} (the original run's own record — not platform-metered)`,
+      ]);
+    }
+    const reportedTokens = reported
+      ? [
+          reported.n_input_tokens !== null ? `in ${reported.n_input_tokens}` : null,
+          reported.n_cache_tokens !== null ? `cache ${reported.n_cache_tokens}` : null,
+          reported.n_output_tokens !== null ? `out ${reported.n_output_tokens}` : null,
+        ].filter((part): part is string => part !== null)
+      : [];
+    if (reportedTokens.length > 0) {
+      rows.push(["reported tokens", reportedTokens.join(" · ")]);
+    }
+    rows.push([
+      "uploaded from",
+      `${run.upload.original_trial_name} · task ${run.upload.original_task_name}` +
+        (run.upload.original_trial_id ? ` · ${run.upload.original_trial_id}` : ""),
+    ]);
+  }
   if (run.attempt_phase) rows.push(["phase", run.attempt_phase]);
-  if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);
+  // Same render law as the job's provider cell: an uploaded trial executed
+  // on no platform sandbox (the wire field is null), and `ported` is the
+  // word for that — derived from provenance, never stored.
+  if (run.upload) rows.push(["provider", "ported"]);
+  else if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);
   // The GPU degrade, when one happened: where the job asked to run vs where
   // the boxes actually ran, with the refusing provider's own reason.
   if (run.sandbox_provider_degrade) {
@@ -3789,6 +3897,28 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   }
 }
 
+/**
+ * `evolve upload <job_dir>` — Harbor's top-level upload verb, in reverse: the
+ * SDK validates the directory gate (their sentences), packs, and POSTs; this
+ * handler only renders the created record. The next step for an uploaded job
+ * is analysis — it is already terminal, so there is nothing to watch.
+ */
+async function cmdUpload(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const dataset = inv.flags.dataset as string | undefined;
+  const created = await client.upload(inv.positionals[0], {
+    ...(dataset !== undefined ? { dataset } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(created));
+    return 0;
+  }
+  for (const line of jobLines(created)) io.out(line);
+  io.out("");
+  io.out(`Analyze it with: evolve analyze ${created.id}`);
+  return 0;
+}
+
 async function cmdTrialShow(inv: Invocation, io: CliIO): Promise<number> {
   const client = trials(clientConfig(inv));
   const run = await client.get(inv.positionals[0]);
@@ -4704,6 +4834,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   // same handler — so neither can drift into a second implementation.
   run: cmdJobStart,
   analyze: cmdAnalyze,
+  upload: cmdUpload,
   "job start": cmdJobStart,
   "job list": cmdJobList,
   "job show": cmdJobShow,

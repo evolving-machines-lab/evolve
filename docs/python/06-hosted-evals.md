@@ -737,9 +737,47 @@ The record files are Harbor's own vocabulary, and everything Evolve-specific rid
 
 ---
 
+## Upload a job
+
+The download's inverse, and Harbor's `harbor upload` in reverse: `upload()` takes the job directory their CLI takes — `result.json` and `config.json` at the root, one subdirectory per trial — and ingests it as a first-class **terminal** job, private to you (Harbor's own default: "on new uploads, private"). A directory a real `harbor run` produced, or one `evolve job download` unpacked, uploads as-is; so does the un-unpacked `.tar.gz` itself:
+
+```bash
+harbor run --dataset terminal-bench@2.0 --agent claude-code ...   # a local run
+evolve upload jobs/2026-08-27__12-00-00 -d terminal-bench@2.0     # → a terminal job here
+evolve analyze <new-id>                                            # works on it unchanged
+```
+
+```python
+async with jobs() as evals:
+    uploaded = await evals.upload(
+        './jobs/2026-08-27__12-00-00',
+        dataset='terminal-bench@2.0',           # optional: link trials to a published version
+    )
+    print(uploaded.status)                      # 'COMPLETED' — a record, on arrival
+    print(uploaded.upload.original_job_id)      # what the archive's own files called it
+
+    await evals.analyze(uploaded.id)            # the reason to upload at all
+```
+
+What lands is the trials' **verbatim facts**, never a re-judgment: a rewarded trial arrives `SCORED` with its rewards untouched, a trial whose result carries no rewards arrives `INDETERMINATE` (a missing verdict is stated as missing, never scored 0), and an errored trial keeps its exception. When present, `agent/trajectory.json`, `agent/stdout.log`, `agent/stderr.log`, `verifier/test-stdout.txt` and `verifier/reward.txt` are stored byte-for-byte in the same slots native trials use — `agent/sessions/` (the harness's native session home; hub archives carry the claude session transcripts there) lands in the stored agent-home slot, and the hub's CLI-output file (`agent/claude-code.txt` and per-harness siblings) fills the stdout slot when `agent/stdout.log` is absent — so the [trial artifact surfaces](#trial-artifacts--the-raw-record) and the analyzer read them with no special casing. Trace events are derived at ingest, raw-first through the platform's own per-harness parsers when the transcript format is recognized, else from the trajectory document, so the trace surfaces serve uploaded trials natively. Agent identity is stored as display labels — harnesses this platform does not run included: an uploaded job is a record, not execution config.
+
+`dataset='name'` or `'name@version'` links the uploaded trials to a published dataset version by task name — matched trials analyze against the real task content; unmatched or unhinted trials analyze through the analyzer's task-not-available branch, exactly Harbor's fallback for a trial without a local task directory. A registry-qualified task name (Harbor's `org/name` form — what hub-downloaded jobs carry) matches and keys by its **leaf**, Harbor's own precedent; the full qualified form stays verbatim in the trial's provenance.
+
+The response is the ordinary Job shape with one extra field: `upload` carries the provenance echo (`original_job_id` and `original_job_name` — what the archive's own record files said about themselves, each `None` when they said nothing — plus `uploaded_at`). It is `None` on every job this platform executed. An uploaded job is a **record, not a run**: resume, retry and regrade refuse it (`job_uploaded`, 409); analyze works on it unchanged.
+
+**Execution honesty**, stated wherever the record could be mistaken for a run. An uploaded job's `sandbox_provider` is `None` at both the job and trial level — the record executed on no platform sandbox, and the closed provider vocabulary gains no fake member for it; sandbox ids are absent for the same reason. The CLI renders that provider cell as `ported` — a word derived from the upload provenance, never a stored value. Each trial carries its own provenance echo, `trial.upload`: the archive's own trial id and name, the task name verbatim, and `reported_agent_result` — the uploader's own token and cost figures, labeled REPORTED and served for the reader. They never populate the platform-metered fields (`agent_result`, `usage`, `spend_source`), which stay `None` because this platform's meter never saw the run — `trial show` keeps the reported rows visually apart from the metered ones. The job aggregates the same claims once at ingest as `upload.reported_totals` (each total `None` when no trial reported it — a zero would be a claim — with `n_trials_reporting` as the partial-reporting honesty count), and `stats['cost_usd']` and the token stats stay `None` the same way; `job show` renders that figure in the spent slot itself as `reported $X.XX (N/M trials reporting)`, and `job list`'s SPENT cell shows the compact `reported $X.XX` — labeled in both, never blended with metered spend. Analysis you run on an uploaded job still meters normally: the analyzer's spend stays its own metered line, exactly as on a native job.
+
+The SDK applies Harbor's directory gate client-side with their own sentences (`… does not contain result.json` / `config.json`) before packing anything, and the server holds the same line as `not_a_job_dir`. The caps are published on the [capability document](#what-the-platform-supports) under `limits['uploads']`: `job_archive_bytes` (the compressed cap, `upload_too_large` past it), `job_trials` (`job_too_large`), and `job_trial_file_bytes` (per stored trial file, `invalid_trial` — which also names a trial whose `result.json` fails Harbor's TrialResult shape).
+
+Re-uploading an archive whose job you already uploaded is **refused typed** (`job_already_uploaded`, 409): the duplicate is detected by you plus the archive result.json's own job id, and the refusal's `details` name your existing job. Where Harbor's re-upload updates the same hub row, our trial rows carry analyses and analysis history that silent replacement would destroy — Harbor's hub rows have no such children — so the platform refuses instead of updating in place (recorded deviation). A different user uploading the same archive gets their own private copy, and an archive whose result.json states no id is undetectable and uploads fresh. Replacing a job outright awaits the job-delete verb, which is not on the surface yet.
+
+A deliberate **subset** of Harbor's verb, each gap recorded with its reason. No `--public`/`--private` and no `--share-org`/`--share-user`/`--org`: there is no public-job or sharing surface here yet — uploads are private, and the flags adopt Harbor's exact names when Teams lands. No `--concurrency`: Harbor's flag parallelizes per-trial uploads because their protocol uploads trial by trial; ours is one archive POST, so the flag would have nothing real to do. Per-trial `lock.json` is not required or ingested, and `artifacts/`, `steps/` content, other `agent/` files that map to no native slot, and any prior `analysis.json` are not ingested in v1 — a prior analysis is never imported, matching the analyzer's own never-read-your-own-analysis exclusion.
+
+---
+
 ## CLI
 
-The SDK's TypeScript package ships the `evolve` binary — a thin shell over the same five clients this chapter documents, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. Two commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`, and `analyze`, the [trace-analysis verb](#analyze). Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
+The SDK's TypeScript package ships the `evolve` binary — a thin shell over the same five clients this chapter documents, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. Three commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint — it prints the created record and the analyze hint, since an uploaded job is already terminal). Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
 job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download | grep
@@ -822,6 +860,8 @@ evolve job grep <id> 'out of memory'       # every trial's trace, one pass
 
 evolve analyze <id>                        # trace analysis, Harbor's defaults; follows the wave
 evolve analyze <id> -m claude-haiku-4-5-20251001 -r rubric.toml
+
+evolve upload jobs/2026-08-27__12-00-00 -d deep-swe@1.1   # ingest a Harbor job dir as a terminal job
 
 evolve trial show <trial-id>
 evolve trial trace <trial-id> --grep 'permission denied' --tail 50
@@ -916,7 +956,7 @@ for agent in doc.agents:
 - **`managed_providers`** — the managed sandbox doors this deployment serves; a different question from the eval lane. Each entry's `agent_sessions` says whether the door carries a full SDK agent session; all three doors do today, Modal included — the Modal door serves commands *and* the file quartet, proven end to end — so a `false` there with a "no filesystem operations" reason is a stale value, not a capability statement. §Managed Sandboxes in the configuration chapter is the authoritative description of what each door serves.
 - **`network_modes`** — the three modes a task may declare ([What runs](#what-runs)).
 - **`statuses`** — the job, trial, import, and dataset-version vocabularies, each with its `terminal` members marked. A watcher stops on `terminal`; a status bar renders `values` without hardcoding the enum.
-- **`limits`** — `limits['job']` carries every create-time bound (`max_agents`, `max_n_attempts`, `max_trials`, `n_concurrent_trials` default and ceiling, `default_max_trial_spend_usd`, `default_sandbox_provider`, `default_sizing`, `model_required`, the effort vocabulary, and the phase wall-clocks a task inherits when its own config declares none — `default_agent_timeout_sec` 3600, `default_verifier_timeout_sec` 600; a task that declares its own always wins — and the timeout-multiplier pair, `default_timeout_multiplier` 1.0 with `max_timeout_multiplier` as the create-time ceiling). `compare` bounds the compare fan-out; `pagination` publishes a `default`/`max` pair per collection scope; `uploads` holds the two archive size caps; `dataset_names` the name pattern and length bounds; and `max_items_named_in_error_message` is how many offending items a refusal names in its English sentence before "and N more" — which is why `details` exists.
+- **`limits`** — `limits['job']` carries every create-time bound (`max_agents`, `max_n_attempts`, `max_trials`, `n_concurrent_trials` default and ceiling, `default_max_trial_spend_usd`, `default_sandbox_provider`, `default_sizing`, `model_required`, the effort vocabulary, and the phase wall-clocks a task inherits when its own config declares none — `default_agent_timeout_sec` 3600, `default_verifier_timeout_sec` 600; a task that declares its own always wins — and the timeout-multiplier pair, `default_timeout_multiplier` 1.0 with `max_timeout_multiplier` as the create-time ceiling). `compare` bounds the compare fan-out; `pagination` publishes a `default`/`max` pair per collection scope; `uploads` holds every upload cap — the dataset-corpus, agent-tarball and skill archive sizes, the per-user skill-record ceiling, and the [job upload](#upload-a-job)'s three (`job_archive_bytes`, `job_trials`, `job_trial_file_bytes`); `dataset_names` the name pattern and length bounds; and `max_items_named_in_error_message` is how many offending items a refusal names in its English sentence before "and N more" — which is why `details` exists.
 - **`error_codes`** — the whole vocabulary from [Error codes](#error-codes), in one array. **`import_warning_codes`** beside it lists the warnings an import can carry.
 
 `schema_version` moves when a field is added, removed, or changes meaning — never when a value changes. Pin behavior to it, not to a deploy date. Responses carry an `ETag` and `Cache-Control: public, max-age=300, stale-while-revalidate=300`; send the ETag back as `If-None-Match` and a matching document answers `304` with no body.
@@ -1741,7 +1781,7 @@ class Job:                          # ONE shape from every call
     verifier_timeout_multiplier: Optional[float]
     agent_setup_timeout_multiplier: Optional[float]
     environment_build_timeout_multiplier: Optional[float]
-    sandbox_provider: EvalSandboxProvider
+    sandbox_provider: Optional[EvalSandboxProvider]  # None exactly on an uploaded job — nothing executed
     counts: JobCounts               # agents + tasks — entity cardinality only
     n_total_trials: int
     trials: TrialTally              # total + zeros-included by_status histogram
@@ -1749,10 +1789,26 @@ class Job:                          # ONE shape from every call
     failure: Optional[JobFailure]   # never the key `error`
     source_jobs: List[SourceJob]    # provenance of a derived job; empty on originals
     is_regrade: bool
+    upload: Optional[UploadProvenance]  # None on every job this platform executed
     idempotent_replay: bool
     started_at: str
     updated_at: str
     finished_at: Optional[str]      # None while live
+
+@dataclass
+class UploadProvenance:             # Job.upload — the ingest's provenance echo
+    original_job_id: Optional[str]  # the archive result.json's own id; None = it stated none
+    original_job_name: Optional[str]  # the archive config.json's own job_name
+    uploaded_at: str
+    reported_totals: Optional[ReportedTotals]  # the trials' REPORTED figures summed at ingest — never metered
+
+@dataclass
+class ReportedTotals:               # each total None when no trial reported it (a zero would be a claim)
+    cost_usd: Optional[float]
+    n_input_tokens: Optional[int]
+    n_cache_tokens: Optional[int]
+    n_output_tokens: Optional[int]
+    n_trials_reporting: int         # against n_total_trials — the partial-reporting honesty count
 
 class JobStats(TypedDict, total=False):   # the wire dict itself, keys typed; every key optional
     # Cumulative, Harbor-style: errored is a subset of completed, cancelled a
@@ -1886,8 +1942,23 @@ class Trial:                        # list rows and detail, one shape
     n_retries: int                                # auto-retries consumed; 0 = never retried
     retries: List[TrialRetry]                     # retired attempts, oldest first; [] = never retried
     session_ref: Optional[str]
+    upload: Optional[TrialUploadProvenance]       # None on every trial this platform executed
     started_at: Optional[str]
     finished_at: Optional[str]
+
+@dataclass
+class TrialUploadProvenance:        # trial.upload — the archive's own record of THIS trial
+    original_trial_id: Optional[str]   # the archive trial result.json's own id
+    original_trial_name: str           # the trial directory the archive carried
+    original_task_name: str            # VERBATIM, possibly org/name; task_name serves the leaf
+    reported_agent_result: Optional[ReportedAgentResult]
+
+@dataclass
+class ReportedAgentResult:          # the uploader's OWN figures — REPORTED, never platform-metered
+    n_input_tokens: Optional[int]
+    n_cache_tokens: Optional[int]
+    n_output_tokens: Optional[int]
+    cost_usd: Optional[float]
 
 @dataclass
 class TrialRetry:                   # one retired attempt — the receipts a retry keeps
@@ -2024,6 +2095,8 @@ The shape an error arrives in is described once, under [Errors](#errors); this i
 Codes you will actually branch on: `dataset_not_found` (also what another account's private dataset reads as), `dataset_version_not_found`, `dataset_name_taken` (409 — the name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `version_not_activatable`, `unknown_task_names`, `no_tasks` (the selectors filtered every task away), `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_trials`, `trial_not_found`, `agent_version_not_found`, `insufficient_credits` (402 — add credits and retry), `job_too_large` (400 — the trial matrix exceeds the published ceiling; the message states the count it would have created), `rate_limited` (retry after `retry_after_sec`), `invalid_api_key`, and `invalid_input` (which is also what the per-arm and per-attempt ceilings refuse with).
 
 [Regrades](#regrade) add `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why) and `no_regradable_trials` (409 — a whole-job regrade found nothing eligible). [Analyze](#analyze) adds `invalid_rubric` (400 — unknown keys named, empty or duplicate criteria, a criterion missing a field, or bounds exceeded), `analysis_already_running` (409 — one wave at a time; retry once the running wave settles), and `no_analyzable_trials` (409 — every trial `CANCELLED`). [Stopping](#stopping-work) adds `invalid_ids` (400 — a stop batch that is empty or over the 100-id cap).
+
+[Uploading a job](#upload-a-job) adds `not_a_job_dir` (400 — the archive is not a Harbor job directory: no `result.json`/`config.json` at its root, or they do not parse), `invalid_trial` (422 — one trial directory cannot be ingested; the refusal names the trial and the reason), `upload_too_large` (413 — the archive over its byte cap; distinct from `import_too_large`, which belongs to dataset corpora), `job_uploaded` (409 — resume, retry or regrade on an uploaded job, which is a record of a run that happened elsewhere; analyze is deliberately not among the refusers), and `job_already_uploaded` (409 — you already uploaded this archive's job, detected by the archive result.json's own id; `details` name the existing job).
 
 [Registered agents](#bring-your-own-agent) add their own: `agent_not_found` (also what another owner's name reads as), `agent_name_taken`, `agent_name_reserved` (the name collides with a built-in), `agent_source_required` (neither an install script nor a tarball), `agent_source_conflict` (both), `agent_invalid_env` (declared env tries to override a run-contract key), `agent_invalid_name`, `agent_too_large`, and `agent_limit_reached` (the per-account ceiling).
 

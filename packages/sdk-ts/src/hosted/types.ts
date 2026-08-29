@@ -910,6 +910,40 @@ export function passAtK(job: Job): PassAtKGroup[] {
 }
 
 /**
+ * Provenance of an UPLOADED job (`jobs().upload()`) — what the archive's own
+ * record files said about themselves: the job id its result.json carried and
+ * the job_name its config.json carried (each null when the file did not state
+ * one — never fabricated), plus when the platform ingested it. The
+ * platform-minted row ids replace the archive's ids everywhere else on the
+ * surface; these fields are where the originals remain readable. Null on
+ * every job this platform executed; non-null marks a terminal RECORD — resume,
+ * retry and regrade refuse it (`job_uploaded`), analyze works on it unchanged.
+ */
+export interface UploadProvenance {
+  original_job_id: string | null;
+  original_job_name: string | null;
+  uploaded_at: string;
+  /**
+   * The job-level sum of the trials' `upload.reported_agent_result` figures
+   * — the uploader's own claims aggregated once at ingest, REPORTED like
+   * their per-trial parts and never entering the platform-metered fields
+   * (`stats.cost_usd` and the token stats stay null for an uploaded job).
+   * Each total sums the trials that reported that field and is null when
+   * none did (a zero would be a claim); `n_trials_reporting` counts the
+   * trials that carried any reported figure, against the job's
+   * `n_total_trials` — the honesty note for a partially reporting archive.
+   * Null only on jobs ingested before this field existed.
+   */
+  reported_totals: {
+    cost_usd: number | null;
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    n_trials_reporting: number;
+  } | null;
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -990,7 +1024,13 @@ export interface Job {
   verifier_timeout_multiplier: number | null;
   agent_setup_timeout_multiplier: number | null;
   environment_build_timeout_multiplier: number | null;
-  sandbox_provider: EvalSandboxProvider;
+  /**
+   * Where this job's trials execute. Null exactly on an UPLOADED job
+   * (`upload` non-null): an ingested record never executed on any platform
+   * sandbox, and naming a provider would be an execution claim. Never null
+   * on a job this platform ran.
+   */
+  sandbox_provider: EvalSandboxProvider | null;
   /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
   /**
@@ -1015,6 +1055,11 @@ export interface Job {
   source_jobs: SourceJob[];
   /** Derived: any source_jobs entry with action "regrade". */
   is_regrade: boolean;
+  /**
+   * The upload provenance echo — null for every job this platform executed,
+   * non-null only on a job ingested by jobs().upload(). See UploadProvenance.
+   */
+  upload: UploadProvenance | null;
   /** True only on a response that replayed an existing job for an Idempotency-Key. */
   idempotent_replay: boolean;
   started_at: string;
@@ -1393,8 +1438,48 @@ export interface Trial {
   retries: TrialRetry[];
   /** Reference to the agent session/trace, when recorded. */
   session_ref: string | null;
+  /**
+   * Provenance of an UPLOADED trial (its job's `upload` is non-null): the
+   * identity and reported figures the archive's own record files carried.
+   * Null for every trial this platform executed. An uploaded trial keeps
+   * its execution facts (`sandbox_provider`, `agent_result`, `usage`,
+   * `spend_source`) null forever — this platform's meter never saw the run;
+   * the archive's own figures live under `upload.reported_agent_result` and
+   * nowhere else.
+   */
+  upload: TrialUploadProvenance | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+/**
+ * What the uploaded archive said about THIS trial: its own ids, the full
+ * task name verbatim, and the uploader's own usage figures. REPORTED means
+ * exactly that — `reported_agent_result` is the archive's claim, served for
+ * the reader; it never populates the platform-metered fields
+ * (`agent_result`, `usage`, `spend_source`), which stay null because this
+ * platform's meter never saw the run.
+ */
+export interface TrialUploadProvenance {
+  /** The archive trial result.json's own `id`; null when it stated none. */
+  original_trial_id: string | null;
+  /** The archive's own `trial_name` (the trial directory). */
+  original_trial_name: string;
+  /**
+   * The archive's task name VERBATIM — possibly registry-qualified
+   * (`org/name`); the trial's `task_name` serves the parsed leaf.
+   */
+  original_task_name: string;
+  /**
+   * The uploaded `agent_result`'s own token and cost figures, or null when
+   * the archive carried none. Uploader-reported, never platform-measured.
+   */
+  reported_agent_result: {
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    cost_usd: number | null;
+  } | null;
 }
 
 /**
@@ -2480,6 +2565,19 @@ export interface DownloadJobOptions {
   stream?: boolean;
 }
 
+/** Options for jobs().upload() */
+export interface UploadJobOptions {
+  /**
+   * "name" or "name@version" of a published dataset — links the uploaded
+   * trials to that version's tasks by task name (a bare name resolves to the
+   * active version). Matched trials analyze against the real task content;
+   * unmatched or unhinted trials analyze through the task-not-available
+   * branch, exactly Harbor's fallback for a trial without a local task
+   * directory.
+   */
+  dataset?: string;
+}
+
 // =============================================================================
 // CLIENTS
 // =============================================================================
@@ -2812,6 +2910,29 @@ export interface JobsClient {
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
   /**
+   * Upload a Harbor job directory as a first-class TERMINAL job — Harbor's
+   * `harbor upload` in reverse, taking their CLI's own input (a `job_dir`
+   * with result.json + config.json at its root, one subdirectory per trial;
+   * the same gate applies here, client-side, with their refusal sentences).
+   * `dirOrArchive` is that directory — packed into a gzipped tar with the
+   * same deterministic packer every upload route here uses — or a
+   * ready-packed `.tar.gz` of one, uploaded byte-for-byte: the platform's own
+   * download() produces exactly this format, so a downloaded job re-uploads
+   * as-is, and any real `harbor run` job dir works the same way.
+   *
+   * Trial facts land verbatim: rewards are never re-scored, a trial without a
+   * verdict lands INDETERMINATE, exceptions are carried, and the trajectory /
+   * raw streams / verifier log / reward.txt are stored byte-for-byte in the
+   * native trial slots. THE RESPONSE IS THE JOB — COMPLETED on creation, with
+   * `upload` carrying the provenance echo. It is a record, not a run: resume,
+   * retry and regrade refuse it (`job_uploaded`); analyze() works on it
+   * unchanged. `{ dataset }` links the uploaded trials to a published dataset
+   * version by task name. The caps live on `GET /api/meta` under
+   * `limits.uploads` (`job_archive_bytes`, `job_trials`,
+   * `job_trial_file_bytes`).
+   */
+  upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job>;
+  /**
    * Grep the parsed trace of EVERY trial of the job in one server-side pass.
    * `q` is the trace filter's grammar: a case-insensitive POSIX regex over
    * each event's type and serialized content, where a plain string is a
@@ -3044,6 +3165,24 @@ export const HOSTED_ERROR_CODES = [
   "invalid_rubric",
   "analysis_already_running",
   "no_analyzable_trials",
+  // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
+  // directory (no result.json / config.json at its root, or they do not
+  // parse); one trial directory that cannot be ingested (the refusal names
+  // the trial and the reason, 422); the archive over the byte cap (413,
+  // distinct from import_too_large — that one belongs to dataset corpora);
+  // and a run-lifecycle verb (resume / retry / regrade) on an UPLOADED job —
+  // a terminal record of a run that happened elsewhere, never runnable here
+  // (409; analyze is deliberately not among the refusers).
+  "not_a_job_dir",
+  "invalid_trial",
+  "upload_too_large",
+  "job_uploaded",
+  // Re-uploading an archive whose job this caller already uploaded (409),
+  // detected by (uploading user, the archive result.json's own job id);
+  // details name the existing job. Deliberately NOT Harbor's update-in-place:
+  // our trial rows carry analyses and analysis history — silently replacing
+  // trials would destroy them; Harbor's hub rows have no such children.
+  "job_already_uploaded",
   "import_not_found",
   "import_too_large",
   "invalid_archive",
@@ -3281,6 +3420,12 @@ export interface CapabilityDocument {
       skill_archive_bytes: number;
       /** Uploaded-skill records one caller may hold (`skill_limit_reached` past it). */
       skill_uploads_per_user: number;
+      /** Compressed cap on one uploaded job archive (`upload_too_large` past it). */
+      job_archive_bytes: number;
+      /** Most trials one uploaded job archive may carry (`job_too_large` past it). */
+      job_trials: number;
+      /** Per-file cap on the trial artifacts an upload stores (`invalid_trial` past it). */
+      job_trial_file_bytes: number;
     };
     dataset_names: {
       pattern: string;

@@ -523,6 +523,9 @@ export {
   type WatchImportOptions,
   type DownloadJobOptions,
   type DownloadDatasetOptions,
+  type UploadJobOptions,
+  type UploadProvenance,
+  type TrialUploadProvenance,
   // Remote inspection: job-wide grep, the per-trial file tree, and the
   // client-side Harbor-tree assembly behind trial/job download.
   assembleTrialTree,
