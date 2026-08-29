@@ -2878,6 +2878,7 @@ class TestJobs:
             original_job_id='orig-123',
             original_job_name='2026-08-27__12-00-00',
             uploaded_at='2026-08-28T10:00:00.000Z',
+            reported_totals=None,
         )
 
     @pytest.mark.asyncio

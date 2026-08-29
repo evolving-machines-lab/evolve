@@ -4178,6 +4178,61 @@ async function testTrialShow() {
   }
 }
 
+async function testTrialShowUploaded() {
+  console.log("\n--- runCli: trial show renders an uploaded trial's REPORTED record beside empty meters ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/run-up1", {
+      status: 200,
+      body: trialFixture({
+        id: "run-up1",
+        status: "SCORED",
+        reward: 1,
+        // The platform-metered facts stay empty for an upload: the meter
+        // never saw the run.
+        agent_result: null,
+        usage: null,
+        sandbox_provider: null,
+        upload: {
+          original_trial_id: "orig-t1",
+          original_trial_name: "trial-1",
+          original_task_name: "laude/hello-world",
+          reported_agent_result: {
+            n_input_tokens: 1200,
+            n_cache_tokens: 300,
+            n_output_tokens: 800,
+            cost_usd: 1.25,
+          },
+        },
+      }),
+    });
+    const { io, out } = captureIO();
+    assertEqual(await runCli(["trial", "show", "run-up1", ...AUTH], io), 0, "exit 0");
+    const text = out.join("\n");
+    // Metered spend is honestly absent, and the archive's claim sits beside
+    // it clearly labeled REPORTED — never folded into the platform's rows.
+    assert(out.some((l) => l.includes("spent") && l.trim().endsWith("-")), "metered spend renders '-'");
+    assert(
+      text.includes("reported cost") && text.includes("$1.2500") && text.includes("not platform-metered"),
+      "reported cost row carries the figure and the label"
+    );
+    assert(
+      out.some((l) => l.includes("reported tokens") && l.includes("in 1200") && l.includes("out 800")),
+      "reported tokens row carries the archive's counts"
+    );
+    assert(
+      out.some((l) => l.includes("uploaded from") && l.includes("trial-1") && l.includes("laude/hello-world")),
+      "the provenance identity row names the original trial and full task name"
+    );
+    assert(
+      out.some((l) => l.includes("provider") && l.includes("ported")),
+      "the provider cell renders ported"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testGpuSurfaces() {
   console.log("\n--- runCli: GPU tasks — requirement column, degrade verdicts, trial degrade row ---");
   installMockFetch();
@@ -5520,11 +5575,20 @@ async function testUploadVerb() {
       id: "eval-up1",
       job_name: "2026-08-27__12-00-00",
       status: "COMPLETED",
+      // Null exactly on an uploaded job: nothing executed here.
+      sandbox_provider: null,
       trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
       upload: {
         original_job_id: "orig-123",
         original_job_name: "2026-08-27__12-00-00",
         uploaded_at: "2026-08-28T10:00:00.000Z",
+        reported_totals: {
+          cost_usd: 2.5,
+          n_input_tokens: 2400,
+          n_cache_tokens: 600,
+          n_output_tokens: 1600,
+          n_trials_reporting: 1,
+        },
       },
       finished_at: "2026-08-28T10:00:00.000Z",
     });
@@ -5550,6 +5614,28 @@ async function testUploadVerb() {
     assert(
       text.includes("2026-08-28T10:00:00.000Z") && text.includes("orig-123"),
       "prints the upload provenance (when + the archive's own identity)"
+    );
+    // The provider cell: the wire is null (nothing executed), and the render
+    // says `ported` — derived from the provenance, never a stored value.
+    assert(
+      out.some((l) => l.includes("provider") && l.includes("ported")),
+      "the provider cell renders ported for an ingested record"
+    );
+    // The aggregated REPORTED totals, labeled and carrying the honesty count
+    // when only some trials reported.
+    assert(
+      out.some(
+        (l) =>
+          l.includes("reported cost") &&
+          l.includes("$2.5000") &&
+          l.includes("not platform-metered") &&
+          l.includes("1 of 2 trials reporting")
+      ),
+      "the reported-cost row carries the figure, the label, and the partial-reporting count"
+    );
+    assert(
+      out.some((l) => l.includes("reported tokens") && l.includes("in 2400") && l.includes("out 1600")),
+      "the reported-tokens row carries the archive's counts"
     );
     assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
   } finally {
@@ -6036,6 +6122,7 @@ async function main() {
   await testCompareCancelDownload();
   await testJobDownloadUnpackGuards();
   await testTrialShow();
+  await testTrialShowUploaded();
   await testGpuSurfaces();
   await testTrialDownloadStream();
   await testTrialDownloadTrajectoryRefused();

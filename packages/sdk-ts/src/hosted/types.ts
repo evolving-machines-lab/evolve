@@ -923,6 +923,24 @@ export interface UploadProvenance {
   original_job_id: string | null;
   original_job_name: string | null;
   uploaded_at: string;
+  /**
+   * The job-level sum of the trials' `upload.reported_agent_result` figures
+   * — the uploader's own claims aggregated once at ingest, REPORTED like
+   * their per-trial parts and never entering the platform-metered fields
+   * (`stats.cost_usd` and the token stats stay null for an uploaded job).
+   * Each total sums the trials that reported that field and is null when
+   * none did (a zero would be a claim); `n_trials_reporting` counts the
+   * trials that carried any reported figure, against the job's
+   * `n_total_trials` — the honesty note for a partially reporting archive.
+   * Null only on jobs ingested before this field existed.
+   */
+  reported_totals: {
+    cost_usd: number | null;
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    n_trials_reporting: number;
+  } | null;
 }
 
 /**
@@ -1006,7 +1024,13 @@ export interface Job {
   verifier_timeout_multiplier: number | null;
   agent_setup_timeout_multiplier: number | null;
   environment_build_timeout_multiplier: number | null;
-  sandbox_provider: EvalSandboxProvider;
+  /**
+   * Where this job's trials execute. Null exactly on an UPLOADED job
+   * (`upload` non-null): an ingested record never executed on any platform
+   * sandbox, and naming a provider would be an execution claim. Never null
+   * on a job this platform ran.
+   */
+  sandbox_provider: EvalSandboxProvider | null;
   /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
   /**
@@ -1414,8 +1438,48 @@ export interface Trial {
   retries: TrialRetry[];
   /** Reference to the agent session/trace, when recorded. */
   session_ref: string | null;
+  /**
+   * Provenance of an UPLOADED trial (its job's `upload` is non-null): the
+   * identity and reported figures the archive's own record files carried.
+   * Null for every trial this platform executed. An uploaded trial keeps
+   * its execution facts (`sandbox_provider`, `agent_result`, `usage`,
+   * `spend_source`) null forever — this platform's meter never saw the run;
+   * the archive's own figures live under `upload.reported_agent_result` and
+   * nowhere else.
+   */
+  upload: TrialUploadProvenance | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+/**
+ * What the uploaded archive said about THIS trial: its own ids, the full
+ * task name verbatim, and the uploader's own usage figures. REPORTED means
+ * exactly that — `reported_agent_result` is the archive's claim, served for
+ * the reader; it never populates the platform-metered fields
+ * (`agent_result`, `usage`, `spend_source`), which stay null because this
+ * platform's meter never saw the run.
+ */
+export interface TrialUploadProvenance {
+  /** The archive trial result.json's own `id`; null when it stated none. */
+  original_trial_id: string | null;
+  /** The archive's own `trial_name` (the trial directory). */
+  original_trial_name: string;
+  /**
+   * The archive's task name VERBATIM — possibly registry-qualified
+   * (`org/name`); the trial's `task_name` serves the parsed leaf.
+   */
+  original_task_name: string;
+  /**
+   * The uploaded `agent_result`'s own token and cost figures, or null when
+   * the archive carried none. Uploader-reported, never platform-measured.
+   */
+  reported_agent_result: {
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    cost_usd: number | null;
+  } | null;
 }
 
 /**

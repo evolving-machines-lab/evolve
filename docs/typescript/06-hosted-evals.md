@@ -774,17 +774,19 @@ console.log(uploaded.upload?.original_job_id);  // what the archive's own files 
 await evals.analyze(uploaded.id);               // the reason to upload at all
 ```
 
-What lands is the trials' **verbatim facts**, never a re-judgment: a rewarded trial arrives `SCORED` with its rewards untouched, a trial whose result carries no rewards arrives `INDETERMINATE` (a missing verdict is stated as missing, never scored 0), and an errored trial keeps its exception. When present, `agent/trajectory.json`, `agent/stdout.log`, `agent/stderr.log`, `verifier/test-stdout.txt` and `verifier/reward.txt` are stored byte-for-byte in the same slots native trials use, so the [trial artifact surfaces](#trial-artifacts--the-raw-record) and the analyzer read them with no special casing. Agent identity is stored as display labels — harnesses this platform does not run included: an uploaded job is a record, not execution config.
+What lands is the trials' **verbatim facts**, never a re-judgment: a rewarded trial arrives `SCORED` with its rewards untouched, a trial whose result carries no rewards arrives `INDETERMINATE` (a missing verdict is stated as missing, never scored 0), and an errored trial keeps its exception. When present, `agent/trajectory.json`, `agent/stdout.log`, `agent/stderr.log`, `verifier/test-stdout.txt` and `verifier/reward.txt` are stored byte-for-byte in the same slots native trials use — `agent/sessions/` (the harness's native session home; hub archives carry the claude session transcripts there) lands in the stored agent-home slot, and the hub's CLI-output file (`agent/claude-code.txt` and per-harness siblings) fills the stdout slot when `agent/stdout.log` is absent — so the [trial artifact surfaces](#trial-artifacts--the-raw-record) and the analyzer read them with no special casing. Trace events are derived at ingest, raw-first through the platform's own per-harness parsers when the transcript format is recognized, else from the trajectory document, so the trace surfaces serve uploaded trials natively. Agent identity is stored as display labels — harnesses this platform does not run included: an uploaded job is a record, not execution config.
 
-`{ dataset: "name" }` or `"name@version"` links the uploaded trials to a published dataset version by task name — matched trials analyze against the real task content; unmatched or unhinted trials analyze through the analyzer's task-not-available branch, exactly Harbor's fallback for a trial without a local task directory.
+`{ dataset: "name" }` or `"name@version"` links the uploaded trials to a published dataset version by task name — matched trials analyze against the real task content; unmatched or unhinted trials analyze through the analyzer's task-not-available branch, exactly Harbor's fallback for a trial without a local task directory. A registry-qualified task name (Harbor's `org/name` form — what hub-downloaded jobs carry) matches and keys by its **leaf**, Harbor's own precedent; the full qualified form stays verbatim in the trial's provenance.
 
 The response is the ordinary Job shape with one extra field: `upload` carries the provenance echo (`original_job_id` and `original_job_name` — what the archive's own record files said about themselves, each null when they said nothing — plus `uploaded_at`). It is null on every job this platform executed. An uploaded job is a **record, not a run**: resume, retry and regrade refuse it (`job_uploaded`, 409); analyze works on it unchanged.
+
+**Execution honesty**, stated wherever the record could be mistaken for a run. An uploaded job's `sandbox_provider` is null at both the job and trial level — the record executed on no platform sandbox, and the closed provider vocabulary gains no fake member for it; sandbox ids are absent for the same reason. The CLI renders that provider cell as `ported` — a word derived from the upload provenance, never a stored value. Each trial carries its own provenance echo, `trial.upload`: the archive's own trial id and name, the task name verbatim, and `reported_agent_result` — the uploader's own token and cost figures, labeled REPORTED and served for the reader. They never populate the platform-metered fields (`agent_result`, `usage`, `spend_source`), which stay null because this platform's meter never saw the run — `trial show` keeps the reported rows visually apart from the metered ones. The job aggregates the same claims once at ingest as `upload.reported_totals` (each total null when no trial reported it — a zero would be a claim — with `n_trials_reporting` as the partial-reporting honesty count), and `stats.cost_usd` and the token stats stay null the same way. Analysis you run on an uploaded job still meters normally: the analyzer's spend stays its own metered line, exactly as on a native job.
 
 The SDK applies Harbor's directory gate client-side with their own sentences (`… does not contain result.json` / `config.json`) before packing anything, and the server holds the same line as `not_a_job_dir`. The caps are published on the [capability document](#what-the-platform-supports) under `limits.uploads`: `job_archive_bytes` (the compressed cap, `upload_too_large` past it), `job_trials` (`job_too_large`), and `job_trial_file_bytes` (per stored trial file, `invalid_trial` — which also names a trial whose `result.json` fails Harbor's TrialResult shape).
 
 Re-uploading an archive whose job you already uploaded is **refused typed** (`job_already_uploaded`, 409): the duplicate is detected by you plus the archive result.json's own job id, and the refusal's `details` name your existing job. Where Harbor's re-upload updates the same hub row, our trial rows carry analyses and analysis history that silent replacement would destroy — Harbor's hub rows have no such children — so the platform refuses instead of updating in place (recorded deviation). A different user uploading the same archive gets their own private copy, and an archive whose result.json states no id is undetectable and uploads fresh. Replacing a job outright awaits the job-delete verb, which is not on the surface yet.
 
-A deliberate **subset** of Harbor's verb, each gap recorded with its reason. No `--public`/`--private` and no `--share-org`/`--share-user`/`--org`: there is no public-job or sharing surface here yet — uploads are private, and the flags adopt Harbor's exact names when Teams lands. No `--concurrency`: Harbor's flag parallelizes per-trial uploads because their protocol uploads trial by trial; ours is one archive POST, so the flag would have nothing real to do. Per-trial `lock.json` is not required or ingested, and `artifacts/`, `agent/sessions/`, `steps/` content and any prior `analysis.json` are not ingested in v1 — a prior analysis is never imported, matching the analyzer's own never-read-your-own-analysis exclusion.
+A deliberate **subset** of Harbor's verb, each gap recorded with its reason. No `--public`/`--private` and no `--share-org`/`--share-user`/`--org`: there is no public-job or sharing surface here yet — uploads are private, and the flags adopt Harbor's exact names when Teams lands. No `--concurrency`: Harbor's flag parallelizes per-trial uploads because their protocol uploads trial by trial; ours is one archive POST, so the flag would have nothing real to do. Per-trial `lock.json` is not required or ingested, and `artifacts/`, `steps/` content, other `agent/` files that map to no native slot, and any prior `analysis.json` are not ingested in v1 — a prior analysis is never imported, matching the analyzer's own never-read-your-own-analysis exclusion.
 
 ---
 
@@ -1828,7 +1830,7 @@ interface Job {                          // ONE shape from every call
     verifier_timeout_multiplier: number | null;
     agent_setup_timeout_multiplier: number | null;
     environment_build_timeout_multiplier: number | null;
-    sandbox_provider: EvalSandboxProvider;
+    sandbox_provider: EvalSandboxProvider | null;  // null exactly on an uploaded job — nothing executed
     counts: { agents: number; tasks: number };   // entity cardinality only
     n_total_trials: number;
     trials: { total: number; byStatus: Record<TrialStatus, number> };  // zeros included
@@ -1847,6 +1849,13 @@ interface UploadProvenance {             // Job.upload — the ingest's provenan
     original_job_id: string | null;      // the archive result.json's own id; null = it stated none
     original_job_name: string | null;    // the archive config.json's own job_name
     uploaded_at: string;
+    reported_totals: {                   // the trials' REPORTED figures summed at ingest — never metered
+        cost_usd: number | null;         // each total null when no trial reported it (a zero would be a claim)
+        n_input_tokens: number | null;
+        n_cache_tokens: number | null;
+        n_output_tokens: number | null;
+        n_trials_reporting: number;      // against n_total_trials — the partial-reporting honesty count
+    } | null;
 }
 
 interface JobStats {
@@ -1963,8 +1972,21 @@ interface Trial {                        // list rows and detail, one shape
     n_retries: number;                   // auto-retries consumed; 0 = never retried
     retries: TrialRetry[];               // retired attempts, oldest first; [] = never retried
     session_ref: string | null;
+    upload: TrialUploadProvenance | null;  // null on every trial this platform executed
     started_at: string | null;
     finished_at: string | null;
+}
+
+interface TrialUploadProvenance {        // trial.upload — the archive's own record of THIS trial
+    original_trial_id: string | null;    // the archive trial result.json's own id
+    original_trial_name: string;         // the trial directory the archive carried
+    original_task_name: string;          // VERBATIM, possibly org/name; task_name serves the leaf
+    reported_agent_result: {             // the uploader's OWN figures — REPORTED, never platform-metered
+        n_input_tokens: number | null;
+        n_cache_tokens: number | null;
+        n_output_tokens: number | null;
+        cost_usd: number | null;
+    } | null;
 }
 
 interface StepResult {                   // one step of a multi-step trial — see What runs

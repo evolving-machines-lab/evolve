@@ -2595,7 +2595,11 @@ function jobLines(e: Job): string[] {
       ]);
     }
   }
-  rows.push(["provider", e.sandbox_provider]);
+  // The provider cell: a real provider, or — for an ingested record — the
+  // word `ported`, RENDERED from the upload provenance, never a stored
+  // value: the wire's sandbox_provider is null there because nothing
+  // executed, and the closed provider vocabulary gains no fake member.
+  rows.push(["provider", e.upload ? "ported" : (e.sandbox_provider ?? "-")]);
   // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
   // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
   // _usd comes out LOWER than what was really spent"). A freshly finished job
@@ -2626,6 +2630,31 @@ function jobLines(e: Job): string[] {
       "spent (judge)",
       fmtSpend(jobSpend(e.stats.judge_cost_usd, judgeUnmeasured)),
     ]);
+  }
+  // THE UPLOADED JOB'S OWN RECORD, labeled REPORTED like its per-trial
+  // parts: the archive's aggregated claim, never this platform's meter —
+  // the metered rows above stay empty for an upload — with the honesty
+  // count when only some trials reported.
+  if (e.upload?.reported_totals) {
+    const totals = e.upload.reported_totals;
+    const partial =
+      totals.n_trials_reporting < e.n_total_trials
+        ? `; ${totals.n_trials_reporting} of ${e.n_total_trials} trials reporting`
+        : "";
+    if (totals.cost_usd !== null) {
+      rows.push([
+        "reported cost",
+        `$${totals.cost_usd.toFixed(4)} (the original run's own record — not platform-metered${partial})`,
+      ]);
+    }
+    const reportedTokens = [
+      totals.n_input_tokens !== null ? `in ${totals.n_input_tokens}` : null,
+      totals.n_cache_tokens !== null ? `cache ${totals.n_cache_tokens}` : null,
+      totals.n_output_tokens !== null ? `out ${totals.n_output_tokens}` : null,
+    ].filter((part): part is string => part !== null);
+    if (reportedTokens.length > 0) {
+      rows.push(["reported tokens", reportedTokens.join(" · ")]);
+    }
   }
   // The trace-analysis aggregate, only when the job has ever been analyzed —
   // null means never, and absence of analysis is stated as absence, not a
@@ -2884,8 +2913,40 @@ export function trialDetailLines(run: Trial): string[] {
     const tokens = fmtUsageTokens(run.usage);
     if (tokens) rows.push(["tokens", tokens]);
   }
+  // THE UPLOADED TRIAL'S OWN RECORD, labeled REPORTED and kept visually
+  // apart from the metered rows above: those stay empty for an upload —
+  // this platform's meter never saw the run — while these are the archive's
+  // own claim, served for the reader and never folded into any total.
+  if (run.upload) {
+    const reported = run.upload.reported_agent_result;
+    if (reported && reported.cost_usd !== null) {
+      rows.push([
+        "reported cost",
+        `$${reported.cost_usd.toFixed(4)} (the original run's own record — not platform-metered)`,
+      ]);
+    }
+    const reportedTokens = reported
+      ? [
+          reported.n_input_tokens !== null ? `in ${reported.n_input_tokens}` : null,
+          reported.n_cache_tokens !== null ? `cache ${reported.n_cache_tokens}` : null,
+          reported.n_output_tokens !== null ? `out ${reported.n_output_tokens}` : null,
+        ].filter((part): part is string => part !== null)
+      : [];
+    if (reportedTokens.length > 0) {
+      rows.push(["reported tokens", reportedTokens.join(" · ")]);
+    }
+    rows.push([
+      "uploaded from",
+      `${run.upload.original_trial_name} · task ${run.upload.original_task_name}` +
+        (run.upload.original_trial_id ? ` · ${run.upload.original_trial_id}` : ""),
+    ]);
+  }
   if (run.attempt_phase) rows.push(["phase", run.attempt_phase]);
-  if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);
+  // Same render law as the job's provider cell: an uploaded trial executed
+  // on no platform sandbox (the wire field is null), and `ported` is the
+  // word for that — derived from provenance, never stored.
+  if (run.upload) rows.push(["provider", "ported"]);
+  else if (run.sandbox_provider) rows.push(["provider", run.sandbox_provider]);
   // The GPU degrade, when one happened: where the job asked to run vs where
   // the boxes actually ran, with the refusing provider's own reason.
   if (run.sandbox_provider_degrade) {

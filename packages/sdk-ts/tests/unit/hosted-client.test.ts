@@ -3249,6 +3249,13 @@ function uploadedJobBody(overrides?: Record<string, unknown>): Record<string, un
       original_job_id: "orig-123",
       original_job_name: "2026-08-27__12-00-00",
       uploaded_at: "2026-08-28T10:00:00.000Z",
+      reported_totals: {
+        cost_usd: 2.5,
+        n_input_tokens: 2400,
+        n_cache_tokens: 600,
+        n_output_tokens: 1600,
+        n_trials_reporting: 2,
+      },
     },
     started_at: "2026-08-28T10:00:00.000Z",
     updated_at: "2026-08-28T10:00:00.000Z",
@@ -3298,8 +3305,15 @@ async function testUploadJobDirectory() {
         original_job_id: "orig-123",
         original_job_name: "2026-08-27__12-00-00",
         uploaded_at: "2026-08-28T10:00:00.000Z",
+        reported_totals: {
+          cost_usd: 2.5,
+          n_input_tokens: 2400,
+          n_cache_tokens: 600,
+          n_output_tokens: 1600,
+          n_trials_reporting: 2,
+        },
       },
-      "the provenance echo rides Job.upload"
+      "the provenance echo rides Job.upload, aggregated REPORTED totals included"
     );
   } finally {
     restoreFetch();
@@ -3466,7 +3480,13 @@ async function testUploadProvenanceMappingEdges() {
     const anon = await e.get("eval-anon");
     assertEqual(
       anon.upload,
-      { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      {
+        original_job_id: null,
+        original_job_name: null,
+        uploaded_at: "2026-08-28T10:00:00.000Z",
+        // Absent totals (a pre-field ingest) read null, never invented.
+        reported_totals: null,
+      },
       "null originals pass through as null"
     );
 
@@ -3481,8 +3501,119 @@ async function testUploadProvenanceMappingEdges() {
     const typed = await e.get("eval-typed");
     assertEqual(
       typed.upload,
-      { original_job_id: "orig-123", original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      {
+        original_job_id: "orig-123",
+        original_job_name: null,
+        uploaded_at: "2026-08-28T10:00:00.000Z",
+        reported_totals: null,
+      },
       "a non-string original_job_name reads null while the rest maps"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testUploadExecutionHonesty() {
+  console.log("\n--- uploaded jobs and trials: null provider, trial provenance + REPORTED figures ---");
+  installMockFetch();
+  try {
+    // Job level: sandbox_provider is null exactly on an uploaded job — the
+    // record executed on no platform sandbox.
+    setMockResponse("/api/jobs/eval-up1", {
+      status: 200,
+      body: uploadedJobBody({ sandbox_provider: null }),
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const job = await e.get("eval-up1");
+    assertEqual(job.sandbox_provider, null, "an uploaded job's provider maps null");
+    assert(job.upload !== null, "…beside its non-null upload provenance");
+
+    // Trial level: the provenance echo with the archive's REPORTED figures.
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+    setMockResponse("/api/trials/run-up1", {
+      status: 200,
+      body: {
+        id: "run-up1",
+        job_id: "eval-up1",
+        task_name: "hello-world",
+        status: "SCORED",
+        sandbox_provider: null,
+        upload: {
+          original_trial_id: "orig-t1",
+          original_trial_name: "trial-1",
+          original_task_name: "laude/hello-world",
+          reported_agent_result: {
+            n_input_tokens: 1200,
+            n_cache_tokens: 300,
+            n_output_tokens: 800,
+            cost_usd: 1.25,
+          },
+        },
+      },
+    });
+    const run = await t.get("run-up1");
+    assertEqual(
+      run.upload,
+      {
+        original_trial_id: "orig-t1",
+        original_trial_name: "trial-1",
+        original_task_name: "laude/hello-world",
+        reported_agent_result: {
+          n_input_tokens: 1200,
+          n_cache_tokens: 300,
+          n_output_tokens: 800,
+          cost_usd: 1.25,
+        },
+      },
+      "the trial provenance echo maps verbatim, reported figures included"
+    );
+    // The claim never leaks into the platform-metered fields beside it.
+    assertEqual(run.agent_result, null, "agent_result stays null — the meter never saw the run");
+    assertEqual(run.usage, null, "usage stays null");
+    assertEqual(run.sandbox_provider, null, "trial provider stays null");
+
+    // Defensive edges: absent → null; an echo missing a required name → null;
+    // malformed reported figures read null each rather than crashing.
+    setMockResponse("/api/trials/run-native", {
+      status: 200,
+      body: { id: "run-native", job_id: "eval-1", task_name: "t", status: "SCORED" },
+    });
+    assertEqual((await t.get("run-native")).upload, null, "a native trial reads null");
+    setMockResponse("/api/trials/run-half", {
+      status: 200,
+      body: {
+        id: "run-half",
+        job_id: "eval-up1",
+        task_name: "t",
+        status: "SCORED",
+        upload: { original_trial_name: "trial-1" },
+      },
+    });
+    assertEqual(
+      (await t.get("run-half")).upload,
+      null,
+      "an echo missing original_task_name reads null whole"
+    );
+    setMockResponse("/api/trials/run-odd", {
+      status: 200,
+      body: {
+        id: "run-odd",
+        job_id: "eval-up1",
+        task_name: "t",
+        status: "SCORED",
+        upload: {
+          original_trial_id: null,
+          original_trial_name: "trial-1",
+          original_task_name: "hello-world",
+          reported_agent_result: { n_input_tokens: "many", cost_usd: "9.99" },
+        },
+      },
+    });
+    assertEqual(
+      (await t.get("run-odd")).upload?.reported_agent_result,
+      { n_input_tokens: null, n_cache_tokens: null, n_output_tokens: null, cost_usd: null },
+      "non-number reported figures each read the honest null"
     );
   } finally {
     restoreFetch();
@@ -5192,6 +5323,7 @@ async function main() {
   await testUploadJobArchivePassthrough();
   await testUploadJobDeterministicPack();
   await testUploadProvenanceMappingEdges();
+  await testUploadExecutionHonesty();
   await testUploadJobTypedErrors();
   await testDownloadPackageBuffer();
   await testDownloadPackageToFile();
