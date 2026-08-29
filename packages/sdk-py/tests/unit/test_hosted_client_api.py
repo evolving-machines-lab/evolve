@@ -2376,7 +2376,10 @@ class TestJobs:
     async def test_trial_analysis_mapping(self):
         """``Trial.analysis`` maps through as the wire's own dict on analyzed
         trials — None on a never-analyzed trial and on a malformed value,
-        never a fabricated empty object (the gpu_cost posture)."""
+        never a fabricated empty object (the gpu_cost posture). Its one
+        normalized key is ``usage``, which goes through the shared
+        UsageReading rule exactly as ``Trial.usage`` does — absent reads
+        None, "the meter never answered"."""
         record = {
             'id': 'an-1',
             'status': 'completed',
@@ -2409,7 +2412,7 @@ class TestJobs:
             page = await jobs_factory(CONFIG).trials('job-1')
 
         analyzed, bare, bad = page.items
-        assert analyzed.analysis == record
+        assert analyzed.analysis == {**record, 'usage': None}
         # The analyzer's spend is its OWN line — the trial's model spend keeps
         # its own number beside it.
         assert analyzed.agent_result.cost_usd == 0.93

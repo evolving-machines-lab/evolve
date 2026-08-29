@@ -2078,6 +2078,7 @@ interface TrialAnalysis {                // Trial.analysis — Harbor's AnalyzeR
     summary: string | null;              // 3–5 sentences; null until completed
     checks: Record<string, AnalysisCheck> | null;   // keys exactly the rubric's criterion names
     estimated_cost_usd: number | null;   // the analyzer's OWN spend — never in the trial's bill
+    usage?: UsageReading | null;         // the one-home reading — ticks while it runs, provisional; settled figures stay estimated_cost_usd
     failure: { phase: string; message: string } | null;  // non-null exactly when failed
     created_at: string;
     finished_at: string | null;

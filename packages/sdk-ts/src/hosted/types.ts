@@ -1223,6 +1223,16 @@ export interface TrialAnalysis {
    */
   checks: Record<string, AnalysisCheck> | null;
   estimated_cost_usd: number | null;
+  /**
+   * The analyzer's one-home usage reading — the SAME object, same keys, the
+   * trial and session surfaces serve, built from the analyzer's OWN gateway
+   * records. Present and ticking while the analysis runs — a mid-run reading
+   * is a lagging LOWER BOUND, always `provisional: true` — and settled by
+   * the same read that writes `estimated_cost_usd`, which stays Harbor's
+   * word for the FINAL figure. Null = the meter never answered, never zero.
+   * Absent on servers predating the field.
+   */
+  usage?: UsageReading | null;
   /** Non-null exactly when status is `failed`. */
   failure: AnalysisFailure | null;
   /** When this analysis was enqueued. */
