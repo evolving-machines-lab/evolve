@@ -854,7 +854,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help:
-          "Model the analyzer agent runs (default: claude-haiku-4-5, Harbor's own; " +
+          "Model the analyzer agent runs (default: glm-5.3-flash; glm-5.3 to escalate; " +
           "must be on the claude roster, GET /api/meta)",
       },
       rubric: {

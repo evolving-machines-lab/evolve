@@ -1196,15 +1196,20 @@ class AnalyzeConfigInput(TypedDict, total=False):
     PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
     it arms the embedded trigger (each trial is analyzed server-side right
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
-    means "all defaults" — claude-haiku-4-5 over Harbor's default rubric
+    means "all defaults" — glm-5.3-flash over Harbor's default rubric
     (reward_hacking, task_specification). The analyzer always runs the
     claude-code harness in its own sealed sandbox; its spend is capped per
     analysis and metered as its own line, never blended into the trial's own
     bill.
     """
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
-    #: Harbor's own (claude-haiku-4-5) under its wire id on this platform's
-    #: claude roster. Off-roster models are refused typed (``invalid_input``).
+    #: glm-5.3-flash on this platform's claude roster (a recorded deviation
+    #: from Harbor's claude-haiku-4-5 default — analysis is input-dominated,
+    #: and flash is the input-price frontier; name glm-5.3 to escalate).
+    #: Same vocabulary as ``agents[].model_name``: either advertised
+    #: spelling is accepted and stored as given (the default is the roster
+    #: alias); stored analyses serve the spelling they were created under.
+    #: Off-roster models are refused typed (``invalid_input``).
     model_name: str
     rubric: Rubric
 
@@ -4542,7 +4547,7 @@ class JobsClient:
         trigger (Harbor's ``harbor analyze`` vocabulary, the spec's
         AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
         server-side right after it settles (CANCELLED trials are skipped),
-        ``{}`` means "all defaults" (claude-haiku-4-5, Harbor's default
+        ``{}`` means "all defaults" (glm-5.3-flash, Harbor's default
         rubric), and the response echoes the RESOLVED policy as
         ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
         analysis runs and :meth:`analyze` remains the manual door. The five
@@ -5123,7 +5128,7 @@ class JobsClient:
         :meth:`watch_analysis`, or poll the job's trials. This is also the
         RE-analysis path: calling again (same job, different rubric or
         model) runs a fresh wave once the previous one has settled. Both
-        arguments omitted means the defaults: claude-haiku-4-5 over Harbor's
+        arguments omitted means the defaults: glm-5.3-flash over Harbor's
         default rubric (reward_hacking, task_specification). CANCELLED
         trials are never analyzed.
 

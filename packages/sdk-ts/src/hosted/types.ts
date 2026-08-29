@@ -462,7 +462,7 @@ export interface Rubric {
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
- * wave. `{}` is legal and means "all defaults": claude-haiku-4-5 over
+ * wave. `{}` is legal and means "all defaults": glm-5.3-flash over
  * Harbor's default rubric (reward_hacking, task_specification — their
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
@@ -474,10 +474,17 @@ export interface Rubric {
 export interface AnalyzeConfigInput {
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * Harbor's own default model (cli/analyze.py `claude-haiku-4-5`) under its
-   * wire id on this platform's claude roster. Must be on that roster
-   * (`GET /api/meta`, `harnesses[].models`, either spelling); anything else
-   * is refused at accept (`invalid_input`, roster in the message).
+   * glm-5.3-flash on this platform's claude roster — a recorded deviation
+   * from Harbor's default analyze model (their cli/analyze.py
+   * `claude-haiku-4-5`): analysis is input-dominated, and flash is the
+   * input-price frontier; name `glm-5.3` (or any roster member) to
+   * escalate. The value speaks the same vocabulary as
+   * `agents[].model_name`: either advertised spelling is accepted and
+   * stored AS GIVEN (the default is the roster alias), the wire id is
+   * resolved only when the analyzer runs, and every stored analysis serves
+   * the spelling it was created under. Must be on the claude roster
+   * (`GET /api/meta`, `harnesses[].models`); anything else is refused at
+   * accept (`invalid_input`, roster in the message).
    */
   model_name?: string;
   rubric?: Rubric;
@@ -2764,7 +2771,7 @@ export interface JobsClient {
    * with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
-   * (or `{}`) means the defaults: claude-haiku-4-5 over Harbor's default
+   * (or `{}`) means the defaults: glm-5.3-flash over Harbor's default
    * rubric. CANCELLED trials are never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;

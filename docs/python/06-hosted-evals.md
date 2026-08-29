@@ -640,8 +640,8 @@ The verifier always re-runs `separate`, under the verifier [network policy](#net
 Harbor's `harbor analyze`, hosted: rubric-driven trace analysis of a finished job's trials. For each trial an analyzer agent (claude-code, Harbor's default analyze agent, in its own sealed sandbox) reads the trial's recorded tree — the trajectory, the logs, the original task — and rules every criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written explanation and a 3–5 sentence summary of what happened. Use it to catch reward hacking, to audit whether task instructions were sufficient, or to run any read-the-evidence question over a whole job at once:
 
 ```python
-# Analyze a terminal job under Harbor's defaults
-# (claude-haiku-4-5; rubric: reward_hacking, task_specification)
+# Analyze a terminal job under the defaults
+# (glm-5.3-flash; rubric: reward_hacking, task_specification)
 await evals.analyze(job.id)                        # 202 — THE RESPONSE IS THE JOB
 settled = await evals.watch_analysis(job.id)       # poll until the wave settles
 
@@ -665,7 +665,7 @@ A custom model or rubric is Harbor's own pair of knobs:
 ```python
 await evals.analyze(
     job.id,
-    model_name='claude-haiku-4-5-20251001',  # must be on the claude roster (meta())
+    model_name='glm-5.3',                    # must be on the claude roster (meta())
     rubric={
         'criteria': [{
             'name': 'tool_misuse',             # snake_case; keys the result's checks
@@ -686,7 +686,7 @@ sweep = await evals.start(
     agents=[AgentArm(name='codex', model_name='gpt-5.5')],
     analyze={},                         # every settling trial is analyzed, defaults
 )
-print(sweep.analyze)                    # {'model_name': 'claude-haiku-4-5-…', 'rubric': {…}}
+print(sweep.analyze)                    # {'model_name': 'glm-5.3-flash', 'rubric': {…}}
 ```
 
 Calling `analyze()` again — a different rubric, a different model — is the **re-analysis** path: a fresh wave runs once the previous one has settled (one wave at a time; `409 analysis_already_running` meanwhile), and each trial then serves its newest analysis, earlier ones staying stored as the audit record. The whole-job preconditions are typed too: `409 job_not_terminal` on a live job, `409 no_analyzable_trials` when every trial is `CANCELLED` — cancelled trials are never analyzed, embedded or manual.
@@ -820,8 +820,8 @@ evolve job regrade <id> --task task-001
 evolve job download <id> -o results/       # unpacks the job tree to results/job-<id>/
 evolve job grep <id> 'out of memory'       # every trial's trace, one pass
 
-evolve analyze <id>                        # trace analysis, Harbor's defaults; follows the wave
-evolve analyze <id> -m claude-haiku-4-5-20251001 -r rubric.toml
+evolve analyze <id>                        # trace analysis, the defaults; follows the wave
+evolve analyze <id> -m glm-5.3 -r rubric.toml
 
 evolve trial show <trial-id>
 evolve trial trace <trial-id> --grep 'permission denied' --tail 50
@@ -1906,7 +1906,7 @@ class Rubric(TypedDict):
     criteria: List[RubricCriterion]
 
 class AnalyzeConfigInput(TypedDict, total=False):  # analyze() kwargs, and start(analyze=...)
-    model_name: str                 # Harbor's --model; default claude-haiku-4-5
+    model_name: str                 # Harbor's --model; default glm-5.3-flash
     rubric: Rubric                  # Harbor's --rubric; default reward_hacking + task_specification
 
 class AnalyzeConfig(TypedDict):     # the RESOLVED policy, echoed as Job.analyze
