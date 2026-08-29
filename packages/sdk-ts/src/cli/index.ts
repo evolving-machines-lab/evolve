@@ -2382,6 +2382,25 @@ function fmtSpend(spend: SpendStatement): string {
 }
 
 /**
+ * THE UPLOADED JOB'S MONEY SLOT — the ruled render: an ingested record's
+ * spent cell carries the archive's aggregated REPORTED figure, spelled
+ * `reported $X.XX`, with `(N/M trials reporting)` where the detail view has
+ * room — clearly labeled, never blended with metered spend, which is null
+ * for uploads by law (the meter never saw the run). Null when the job is not
+ * an upload (the metered lane rules the slot then); "-" when the archive
+ * reported no cost — nothing is invented.
+ */
+function reportedSpent(e: Job, withCount: boolean): string | null {
+  if (!e.upload) return null;
+  const totals = e.upload.reported_totals;
+  if (!totals || totals.cost_usd === null) return "-";
+  const count = withCount
+    ? ` (${totals.n_trials_reporting}/${e.n_total_trials} trials reporting)`
+    : "";
+  return `reported ${fmtUsd(totals.cost_usd)}${count}`;
+}
+
+/**
  * The token half of a usage reading, one row wide. Null when the reading
  * carries no token counts at all (money may land first) — the caller then
  * prints nothing rather than a row of dashes. The provisional marker rides
@@ -2603,8 +2622,13 @@ function jobLines(e: Job): string[] {
   // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
   // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
   // _usd comes out LOWER than what was really spent"). A freshly finished job
-  // is normally in that state for its first few minutes.
-  rows.push(["spent", fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials))]);
+  // is normally in that state for its first few minutes. For an ingested
+  // record the slot carries the archive's REPORTED figure instead — see
+  // reportedSpent.
+  rows.push([
+    "spent",
+    reportedSpent(e, true) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+  ]);
   // GPU compute is a SEPARATE labeled estimate (lane 5) — never summed into
   // the spent row above, and absent entirely for a job with no GPU trials.
   if (e.stats.gpu_cost_usd != null) {
@@ -2631,22 +2655,11 @@ function jobLines(e: Job): string[] {
       fmtSpend(jobSpend(e.stats.judge_cost_usd, judgeUnmeasured)),
     ]);
   }
-  // THE UPLOADED JOB'S OWN RECORD, labeled REPORTED like its per-trial
-  // parts: the archive's aggregated claim, never this platform's meter —
-  // the metered rows above stay empty for an upload — with the honesty
-  // count when only some trials reported.
+  // The token half of the archive's claim, beside the reported spent slot
+  // above — REPORTED like it, never the platform's counters (those stay
+  // null for an upload).
   if (e.upload?.reported_totals) {
     const totals = e.upload.reported_totals;
-    const partial =
-      totals.n_trials_reporting < e.n_total_trials
-        ? `; ${totals.n_trials_reporting} of ${e.n_total_trials} trials reporting`
-        : "";
-    if (totals.cost_usd !== null) {
-      rows.push([
-        "reported cost",
-        `$${totals.cost_usd.toFixed(4)} (the original run's own record — not platform-metered${partial})`,
-      ]);
-    }
     const reportedTokens = [
       totals.n_input_tokens !== null ? `in ${totals.n_input_tokens}` : null,
       totals.n_cache_tokens !== null ? `cache ${totals.n_cache_tokens}` : null,
@@ -2734,7 +2747,10 @@ const JOB_COLUMNS: ListColumn<Job>[] = [
   {
     key: "spent",
     header: "SPENT",
-    cell: (e) => fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+    // One law with the detail row: an uploaded job's cell carries the
+    // archive's REPORTED figure, labeled; a native job the metered lane.
+    cell: (e) =>
+      reportedSpent(e, false) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
   },
   { key: "started", header: "STARTED", cell: (e) => e.started_at },
 ];

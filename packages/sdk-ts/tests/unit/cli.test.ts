@@ -5621,21 +5621,33 @@ async function testUploadVerb() {
       out.some((l) => l.includes("provider") && l.includes("ported")),
       "the provider cell renders ported for an ingested record"
     );
-    // The aggregated REPORTED totals, labeled and carrying the honesty count
-    // when only some trials reported.
+    // THE RULED MONEY SLOT: the spent row itself carries the archive's
+    // aggregated REPORTED figure, labeled, with the completeness count —
+    // never blended with metered spend, which is null for uploads.
     assert(
       out.some(
         (l) =>
-          l.includes("reported cost") &&
-          l.includes("$2.5000") &&
-          l.includes("not platform-metered") &&
-          l.includes("1 of 2 trials reporting")
+          l.includes("spent") &&
+          l.includes("reported $2.50") &&
+          l.includes("(1/2 trials reporting)")
       ),
-      "the reported-cost row carries the figure, the label, and the partial-reporting count"
+      "the spent slot renders `reported $X.XX (N/M trials reporting)`"
     );
     assert(
       out.some((l) => l.includes("reported tokens") && l.includes("in 2400") && l.includes("out 1600")),
       "the reported-tokens row carries the archive's counts"
+    );
+
+    // The list's SPENT cell follows the same law, compactly labeled.
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [uploaded], nextCursor: null, hasMore: false },
+    });
+    const list = captureIO();
+    assertEqual(await runCli(["job", "list", ...AUTH], list.io), 0, "job list exits 0");
+    assert(
+      list.out.some((l) => l.includes("eval-up1") && l.includes("reported $2.50")),
+      "the SPENT cell renders the reported figure with the label"
     );
     assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
   } finally {
