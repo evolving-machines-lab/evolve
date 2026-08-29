@@ -5163,7 +5163,11 @@ class JobsClient:
         enqueue race after an accepted :meth:`analyze` and is watched
         through, never misread as "never analyzed" — so on a job that was
         NEVER analyzed this polls indefinitely (until ``timeout_s``): call
-        it after :meth:`analyze`, as the CLI always does.
+        it after :meth:`analyze`, as the CLI always does. It is the MANUAL
+        wave's companion, not the embedded trigger's: on a still-RUNNING job
+        created with ``analyze``, ``n_pending`` can touch 0 between trial
+        settles, so the watch can return before every trial has been
+        analyzed.
 
         ``timeout_s`` bounds the whole watch and raises
         :class:`TimeoutError`. A rate limit or transient outage mid-watch is
@@ -5215,11 +5219,16 @@ class JobsClient:
         standard job-directory layout (deterministic bytes).
 
         The archive extracts to ``job-<id>/`` with ``config.json``,
-        ``result.json`` (stats incl. ``pass_at_k``), and per trial its
-        ``config.json``, ``result.json``, ``agent/trajectory.json`` (the
-        normalized ATIF trajectory), ``agent/{stdout,stderr}.log``,
-        ``verifier/test-stdout.txt``, ``verifier/reward.json`` and
-        ``exception.txt`` — absent artifacts are absent files.
+        ``lock.json``, ``result.json`` (stats incl. ``pass_at_k``) and
+        ``job.log``, and per trial its ``config.json``, ``lock.json``,
+        ``result.json`` (``step_results`` on multi-step trials),
+        ``trial.log``, ``agent/trajectory.json`` (the normalized ATIF
+        trajectory), ``agent/{stdout,stderr}.log``, ``agent/sessions/``,
+        ``verifier/test-stdout.txt``, ``verifier/reward.json``, the raw
+        ``verifier/reward.txt`` (only when the grader wrote one),
+        ``steps/<name>/verifier/reward.json`` (multi-step trials only),
+        ``exception.txt``, and ``artifacts/`` with its always-present
+        ``manifest.json`` — absent artifacts are absent files.
 
         Returns the archive bytes — verified against the response's
         Content-Length and, when the server states one, its digest — or, when

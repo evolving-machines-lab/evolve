@@ -2776,7 +2776,10 @@ export interface JobsClient {
    * trials (`Trial.analysis`). A null tally is tolerated and watched
    * through — it is the enqueue race right after an accepted analyze() —
    * so on a job that was NEVER analyzed this polls indefinitely: call it
-   * after analyze(), as the CLI always does.
+   * after analyze(), as the CLI always does. It is the MANUAL wave's
+   * companion, not the embedded trigger's: on a still-RUNNING job created
+   * with `analyze`, `n_pending` can touch 0 between trial settles, so the
+   * watch can return before every trial has been analyzed.
    */
   watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job>;
   /**
@@ -2787,15 +2790,19 @@ export interface JobsClient {
   /**
    * Download a terminal job's results as one .tar.gz in the standard
    * job-directory layout (deterministic bytes): extracts to `job-<id>/` with
-   * config.json, result.json (stats incl. pass_at_k), and per trial its
-   * config.json, result.json, agent/trajectory.json (the normalized ATIF
-   * trajectory), agent/{stdout,stderr}.log, verifier/test-stdout.txt,
-   * verifier/reward.json and exception.txt — absent artifacts are absent
-   * files. Default: Buffer — verified against the response's Content-Length
-   * and, when the server states one, its digest. { to } saves to a directory
-   * (temp-then-rename, same verification) and returns the file path.
-   * { stream: true } returns the raw response stream, the one shape the
-   * caller must verify themselves.
+   * config.json, lock.json, result.json (stats incl. pass_at_k) and job.log,
+   * and per trial its config.json, lock.json, result.json (step_results on
+   * multi-step trials), trial.log, agent/trajectory.json (the normalized
+   * ATIF trajectory), agent/{stdout,stderr}.log, agent/sessions/,
+   * verifier/test-stdout.txt, verifier/reward.json, the raw
+   * verifier/reward.txt (only when the grader wrote one),
+   * steps/<name>/verifier/reward.json (multi-step trials only),
+   * exception.txt, and artifacts/ with its always-present manifest.json —
+   * absent artifacts are absent files. Default: Buffer — verified against
+   * the response's Content-Length and, when the server states one, its
+   * digest. { to } saves to a directory (temp-then-rename, same
+   * verification) and returns the file path. { stream: true } returns the
+   * raw response stream, the one shape the caller must verify themselves.
    */
   download(id: string): Promise<Buffer>;
   download(id: string, options: { to: string }): Promise<string>;
