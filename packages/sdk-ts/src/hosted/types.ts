@@ -3113,6 +3113,12 @@ export const HOSTED_ERROR_CODES = [
   "invalid_trial",
   "upload_too_large",
   "job_uploaded",
+  // Re-uploading an archive whose job this caller already uploaded (409),
+  // detected by (uploading user, the archive result.json's own job id);
+  // details name the existing job. Deliberately NOT Harbor's update-in-place:
+  // our trial rows carry analyses and analysis history — silently replacing
+  // trials would destroy them; Harbor's hub rows have no such children.
+  "job_already_uploaded",
   "import_not_found",
   "import_too_large",
   "invalid_archive",

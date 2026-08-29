@@ -74,6 +74,7 @@
     "invalid_trial",
     "upload_too_large",
     "job_uploaded",
+    "job_already_uploaded",
     "import_not_found",
     "import_too_large",
     "invalid_archive",

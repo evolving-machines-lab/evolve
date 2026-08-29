@@ -3469,6 +3469,21 @@ async function testUploadProvenanceMappingEdges() {
       { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
       "null originals pass through as null"
     );
+
+    // A non-string original is the same honest null — never a coerced value.
+    setMockResponse("/api/jobs/eval-typed", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-typed",
+        upload: { original_job_id: "orig-123", original_job_name: 7, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      }),
+    });
+    const typed = await e.get("eval-typed");
+    assertEqual(
+      typed.upload,
+      { original_job_id: "orig-123", original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      "a non-string original_job_name reads null while the rest maps"
+    );
   } finally {
     restoreFetch();
   }
@@ -3516,6 +3531,32 @@ async function testUploadJobTypedErrors() {
       assertEqual((err.details as Record<string, unknown>)?.trial, "trial-1", "details name the trial");
     }
     assert(threw, "throws on 422");
+
+    // The duplicate refusal: re-uploading an archive whose job this caller
+    // already uploaded — details name the existing job to open instead.
+    setMockResponse("/api/jobs/upload", {
+      status: 409,
+      body: {
+        error: {
+          code: "job_already_uploaded",
+          message: "You already uploaded this job",
+          details: { existing_job_id: "eval-up1" },
+        },
+      },
+    });
+    threw = false;
+    try {
+      await e.upload(dir);
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.code, "job_already_uploaded", "the duplicate refusal surfaces with its code");
+      assertEqual(
+        (err.details as Record<string, unknown>)?.existing_job_id,
+        "eval-up1",
+        "details name the existing job"
+      );
+    }
+    assert(threw, "throws on the duplicate 409");
   } finally {
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
