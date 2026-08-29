@@ -52,6 +52,7 @@ import {
   writeQwenThinkingConfig,
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
+  writeGatewayModelsJson,
 } from "./mcp";
 import { createAgentParser, type AgentParser } from "./parsers";
 import type { OutputEvent } from "./parsers/types";
@@ -152,6 +153,9 @@ function providerRuntimeProviderForAgent(
       return "openrouter";
     case "droid":
       return "droid";
+    case "pi":
+    case "prime-agent":
+      return "openrouter";
     default:
       return null;
   }
@@ -1296,6 +1300,30 @@ export class Agent {
     );
   }
 
+  /**
+   * Point a pi-family CLI at the Evolve gateway by overriding the built-in
+   * provider's baseUrl in models.json, and attach the given spend headers.
+   *
+   * The provider API key still comes from the env var, so the runtime token is
+   * never written to disk.
+   */
+  private async writeGatewayModelsConfig(
+    sandbox: SandboxInstance,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    const gatewayModelsJson = this.registry.gatewayModelsJson;
+    if (!gatewayModelsJson) return;
+    const providerRuntime = this.requireActiveProviderRuntimeToken();
+    await writeGatewayModelsJson(
+      sandbox,
+      gatewayModelsJson,
+      withOpenAiV1Path(
+        providerRuntime?.baseUrl ?? getGatewayUrl(this.registry.gatewayPath),
+      ),
+      headers,
+    );
+  }
+
   private captureDroidSession(
     rawLine: string,
     events: OutputEvent[] | null,
@@ -1616,6 +1644,16 @@ export class Agent {
 
     // Kimi TOML provider spend tracking: handled per-run in run() since we write
     // a dedicated config file from scratch each time (no session-level setup needed).
+
+    // models.json provider override (pi, prime-agent): these CLIs have no
+    // base-URL env var, so the gateway endpoint has to be on disk before the
+    // first run. Per-run tags are rewritten before each spawn in run().
+    if (!this.agentConfig.isDirectMode && this.registry.gatewayModelsJson) {
+      await this.writeGatewayModelsConfig(sandbox, {
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+        ...this.providerRuntimeHeaderUpdates(),
+      });
+    }
 
     // Setup skills
     if (this.skills?.length) {
@@ -1980,6 +2018,16 @@ export class Agent {
           ...this.providerRuntimeHeaderUpdates(),
         },
       );
+    }
+
+    // Per-run models.json rewrite (pi, prime-agent): provider headers are read
+    // from the file at request time, so refresh the run tag before spawning.
+    if (!this.agentConfig.isDirectMode && this.registry.gatewayModelsJson) {
+      await this.writeGatewayModelsConfig(sandbox, {
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+        [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        ...this.providerRuntimeHeaderUpdates(),
+      });
     }
 
     // Line buffer for NDJSON parsing (shared by both modes)

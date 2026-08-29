@@ -715,7 +715,7 @@ Override the default agent for any operation (apiKey inherited from Swarm config
 
 ```ts
 interface AgentOverride {
-    type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
+    type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid" | "pi" | "prime-agent";
     model?: string;
     reasoningEffort?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "thinking" | "no-thinking";
 }

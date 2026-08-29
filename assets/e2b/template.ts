@@ -54,6 +54,7 @@ export const template = Template()
     @google/gemini-cli@latest
     @qwen-code/qwen-code@latest
     opencode-ai@latest
+    @earendil-works/pi-coding-agent@latest
   `.replace(/\n\s+/g, ' ').trim())
 
   // ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ export const template = Template()
   .setWorkdir('/home/user')
 
   // Create skills directories for all CLIs
-  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills')
+  .runCmd('mkdir -p ~/.evolve/skills ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills ~/.pi/agent/skills ~/.prime/agent/skills')
 
   // ---------------------------------------------------------------------------
   // Factory Droid CLI
@@ -93,6 +94,19 @@ export const template = Template()
   // Make Droid available to non-login shell commands.
   .setUser('root')
   .runCmd('ln -sf /home/user/.local/bin/droid /usr/local/bin/droid && chown -R user:user /home/user/.factory /home/user/.local')
+  .setUser('user')
+
+  // ---------------------------------------------------------------------------
+  // Prime Agent CLI
+  // ---------------------------------------------------------------------------
+  // Vendor script install: Prime Agent's docs state the inherited npm package is
+  // not a supported install path.
+  .runCmd('curl -fsSL https://app.primeintellect.ai/prime-agent/install.sh | sh')
+
+  // Make Prime Agent available to non-login shell commands. The installer does
+  // not document its target directory, so resolve the binary instead of assuming.
+  .setUser('root')
+  .runCmd('PRIME_BIN="$(command -v prime-agent || find /home/user -maxdepth 5 -type f -name prime-agent -perm -u+x 2>/dev/null | head -n1)" && test -n "$PRIME_BIN" && ln -sf "$PRIME_BIN" /usr/local/bin/prime-agent && prime-agent --version && chown -R user:user /home/user')
   .setUser('user')
 
   // ---------------------------------------------------------------------------

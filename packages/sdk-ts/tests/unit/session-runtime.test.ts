@@ -1759,6 +1759,8 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
     { agentType: "kimi", provider: "kimi", tokenMustBeInSandboxConfig: true },
     { agentType: "opencode", provider: "openrouter", tokenMustBeInSandboxConfig: true },
     { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true },
+    { agentType: "pi", provider: "openrouter", tokenMustBeInSandboxConfig: true },
+    { agentType: "prime-agent", provider: "openrouter", tokenMustBeInSandboxConfig: true },
   ];
 
   try {

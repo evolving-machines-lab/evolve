@@ -124,6 +124,42 @@ function toDroidFormat(config: McpServerConfig): Record<string, unknown> {
   return { type: transport === "stdio" ? "stdio" : "http", ...rest };
 }
 
+/**
+ * Transform to prime-agent format
+ *
+ * prime-agent uses an explicit type field and refuses literal secrets in stdio
+ * env: those must be environment-variable references shaped as
+ * `{ "env": "VAR_NAME" }`. Static `headers` on http servers are allowed.
+ */
+function toPrimeAgentFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  const { type, httpHeaders, envHttpHeaders, envVars, env, url, headers, bearerTokenEnvVar, ...rest } = config;
+
+  if (transport === "stdio" && config.command) {
+    if (env && Object.keys(env).length > 0) {
+      throw new Error(
+        'prime-agent rejects literal MCP env values. Pass envVars: ["NAME"] to reference an environment variable instead.'
+      );
+    }
+    const envRefs = Object.fromEntries((envVars ?? []).map((name) => [name, { env: name }]));
+    return {
+      type: "stdio",
+      ...rest,
+      ...(Object.keys(envRefs).length > 0 && { env: envRefs }),
+    };
+  }
+
+  const result: Record<string, unknown> = { type: "http", ...rest, url };
+  const resolvedHeaders = headers ?? httpHeaders;
+  if (resolvedHeaders && Object.keys(resolvedHeaders).length > 0) {
+    result.headers = resolvedHeaders;
+  }
+  if (bearerTokenEnvVar) {
+    result.bearerTokenEnvVar = bearerTokenEnvVar;
+  }
+  return result;
+}
+
 // =============================================================================
 // GENERIC JSON WRITER
 // =============================================================================
@@ -132,7 +168,7 @@ type ConfigTransformer = (config: McpServerConfig) => Record<string, unknown>;
 
 async function writeJsonMcpConfig(
   sandbox: SandboxInstance,
-  agentType: "gemini" | "qwen" | "kimi",
+  agentType: "gemini" | "qwen" | "kimi" | "prime-agent",
   servers: Record<string, McpServerConfig>,
   transform: ConfigTransformer
 ): Promise<void> {
@@ -410,6 +446,82 @@ export async function writeDroidGatewaySettings(
   };
 
   await sandbox.files.write(settingsPath, JSON.stringify(content, null, 2));
+}
+
+export interface GatewayModelsJsonConfig {
+  modelsPath: string;
+  providerKey: string;
+  api: "openai-completions" | "openai-responses" | "anthropic-messages";
+}
+
+/**
+ * Write a models.json provider override for pi-family CLIs (pi, prime-agent).
+ *
+ * These CLIs have no base-URL env var, so pointing them at the Evolve gateway
+ * means overriding the built-in provider's `baseUrl` in models.json. The same
+ * entry carries the LiteLLM spend-tracking headers, which is why this is
+ * rewritten before each run rather than once at setup.
+ *
+ * Overriding a built-in provider keeps its whole model catalog available — only
+ * baseUrl, api and headers are replaced. The API key still resolves from the
+ * provider's env var, so the runtime token never lands in this file.
+ *
+ * Existing config is preserved: other providers, and any user-supplied keys on
+ * this provider, are merged rather than dropped.
+ */
+export async function writeGatewayModelsJson(
+  sandbox: SandboxInstance,
+  config: GatewayModelsJsonConfig,
+  baseUrl: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  const modelsPath = expandPath(config.modelsPath);
+  const modelsDir = modelsPath.slice(0, modelsPath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(modelsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(modelsPath);
+    if (typeof existing === "string") {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const providers = (existingConfig.providers as Record<string, unknown>) ?? {};
+  const provider = (providers[config.providerKey] as Record<string, unknown>) ?? {};
+  const existingHeaders = (provider.headers as Record<string, string>) ?? {};
+
+  existingConfig.providers = {
+    ...providers,
+    [config.providerKey]: {
+      ...provider,
+      baseUrl,
+      api: config.api,
+      headers: { ...existingHeaders, ...headers },
+    },
+  };
+
+  await sandbox.files.write(modelsPath, JSON.stringify(existingConfig, null, 2));
+}
+
+/**
+ * Write MCP config for prime-agent
+ *
+ * prime-agent reads `mcpServers` from ~/.prime/agent/settings.json. Note it
+ * deliberately ignores MCP entries in project-level settings, so this has to be
+ * the user-global file.
+ *
+ * Transport shapes: { type: "stdio", command, args, cwd, env } and
+ * { type: "http", url, headers | bearerTokenEnvVar }.
+ */
+export async function writePrimeAgentMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>
+): Promise<void> {
+  await writeJsonMcpConfig(sandbox, "prime-agent", servers, toPrimeAgentFormat);
 }
 
 /**
