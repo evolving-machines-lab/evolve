@@ -526,6 +526,7 @@ export {
   type UploadJobOptions,
   type UploadProvenance,
   type TrialUploadProvenance,
+  type JobDeleteResult,
   // Remote inspection: job-wide grep, the per-trial file tree, and the
   // client-side Harbor-tree assembly behind trial/job download.
   assembleTrialTree,

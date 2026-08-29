@@ -52,6 +52,7 @@ import type {
   Job,
   JobBuildExclusion,
   JobCreate,
+  JobDeleteResult,
   JobEvent,
   JobFailure,
   JobGrepGroup,
@@ -194,6 +195,7 @@ export type {
   Job,
   JobBuildExclusion,
   JobCreate,
+  JobDeleteResult,
   JobEvent,
   JobFailure,
   JobGrepGroup,
@@ -2730,6 +2732,23 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         ),
       });
       return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
+    async delete(id: string): Promise<JobDeleteResult> {
+      // The verb is the wire, verbatim — the server owns every rule (creator
+      // only, terminal only, no live analysis wave or derived regrade) and
+      // every refusal arrives typed. The 200 is the receipt, its three
+      // fields required by the contract, read in the same shape mapJob
+      // reads required counts.
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as Record<string, unknown>;
+      return {
+        job_id: (data.job_id as string) ?? id,
+        trials_deleted: (data.trials_deleted as number) ?? 0,
+        analyses_deleted: (data.analyses_deleted as number) ?? 0,
+      };
     },
 
     async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {

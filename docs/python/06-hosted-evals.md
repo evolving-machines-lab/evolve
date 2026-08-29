@@ -769,9 +769,39 @@ The response is the ordinary Job shape with one extra field: `upload` carries th
 
 The SDK applies Harbor's directory gate client-side with their own sentences (`… does not contain result.json` / `config.json`) before packing anything, and the server holds the same line as `not_a_job_dir`. The caps are published on the [capability document](#what-the-platform-supports) under `limits['uploads']`: `job_archive_bytes` (the compressed cap, `upload_too_large` past it), `job_trials` (`job_too_large`), and `job_trial_file_bytes` (per stored trial file, `invalid_trial` — which also names a trial whose `result.json` fails Harbor's TrialResult shape).
 
-Re-uploading an archive whose job you already uploaded is **refused typed** (`job_already_uploaded`, 409): the duplicate is detected by you plus the archive result.json's own job id, and the refusal's `details` name your existing job. Where Harbor's re-upload updates the same hub row, our trial rows carry analyses and analysis history that silent replacement would destroy — Harbor's hub rows have no such children — so the platform refuses instead of updating in place (recorded deviation). A different user uploading the same archive gets their own private copy, and an archive whose result.json states no id is undetectable and uploads fresh. Replacing a job outright awaits the job-delete verb, which is not on the surface yet.
+Re-uploading an archive whose job you already uploaded is **refused typed** (`job_already_uploaded`, 409): the duplicate is detected by you plus the archive result.json's own job id, and the refusal's `details` name your existing job. Where Harbor's re-upload updates the same hub row, our trial rows carry analyses and analysis history that silent replacement would destroy — Harbor's hub rows have no such children — so the platform refuses instead of updating in place (recorded deviation). A different user uploading the same archive gets their own private copy, and an archive whose result.json states no id is undetectable and uploads fresh. To replace a job outright, [delete it](#delete-a-job) and upload again — deleting the job frees its duplicate lock.
 
 A deliberate **subset** of Harbor's verb, each gap recorded with its reason. No `--public`/`--private` and no `--share-org`/`--share-user`/`--org`: there is no public-job or sharing surface here yet — uploads are private, and the flags adopt Harbor's exact names when Teams lands. No `--concurrency`: Harbor's flag parallelizes per-trial uploads because their protocol uploads trial by trial; ours is one archive POST, so the flag would have nothing real to do. Per-trial `lock.json` is not required or ingested, and `artifacts/`, `steps/` content, other `agent/` files that map to no native slot, and any prior `analysis.json` are not ingested in v1 — a prior analysis is never imported, matching the analyzer's own never-read-your-own-analysis exclusion.
+
+---
+
+## Delete a job
+
+Permanent, and total: `delete()` destroys one of your jobs with everything that hangs off it — trials, trace events, analyses, and every stored trace object (trajectories, raw streams, verifier logs, analyzer streams, stored files). Harbor's own verb is `harbor hub job delete` ("Permanently delete Hub jobs you own, including their trials"); where their hub delete leaves uploaded archives behind in storage, this platform purges the stored objects too (recorded deviation).
+
+```python
+async with jobs() as evals:
+    receipt = await evals.delete(job.id)
+    print(receipt.trials_deleted, receipt.analyses_deleted)  # what was destroyed, counted
+```
+
+The response is the receipt — `job_id`, `trials_deleted`, `analyses_deleted`: what went, counted.
+
+**Creator-only.** Org members may operate a job (cancel, retry), never destroy its record: a member who did not create the job is refused (`org_forbidden`, 403), and an id outside your reach answers 404 — existence never leaks. Harbor's rule is the same ("only the owner can delete a job").
+
+**Terminal only — never a delete under a live worker.** A QUEUED/RUNNING/CANCELLING job refuses `job_not_terminal` (409; cancel first — Harbor's "a hosted job must have finished"). The same law covers work still riding the job's rows: a queued or running analysis wave refuses `analysis_already_running` (409; one wave at a time — wait for it to settle), and a live regrade derived from this job refuses `job_not_terminal` with the regrade jobs to wait for in `details['regrade_job_ids']` — a regrade is a job on this wire, and that job is the one not yet terminal.
+
+What stays: regrade JOB rows (who asked for a regrade, and when, deliberately outlives a deleted source), a derived job's `source_jobs` entry, which keeps naming the deleted id as history, and — for a native job — the model gateway's own ledger, which remains the billing truth. A regrade job id is itself not deletable here (`job_not_found`, 404): a regrade's results are deleted from the traces surface.
+
+Delete works on uploaded and native jobs alike, and deleting an uploaded job frees its duplicate lock — **delete-then-reupload is the replace path** for an [uploaded job](#upload-a-job).
+
+The CLI mirrors Harbor's confirm posture: `evolve job delete <id>` names the job and asks before destroying anything, `--yes`/`-y` skips the prompt (a non-interactive stdin without `--yes` refuses rather than guessing), and `--json` prints the receipt:
+
+```bash
+evolve job delete cme12ab34            # names the job, then asks — [y/N]
+evolve job delete cme12ab34 --yes      # no prompt; prints the receipt counts
+evolve job delete cme12ab34 -y --json  # {"job_id":"…","trials_deleted":12,"analyses_deleted":3}
+```
 
 ---
 
@@ -780,7 +810,7 @@ A deliberate **subset** of Harbor's verb, each gap recorded with its reason. No 
 The SDK's TypeScript package ships the `evolve` binary — a thin shell over the same five clients this chapter documents, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. Three commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint — it prints the created record and the analyze hint, since an uploaded job is already terminal). Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
-job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download | grep
+job      start | list | show | trials | tasks | compare | cancel | delete | stop | resume | retry | regrade | download | grep
 trial    show | trace | download | retry | regrade | stop
 dataset  list | show | publish | download | activate
 skill    list | upload | show | delete

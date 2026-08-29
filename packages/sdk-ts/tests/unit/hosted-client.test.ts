@@ -3715,6 +3715,101 @@ async function testUploadJobTypedErrors() {
 }
 
 // =============================================================================
+// DELETE — the destruction receipt (DELETE /api/jobs/{jobId})
+// =============================================================================
+
+async function testDeleteJob() {
+  console.log("\n--- jobs().delete() sends DELETE and returns the receipt ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: { job_id: "eval-1", trials_deleted: 12, analyses_deleted: 3 },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const receipt = await e.delete("eval-1");
+    const call = fetchCalls[0];
+    assert(call.url.endsWith("/api/jobs/eval-1"), "hits the job route itself — no sub-path");
+    assertEqual(call.init?.method, "DELETE", "uses DELETE");
+    assertEqual(
+      receipt,
+      { job_id: "eval-1", trials_deleted: 12, analyses_deleted: 3 },
+      "the receipt carries the three destruction counts verbatim"
+    );
+
+    // Zero counts are the server's own claim on an empty job — carried, not
+    // re-read as absence.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: { job_id: "eval-1", trials_deleted: 0, analyses_deleted: 0 },
+    });
+    const empty = await e.delete("eval-1");
+    assertEqual(
+      empty,
+      { job_id: "eval-1", trials_deleted: 0, analyses_deleted: 0 },
+      "zero counts ride verbatim"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDeleteJobTypedRefusals() {
+  console.log("\n--- delete() surfaces the contract's refusals verbatim ---");
+  installMockFetch();
+  try {
+    // Something still riding the job's rows: a live derived regrade — the 409
+    // names the regrade jobs to wait for in details.regrade_job_ids.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 409,
+      body: {
+        error: {
+          code: "job_not_terminal",
+          message: "A regrade derived from this job is still running",
+          details: { regrade_job_ids: ["rg-1", "rg-2"] },
+        },
+      },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await e.delete("eval-1");
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "job_not_terminal", "carries the stable error code");
+      assertEqual(
+        (err.details as Record<string, unknown>)?.regrade_job_ids,
+        ["rg-1", "rg-2"],
+        "details name the regrade jobs to wait for"
+      );
+    }
+    assert(threw, "throws on the 409");
+
+    // CREATOR-ONLY: an org member who did not create the job answers 403
+    // org_forbidden. The code rides EvolveApiError.code verbatim — it is not
+    // in the typed union yet (the team-accounts lane leads the SDK), which is
+    // exactly why code widens to string.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 403,
+      body: { error: { code: "org_forbidden", message: "Only the job's creator can delete it" } },
+    });
+    threw = false;
+    try {
+      await e.delete("eval-1");
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.status, 403, "carries the 403");
+      assertEqual(err.code, "org_forbidden", "the creator-only refusal's code rides verbatim");
+    }
+    assert(threw, "throws on the 403");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // WATCH (SSE) TESTS
 // =============================================================================
 
@@ -4907,7 +5002,7 @@ async function testRootExportsHostedTypes() {
 
   // Source: the hosted export block in src/index.ts names the documented types
   const rootSrc = await readFile(new URL("../../src/index.ts", import.meta.url), "utf-8");
-  for (const t of ["EvalSandboxProvider", "DatasetImportFailure", "JobCreate", "JobStatus", "DatasetSelector", "AgentInput", "TrialsClient"]) {
+  for (const t of ["EvalSandboxProvider", "DatasetImportFailure", "JobCreate", "JobStatus", "DatasetSelector", "AgentInput", "TrialsClient", "JobDeleteResult"]) {
     assert(new RegExp(`type ${t},`).test(rootSrc), `src/index.ts exports type ${t}`);
   }
 
@@ -5345,6 +5440,8 @@ async function main() {
   await testUploadProvenanceMappingEdges();
   await testUploadExecutionHonesty();
   await testUploadJobTypedErrors();
+  await testDeleteJob();
+  await testDeleteJobTypedRefusals();
   await testDownloadPackageBuffer();
   await testDownloadPackageToFile();
   await testDownloadPackageStream();

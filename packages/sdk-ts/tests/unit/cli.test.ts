@@ -4070,6 +4070,115 @@ async function testCompareCancelDownload() {
   }
 }
 
+async function testJobDelete() {
+  console.log("\n--- runCli: job delete — Harbor's confirm posture, the receipt counts ---");
+
+  // Grammar: exactly one id.
+  assertThrowsUsage(() => parseArgs(["job", "delete"]), "requires", "delete needs an id");
+  assertThrowsUsage(() => parseArgs(["job", "delete", "a", "b"]), "unexpected argument", "one id only");
+
+  installMockFetch();
+  try {
+    const receipt = { job_id: "eval-1", trials_deleted: 12, analyses_deleted: 3 };
+
+    // Non-interactive without --yes: refused BEFORE any request — Harbor's
+    // own posture ("Re-run with --yes to confirm", their hub delete on a
+    // non-TTY stdin). io without a confirm hook IS the non-interactive case.
+    const bare = captureIO();
+    const before = fetchCalls.length;
+    const bareCode = await runCli(["job", "delete", "eval-1", ...AUTH], bare.io);
+    assertEqual(bareCode, 1, "a bare non-interactive delete refuses with exit 1");
+    assert(
+      bare.err.some((l) => l.includes("--yes")),
+      "the refusal names the --yes flag"
+    );
+    assertEqual(fetchCalls.length, before, "nothing was requested — the refusal is local");
+
+    // --yes goes straight to DELETE and renders the receipt counts.
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: receipt });
+    const yes = captureIO();
+    const yesCode = await runCli(["job", "delete", "eval-1", "--yes", ...AUTH], yes.io);
+    assertEqual(yesCode, 0, "--yes deletes without a prompt");
+    const deleteCall = fetchCalls.find((c) => c.init?.method === "DELETE");
+    assert(
+      deleteCall !== undefined && deleteCall.url.endsWith("/api/jobs/eval-1"),
+      "DELETE hits the job route itself"
+    );
+    assert(
+      yes.out.some((l) => l.includes("12") && l.includes("3")),
+      "the human receipt states the destruction counts"
+    );
+
+    // --json emits the receipt verbatim — the machine envelope.
+    const json = captureIO();
+    assertEqual(
+      await runCli(["job", "delete", "eval-1", "-y", "--json", ...AUTH], json.io),
+      0,
+      "-y is --yes (Harbor's short flag)"
+    );
+    assertEqual(JSON.parse(json.out.join("\n")), receipt, "--json prints the JobDeleteResult verbatim");
+
+    // Interactive declined: the job is fetched and NAMED before the question
+    // (Harbor prints id + name, then asks), no DELETE fires, exit 1.
+    installMockFetch();
+    let deleted = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (init?.method === "DELETE") {
+        deleted++;
+        return buildMockResponse({ status: 200, body: receipt });
+      }
+      return buildMockResponse({ status: 200, body: wireJob({ id: "eval-1", job_name: "nightly" }) });
+    };
+    const asked: string[] = [];
+    const declined = captureIO(true);
+    declined.io.confirm = async (q: string) => {
+      asked.push(q);
+      return false;
+    };
+    const declinedCode = await runCli(["job", "delete", "eval-1", ...AUTH], declined.io);
+    assertEqual(declinedCode, 1, "a declined confirmation exits 1");
+    assertEqual(deleted, 0, "nothing was deleted");
+    assert(asked.length === 1 && asked[0].includes("Permanently delete"), "the question states permanence");
+    assert(
+      declined.err.some((l) => l.includes("eval-1") && l.includes("nightly")),
+      "what would die is named — id and job name — before the question"
+    );
+    assert(declined.err.some((l) => l.includes("cancelled")), "the outcome is stated");
+
+    // Interactive accepted: DELETE fires and the receipt renders.
+    const accepted = captureIO(true);
+    accepted.io.confirm = async () => true;
+    const acceptedCode = await runCli(["job", "delete", "eval-1", ...AUTH], accepted.io);
+    assertEqual(acceptedCode, 0, "an accepted confirmation deletes");
+    assertEqual(deleted, 1, "exactly one DELETE fired");
+    assert(
+      accepted.out.some((l) => l.includes("12") && l.includes("3")),
+      "the receipt counts render after an accepted prompt"
+    );
+
+    // A typed refusal surfaces verbatim through the standard error path.
+    installMockFetch();
+    setMockResponse("/api/jobs/eval-1", {
+      status: 409,
+      body: { error: { code: "job_not_terminal", message: "Cancel the job first" } },
+    });
+    const refused = captureIO();
+    assertEqual(
+      await runCli(["job", "delete", "eval-1", "--yes", ...AUTH], refused.io),
+      1,
+      "a server refusal exits 1"
+    );
+    assert(
+      refused.err.some((l) => l.includes("Cancel the job first")),
+      "the server's sentence reaches stderr unrewritten"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobDownloadUnpackGuards() {
   console.log("\n--- runCli: job download unpack guards ---");
   installMockFetch();
@@ -6132,6 +6241,7 @@ async function main() {
   await testJobShowAnalysisRows();
   testTrialDetailAnalysisRows();
   await testCompareCancelDownload();
+  await testJobDelete();
   await testJobDownloadUnpackGuards();
   await testTrialShow();
   await testTrialShowUploaded();

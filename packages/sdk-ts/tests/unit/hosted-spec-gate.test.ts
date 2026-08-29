@@ -197,6 +197,7 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   watchJob: "jobs.watch",
   downloadJob: "jobs.download",
   uploadJob: "jobs.upload",
+  deleteJob: "jobs.delete",
   resumeJob: "jobs.resume",
   retryJob: "jobs.retry",
   regradeJob: "jobs.regrade",

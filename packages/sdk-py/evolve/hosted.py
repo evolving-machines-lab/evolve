@@ -1004,6 +1004,21 @@ class UploadProvenance:
 
 
 @dataclass
+class JobDeleteResult:
+    """The deletion receipt of ``DELETE /api/jobs/{jobId}``: what was
+    destroyed. The contract's own minimal shape — Harbor's hub delete
+    answers no wire body, so there was no shape to mirror.
+    ``trials_deleted`` counts the trial rows destroyed with the job (their
+    trace events, attempts and stored trace objects went with them);
+    ``analyses_deleted`` the trial-analysis rows, their stored analyzer
+    streams included.
+    """
+    job_id: str
+    trials_deleted: int
+    analyses_deleted: int
+
+
+@dataclass
 class SourceJob:
     """Provenance of a derived job.
 
@@ -2590,6 +2605,17 @@ def _map_source_job(data: Dict[str, Any]) -> SourceJob:
         action=data.get('action', ''),
         type=data.get('type', ''),
         job_id=data.get('job_id', ''),
+    )
+
+
+def _map_job_delete_result(data: Dict[str, Any]) -> JobDeleteResult:
+    """The receipt's three fields are REQUIRED by the contract — read in the
+    same tolerant shape every required field here uses, a zero count riding
+    verbatim as the server's own claim about an empty job."""
+    return JobDeleteResult(
+        job_id=data.get('job_id', ''),
+        trials_deleted=data.get('trials_deleted', 0),
+        analyses_deleted=data.get('analyses_deleted', 0),
     )
 
 
@@ -5525,6 +5551,35 @@ class JobsClient:
             '/api/jobs/upload', body, {'Content-Type': content_type}
         )
         return _map_job(raw)
+
+    async def delete(self, id: str) -> JobDeleteResult:
+        """Permanently delete one of your jobs — trials, trace events,
+        analyses and every stored trace object included (Harbor's
+        ``harbor hub job delete``: "Permanently delete Hub jobs you own,
+        including their trials"). Works on uploaded and native jobs alike;
+        deleting an uploaded job frees its duplicate lock, so
+        delete-then-reupload is the replace path.
+
+        CREATOR-ONLY: org members may operate a job (cancel, retry), never
+        destroy its record — a member who did not create it is refused
+        (``org_forbidden``, 403). TERMINAL ONLY — never a delete under a
+        live worker: a QUEUED/RUNNING/CANCELLING job refuses
+        ``job_not_terminal`` (409; cancel first), a queued or running
+        analysis wave refuses ``analysis_already_running`` (409), and a live
+        regrade derived from this job refuses ``job_not_terminal`` with the
+        regrade jobs to wait for in ``details['regrade_job_ids']``. A
+        regrade job id is itself not deletable here (``job_not_found``,
+        404) — a regrade's results are deleted from the traces surface.
+        What stays: regrade JOB rows and ``source_jobs`` history, which keep
+        naming the deleted id; the model gateway's own ledger remains the
+        billing truth.
+
+        The response is the receipt: what was destroyed, counted.
+        """
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}', method='DELETE'
+        )
+        return _map_job_delete_result(raw)
 
     async def grep(
         self,

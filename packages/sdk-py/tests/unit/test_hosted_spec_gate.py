@@ -153,6 +153,7 @@ OPERATION_TO_METHOD = {
     'watchJob': (JobsClient, 'watch'),
     'downloadJob': (JobsClient, 'download'),
     'uploadJob': (JobsClient, 'upload'),
+    'deleteJob': (JobsClient, 'delete'),
     'resumeJob': (JobsClient, 'resume'),
     'retryJob': (JobsClient, 'retry'),
     'regradeJob': (JobsClient, 'regrade'),
