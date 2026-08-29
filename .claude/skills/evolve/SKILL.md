@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via datasets()/agents()/jobs()/trials() clients and the evolve CLI, including bring-your-own agents, (11) Dataset publishing (git or local directory), regrades, and sandbox create options (image, resources, network policy)."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client, (10) Hosted evals via datasets()/agents()/jobs()/trials() clients and the evolve CLI, including bring-your-own agents, (11) Dataset publishing (git or local directory), regrades, trace analysis (analyze), and sandbox create options (image, resources, network policy)."
 ---
 
 # Evolve SDK
@@ -132,6 +132,7 @@ Read on demand when the user's task requires them:
 | Stop verbs (job cancel, trial stop, job stop --dataset) | [TS](references/typescript/06-hosted-evals.md#stopping-work) | [PY](references/python/06-hosted-evals.md#stopping-work) |
 | Resume (new linked job over failed and stopped trials) | [TS](references/typescript/06-hosted-evals.md#resume) | [PY](references/python/06-hosted-evals.md#resume) |
 | Regrade (verifier-only re-run — the response IS a job) | [TS](references/typescript/06-hosted-evals.md#regrade) | [PY](references/python/06-hosted-evals.md#regrade) |
+| Analyze (rubric-driven trace analysis, embedded or on demand) | [TS](references/typescript/06-hosted-evals.md#analyze) | [PY](references/python/06-hosted-evals.md#analyze) |
 | compare() (aggregates + task matrix) | [TS](references/typescript/06-hosted-evals.md#compare) | [PY](references/python/06-hosted-evals.md#compare) |
 | download() (the results archive) | [TS](references/typescript/06-hosted-evals.md#download-the-archive) | [PY](references/python/06-hosted-evals.md#download-the-archive) |
 | evolve CLI (noun-verb grammar, top-level run, short flags, -c config) | [TS](references/typescript/06-hosted-evals.md#cli) | [PY](references/python/06-hosted-evals.md#cli) |
