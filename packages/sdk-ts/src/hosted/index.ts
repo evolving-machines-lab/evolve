@@ -855,7 +855,9 @@ function mapUploadProvenance(raw: unknown): Job["upload"] {
     totals &&
     typeof totals === "object" &&
     !Array.isArray(totals) &&
-    typeof (totals as Record<string, unknown>).n_trials_reporting === "number"
+    // A genuine integer, as the contract states — a fractional count is a
+    // malformed object and voids the totals whole (the Python mapper's rule).
+    Number.isInteger((totals as Record<string, unknown>).n_trials_reporting)
       ? {
           cost_usd: reportedNumber((totals as Record<string, unknown>).cost_usd),
           n_input_tokens: reportedNumber((totals as Record<string, unknown>).n_input_tokens),

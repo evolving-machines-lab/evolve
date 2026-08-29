@@ -3509,6 +3509,26 @@ async function testUploadProvenanceMappingEdges() {
       },
       "a non-string original_job_name reads null while the rest maps"
     );
+
+    // A fractional trial count is a malformed totals object and voids it
+    // whole — the count must be a genuine integer (the Python mapper's rule).
+    setMockResponse("/api/jobs/eval-frac", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-frac",
+        upload: {
+          original_job_id: "orig-123",
+          original_job_name: null,
+          uploaded_at: "2026-08-28T10:00:00.000Z",
+          reported_totals: { cost_usd: 2.5, n_trials_reporting: 1.5 },
+        },
+      }),
+    });
+    assertEqual(
+      (await e.get("eval-frac")).upload?.reported_totals,
+      null,
+      "a fractional n_trials_reporting voids the totals whole"
+    );
   } finally {
     restoreFetch();
   }
