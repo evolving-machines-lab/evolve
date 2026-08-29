@@ -951,6 +951,21 @@ export interface UploadProvenance {
 }
 
 /**
+ * The deletion receipt of `DELETE /api/jobs/{jobId}`: what was destroyed.
+ * The contract's own minimal shape — Harbor's hub delete answers no wire
+ * body, so there was no shape to mirror. `trials_deleted` counts the trial
+ * rows destroyed with the job (their trace events, attempts and stored
+ * trace objects went with them); `analyses_deleted` the trial-analysis
+ * rows, their stored analyzer streams included.
+ */
+export interface JobDeleteResult {
+  /** The deleted job. */
+  job_id: string;
+  trials_deleted: number;
+  analyses_deleted: number;
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -2939,6 +2954,29 @@ export interface JobsClient {
    * `job_trial_file_bytes`).
    */
   upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job>;
+  /**
+   * Permanently delete one of your jobs — trials, trace events, analyses and
+   * every stored trace object included (Harbor's `harbor hub job delete`:
+   * "Permanently delete Hub jobs you own, including their trials"). Works on
+   * uploaded and native jobs alike; deleting an uploaded job frees its
+   * duplicate lock, so delete-then-reupload is the replace path.
+   *
+   * CREATOR-ONLY: org members may operate a job (cancel, retry), never
+   * destroy its record — a member who did not create it is refused
+   * (`org_forbidden`, 403). TERMINAL ONLY — never a delete under a live
+   * worker: a QUEUED/RUNNING/CANCELLING job refuses `job_not_terminal`
+   * (409; cancel first), a queued or running analysis wave refuses
+   * `analysis_already_running` (409), and a live regrade derived from this
+   * job refuses `job_not_terminal` with the regrade jobs to wait for in
+   * `details.regrade_job_ids`. A regrade job id is itself not deletable
+   * here (`job_not_found`, 404) — a regrade's results are deleted from the
+   * traces surface. What stays: regrade JOB rows and `source_jobs` history,
+   * which keep naming the deleted id; the model gateway's own ledger
+   * remains the billing truth.
+   *
+   * The response is the receipt: what was destroyed, counted.
+   */
+  delete(id: string): Promise<JobDeleteResult>;
   /**
    * Grep the parsed trace of EVERY trial of the job in one server-side pass.
    * `q` is the trace filter's grammar: a case-insensitive POSIX regex over

@@ -410,6 +410,16 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<id>",
         example: "evolve job cancel cme12ab34",
       },
+      delete: {
+        summary: "Permanently delete a job you created — trials, traces, analyses and stored files",
+        flags: {
+          yes: { kind: "boolean", short: "y", help: "Delete without a confirmation prompt" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        example: "evolve job delete cme12ab34 --yes",
+      },
       stop: {
         summary: "Stop one dataset's live trials without cancelling the job",
         flags: {
@@ -2332,12 +2342,33 @@ export interface CliIO {
    * false when absent so redirected output always gets machine-safe rows.
    */
   tty?: boolean;
+  /**
+   * Ask the human a yes/no question — the destructive-verb prompt. Present
+   * only when stdin can actually answer (an interactive terminal); absent,
+   * a destructive verb must be told --yes, exactly Harbor's non-TTY
+   * posture. The question rides stderr so stdout stays machine-clean.
+   */
+  confirm?(question: string): Promise<boolean>;
 }
 
 const defaultIO: CliIO = {
   out: (line) => process.stdout.write(line + "\n"),
   err: (line) => process.stderr.write(line + "\n"),
   tty: process.stdout.isTTY === true && process.env.TERM !== "dumb",
+  ...(process.stdin.isTTY === true
+    ? {
+        confirm: async (question: string): Promise<boolean> => {
+          const { createInterface } = await import("node:readline/promises");
+          const rl = createInterface({ input: process.stdin, output: process.stderr });
+          try {
+            const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+            return answer === "y" || answer === "yes";
+          } finally {
+            rl.close();
+          }
+        },
+      }
+    : {}),
 };
 
 function table(rows: string[][]): string[] {
@@ -3536,6 +3567,50 @@ async function cmdJobCancel(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(e));
   } else {
     for (const line of jobLines(e)) io.out(line);
+  }
+  return 0;
+}
+
+/**
+ * Harbor's `hub job delete` posture (their cli/hub.py delete_cmd): a
+ * destructive verb never fires bare — without --yes it names what would die
+ * and asks, and a non-interactive stdin refuses with "re-run with --yes".
+ * One id per invocation where Harbor's takes a list: the wire is one DELETE
+ * per job and the house grammar is unary (recorded deviation). The server
+ * owns every refusal — creator-only, terminal-only, no live analysis wave
+ * or derived regrade — and each surfaces verbatim through the standard
+ * error path.
+ */
+async function cmdJobDelete(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const id = await resolveJobId(inv, inv.positionals[0]);
+  if (inv.flags.yes !== true) {
+    if (io.confirm === undefined) {
+      // Harbor's non-TTY refusal — reads may have happened (prefix
+      // resolution, exactly as Harbor reads headers first), deletes never.
+      throw new Error(
+        "deleting a job is permanent — trials, traces, analyses and stored files. " +
+          "Re-run with --yes to confirm."
+      );
+    }
+    // Name what would die before asking — Harbor prints each id with its
+    // job name ahead of the prompt. The naming line rides stderr with the
+    // question: stdout stays machine-clean.
+    const job = await client.get(id);
+    io.err(`  ${job.id}  ${job.job_name || "—"}`);
+    if (!(await io.confirm("Permanently delete this job and all associated trials?"))) {
+      io.err("Delete cancelled.");
+      return 1;
+    }
+  }
+  const receipt = await client.delete(id);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(receipt));
+  } else {
+    io.out(
+      `Deleted job ${receipt.job_id}: ${receipt.trials_deleted} trials, ` +
+        `${receipt.analyses_deleted} analyses destroyed.`
+    );
   }
   return 0;
 }
@@ -4842,6 +4917,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job tasks": cmdJobTasks,
   "job compare": cmdJobCompare,
   "job cancel": cmdJobCancel,
+  "job delete": cmdJobDelete,
   "job stop": cmdJobStop,
   "job resume": cmdJobResume,
   "job retry": cmdJobRetry,

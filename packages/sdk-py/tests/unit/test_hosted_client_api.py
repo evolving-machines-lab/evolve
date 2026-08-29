@@ -61,6 +61,7 @@ from evolve import (
     EvolveIncompleteDownloadError,
     HostedClientConfig,
     JobCounts,
+    JobDeleteResult,
     JobFailure,
     NoActiveVersionError,
     SourceJob,
@@ -2957,6 +2958,48 @@ class TestJobs:
                 await jobs_factory(CONFIG).upload(str(job_dir))
         assert exc.value.status == 413
         assert exc.value.code == 'upload_too_large'
+
+    @pytest.mark.asyncio
+    async def test_delete_sends_delete_and_maps_the_receipt(self):
+        """jobs.delete() — DELETE on the job route itself, the receipt back
+        verbatim: what was destroyed, in the contract's three counts."""
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1', {
+                'job_id': 'job-1', 'trials_deleted': 12, 'analyses_deleted': 3,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            receipt = await jobs_factory(CONFIG).delete('job-1')
+
+        assert fake.requests[0].get_method() == 'DELETE'
+        assert fake.requests[0].full_url.endswith('/api/jobs/job-1')
+        assert receipt == JobDeleteResult(
+            job_id='job-1', trials_deleted=12, analyses_deleted=3
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_surfaces_typed_refusals(self):
+        """A live derived regrade blocks the delete: 409 job_not_terminal
+        with the regrade jobs to wait for in details — verbatim, typed."""
+        import io
+        import urllib.error
+
+        def raise_http_error(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 409, 'Conflict', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'job_not_terminal',
+                    'message': 'A regrade derived from this job is still running',
+                    'details': {'regrade_job_ids': ['rg-1']},
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', raise_http_error):
+            with pytest.raises(EvolveAPIError) as exc:
+                await jobs_factory(CONFIG).delete('job-1')
+        assert exc.value.status == 409
+        assert exc.value.code == 'job_not_terminal'
+        assert exc.value.details == {'regrade_job_ids': ['rg-1']}
 
     @pytest.mark.asyncio
     async def test_compare_maps_aggregates_and_matrix(self):
