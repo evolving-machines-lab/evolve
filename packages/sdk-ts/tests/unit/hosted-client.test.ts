@@ -2999,7 +2999,9 @@ async function testWatchAnalysisPollsToSettled() {
 }
 
 async function testTrialAnalysisMapsVerbatim() {
-  console.log("\n--- trials().get() maps Trial.analysis verbatim; absent reads null ---");
+  console.log(
+    "\n--- trials().get() maps Trial.analysis verbatim beside its one normalized key ---",
+  );
   installMockFetch();
   try {
     const analysis = {
@@ -3016,19 +3018,62 @@ async function testTrialAnalysisMapsVerbatim() {
       created_at: "2026-08-28T00:00:00.000Z",
       finished_at: "2026-08-28T00:01:00.000Z",
     };
+    // The analyzer's own one-home reading — the SAME shape the trial and
+    // session surfaces serve, through the same one rule (mapUsageReading).
+    const usage = {
+      provisional: true,
+      spent_usd: 0.0091,
+      input_tokens: 48211,
+      cached_input_tokens: 31007,
+      output_tokens: 1206,
+      as_of: "2026-08-29T00:00:30.000Z",
+    };
     setMockResponse("/api/trials/run-1", {
       status: 200,
-      body: { id: "run-1", job_id: "eval-1", task_name: "demo-task", analysis },
+      body: { id: "run-1", job_id: "eval-1", task_name: "demo-task", analysis: { ...analysis, usage } },
     });
     setMockResponse("/api/trials/run-2", {
       status: 200,
       body: { id: "run-2", job_id: "eval-1", task_name: "demo-task" },
     });
+    // An older server's analysis has no usage key at all — it reads null,
+    // "the meter never answered", exactly as the trial's own usage does.
+    setMockResponse("/api/trials/run-3", {
+      status: 200,
+      body: { id: "run-3", job_id: "eval-1", task_name: "demo-task", analysis },
+    });
+    // A malformed reading (no provisional bool; a stray string can never
+    // become money) is refused to null by the one shared rule.
+    setMockResponse("/api/trials/run-4", {
+      status: 200,
+      body: {
+        id: "run-4",
+        job_id: "eval-1",
+        task_name: "demo-task",
+        analysis: { ...analysis, usage: { spent_usd: "0.42" } },
+      },
+    });
     const t = trials({ apiKey: "test-key", baseUrl: BASE });
     const analyzed = await t.get("run-1");
-    assertEqual(analyzed.analysis, analysis, "the LATEST analysis rides the trial verbatim");
+    assertEqual(
+      analyzed.analysis,
+      { ...analysis, usage },
+      "the LATEST analysis rides the trial verbatim, its reading intact",
+    );
     const bare = await t.get("run-2");
     assertEqual(bare.analysis, null, "a never-analyzed trial reads null, never a fabricated object");
+    const preUsage = await t.get("run-3");
+    assertEqual(
+      preUsage.analysis,
+      { ...analysis, usage: null },
+      "an analysis without the reading reads usage null — the meter never answered",
+    );
+    const malformed = await t.get("run-4");
+    assertEqual(
+      malformed.analysis,
+      { ...analysis, usage: null },
+      "a malformed reading is refused to null; the analysis beside it rides verbatim",
+    );
   } finally {
     restoreFetch();
   }

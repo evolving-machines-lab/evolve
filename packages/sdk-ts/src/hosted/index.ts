@@ -988,6 +988,21 @@ function mapAgentInfo(raw: Record<string, unknown>): AgentInfo {
   };
 }
 
+/**
+ * The wire's trial analysis, defensively: absent (an older server, or a
+ * never-analyzed trial) and malformed both read null — "never analyzed",
+ * never a fabricated empty object. The object rides otherwise verbatim; its
+ * one nested reading, `usage`, goes through the same one rule as the trial's
+ * own (mapUsageReading), so absent and malformed both read null there too.
+ */
+function mapTrialAnalysis(raw: unknown): TrialAnalysis | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return {
+    ...(raw as TrialAnalysis),
+    usage: mapUsageReading((raw as Record<string, unknown>).usage),
+  };
+}
+
 /** The wire degrade object, defensively: anything malformed answers null. */
 function mapProviderDegrade(raw: unknown): Trial["sandbox_provider_degrade"] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -1012,13 +1027,9 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     // The judge share of the bill, itemized (absent on older servers and on
     // every non-judge trial — null either way, and null never means $0).
     judge_result: (raw.judge_result as JudgeResult | null) ?? null,
-    // The trial's LATEST trace analysis. Defensive like gpu_cost: absent (an
-    // older server, or a never-analyzed trial) and malformed both read null —
-    // "never analyzed", never a fabricated empty object.
-    analysis:
-      raw.analysis && typeof raw.analysis === "object" && !Array.isArray(raw.analysis)
-        ? (raw.analysis as TrialAnalysis)
-        : null,
+    // The trial's LATEST trace analysis, its nested usage reading through
+    // the one shared rule — see mapTrialAnalysis.
+    analysis: mapTrialAnalysis(raw.analysis),
     environment_setup: mapTimingInfo(raw.environment_setup),
     agent_setup: mapTimingInfo(raw.agent_setup),
     agent_execution: mapTimingInfo(raw.agent_execution),

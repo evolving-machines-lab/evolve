@@ -2026,6 +2026,7 @@ class TrialAnalysis(TypedDict):     # Trial.analysis — Harbor's AnalyzeResult 
     summary: Optional[str]          # 3–5 sentences; None until completed
     checks: Optional[Dict[str, AnalysisCheck]]   # keys exactly the rubric's criterion names
     estimated_cost_usd: Optional[float]  # the analyzer's OWN spend — never in the trial's bill
+    usage: Optional[UsageReading]        # the one-home reading — ticks while it runs, provisional; settled figures stay estimated_cost_usd
     failure: Optional[AnalysisFailure]   # {phase, message}; non-None exactly when failed
     created_at: str
     finished_at: Optional[str]

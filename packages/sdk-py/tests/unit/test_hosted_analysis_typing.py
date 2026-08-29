@@ -14,6 +14,10 @@ The law of the shapes:
   ``Optional[TrialAnalysis]``, and ``JobStats['analysis']``
   ``Optional[JobAnalysisStats]`` — the None reading is "never analyzed",
   stated, never a fabricated empty object.
+- ``TrialAnalysis['usage']`` is the ONE nested value the mapper normalizes:
+  it goes through the shared ``UsageReading`` rule
+  (``evolve.results._usage_reading_from_data``), exactly as ``Trial.usage``
+  does — absent and malformed both read None, never a fabricated zero.
 """
 
 import re
@@ -32,6 +36,7 @@ from evolve import (
     RubricCriterion,
     Trial,
     TrialAnalysis,
+    UsageReading,
 )
 from evolve.hosted import _map_job, _map_trial
 from tests.unit.conftest import resolve_spec_path
@@ -142,7 +147,9 @@ def test_runtime_is_still_the_plain_wire_dict() -> None:
     assert job.stats['analysis']['checks']['reward_hacking']['n_pass'] == 1
 
     trial = _map_trial({'id': 'run-1', 'analysis': analysis})
-    assert trial.analysis == analysis
+    # Verbatim beside the ONE normalized key: a payload from a server
+    # predating `usage` reads None there — "the meter never answered".
+    assert trial.analysis == {**analysis, 'usage': None}
     assert trial.analysis['checks']['reward_hacking']['outcome'] == 'pass'
 
     # Absence is stated as None — never a fabricated empty object.
@@ -150,3 +157,51 @@ def test_runtime_is_still_the_plain_wire_dict() -> None:
     assert bare.analyze is None
     assert bare.stats.get('analysis') is None
     assert _map_trial({'id': 'run-2'}).analysis is None
+
+
+def test_analysis_usage_reads_by_the_one_shared_rule() -> None:
+    # The nested reading goes through the shared UsageReading rule — the same
+    # one Trial.usage follows: a well-formed reading becomes the shared
+    # dataclass, absent and malformed both read None ("the meter never
+    # answered"), never a fabricated zero.
+    base = {
+        'id': 'an-2',
+        'status': 'running',
+        'model_name': 'claude-haiku-4-5-20251001',
+        'rubric': {
+            'criteria': [
+                {'name': 'reward_hacking', 'description': 'd', 'guidance': 'g'},
+            ],
+        },
+        'summary': None,
+        'checks': None,
+        'estimated_cost_usd': None,
+        'failure': None,
+        'created_at': '2026-08-29T00:00:00Z',
+        'finished_at': None,
+    }
+    ticking = {
+        'provisional': True,
+        'spent_usd': 0.0091,
+        'input_tokens': 48211,
+        'cached_input_tokens': 31007,
+        'output_tokens': 1206,
+        'as_of': '2026-08-29T00:00:30Z',
+    }
+    trial = _map_trial({'id': 'run-3', 'analysis': {**base, 'usage': ticking}})
+    assert trial.analysis['usage'] == UsageReading(
+        provisional=True,
+        spent_usd=0.0091,
+        input_tokens=48211,
+        cached_input_tokens=31007,
+        output_tokens=1206,
+        as_of='2026-08-29T00:00:30Z',
+    )
+    # Everything else rides verbatim beside the one normalized key.
+    assert trial.analysis == {**base, 'usage': trial.analysis['usage']}
+
+    # Absent (an older server) and malformed (no provisional bool; a stray
+    # string can never become money) both read None.
+    assert _map_trial({'id': 'run-4', 'analysis': dict(base)}).analysis['usage'] is None
+    malformed = {**base, 'usage': {'spent_usd': '0.42'}}
+    assert _map_trial({'id': 'run-5', 'analysis': malformed}).analysis['usage'] is None

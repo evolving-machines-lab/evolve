@@ -1334,7 +1334,10 @@ class TrialAnalysis(TypedDict):
     own line, never part of the trial's ``agent_result.cost_usd`` or the
     job's ``stats['cost_usd']``; the job aggregate is
     ``stats['analysis']['cost_usd']``. None when nothing was measured, never
-    a fabricated 0. A plain wire dict at runtime.
+    a fabricated 0. A plain wire dict at runtime — except ``usage``, which
+    the mapper normalizes into the shared
+    :class:`evolve.results.UsageReading` by the same one rule the trial's
+    own ``usage`` follows.
     """
     id: str
     #: ``'queued'`` | ``'running'`` | ``'completed'`` | ``'failed'``. Every
@@ -1350,6 +1353,15 @@ class TrialAnalysis(TypedDict):
     #: names (the frozen-criteria law). None until completed.
     checks: Optional[Dict[str, AnalysisCheck]]
     estimated_cost_usd: Optional[float]
+    #: The analyzer's one-home usage reading — the SAME shape, same keys, the
+    #: trial and session surfaces serve
+    #: (:class:`evolve.results.UsageReading`), built from the analyzer's OWN
+    #: gateway records. Present and ticking while the analysis runs — a
+    #: mid-run reading is a lagging LOWER BOUND, always ``provisional=True``
+    #: — and settled by the same read that writes ``estimated_cost_usd``,
+    #: which stays Harbor's word for the FINAL figure. None = the meter never
+    #: answered, never zero.
+    usage: Optional[UsageReading]
     #: Non-None exactly when status is ``'failed'``.
     failure: Optional[AnalysisFailure]
     #: When this analysis was enqueued.
@@ -2972,9 +2984,15 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         judge_spend_source=data.get('judge_spend_source'),
         # The trial's LATEST trace analysis. Defensive like gpu_cost: absent
         # (an older server, or a never-analyzed trial) and malformed both
-        # read None — "never analyzed", never a fabricated empty object.
+        # read None — "never analyzed", never a fabricated empty object. The
+        # dict rides otherwise verbatim; its nested ``usage`` goes through
+        # the one shared parsing rule, exactly as the trial's own does.
         analysis=(
-            data['analysis'] if isinstance(data.get('analysis'), dict) else None
+            {
+                **data['analysis'],
+                'usage': _usage_reading_from_data(data['analysis'].get('usage')),
+            }
+            if isinstance(data.get('analysis'), dict) else None
         ),
         environment_setup=_map_timing(data.get('environment_setup')),
         agent_setup=_map_timing(data.get('agent_setup')),
