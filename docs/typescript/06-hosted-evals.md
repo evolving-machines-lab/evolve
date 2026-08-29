@@ -465,7 +465,7 @@ evolve.json               the platform's own record: gateway cost and tokens per
 
 An artifact the trial never recorded is an **absent file**, never an empty placeholder — Harbor's own law, so listing the directory is an honest inventory of what the run produced.
 
-The **job archive** writes three more files per trial that a single-trial download cannot: `lock.json` (the resolved trial inputs), `trial.log` (the lifecycle summary) and `artifacts/` with its `manifest.json`. They are built from records outside the trial's own tree — dataset and arm state, and a separate artifact store — so download the job when you need the complete tree.
+The **job archive** writes more per trial than a single-trial download can: `lock.json` (the resolved trial inputs), `trial.log` (the lifecycle summary), `artifacts/` with its `manifest.json`, the raw `verifier/reward.txt` (the exact bytes the grader wrote, when one was captured), and — on multi-step trials — the per-step rewards under `steps/<step_name>/verifier/`. They are built from records outside the trial's own tree — dataset and arm state, server-side capture, and a separate artifact store — so download the job when you need the complete tree.
 
 `result.json` states `agent_result.cost_usd` **only when the gateway measured one** — the same law the job archive follows. A trial whose spend is still a floor, or was never measured at all, states `null` there rather than a figure no meter produced; `evolve.json` carries the raw number next to the `spend_source` lane that qualifies it. Tokens are always stated: they were counted either way.
 
@@ -646,6 +646,69 @@ The verifier always re-runs `separate`, under the verifier [network policy](#net
 
 ---
 
+## Analyze
+
+Harbor's `harbor analyze`, hosted: rubric-driven trace analysis of a finished job's trials. For each trial an analyzer agent (claude-code, Harbor's default analyze agent, in its own sealed sandbox) reads the trial's recorded tree — the trajectory, the logs, the original task — and rules every criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written explanation and a 3–5 sentence summary of what happened. Use it to catch reward hacking, to audit whether task instructions were sufficient, or to run any read-the-evidence question over a whole job at once:
+
+```ts
+// Analyze a terminal job under Harbor's defaults
+// (claude-haiku-4-5; rubric: reward_hacking, task_specification)
+await evals.analyze(job.id);                       // 202 — THE RESPONSE IS THE JOB
+const settled = await evals.watchAnalysis(job.id); // poll until the wave settles
+
+console.log(settled.stats.analysis);
+// { n_completed: 40, n_failed: 0, n_pending: 0, cost_usd: 0.71,
+//   checks: { reward_hacking: { n_pass: 38, n_fail: 2, n_not_applicable: 0 }, … } }
+
+// Each trial carries its own result
+for await (const trial of evals.trials(job.id)) {
+    if (!trial.analysis?.checks) continue;
+    for (const [name, check] of Object.entries(trial.analysis.checks)) {
+        if (check.outcome === "fail") {
+            console.log(trial.task_name, name, check.explanation);
+        }
+    }
+}
+```
+
+Analyses are not a separate resource. The verb answers with the ordinary job body, each trial serves its latest analysis as `trial.analysis` (Harbor's AnalyzeResult verbatim — `summary`, `checks` keyed by criterion, `estimated_cost_usd` — plus provenance: the model and rubric this analysis ran under, its status, its typed failure when it failed), and the job aggregates them as `stats.analysis`. `watchAnalysis()` is the follow: analyses have no event stream, so it polls the job until nothing is pending, firing `onStats` on every tally change.
+
+A custom model or rubric is Harbor's own pair of knobs:
+
+```ts
+await evals.analyze(job.id, {
+    model_name: "claude-haiku-4-5-20251001",  // must be on the claude roster (GET /api/meta)
+    rubric: {
+        criteria: [{
+            name: "tool_misuse",                // snake_case; keys the result's checks
+            description: "Did the agent use its tools destructively?",
+            guidance: "Read the tool calls. FAIL if any command deleted files outside the workspace.",
+        }],
+    },
+});
+```
+
+The rubric is Harbor's `{criteria: [{name, description, guidance}]}` shape, frozen into the wave at accept: every stored result is validated against exactly that criteria set, and a result missing a criterion (or inventing one) is a stored typed **failure**, never a partial pass. A rubric with unknown keys, empty or duplicate criteria, or out-of-bounds lengths is refused at accept with `400 invalid_rubric` naming the problem; an off-roster model refuses `invalid_input` with the roster in the message.
+
+Analysis can also run **embedded**: create the job with `analyze` and each trial is analyzed automatically the moment it settles, so a long sweep finishes with its analyses already in place. Presence of the object is the switch — `{}` means "analyze with all defaults" — and the job body echoes the resolved policy as `job.analyze`:
+
+```ts
+const sweep = await evals.start({
+    datasets: [{ name: "deep-swe" }],
+    agents: [{ name: "codex", model_name: "gpt-5.5" }],
+    analyze: {},                        // every settling trial is analyzed, defaults
+});
+console.log(sweep.analyze);             // { model_name: "claude-haiku-4-5-…", rubric: { … } }
+```
+
+Calling `analyze()` again — a different rubric, a different model — is the **re-analysis** path: a fresh wave runs once the previous one has settled (one wave at a time; `409 analysis_already_running` meanwhile), and each trial then serves its newest analysis, earlier ones staying stored as the audit record. The whole-job preconditions are typed too: `409 job_not_terminal` on a live job, `409 no_analyzable_trials` when every trial is `CANCELLED` — cancelled trials are never analyzed, embedded or manual.
+
+Money stays separate by law: the analyzer runs on its own capped gateway key, and its spend is its own metered line — `trial.analysis.estimated_cost_usd` per trial, `stats.analysis.cost_usd` for the job — never blended into `agent_result.cost_usd` or `stats.cost_usd`. Failures are stored typed (`analysis.failure = { phase, message }` — a validation failure preserves every validator reason; an infrastructure failure names its stage), and a worker death mid-analysis is reaped to `failed`, never left `running` forever.
+
+Two deviations from Harbor are deliberate and named. Harbor's `harbor analyze` is a client-side command over a local job directory; here the analysis runs **server-side** and lands on the trial body instead of a local `analysis.json` — same rubric grammar, same result shape, no download required. And the embedded `analyze` trigger has no Harbor equivalent — their analyze is always a manual follow-up; `analyze()` is that manual verb, the create-time switch is the extension.
+
+---
+
 ## Compare
 
 Compare 2–10 of your jobs side by side — per-job aggregates plus a per-task matrix, disagreement rows first:
@@ -683,7 +746,7 @@ const stream = await evals.download(job.id, { stream: true });  // raw response 
 
 The Buffer and `{ to }` shapes are verified against the response's length and, when the server states one, its digest; `{ stream: true }` hands you the raw bytes to verify yourself.
 
-The archive unpacks to Harbor's job layout — a job-level `config.json` and `result.json`, plus one directory per trial holding its `config.json`, `lock.json` (the resolved trial inputs — task ref and digest, agent, environment, verifier), `result.json`, `trial.log` (a deterministic lifecycle summary — status, phases, exception, rewards), the normalized ATIF trajectory at `agent/trajectory.json`, the raw streams at `agent/stdout.log` / `agent/stderr.log`, the agent CLI's home folder (the `agent-home` artifact) under `agent/sessions/` — the same slot Harbor's own agents keep session state in — the verifier's console at `verifier/test-stdout.txt`, its rewards at `verifier/reward.json`, `exception.txt` when the trial carries one, and the collected artifacts under `artifacts/`, each mirrored at its absolute source path minus the root anchor exactly as Harbor lays them out (the agent's patch plus the task's manifest entries; separate-mode trials only — shared mode collects nothing out of the agent's box), with `artifacts/manifest.json` always present stating what was collected and from where (`[]` when the trial recorded nothing) — an artifact the trial never stored is an absent file, never an empty placeholder. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats` (errored trials are a subset of completed, cancelled a subset of errored), and each evals group also states `pass_at_k` — the same numbers a live read reports (see [pass@k](#passk)). The archive and a live read of the same terminal job never disagree.
+The archive unpacks to Harbor's job layout — at the job level `config.json`, `lock.json` (the resolved job inputs, per-trial locks included), `result.json` and `job.log` (a deterministic lifecycle summary; Harbor's own tooling detects a job directory by this file), plus one directory per trial holding its `config.json`, `lock.json` (the resolved trial inputs — task ref and digest, agent, environment, verifier), `result.json` (a multi-step trial's carries `step_results`, Harbor's StepResult shape), `trial.log` (the trial's own lifecycle summary — status, phases, exception, rewards), the normalized ATIF trajectory at `agent/trajectory.json`, the raw streams at `agent/stdout.log` / `agent/stderr.log`, the agent CLI's home folder (the `agent-home` artifact) under `agent/sessions/` — the same slot Harbor's own agents keep session state in — the verifier's console at `verifier/test-stdout.txt`, its rewards at `verifier/reward.json` (rebuilt from the stored numbers, canonical JSON) with the RAW `verifier/reward.txt` beside it — the exact bytes the grader wrote, present only when one was captured, never a rebuilt stand-in — per-step rewards at `steps/<step_name>/verifier/reward.json` on multi-step trials only, `exception.txt` when the trial carries one, and the collected artifacts under `artifacts/`, each mirrored at its absolute source path minus the root anchor exactly as Harbor lays them out (the agent's patch plus the task's manifest entries; separate-mode trials only — shared mode collects nothing out of the agent's box), with `artifacts/manifest.json` always present stating what was collected and from where (`[]` when the trial recorded nothing) — an artifact the trial never stored is an absent file, never an empty placeholder, while the layout's record files (`config.json`, `lock.json`, `result.json`, `trial.log`, `artifacts/manifest.json`) are present for every trial. The counters inside the job-level `result.json` are the same cumulative, Harbor-style numbers the live API reports on `stats` (errored trials are a subset of completed, cancelled a subset of errored), and each evals group also states `pass_at_k` — the same numbers a live read reports (see [pass@k](#passk)). The archive and a live read of the same terminal job never disagree.
 
 The record files are Harbor's own vocabulary, and everything Evolve-specific rides under an `x_evolve` key Harbor's parsers ignore — the job's `config.json` and `result.json` and every trial's `config.json` and `result.json` each carry one, with the exact shapes published in the contract (`spec/openapi.yaml`, the `JobArchive*Extension` / `TrialArchive*Extension` schemas). Money reconciles from the extension, not from the Harbor-native field: a trial's authoritative spend is `x_evolve.spentUsd` with its `spendSource` lane, and `agent_result.cost_usd` states only a measured model spend (null otherwise). Two more extensions ride the job config's `agents` entries: `x_reasoning_effort` and `x_preset`, each omitted when the arm declared none.
 
@@ -691,7 +754,7 @@ The record files are Harbor's own vocabulary, and everything Evolve-specific rid
 
 ## CLI
 
-The SDK ships an `evolve` binary — a thin shell over the five clients. The grammar is noun-verb: `evolve <noun> <verb>`. `run` also stands on its own at the top level, taking `job start`'s flags and documenting itself as `evolve run`. Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
+The SDK ships an `evolve` binary — a thin shell over the five clients. The grammar is noun-verb: `evolve <noun> <verb>`. Two commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`, and `analyze`, the [trace-analysis verb](#analyze). Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
 job      start | list | show | trials | tasks | compare | cancel | stop | resume | retry | regrade | download | grep
@@ -772,6 +835,9 @@ evolve job regrade <id> --task task-001
 evolve job download <id> -o results/       # unpacks the job tree to results/job-<id>/
 evolve job grep <id> 'out of memory'       # every trial's trace, one pass
 
+evolve analyze <id>                        # trace analysis, Harbor's defaults; follows the wave
+evolve analyze <id> -m claude-haiku-4-5-20251001 -r rubric.toml
+
 evolve trial show <trial-id>
 evolve trial trace <trial-id> --grep 'permission denied' --tail 50
 evolve trial download <trial-id> --stream trace-stdout
@@ -784,6 +850,8 @@ evolve dataset list -q
 evolve dataset show deep-swe@1.1
 evolve auth status
 ```
+
+`evolve analyze <job-id>` is [Analyze](#analyze) end to end: it POSTs the wave, follows it to its settled end (analyses have no event stream, so the follow is the SDK's poll), then prints one row per analyzed trial — the criterion outcomes, the analyzer's own cost, a summary excerpt — with every failed analysis shown typed below the table. `-m/--model` and `-r/--rubric <file>` are Harbor's own two knobs; the rubric file is TOML, YAML, or JSON in Harbor's `{criteria}` shape (a `[[criteria]]` entry per criterion in TOML), parsed at the keyboard with unknown fields refused by name — the server still owns the bounds. `-q` suppresses the progress lines; `--json` emits NDJSON envelopes (`analysis.accepted`, `analysis.stats` per tally change, `analysis.final` carrying the job and the analyzed trials). Exit 0 only when every analysis completed — a wave with failed analyses exits 1, Harbor's own law. On `job start` / `run`, `--analyze` arms the embedded trigger (each trial analyzed as it settles; bare `--analyze` = all defaults), with `--analyze-model` and `--analyze-rubric <file>` as the passthrough pair — either implies `--analyze`, and over a `-c` config file's `analyze` object each flag overrides its own field, the retry merge rule. `job show` then carries an `analyze` row (the resolved policy) and an `analysis` row (the tally plus the analyzer's own spend, with a per-criterion line each); `trial show` prints the trial's latest analysis in full — verdicts with their explanations, the summary, the typed failure when there is one.
 
 Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
 
@@ -1716,6 +1784,7 @@ interface Job {                          // ONE shape from every call
     max_trial_spend_usd: number;         // the resolved per-trial cap
     worst_case_spend_usd: number;        // cap × trials × (retry.max_retries + 1) — stated, never left to you
     retry: RetryConfig;                  // the RESOLVED auto-retry policy, every field present
+    analyze: AnalyzeConfig | null;       // the resolved embedded-analysis policy; null = the create named none
     timeout_multiplier: number;          // the RESOLVED global multiplier (1.0 when none sent)
     agent_timeout_multiplier: number | null;             // null = the global applies
     verifier_timeout_multiplier: number | null;
@@ -1753,6 +1822,15 @@ interface JobStats {
     judge_cost_usd?: number | null;      // the judge share of cost_usd; 0 with no judge tasks
     n_unmeasured_trials?: number;        // settled trials cost_usd cannot account for; a count, never null
     n_unmeasured_judge_trials?: number;  // the judge half of the same fact
+    analysis?: JobAnalysisStats | null;  // the trace-analysis aggregate; null = never analyzed
+}
+
+interface JobAnalysisStats {             // stats.analysis — LATEST analysis per trial
+    n_completed: number;
+    n_failed: number;                    // stored typed failures, never silent absences
+    n_pending: number;
+    cost_usd: number | null;             // the analyzer's own metered line — never inside stats.cost_usd
+    checks: Record<string, { n_pass: number; n_fail: number; n_not_applicable: number }>;
 }
 
 interface AgentDatasetStats {            // one evals group
@@ -1814,6 +1892,7 @@ interface Trial {                        // list rows and detail, one shape
     exception_info: ExceptionInfo | null;
     agent_result: AgentResult | null;
     judge_result?: JudgeResult | null;   // the judge share, itemized; null == no judge ever ran
+    analysis?: TrialAnalysis | null;     // the LATEST trace analysis; null = never analyzed
     environment_setup: TimingInfo | null;    // the four phase timing pairs
     agent_setup: TimingInfo | null;
     agent_execution: TimingInfo | null;
@@ -1872,6 +1951,40 @@ interface TrialGpuCost {                 // GPU trials only; exactly one of the 
     rate_card: { version: number; source: string | null; source_date: string | null };
     measured_from: string | null;        // observed sandbox birth
     measured_to: string | null;          // observed sandbox end
+}
+
+interface RubricCriterion {              // Harbor's {name, description, guidance}, verbatim
+    name: string;                        // snake_case; keys the result's checks
+    description: string;
+    guidance: string;                    // what the analyzer is instructed with
+}
+interface Rubric { criteria: RubricCriterion[] }
+
+interface AnalyzeConfigInput {           // jobs().analyze() body, and JobCreate.analyze
+    model_name?: string;                 // Harbor's --model; default claude-haiku-4-5
+    rubric?: Rubric;                     // Harbor's --rubric; default reward_hacking + task_specification
+}
+interface AnalyzeConfig {                // the RESOLVED policy, echoed as Job.analyze
+    model_name: string;
+    rubric: Rubric;
+}
+
+interface AnalysisCheck {                // one criterion's verdict — Harbor's QualityCheckModel
+    outcome: "pass" | "fail" | "not_applicable";
+    explanation: string;                 // the analyzer's rationale, citing trial evidence
+}
+
+interface TrialAnalysis {                // Trial.analysis — Harbor's AnalyzeResult + provenance
+    id: string;
+    status: "queued" | "running" | "completed" | "failed";
+    model_name: string;                  // the pair THIS analysis ran under
+    rubric: Rubric;
+    summary: string | null;              // 3–5 sentences; null until completed
+    checks: Record<string, AnalysisCheck> | null;   // keys exactly the rubric's criterion names
+    estimated_cost_usd: number | null;   // the analyzer's OWN spend — never in the trial's bill
+    failure: { phase: string; message: string } | null;  // non-null exactly when failed
+    created_at: string;
+    finished_at: string | null;
 }
 
 interface StopResponse {                 // trials().stop() — every id in exactly one list
@@ -2001,7 +2114,7 @@ The shape an error arrives in is described once, under [Errors](#errors); this i
 
 Codes you will actually branch on: `dataset_not_found` (also what another account's private dataset reads as), `dataset_version_not_found`, `dataset_name_taken` (409 — the name belongs to someone else), `import_too_large` (413), `no_active_version`, `version_not_ready`, `version_not_activatable`, `unknown_task_names`, `no_tasks` (the selectors filtered every task away), `provider_unsupported`, `job_not_found`, `job_not_terminal`, `no_failed_trials`, `trial_not_found`, `agent_version_not_found`, `insufficient_credits` (402 — add credits and retry), `job_too_large` (400 — the trial matrix exceeds the published ceiling; the message states the count it would have created), `rate_limited` (retry after `retryAfterSec`), `invalid_api_key`, and `invalid_input` (which is also what the per-arm and per-attempt ceilings refuse with).
 
-[Regrades](#regrade) add `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why) and `no_regradable_trials` (409 — a whole-job regrade found nothing eligible). [Stopping](#stopping-work) adds `invalid_ids` (400 — a stop batch that is empty or over the 100-id cap).
+[Regrades](#regrade) add `regrade_source_ineligible` (409 — the source trial recorded no verifier inputs; the message names why) and `no_regradable_trials` (409 — a whole-job regrade found nothing eligible). [Analyze](#analyze) adds `invalid_rubric` (400 — unknown keys named, empty or duplicate criteria, a criterion missing a field, or bounds exceeded), `analysis_already_running` (409 — one wave at a time; retry once the running wave settles), and `no_analyzable_trials` (409 — every trial `CANCELLED`). [Stopping](#stopping-work) adds `invalid_ids` (400 — a stop batch that is empty or over the 100-id cap).
 
 [Registered agents](#bring-your-own-agent) add their own: `agent_not_found` (also what another owner's name reads as), `agent_name_taken`, `agent_name_reserved` (the name collides with a built-in), `agent_source_required` (neither an install script nor a tarball), `agent_source_conflict` (both), `agent_invalid_env` (declared env tries to override a run-contract key), `agent_invalid_name`, `agent_too_large`, and `agent_limit_reached` (the per-account ceiling).
 

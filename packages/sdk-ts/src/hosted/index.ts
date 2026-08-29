@@ -17,6 +17,8 @@ import type {
   AgentSource,
   AgentUpsertInput,
   AgentsClient,
+  AnalyzeConfig,
+  AnalyzeConfigInput,
   AttemptPhase,
   AuthClient,
   AuthStatus,
@@ -97,6 +99,7 @@ import type {
   TraceEventPage,
   TraceOptions,
   Trial,
+  TrialAnalysis,
   TrialArtifactStream,
   TrialCounts,
   TrialFile,
@@ -112,6 +115,7 @@ import type {
   UsageReading,
   VerifierEnvironmentMode,
   VerifierResult,
+  WatchAnalysisOptions,
   WatchImportOptions,
   WatchJobOptions,
 } from "./types";
@@ -145,6 +149,10 @@ export type {
   AgentSourceInput,
   AgentUpsertInput,
   AgentsClient,
+  AnalysisCheck,
+  AnalysisFailure,
+  AnalyzeConfig,
+  AnalyzeConfigInput,
   ApiKey,
   AttemptPhase,
   AuthClient,
@@ -189,6 +197,7 @@ export type {
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobAnalysisStats,
   JobList,
   JobPage,
   JobStats,
@@ -222,6 +231,8 @@ export type {
   RetryConfig,
   RetryConfigInput,
   RetryRequest,
+  Rubric,
+  RubricCriterion,
   SkillLock,
   SkillUpload,
   SkillUploadList,
@@ -243,6 +254,7 @@ export type {
   TraceEventPage,
   TraceOptions,
   Trial,
+  TrialAnalysis,
   TrialArtifactStream,
   TrialCounts,
   TrialFile,
@@ -259,6 +271,7 @@ export type {
   UsageReading,
   VerifierEnvironmentMode,
   VerifierResult,
+  WatchAnalysisOptions,
   WatchImportOptions,
   WatchJobOptions,
 } from "./types";
@@ -827,6 +840,13 @@ function mapJob(raw: Record<string, unknown>): Job {
     max_trial_spend_usd: raw.max_trial_spend_usd as number,
     worst_case_spend_usd: raw.worst_case_spend_usd as number,
     retry: mapRetryConfig(raw.retry),
+    // The resolved embedded-analysis policy, or null: a create that named
+    // none, and an older server that sends nothing, both mean "no embedded
+    // analysis" — exactly what null states.
+    analyze:
+      raw.analyze && typeof raw.analyze === "object" && !Array.isArray(raw.analyze)
+        ? (raw.analyze as AnalyzeConfig)
+        : null,
     // Timeout multipliers, tolerant of an OLDER server that sends none: the
     // absent-field reading is every phase at 1.0 — exactly how such a server
     // behaves.
@@ -939,6 +959,13 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     // The judge share of the bill, itemized (absent on older servers and on
     // every non-judge trial — null either way, and null never means $0).
     judge_result: (raw.judge_result as JudgeResult | null) ?? null,
+    // The trial's LATEST trace analysis. Defensive like gpu_cost: absent (an
+    // older server, or a never-analyzed trial) and malformed both read null —
+    // "never analyzed", never a fabricated empty object.
+    analysis:
+      raw.analysis && typeof raw.analysis === "object" && !Array.isArray(raw.analysis)
+        ? (raw.analysis as TrialAnalysis)
+        : null,
     environment_setup: mapTimingInfo(raw.environment_setup),
     agent_setup: mapTimingInfo(raw.agent_setup),
     agent_execution: mapTimingInfo(raw.agent_execution),
@@ -2501,6 +2528,62 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
+    async analyze(id: string, req?: AnalyzeConfigInput): Promise<Job> {
+      // The config rides the body verbatim ({} = all defaults) and the server
+      // owns every refusal — the rubric grammar, the model roster, the
+      // one-wave-at-a-time law. THE RESPONSE IS THE JOB, analyses enqueued.
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req ?? {}),
+      });
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
+    async watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job> {
+      // Analyses have no event stream — the contract says "poll the job's
+      // trials to watch them settle" — so this is the poll, in one home,
+      // watchImport's posture: a 429/503 mid-watch is a delay, not an
+      // outcome. Settled means stats.analysis reports nothing pending; a
+      // still-null tally is the enqueue race after an accepted POST, watched
+      // through rather than misread as "never analyzed".
+      const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      let lastTally: string | null = null;
+      for (;;) {
+        throwIfAborted(options?.signal);
+        let current: Job;
+        try {
+          current = await getJob(id);
+        } catch (error) {
+          if (
+            error instanceof EvolveApiError &&
+            (error.status === 429 || error.status === 503)
+          ) {
+            await sleep(
+              Math.max((error.retryAfterSec ?? 0) * 1000, pollIntervalMs),
+              options?.signal
+            );
+            continue;
+          }
+          throw error;
+        }
+        const analysis = current.stats.analysis ?? null;
+        if (analysis) {
+          const tally = JSON.stringify([
+            analysis.n_completed,
+            analysis.n_failed,
+            analysis.n_pending,
+          ]);
+          if (tally !== lastTally) {
+            lastTally = tally;
+            options?.onStats?.(current);
+          }
+          if (analysis.n_pending === 0) return current;
+        }
+        await sleep(pollIntervalMs, options?.signal);
+      }
+    },
+
     download: (async (
       id: string,
       options?: DownloadJobOptions
@@ -2766,7 +2849,7 @@ export interface HostedEvolve {
   readonly datasets: DatasetsClient;
   /** Your own bring-your-own agent registrations. */
   readonly agents: AgentsClient;
-  /** Jobs: start, watch, compare, resume, retry, regrade, download. */
+  /** Jobs: start, watch, compare, resume, retry, regrade, analyze, download. */
   readonly jobs: JobsClient;
   /** Platform-stored skills, referenced as `upload:<id>` in agents[].skills. */
   readonly skills: SkillsClient;

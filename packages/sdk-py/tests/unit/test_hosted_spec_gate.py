@@ -155,6 +155,7 @@ OPERATION_TO_METHOD = {
     'resumeJob': (JobsClient, 'resume'),
     'retryJob': (JobsClient, 'retry'),
     'regradeJob': (JobsClient, 'regrade'),
+    'analyzeJob': (JobsClient, 'analyze'),
     'grepJob': (JobsClient, 'grep'),
     'listJobTrials': (JobsClient, 'trials'),
     'listJobTasks': (JobsClient, 'tasks'),

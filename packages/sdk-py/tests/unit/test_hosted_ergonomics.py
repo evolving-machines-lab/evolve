@@ -643,6 +643,9 @@ class TestPassAtK:
             stats=stats,
             # {} is the older-server / no-auto-retry read of the policy echo.
             retry={},
+            # None is "created with no embedded analysis" — the older-server
+            # read too.
+            analyze=None,
             # The older-server read of the multipliers: every phase at 1.0.
             timeout_multiplier=1.0,
             agent_timeout_multiplier=None,

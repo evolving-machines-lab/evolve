@@ -180,6 +180,13 @@ HostedErrorCode = Literal[
     'concurrent_update',
     'regrade_source_ineligible',
     'no_regradable_trials',
+    # Analyze: a rubric that cannot rule an analysis (unknown keys, empty or
+    # duplicate criteria, bounds exceeded); one wave at a time (re-analysis is
+    # legal once the previous wave settles); a terminal job with no analyzable
+    # trial (every trial CANCELLED).
+    'invalid_rubric',
+    'analysis_already_running',
+    'no_analyzable_trials',
     'import_not_found',
     'import_too_large',
     'invalid_archive',
@@ -1071,6 +1078,10 @@ class JobStats(TypedDict, total=False):
     #: measured (``judge_spend_source`` ``'assumed_cap'``). 0 on jobs with no
     #: judge-enabled tasks.
     n_unmeasured_judge_trials: int
+    #: Aggregate of the job's trace analyses; None when no trial of this job
+    #: has ever been analyzed. Never a fabricated empty object — absence of
+    #: analysis is stated as None, here and on each trial.
+    analysis: Optional['JobAnalysisStats']
 
 
 class JobRetryConfigInput(TypedDict, total=False):
@@ -1148,6 +1159,149 @@ JobSecretInline = TypedDict(
     {'name': str, 'value': str, 'delivery': str, 'label': str, 'as': str},
     total=False,
 )
+
+
+class RubricCriterion(TypedDict):
+    """One analysis criterion — Harbor's RubricCriterion verbatim (their
+    cli/quality_checker/models.py ``{name, description, guidance}``). The
+    name becomes the key of the matching entry in ``checks``; the guidance is
+    what the analyzer agent is instructed with. A plain dict at runtime, like
+    every wire shape here.
+    """
+    #: Criterion identifier, snake_case (it keys the result's ``checks``).
+    #: Harbor's defaults are ``reward_hacking`` and ``task_specification``.
+    name: str
+    #: What the criterion evaluates, one sentence.
+    description: str
+    #: Evaluation guidance handed to the analyzer agent — what evidence to
+    #: read and what PASS / FAIL / NOT_APPLICABLE mean for this criterion.
+    guidance: str
+
+
+class Rubric(TypedDict):
+    """An analysis rubric — Harbor's Rubric shape (``{criteria: [...]}``,
+    their cli/quality_checker/models.py). The criteria set is FROZEN into
+    each analysis at enqueue: the stored result is validated against exactly
+    this set — a missing or extra criterion is a stored typed failure, never
+    a partial pass.
+    """
+    criteria: List[RubricCriterion]
+
+
+class AnalyzeConfigInput(TypedDict, total=False):
+    """Trace-analysis configuration INPUT — Harbor's ``harbor analyze``
+    vocabulary (their cli/analyze.py: ``--model``, ``--rubric``), the spec's
+    ``AnalyzeConfigInput`` schema.
+
+    PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
+    it arms the embedded trigger (each trial is analyzed server-side right
+    after it settles; CANCELLED trials are skipped); ``{}`` is legal and
+    means "all defaults" — claude-haiku-4-5 over Harbor's default rubric
+    (reward_hacking, task_specification). The analyzer always runs the
+    claude-code harness in its own sealed sandbox; its spend is capped per
+    analysis and metered as its own line, never blended into the trial's own
+    bill.
+    """
+    #: Model the analyzer agent runs — Harbor's ``--model``; the default is
+    #: Harbor's own (claude-haiku-4-5) under its wire id on this platform's
+    #: claude roster. Off-roster models are refused typed (``invalid_input``).
+    model_name: str
+    rubric: Rubric
+
+
+class AnalyzeConfig(TypedDict):
+    """The RESOLVED trace-analysis policy — the caller's values or the
+    defaults of the day, resolved at accept and stored (same law as
+    ``JobRetryConfig``). Echoed as ``Job.analyze`` when the job was created
+    with ``analyze``; each analysis additionally carries the exact pair IT
+    ran under (``Trial.analysis['model_name']`` / ``['rubric']``), which a
+    later manual re-analysis may have changed.
+    """
+    model_name: str
+    rubric: Rubric
+
+
+class AnalysisCheck(TypedDict):
+    """One criterion's verdict — Harbor's QualityCheckModel verbatim (their
+    cli/quality_checker/models.py ``{explanation, outcome}``)."""
+    #: ``'pass'`` | ``'fail'`` | ``'not_applicable'``.
+    outcome: str
+    #: The analyzer's rationale, citing trial evidence.
+    explanation: str
+
+
+class AnalysisFailure(TypedDict):
+    """Why an analysis FAILED — a stored typed failure, never a silent
+    absence and never a fake pass."""
+    #: Which part failed: ``invalid_result`` (the analyzer ran but its
+    #: analysis.json failed validation — the message preserves every
+    #: validator reason, one per line), ``inputs`` (the trial tree or task
+    #: content could not be assembled), or an infrastructure stage of the
+    #: analyzer run (``mint_key``, ``boot``, ``harness_install``, ``agent``,
+    #: ``artifact_read``, ``lease_expired``, ...).
+    phase: str
+    message: str
+
+
+class TrialAnalysis(TypedDict):
+    """One trace analysis of a trial — ``Trial.analysis``.
+
+    The result half is Harbor's AnalyzeResult verbatim (their
+    analyze/models.py: ``summary``, ``checks`` keyed by criterion,
+    ``estimated_cost_usd``; the enclosing trial is Harbor's ``trial_name``);
+    the rest is provenance — which model and rubric THIS analysis ran under,
+    its lifecycle status, and its typed failure when it failed.
+
+    ``estimated_cost_usd`` is the analyzer agent's OWN metered spend — its
+    own line, never part of the trial's ``agent_result.cost_usd`` or the
+    job's ``stats['cost_usd']``; the job aggregate is
+    ``stats['analysis']['cost_usd']``. None when nothing was measured, never
+    a fabricated 0. A plain wire dict at runtime.
+    """
+    id: str
+    #: ``'queued'`` | ``'running'`` | ``'completed'`` | ``'failed'``. Every
+    #: non-terminal analysis reaches ``completed`` or ``failed``; a worker
+    #: death mid-run is reaped to a typed ``failed``.
+    status: str
+    model_name: str
+    rubric: Rubric
+    #: 3–5 sentence overview of the trial (Harbor's summary contract). None
+    #: until completed.
+    summary: Optional[str]
+    #: One entry per rubric criterion, keys exactly the rubric's criterion
+    #: names (the frozen-criteria law). None until completed.
+    checks: Optional[Dict[str, AnalysisCheck]]
+    estimated_cost_usd: Optional[float]
+    #: Non-None exactly when status is ``'failed'``.
+    failure: Optional[AnalysisFailure]
+    #: When this analysis was enqueued.
+    created_at: str
+    #: When it settled; None while queued or running.
+    finished_at: Optional[str]
+
+
+class JobAnalysisStats(TypedDict):
+    """The job-level analysis aggregate — ``stats['analysis']``.
+
+    Harbor's job ``analysis.json`` is a flat list of per-trial results
+    (their analyze/models.py AnalyzeReport); each trial's own result rides
+    ``Trial.analysis``, and this object aggregates them. LATEST-per-trial: a
+    re-analyzed trial contributes only its newest analysis, matching Harbor,
+    where a re-run overwrites the trial directory's ``analysis.json``.
+    """
+    #: Trials whose latest analysis produced a valid result.
+    n_completed: int
+    #: Trials whose latest analysis is a stored typed failure.
+    n_failed: int
+    #: Trials whose latest analysis is still queued or running.
+    n_pending: int
+    #: Measured spend of the LATEST analyses summed — the analyzer's own
+    #: metered line, never part of ``stats['cost_usd']``. None when no
+    #: analysis recorded measured spend.
+    cost_usd: Optional[float]
+    #: Per-criterion outcome tally over the completed latest analyses, keyed
+    #: by criterion name: ``{n_pass, n_fail, n_not_applicable}`` each.
+    checks: Dict[str, Dict[str, int]]
 
 
 class JobRetryConfig(TypedDict):
@@ -1236,6 +1390,11 @@ class Job:
     #: present: an older server that sends no policy reads as the retries-off
     #: policy with Harbor's defaults, exactly how such a server behaves.
     retry: JobRetryConfig
+    #: The resolved embedded-analysis policy the job was created with; None
+    #: when the create named none (a later manual :meth:`JobsClient.analyze`
+    #: does not rewrite it — the job row states what the CREATE asked for,
+    #: each analysis states what IT ran under). Always None on a regrade job.
+    analyze: Optional[AnalyzeConfig]
     #: The RESOLVED timeout multipliers this job's phases arm under —
     #: Harbor's five flat JobConfig fields, echoed on every job body. The
     #: global one is always a number (1.0 when the create request named
@@ -1585,6 +1744,13 @@ class Trial:
     #: serve (:class:`evolve.results.UsageReading`). None = the meter never
     #: answered, never zero.
     usage: Optional[UsageReading] = None
+    #: The trial's LATEST trace analysis (:class:`TrialAnalysis`); None when
+    #: the trial has never been analyzed — never a fabricated empty object. A
+    #: re-analysis (same job, different rubric or model) replaces what this
+    #: field serves, matching Harbor, where a re-run overwrites the trial
+    #: directory's analysis.json; earlier analyses stay stored as the audit
+    #: record.
+    analysis: Optional[TrialAnalysis] = None
 
 
 @dataclass
@@ -2404,6 +2570,12 @@ def _map_job(data: Dict[str, Any]) -> Job:
         # server that sends no policy reads as the retries-off policy, which
         # is exactly how such a server behaves; every field always present.
         retry=_map_retry_config(data.get('retry')),
+        # The resolved embedded-analysis policy, or None: a create that named
+        # none, and an older server that sends nothing, both mean "no
+        # embedded analysis" — exactly what None states.
+        analyze=(
+            data['analyze'] if isinstance(data.get('analyze'), dict) else None
+        ),
         # Timeout multipliers: an older server sends none — 1.0 / None reads
         # as "every phase at 1.0", exactly how such a server behaves.
         timeout_multiplier=(
@@ -2606,6 +2778,12 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         # older servers and on every non-judge trial — None either way.
         judge_result=_map_judge_result(data.get('judge_result')),
         judge_spend_source=data.get('judge_spend_source'),
+        # The trial's LATEST trace analysis. Defensive like gpu_cost: absent
+        # (an older server, or a never-analyzed trial) and malformed both
+        # read None — "never analyzed", never a fabricated empty object.
+        analysis=(
+            data['analysis'] if isinstance(data.get('analysis'), dict) else None
+        ),
         environment_setup=_map_timing(data.get('environment_setup')),
         agent_setup=_map_timing(data.get('agent_setup')),
         agent_execution=_map_timing(data.get('agent_execution')),
@@ -4320,6 +4498,7 @@ class JobsClient:
         max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
         retry: Optional[JobRetryConfigInput] = None,
+        analyze: Optional[AnalyzeConfigInput] = None,
         timeout_multiplier: Optional[float] = None,
         agent_timeout_multiplier: Optional[float] = None,
         verifier_timeout_multiplier: Optional[float] = None,
@@ -4359,7 +4538,15 @@ class JobsClient:
         ``'include_exceptions'`` has no such split: None, an omitted key,
         and the empty list ``[]`` all mean no filter — Harbor's include
         check treats the empty set exactly like None, so ``[]`` never means
-        "retry nothing". The five ``*timeout_multiplier`` arguments are
+        "retry nothing". ``analyze`` arms the EMBEDDED trace-analysis
+        trigger (Harbor's ``harbor analyze`` vocabulary, the spec's
+        AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
+        server-side right after it settles (CANCELLED trials are skipped),
+        ``{}`` means "all defaults" (claude-haiku-4-5, Harbor's default
+        rubric), and the response echoes the RESOLVED policy as
+        ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
+        analysis runs and :meth:`analyze` remains the manual door. The five
+        ``*timeout_multiplier`` arguments are
         Harbor's timeout knobs verbatim: ``timeout_multiplier`` multiplies
         every TASK-DECLARED timeout for this job's runs (default 1.0;
         values below 1 shrink), and each phase-specific one —
@@ -4431,6 +4618,8 @@ class JobsClient:
             body['sandbox_provider'] = sandbox_provider
         if retry is not None:
             body['retry'] = retry
+        if analyze is not None:
+            body['analyze'] = analyze
         if timeout_multiplier is not None:
             body['timeout_multiplier'] = timeout_multiplier
         if agent_timeout_multiplier is not None:
@@ -4916,6 +5105,110 @@ class JobsClient:
         )
         return _map_job(raw)
 
+    async def analyze(
+        self,
+        id: str,
+        *,
+        model_name: Optional[str] = None,
+        rubric: Optional[Rubric] = None,
+    ) -> Job:
+        """Analyze a terminal job's trial traces (rubric-driven, Harbor's
+        ``harbor analyze``), server-side.
+
+        For each trial the analyzer agent reads the trial's Harbor-shape tree
+        plus its original task and rules every rubric criterion, storing the
+        result on the trial (``Trial.analysis``) and the aggregate on the job
+        (``stats['analysis']``). THE RESPONSE IS THE JOB, its analyses
+        enqueued — analyses are not a separate resource; follow them with
+        :meth:`watch_analysis`, or poll the job's trials. This is also the
+        RE-analysis path: calling again (same job, different rubric or
+        model) runs a fresh wave once the previous one has settled. Both
+        arguments omitted means the defaults: claude-haiku-4-5 over Harbor's
+        default rubric (reward_hacking, task_specification). CANCELLED
+        trials are never analyzed.
+
+        The server owns every acceptance refusal, surfaced typed:
+        ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
+        or duplicate criteria, bounds), ``invalid_input`` (off-roster
+        model), ``analysis_already_running`` (one wave at a time),
+        ``no_analyzable_trials`` (every trial CANCELLED).
+        """
+        body: Dict[str, Any] = {}
+        if model_name is not None:
+            body['model_name'] = model_name
+        if rubric is not None:
+            body['rubric'] = rubric
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/analyze', method='POST', body=body
+        )
+        return _map_job(raw)
+
+    async def watch_analysis(
+        self,
+        id: str,
+        *,
+        on_stats: Optional[Callable[[Job], None]] = None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ) -> Job:
+        """Follow a job's analysis wave to its settled end.
+
+        Analyses have no event stream — the contract's own words: poll the
+        job's trials to watch them settle — so this polls :meth:`get` until
+        ``stats['analysis']`` reports nothing pending, and returns the final
+        job; the per-trial results then ride the job's trials
+        (``Trial.analysis``). ``on_stats`` fires on every observed change of
+        the analysis tally (including the first non-None one seen), with the
+        job body the observation came from. A still-None tally is the
+        enqueue race after an accepted :meth:`analyze` and is watched
+        through, never misread as "never analyzed" — so on a job that was
+        NEVER analyzed this polls indefinitely (until ``timeout_s``): call
+        it after :meth:`analyze`, as the CLI always does. It is the MANUAL
+        wave's companion, not the embedded trigger's: on a still-RUNNING job
+        created with ``analyze``, ``n_pending`` can touch 0 between trial
+        settles, so the watch can return before every trial has been
+        analyzed.
+
+        ``timeout_s`` bounds the whole watch and raises
+        :class:`TimeoutError`. A rate limit or transient outage mid-watch is
+        a delay, not an outcome: a 429/503 sleeps the server's
+        ``retry_after_sec`` and keeps watching.
+        """
+        if poll_interval_s <= 0:
+            raise ValueError('poll_interval_s must be positive')
+        deadline = time.monotonic() + timeout_s if timeout_s is not None else None
+        last_tally: Optional['tuple[int, int, int]'] = None
+        while True:
+            try:
+                job = await self.get(id)
+            except EvolveAPIError as error:
+                if error.status not in (429, 503):
+                    raise
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f'watch_analysis({id!r}) timed out after {timeout_s}s'
+                    ) from error
+                await asyncio.sleep(
+                    max(error.retry_after_sec or 0.0, poll_interval_s)
+                )
+                continue
+            analysis = job.stats.get('analysis')
+            if isinstance(analysis, dict):
+                tally = (
+                    int(analysis.get('n_completed', 0)),
+                    int(analysis.get('n_failed', 0)),
+                    int(analysis.get('n_pending', 0)),
+                )
+                if tally != last_tally:
+                    last_tally = tally
+                    if on_stats is not None:
+                        on_stats(job)
+                if tally[2] == 0:
+                    return job
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f'watch_analysis({id!r}) timed out after {timeout_s}s')
+            await asyncio.sleep(poll_interval_s)
+
     async def download(
         self,
         id: str,
@@ -4926,11 +5219,16 @@ class JobsClient:
         standard job-directory layout (deterministic bytes).
 
         The archive extracts to ``job-<id>/`` with ``config.json``,
-        ``result.json`` (stats incl. ``pass_at_k``), and per trial its
-        ``config.json``, ``result.json``, ``agent/trajectory.json`` (the
-        normalized ATIF trajectory), ``agent/{stdout,stderr}.log``,
-        ``verifier/test-stdout.txt``, ``verifier/reward.json`` and
-        ``exception.txt`` — absent artifacts are absent files.
+        ``lock.json``, ``result.json`` (stats incl. ``pass_at_k``) and
+        ``job.log``, and per trial its ``config.json``, ``lock.json``,
+        ``result.json`` (``step_results`` on multi-step trials),
+        ``trial.log``, ``agent/trajectory.json`` (the normalized ATIF
+        trajectory), ``agent/{stdout,stderr}.log``, ``agent/sessions/``,
+        ``verifier/test-stdout.txt``, ``verifier/reward.json``, the raw
+        ``verifier/reward.txt`` (only when the grader wrote one),
+        ``steps/<name>/verifier/reward.json`` (multi-step trials only),
+        ``exception.txt``, and ``artifacts/`` with its always-present
+        ``manifest.json`` — absent artifacts are absent files.
 
         Returns the archive bytes — verified against the response's
         Content-Length and, when the server states one, its digest — or, when
@@ -5358,7 +5656,7 @@ class HostedEvolve:
 
     @property
     def jobs(self) -> JobsClient:
-        """Jobs: start, watch, compare, resume, retry, regrade, download."""
+        """Jobs: start, watch, compare, resume, retry, regrade, analyze, download."""
         if self._jobs is None:
             self._jobs = JobsClient(self._config)
         return self._jobs

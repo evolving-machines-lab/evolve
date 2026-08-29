@@ -109,6 +109,7 @@ await evolve.run(prompt='Hello world')
 | Stop verbs (`cancel()`, `trials().stop()`, `job stop --dataset`) | [Hosted Evals → Stopping Work](./06-hosted-evals.md#stopping-work) |
 | `resume()` (new linked job over failed and stopped trials) | [Hosted Evals → Resume](./06-hosted-evals.md#resume) |
 | Regrade (`regrade()` — the response IS a job) | [Hosted Evals → Regrade](./06-hosted-evals.md#regrade) |
+| Analyze (`analyze()` / `watch_analysis()` — rubric-driven trace analysis) | [Hosted Evals → Analyze](./06-hosted-evals.md#analyze) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `download()` (the results archive) | [Hosted Evals → Download the Archive](./06-hosted-evals.md#download-the-archive) |
 | CLI (via the TypeScript `evolve` binary) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
