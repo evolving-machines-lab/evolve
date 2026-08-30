@@ -3625,13 +3625,31 @@ function testBuildJobInputAnalyze() {
       "-m", "m",
       "--analyze-model", "claude-haiku-4-5-20251001",
       "--analyze-rubric", "rubric.json",
+      "--analyze-provider", "modal",
     ]),
     () => JSON.stringify(CLI_RUBRIC)
   );
   assertEqual(
     withFields.analyze,
-    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC },
-    "--analyze-model/--analyze-rubric imply --analyze and fill their fields"
+    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC, sandbox_provider: "modal" },
+    "--analyze-model/--analyze-rubric/--analyze-provider imply --analyze and fill their fields"
+  );
+
+  // The provider VALUE is the server's to rule (the lineup lives on GET
+  // /api/meta, one home): the CLI passes it verbatim, no client-side roster.
+  const providerOnly = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--analyze-provider", "not-a-provider",
+    ])
+  );
+  assertEqual(
+    providerOnly.analyze,
+    { sandbox_provider: "not-a-provider" },
+    "--analyze-provider alone arms --analyze and rides verbatim — the server owns the lineup refusal"
   );
 
   const minimal = buildJobInput(
@@ -3644,25 +3662,29 @@ function testBuildJobInputAnalyze() {
     console.log(`  - ${SPEC_SKIP_REASON}`);
     return;
   }
+  // The file's analyze.sandbox_provider passes the spec-derived -c validation
+  // (the key is in the spec's own AnalyzeConfigInput vocabulary — zero CLI
+  // edits), and each flag still overrides exactly its own field.
   const merged = buildJobInput(
     parseArgs([
       "job", "start",
       "--config", "job.json",
       "--analyze-model", "claude-haiku-4-5-20251001",
+      "--analyze-provider", "modal",
     ]),
     (path) =>
       path === "job.json"
         ? JSON.stringify({
             datasets: [{ name: "deep-swe" }],
             agents: [{ name: "codex", model_name: "m" }],
-            analyze: { model_name: "other-model", rubric: CLI_RUBRIC },
+            analyze: { model_name: "other-model", rubric: CLI_RUBRIC, sandbox_provider: "e2b" },
           })
         : ""
   );
   assertEqual(
     merged.analyze,
-    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC },
-    "the flag overrides its field; the file's rubric survives"
+    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC, sandbox_provider: "modal" },
+    "each flag overrides its field; the file's rubric survives; the file's provider is spec-legal"
   );
 }
 
@@ -3707,7 +3729,7 @@ async function testAnalyzeVerbEndToEnd() {
     });
     const { io, out } = captureIO();
     const code = await runCli(
-      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", ...AUTH],
+      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0 when every analysis completed");
@@ -3715,8 +3737,8 @@ async function testAnalyzeVerbEndToEnd() {
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001" },
-      "-m rides the body as model_name; no rubric key when none given"
+      { model_name: "claude-haiku-4-5-20251001", sandbox_provider: "daytona" },
+      "-m/-e ride the body as model_name/sandbox_provider; no rubric key when none given"
     );
     assert(jobReads >= 2, "follows the wave by polling the job");
     assert(

@@ -2845,7 +2845,13 @@ const ANALYZE_RUBRIC = {
 const ANALYZED_JOB_BODY = {
   ...JOB_SUMMARY,
   status: "COMPLETED",
-  analyze: { model_name: "claude-haiku-4-5-20251001", rubric: ANALYZE_RUBRIC },
+  // The resolved echo always names its provider (the spec's required list):
+  // the caller's value as stored, or the platform's analysis default of the day.
+  analyze: {
+    model_name: "claude-haiku-4-5-20251001",
+    rubric: ANALYZE_RUBRIC,
+    sandbox_provider: "daytona",
+  },
   stats: {
     n_completed_trials: 2,
     cost_usd: 1.5,
@@ -2868,21 +2874,30 @@ async function testAnalyzeJob() {
     const job = await e.analyze("eval-1", {
       model_name: "claude-haiku-4-5-20251001",
       rubric: ANALYZE_RUBRIC,
+      sandbox_provider: "modal",
     });
     const call = fetchCalls[fetchCalls.length - 1];
     assertEqual(call.init?.method, "POST", "uses POST");
     assert(call.url.endsWith("/api/jobs/eval-1/analyze"), "hits the per-job analyze route");
     assertEqual(
       JSON.parse(call.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001", rubric: ANALYZE_RUBRIC },
-      "the config rides the body verbatim"
+      {
+        model_name: "claude-haiku-4-5-20251001",
+        rubric: ANALYZE_RUBRIC,
+        sandbox_provider: "modal",
+      },
+      "the config rides the body verbatim — sandbox_provider included"
     );
     // THE RESPONSE IS THE JOB — analyses are not a separate resource.
     assertEqual(job.id, "eval-1", "returns the job body");
     assertEqual(
       job.analyze,
-      { model_name: "claude-haiku-4-5-20251001", rubric: ANALYZE_RUBRIC },
-      "the resolved embedded policy maps verbatim"
+      {
+        model_name: "claude-haiku-4-5-20251001",
+        rubric: ANALYZE_RUBRIC,
+        sandbox_provider: "daytona",
+      },
+      "the resolved embedded policy maps verbatim — the provider echo rides it"
     );
     assertEqual(
       job.stats.analysis,

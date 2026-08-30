@@ -300,6 +300,13 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<path>",
     help: "Rubric file for the analyzer (TOML/YAML/JSON, Harbor's {criteria} shape; implies --analyze)",
   },
+  "analyze-provider": {
+    kind: "string",
+    value: "<provider>",
+    help:
+      "Sandbox provider the analyzer runs on (implies --analyze; the job lineup, GET /api/meta; " +
+      "default: the platform's analysis default)",
+  },
   "timeout-multiplier": {
     kind: "number",
     value: "<x>",
@@ -854,7 +861,11 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // Harbor registers `analyze` at the top level too (their cli/main.py binds
   // analyze_command as its own command); theirs takes a local job directory,
   // ours the hosted job id — the platform's one recorded deviation, analysis
-  // running server-side.
+  // running server-side. -e/--env is Harbor's own analyze flag (their
+  // cli/analyze.py: `"-e", "--env"`), re-aimed for that deviation: theirs
+  // picks a local environment TYPE (docker, daytona); ours picks which hosted
+  // provider's sandbox the analyzer boots — there is no local backend
+  // server-side.
   analyze: {
     summary:
       "Analyze a terminal job's trial traces against a rubric (server-side; follows the wave to its settled end)",
@@ -874,6 +885,14 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         help:
           "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} " +
           "shape; default: Harbor's default rubric — reward_hacking, task_specification)",
+      },
+      env: {
+        kind: "string",
+        short: "e",
+        value: "<provider>",
+        help:
+          "Sandbox provider the analyzer runs on (Harbor's -e/--env; the job lineup, " +
+          "GET /api/meta; default: the platform's analysis default)",
       },
       quiet: {
         kind: "boolean",
@@ -2202,18 +2221,25 @@ export function buildJobInput(
   if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
 
   // Embedded analysis: PRESENCE of the object is the switch (the spec's
-  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the three
+  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the four
   // flags arms it — --analyze bare means "all defaults" — and the sub-flags
   // override the file's fields one by one, the same merge rule as retry.
   const analyzeArmed =
     f.analyze === true ||
     f["analyze-model"] !== undefined ||
     f["analyze-rubric"] !== undefined ||
+    f["analyze-provider"] !== undefined ||
     base.analyze !== undefined;
   const analyze: AnalyzeConfigInput = { ...(base.analyze ?? {}) };
   if (f["analyze-model"] !== undefined) analyze.model_name = String(f["analyze-model"]);
   if (f["analyze-rubric"] !== undefined) {
     analyze.rubric = loadRubricFile(String(f["analyze-rubric"]), read);
+  }
+  // Unlike -e/--env, the value rides verbatim: the analyzer's provider lineup
+  // is the server's roster (GET /api/meta), and its refusal (`invalid_input`,
+  // lineup in the message) is the one copy of that list.
+  if (f["analyze-provider"] !== undefined) {
+    analyze.sandbox_provider = String(f["analyze-provider"]) as EvalSandboxProvider;
   }
 
   // Timeout multipliers: Harbor's five flags verbatim (their
@@ -2615,13 +2641,15 @@ function jobLines(e: Job): string[] {
       ((e.stats.n_retries ?? 0) > 0 ? ` (${e.stats.n_retries} used)` : ""),
   ]);
   // The embedded-analysis policy, only when the create named one — the
-  // resolved pair, so the row states what every settling trial is analyzed
-  // under.
+  // resolved policy, so the row states what every settling trial is analyzed
+  // under. The provider is defensive: an older server's echo may not name
+  // one, and the row must not invent it.
   if (e.analyze) {
     rows.push([
       "analyze",
       `${e.analyze.model_name} · ${e.analyze.rubric.criteria.length} ` +
-        `criteri${e.analyze.rubric.criteria.length === 1 ? "on" : "a"}`,
+        `criteri${e.analyze.rubric.criteria.length === 1 ? "on" : "a"}` +
+        (e.analyze.sandbox_provider ? ` · ${e.analyze.sandbox_provider}` : ""),
     ]);
   }
   // Timeout multipliers, only when the job stretches (or shrinks) anything —
@@ -3828,6 +3856,12 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const req: AnalyzeConfigInput = {};
   if (inv.flags.model !== undefined) req.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) req.rubric = loadRubricFile(String(inv.flags.rubric));
+  // -e rides verbatim, like --analyze-provider on run: the analyzer's
+  // provider lineup is the server's roster, and its `invalid_input` refusal
+  // names it — no client-side copy to drift.
+  if (inv.flags.env !== undefined) {
+    req.sandbox_provider = String(inv.flags.env) as EvalSandboxProvider;
+  }
   const accepted = await client.analyze(id, req);
   if (json) {
     io.out(JSON.stringify({ kind: "analysis.accepted", job: accepted }));
