@@ -93,9 +93,13 @@ jobs:
             exit 1
           fi
 
-      # The SMDD example's grader computes RDKit descriptors.
+      # The SMDD example's grader computes RDKit descriptors. goldnull.py runs
+      # the verifier with THIS interpreter, so prove the import here — otherwise a
+      # dependency problem surfaces as a misleading "gold must be 1.0" failure.
       - name: Install example grader dependencies
-        run: pip install 'rdkit==2026.3.5'
+        run: |
+          pip install 'rdkit==2026.3.5'
+          python3 -c 'import rdkit; print("rdkit", rdkit.__version__)'
 
       - name: Lint the example tasks
         run: python3 skills/harbor-task/scripts/validate_task.py skills/harbor-task/examples/tasks/*

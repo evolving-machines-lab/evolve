@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -63,8 +64,12 @@ def workdir_of(task: Path) -> str:
 
 
 def run_phase(script: Path, sandbox: Path, workdir: Path, label: str, quiet: bool) -> int:
+    # Inherit the caller's environment and override only the task's own slots.
+    # Replacing it wholesale (a hardcoded PATH) silently runs a DIFFERENT
+    # interpreter than the one the caller installed the grader's dependencies
+    # into — which is exactly how a venv, or a CI setup-python, gets missed.
     env = {
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        **os.environ,
         "HOME": str(sandbox),
         "TASK_WORKDIR": str(workdir),
         "LOGS_DIR": str(sandbox / "logs"),
