@@ -2,6 +2,13 @@
 
 Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes with built-in observability, and score them against datasets on hosted infrastructure.
 
+## Contributing & branches
+
+All work branches from and PRs into `project-sable` — the active development
+trunk. Never target or push `main` (the released line; GitHub's PR dropdown
+defaults to it — switch the base). Never push directly to any long-lived
+branch; never force-push. Full rules: [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Repo Structure
 
 ```

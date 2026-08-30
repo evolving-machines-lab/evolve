@@ -9,16 +9,18 @@
  *
  * IT IS NOT THE SAME FILE SET, and the difference is recorded rather than
  * implied. The server archive also writes, per trial, `lock.json` (the
- * resolved trial inputs), `trial.log` (the lifecycle summary) and
- * `artifacts/` with its always-present `manifest.json`. None of the three is
- * reachable from the trial routes this assembly reads: the lock is built from
- * dataset- and arm-side records (the task's source digest, its declared
- * timeouts, the skills that mounted) that no trial route serves, the collected
- * artifacts live under their own storage prefix outside the trial's tree, and
- * the log is the platform's own renderer. Materializing them here
- * would mean a second renderer that can drift from the server's, so the
- * single-trial tree states less rather than stating it differently. A caller
- * that needs the complete tree downloads the JOB.
+ * resolved trial inputs), `trial.log` (the lifecycle summary), `artifacts/`
+ * with its always-present `manifest.json`, the raw `verifier/reward.txt`
+ * (the exact bytes the grader wrote, when captured), and — on multi-step
+ * trials — the per-step `steps/<name>/verifier/reward.json` files. None of
+ * these is materialized here: the lock is built from dataset- and arm-side
+ * records (the task's source digest, its declared timeouts, the skills that
+ * mounted) that no trial route serves, the collected artifacts and the raw
+ * reward bytes live under their own storage prefixes outside what this
+ * assembly reads, and the log is the platform's own renderer. Materializing
+ * them here would mean a second renderer that can drift from the server's,
+ * so the single-trial tree states less rather than stating it differently.
+ * A caller that needs the complete tree downloads the JOB.
  *
  * The files:
  *

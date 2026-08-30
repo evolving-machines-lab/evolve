@@ -50,6 +50,16 @@
           "alias": "sonnet[1m]",
           "modelId": "sonnet[1m]",
           "description": "Daily coding with 1M context window"
+        },
+        {
+          "alias": "glm-5.3",
+          "modelId": "glm-5.3",
+          "description": "Zhipu GLM-5.3 via the Evolve gateway"
+        },
+        {
+          "alias": "glm-5.3-flash",
+          "modelId": "glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via the Evolve gateway"
         }
       ],
       "effortSupport": "level",
@@ -171,9 +181,14 @@
           "description": "Factory-managed Droid Core Kimi K3"
         },
         {
-          "alias": "glm-5.2",
-          "modelId": "glm-5.2",
-          "description": "Factory-managed Droid Core GLM-5.2"
+          "alias": "glm-5.3",
+          "modelId": "glm-5.3",
+          "description": "Zhipu GLM-5.3 via the Evolve gateway"
+        },
+        {
+          "alias": "glm-5.3-flash",
+          "modelId": "glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via the Evolve gateway"
         }
       ],
       "effortSupport": "level",
@@ -311,9 +326,14 @@
           "description": "Kimi K3 via OpenRouter"
         },
         {
-          "alias": "openrouter/z-ai/glm-5.2",
-          "modelId": "openrouter/z-ai/glm-5.2",
-          "description": "Zhipu GLM-5.2 via OpenRouter"
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via OpenRouter"
         }
       ],
       "effortSupport": "level",

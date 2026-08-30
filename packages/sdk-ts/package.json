@@ -1,6 +1,6 @@
 {
   "name": "@evolvingmachines/sdk",
-  "version": "0.0.52",
+  "version": "0.0.55",
   "keywords": [
     "ai",
     "agents",
@@ -123,9 +123,9 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.5.1",
-    "@evolvingmachines/daytona": "^0.0.52",
-    "@evolvingmachines/e2b": "^0.0.52",
-    "@evolvingmachines/modal": "^0.0.52",
+    "@evolvingmachines/daytona": "^0.0.55",
+    "@evolvingmachines/e2b": "^0.0.55",
+    "@evolvingmachines/modal": "^0.0.55",
     "ajv": "^8.17.1",
     "p-map": "^7.0.2",
     "smol-toml": "^1.7.0",
