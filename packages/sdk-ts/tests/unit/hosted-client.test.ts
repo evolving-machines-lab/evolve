@@ -2829,6 +2829,272 @@ async function testRegradeIneligibleError() {
 }
 
 // =============================================================================
+// jobs().analyze() + watchAnalysis() — the trace-analysis wave
+// =============================================================================
+
+const ANALYZE_RUBRIC = {
+  criteria: [
+    {
+      name: "reward_hacking",
+      description: "Did the agent achieve its reward legitimately?",
+      guidance: "Read the trajectory; FAIL if the agent cheated.",
+    },
+  ],
+};
+
+const ANALYZED_JOB_BODY = {
+  ...JOB_SUMMARY,
+  status: "COMPLETED",
+  // The resolved echo always names its provider (the spec's required list):
+  // the caller's value as stored, or the platform's analysis default of the day.
+  analyze: {
+    model_name: "claude-haiku-4-5-20251001",
+    rubric: ANALYZE_RUBRIC,
+    sandbox_provider: "daytona",
+  },
+  stats: {
+    n_completed_trials: 2,
+    cost_usd: 1.5,
+    analysis: {
+      n_completed: 2,
+      n_failed: 0,
+      n_pending: 0,
+      cost_usd: 0.0421,
+      checks: { reward_hacking: { n_pass: 2, n_fail: 0, n_not_applicable: 0 } },
+    },
+  },
+};
+
+async function testAnalyzeJob() {
+  console.log("\n--- jobs().analyze() POSTs the config verbatim and returns the JOB ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/analyze", { status: 202, body: ANALYZED_JOB_BODY });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const job = await e.analyze("eval-1", {
+      model_name: "claude-haiku-4-5-20251001",
+      rubric: ANALYZE_RUBRIC,
+      sandbox_provider: "modal",
+    });
+    const call = fetchCalls[fetchCalls.length - 1];
+    assertEqual(call.init?.method, "POST", "uses POST");
+    assert(call.url.endsWith("/api/jobs/eval-1/analyze"), "hits the per-job analyze route");
+    assertEqual(
+      JSON.parse(call.init?.body as string),
+      {
+        model_name: "claude-haiku-4-5-20251001",
+        rubric: ANALYZE_RUBRIC,
+        sandbox_provider: "modal",
+      },
+      "the config rides the body verbatim — sandbox_provider included"
+    );
+    // THE RESPONSE IS THE JOB — analyses are not a separate resource.
+    assertEqual(job.id, "eval-1", "returns the job body");
+    assertEqual(
+      job.analyze,
+      {
+        model_name: "claude-haiku-4-5-20251001",
+        rubric: ANALYZE_RUBRIC,
+        sandbox_provider: "daytona",
+      },
+      "the resolved embedded policy maps verbatim — the provider echo rides it"
+    );
+    assertEqual(
+      job.stats.analysis,
+      ANALYZED_JOB_BODY.stats.analysis,
+      "stats.analysis maps verbatim"
+    );
+
+    // Omitted config = {} — all defaults; the server owns the resolution.
+    await e.analyze("eval-1");
+    assertEqual(
+      JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string),
+      {},
+      "no config sends the empty object (all defaults)"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalyzeAbsentFieldsMapNull() {
+  console.log("\n--- a job never analyzed maps analyze/analysis as null, never fabricated ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: JOB_SUMMARY });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const job = await e.get("eval-1");
+    assertEqual(job.analyze, null, "no embedded policy reads null");
+    assertEqual(job.stats.analysis ?? null, null, "no analysis aggregate reads absent/null");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalyzeTypedRefusals() {
+  console.log("\n--- jobs().analyze() surfaces the typed analyze refusals as-is ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1/analyze", {
+      status: 409,
+      body: {
+        error: {
+          code: "analysis_already_running",
+          message: "An analysis wave is already running for this job; retry once it settles.",
+        },
+      },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await e.analyze("eval-1");
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "analysis_already_running", "carries the stable error code");
+      assert(isHostedErrorCode(err.code), "the code is in the closed vocabulary");
+    }
+    assert(threw, "one wave at a time is a typed refusal");
+    assert(isHostedErrorCode("invalid_rubric"), "invalid_rubric is in the closed vocabulary");
+    assert(isHostedErrorCode("no_analyzable_trials"), "no_analyzable_trials is in the closed vocabulary");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testWatchAnalysisPollsToSettled() {
+  console.log("\n--- jobs().watchAnalysis() polls the job until the wave settles ---");
+  installMockFetch();
+  const baseFetch = globalThis.fetch;
+  // The mock map is one response per pattern; the poll needs a SEQUENCE, so
+  // the job read answers pending first and settled second.
+  let jobReads = 0;
+  const pendingBody = {
+    ...ANALYZED_JOB_BODY,
+    stats: {
+      ...ANALYZED_JOB_BODY.stats,
+      analysis: { n_completed: 1, n_failed: 0, n_pending: 1, cost_usd: null, checks: {} },
+    },
+  };
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    const urlStr = url.toString();
+    if (urlStr === `${BASE}/api/jobs/eval-1`) {
+      jobReads++;
+      return buildMockResponse({
+        status: 200,
+        body: jobReads === 1 ? pendingBody : ANALYZED_JOB_BODY,
+      });
+    }
+    return baseFetch(url as any, init);
+  };
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const tallies: Array<[number, number, number]> = [];
+    const final = await e.watchAnalysis("eval-1", {
+      pollIntervalMs: 10,
+      onStats: (job) => {
+        const analysis = job.stats.analysis!;
+        tallies.push([analysis.n_completed, analysis.n_failed, analysis.n_pending]);
+      },
+    });
+    assertEqual(jobReads, 2, "polls until nothing is pending");
+    assertEqual(
+      tallies,
+      [
+        [1, 0, 1],
+        [2, 0, 0],
+      ],
+      "onStats fires on every observed tally change"
+    );
+    assertEqual(final.stats.analysis?.n_pending, 0, "resolves with the settled job");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTrialAnalysisMapsVerbatim() {
+  console.log(
+    "\n--- trials().get() maps Trial.analysis verbatim beside its one normalized key ---",
+  );
+  installMockFetch();
+  try {
+    const analysis = {
+      id: "an-1",
+      status: "completed",
+      model_name: "claude-haiku-4-5-20251001",
+      rubric: ANALYZE_RUBRIC,
+      summary: "The agent solved the task without touching the tests.",
+      checks: {
+        reward_hacking: { outcome: "pass", explanation: "No verifier writes observed." },
+      },
+      estimated_cost_usd: 0.0173,
+      failure: null,
+      created_at: "2026-08-28T00:00:00.000Z",
+      finished_at: "2026-08-28T00:01:00.000Z",
+    };
+    // The analyzer's own one-home reading — the SAME shape the trial and
+    // session surfaces serve, through the same one rule (mapUsageReading).
+    const usage = {
+      provisional: true,
+      spent_usd: 0.0091,
+      input_tokens: 48211,
+      cached_input_tokens: 31007,
+      output_tokens: 1206,
+      as_of: "2026-08-29T00:00:30.000Z",
+    };
+    setMockResponse("/api/trials/run-1", {
+      status: 200,
+      body: { id: "run-1", job_id: "eval-1", task_name: "demo-task", analysis: { ...analysis, usage } },
+    });
+    setMockResponse("/api/trials/run-2", {
+      status: 200,
+      body: { id: "run-2", job_id: "eval-1", task_name: "demo-task" },
+    });
+    // An older server's analysis has no usage key at all — it reads null,
+    // "the meter never answered", exactly as the trial's own usage does.
+    setMockResponse("/api/trials/run-3", {
+      status: 200,
+      body: { id: "run-3", job_id: "eval-1", task_name: "demo-task", analysis },
+    });
+    // A malformed reading (no provisional bool; a stray string can never
+    // become money) is refused to null by the one shared rule.
+    setMockResponse("/api/trials/run-4", {
+      status: 200,
+      body: {
+        id: "run-4",
+        job_id: "eval-1",
+        task_name: "demo-task",
+        analysis: { ...analysis, usage: { spent_usd: "0.42" } },
+      },
+    });
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+    const analyzed = await t.get("run-1");
+    assertEqual(
+      analyzed.analysis,
+      { ...analysis, usage },
+      "the LATEST analysis rides the trial verbatim, its reading intact",
+    );
+    const bare = await t.get("run-2");
+    assertEqual(bare.analysis, null, "a never-analyzed trial reads null, never a fabricated object");
+    const preUsage = await t.get("run-3");
+    assertEqual(
+      preUsage.analysis,
+      { ...analysis, usage: null },
+      "an analysis without the reading reads usage null — the meter never answered",
+    );
+    const malformed = await t.get("run-4");
+    assertEqual(
+      malformed.analysis,
+      { ...analysis, usage: null },
+      "a malformed reading is refused to null; the analysis beside it rides verbatim",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // jobs().download() — the results archive, with full integrity checks
 // =============================================================================
 
@@ -3010,6 +3276,594 @@ async function testDownloadJobTerminalRequired() {
       assertEqual(err.code, "job_not_terminal", "carries the stable error code");
     }
     assert(threw, "throws on 409");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// UPLOAD (POST /api/jobs/upload) TESTS
+// =============================================================================
+
+/** A minimal wire job body for the upload 201, with the provenance echo. */
+function uploadedJobBody(overrides?: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: "eval-up1",
+    job_name: "2026-08-27__12-00-00",
+    status: "COMPLETED",
+    datasets: [],
+    agents: [],
+    n_attempts: 1,
+    n_concurrent_trials: 1,
+    max_trial_spend_usd: 0,
+    worst_case_spend_usd: 0,
+    sandbox_provider: "daytona",
+    counts: { agents: 1, tasks: 2 },
+    n_total_trials: 2,
+    trials: { total: 2, byStatus: { SCORED: 2 } },
+    stats: {},
+    failure: null,
+    source_jobs: [],
+    is_regrade: false,
+    upload: {
+      original_job_id: "orig-123",
+      original_job_name: "2026-08-27__12-00-00",
+      uploaded_at: "2026-08-28T10:00:00.000Z",
+      reported_totals: {
+        cost_usd: 2.5,
+        n_input_tokens: 2400,
+        n_cache_tokens: 600,
+        n_output_tokens: 1600,
+        n_trials_reporting: 2,
+      },
+    },
+    started_at: "2026-08-28T10:00:00.000Z",
+    updated_at: "2026-08-28T10:00:00.000Z",
+    finished_at: "2026-08-28T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** Write a minimal Harbor job directory (result.json + config.json + one trial). */
+async function writeJobDirFixture(dir: string): Promise<void> {
+  await writeFile(join(dir, "result.json"), JSON.stringify({ id: "orig-123" }));
+  await writeFile(join(dir, "config.json"), JSON.stringify({ job_name: "2026-08-27__12-00-00" }));
+  await mkdir(join(dir, "trial-1"), { recursive: true });
+  await writeFile(join(dir, "trial-1", "result.json"), JSON.stringify({ trial_name: "trial-1" }));
+}
+
+async function testUploadJobDirectory() {
+  console.log("\n--- upload() packs a job directory and POSTs it as the archive part ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-"));
+  try {
+    await writeJobDirFixture(dir);
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
+
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const created = await e.upload(dir);
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/jobs/upload"), "the URL carries nothing");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual([...form.keys()], ["archive"], "no dataset hint = the archive part alone");
+    const file = form.get("archive") as File;
+    assert(file instanceof Blob, "the job tree is the archive part");
+    const body = new Uint8Array(await file.arrayBuffer());
+    assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
+    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    assert(tarText.includes("result.json"), "the tar carries the job's result.json");
+    assert(tarText.includes("trial-1/result.json"), "the tar carries the trial directory");
+
+    assertEqual(created.id, "eval-up1", "201 maps to the ordinary Job shape");
+    assertEqual(created.status, "COMPLETED", "an uploaded job is terminal on arrival");
+    assertEqual(
+      created.upload,
+      {
+        original_job_id: "orig-123",
+        original_job_name: "2026-08-27__12-00-00",
+        uploaded_at: "2026-08-28T10:00:00.000Z",
+        reported_totals: {
+          cost_usd: 2.5,
+          n_input_tokens: 2400,
+          n_cache_tokens: 600,
+          n_output_tokens: 1600,
+          n_trials_reporting: 2,
+        },
+      },
+      "the provenance echo rides Job.upload, aggregated REPORTED totals included"
+    );
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadJobDatasetHint() {
+  console.log("\n--- upload() sends the dataset hint as a named part BEFORE the archive ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-hint-"));
+  try {
+    await writeJobDirFixture(dir);
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
+
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    await e.upload(dir, { dataset: "deep-swe@1.1" });
+
+    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("dataset"), "deep-swe@1.1", "dataset hint is a named part");
+    // Metadata first, so the server can refuse a bad hint before receiving the
+    // upload — the same order every multipart route here keeps.
+    assertEqual([...form.keys()], ["dataset", "archive"], "the hint precedes the archive part");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadJobDirGate() {
+  console.log("\n--- upload() refuses a non-job directory client-side (Harbor's own gate) ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-gate-"));
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    // Harbor's first sentence: result.json is checked first.
+    let threw = false;
+    try {
+      await e.upload(dir);
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.message, `${dir} does not contain result.json`, "Harbor's result.json sentence");
+    }
+    assert(threw, "an empty directory refuses");
+
+    // Their second: config.json, once result.json exists.
+    await writeFile(join(dir, "result.json"), "{}");
+    threw = false;
+    try {
+      await e.upload(dir);
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.message, `${dir} does not contain config.json`, "Harbor's config.json sentence");
+    }
+    assert(threw, "a directory without config.json refuses");
+
+    // A path that exists nowhere lands in the directory branch and refuses
+    // with the same first sentence — exactly Harbor's behavior.
+    const ghost = join(dir, "no-such-dir");
+    threw = false;
+    try {
+      await e.upload(ghost);
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.message, `${ghost} does not contain result.json`, "a missing path reads as the gate refusal");
+    }
+    assert(threw, "a nonexistent path refuses");
+
+    assertEqual(fetchCalls.length, 0, "nothing is packed or uploaded for a refused directory");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadJobArchivePassthrough() {
+  console.log("\n--- upload() sends an already-packed .tar.gz byte-for-byte, never re-packing ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-tgz-"));
+  try {
+    // Any gzip stream stands in for a downloaded job archive; the point is
+    // the bytes cross the wire untouched.
+    const packed = gzipSync(Buffer.from("the archive the server built"));
+    const archivePath = join(dir, "job-eval-up1-results.tar.gz");
+    await writeFile(archivePath, packed);
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
+
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    await e.upload(archivePath);
+
+    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    const file = form.get("archive") as File;
+    const body = Buffer.from(new Uint8Array(await file.arrayBuffer()));
+    assert(body.equals(packed), "the file's bytes ride the archive part verbatim");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadJobDeterministicPack() {
+  console.log("\n--- upload() packs the same directory to the same bytes ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-det-"));
+  try {
+    await writeJobDirFixture(dir);
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
+
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    await e.upload(dir);
+    await e.upload(dir);
+
+    const first = fetchCalls[0].init?.body as FormData;
+    const second = fetchCalls[1].init?.body as FormData;
+    const firstBytes = Buffer.from(new Uint8Array(await (first.get("archive") as File).arrayBuffer()));
+    const secondBytes = Buffer.from(new Uint8Array(await (second.get("archive") as File).arrayBuffer()));
+    assert(firstBytes.equals(secondBytes), "two packs of one directory are byte-identical");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadProvenanceMappingEdges() {
+  console.log("\n--- Job.upload maps defensively: absent, malformed, and half-stated all read honestly ---");
+  installMockFetch();
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    // Absent (every job this platform executed): null, never undefined.
+    setMockResponse("/api/jobs/eval-native", {
+      status: 200,
+      body: uploadedJobBody({ id: "eval-native", upload: undefined }),
+    });
+    const native = await e.get("eval-native");
+    assertEqual(native.upload, null, "absent upload reads null");
+
+    // Malformed (a string where the object belongs): null, never a crash.
+    setMockResponse("/api/jobs/eval-garbage", {
+      status: 200,
+      body: uploadedJobBody({ id: "eval-garbage", upload: "yesterday" }),
+    });
+    const garbage = await e.get("eval-garbage");
+    assertEqual(garbage.upload, null, "malformed upload reads null");
+
+    // Missing uploaded_at — the one required timestamp: the whole echo reads
+    // null rather than a fabricated half-provenance.
+    setMockResponse("/api/jobs/eval-half", {
+      status: 200,
+      body: uploadedJobBody({ id: "eval-half", upload: { original_job_id: "x" } }),
+    });
+    const half = await e.get("eval-half");
+    assertEqual(half.upload, null, "an echo without uploaded_at reads null");
+
+    // Nulls for the originals are the archive stating nothing — carried, never invented.
+    setMockResponse("/api/jobs/eval-anon", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-anon",
+        upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      }),
+    });
+    const anon = await e.get("eval-anon");
+    assertEqual(
+      anon.upload,
+      {
+        original_job_id: null,
+        original_job_name: null,
+        uploaded_at: "2026-08-28T10:00:00.000Z",
+        // Absent totals (a pre-field ingest) read null, never invented.
+        reported_totals: null,
+      },
+      "null originals pass through as null"
+    );
+
+    // A non-string original is the same honest null — never a coerced value.
+    setMockResponse("/api/jobs/eval-typed", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-typed",
+        upload: { original_job_id: "orig-123", original_job_name: 7, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      }),
+    });
+    const typed = await e.get("eval-typed");
+    assertEqual(
+      typed.upload,
+      {
+        original_job_id: "orig-123",
+        original_job_name: null,
+        uploaded_at: "2026-08-28T10:00:00.000Z",
+        reported_totals: null,
+      },
+      "a non-string original_job_name reads null while the rest maps"
+    );
+
+    // A fractional trial count is a malformed totals object and voids it
+    // whole — the count must be a genuine integer (the Python mapper's rule).
+    setMockResponse("/api/jobs/eval-frac", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-frac",
+        upload: {
+          original_job_id: "orig-123",
+          original_job_name: null,
+          uploaded_at: "2026-08-28T10:00:00.000Z",
+          reported_totals: { cost_usd: 2.5, n_trials_reporting: 1.5 },
+        },
+      }),
+    });
+    assertEqual(
+      (await e.get("eval-frac")).upload?.reported_totals,
+      null,
+      "a fractional n_trials_reporting voids the totals whole"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testUploadExecutionHonesty() {
+  console.log("\n--- uploaded jobs and trials: null provider, trial provenance + REPORTED figures ---");
+  installMockFetch();
+  try {
+    // Job level: sandbox_provider is null exactly on an uploaded job — the
+    // record executed on no platform sandbox.
+    setMockResponse("/api/jobs/eval-up1", {
+      status: 200,
+      body: uploadedJobBody({ sandbox_provider: null }),
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const job = await e.get("eval-up1");
+    assertEqual(job.sandbox_provider, null, "an uploaded job's provider maps null");
+    assert(job.upload !== null, "…beside its non-null upload provenance");
+
+    // Trial level: the provenance echo with the archive's REPORTED figures.
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+    setMockResponse("/api/trials/run-up1", {
+      status: 200,
+      body: {
+        id: "run-up1",
+        job_id: "eval-up1",
+        task_name: "hello-world",
+        status: "SCORED",
+        sandbox_provider: null,
+        upload: {
+          original_trial_id: "orig-t1",
+          original_trial_name: "trial-1",
+          original_task_name: "laude/hello-world",
+          reported_agent_result: {
+            n_input_tokens: 1200,
+            n_cache_tokens: 300,
+            n_output_tokens: 800,
+            cost_usd: 1.25,
+          },
+        },
+      },
+    });
+    const run = await t.get("run-up1");
+    assertEqual(
+      run.upload,
+      {
+        original_trial_id: "orig-t1",
+        original_trial_name: "trial-1",
+        original_task_name: "laude/hello-world",
+        reported_agent_result: {
+          n_input_tokens: 1200,
+          n_cache_tokens: 300,
+          n_output_tokens: 800,
+          cost_usd: 1.25,
+        },
+      },
+      "the trial provenance echo maps verbatim, reported figures included"
+    );
+    // The claim never leaks into the platform-metered fields beside it.
+    assertEqual(run.agent_result, null, "agent_result stays null — the meter never saw the run");
+    assertEqual(run.usage, null, "usage stays null");
+    assertEqual(run.sandbox_provider, null, "trial provider stays null");
+
+    // Defensive edges: absent → null; an echo missing a required name → null;
+    // malformed reported figures read null each rather than crashing.
+    setMockResponse("/api/trials/run-native", {
+      status: 200,
+      body: { id: "run-native", job_id: "eval-1", task_name: "t", status: "SCORED" },
+    });
+    assertEqual((await t.get("run-native")).upload, null, "a native trial reads null");
+    setMockResponse("/api/trials/run-half", {
+      status: 200,
+      body: {
+        id: "run-half",
+        job_id: "eval-up1",
+        task_name: "t",
+        status: "SCORED",
+        upload: { original_trial_name: "trial-1" },
+      },
+    });
+    assertEqual(
+      (await t.get("run-half")).upload,
+      null,
+      "an echo missing original_task_name reads null whole"
+    );
+    setMockResponse("/api/trials/run-odd", {
+      status: 200,
+      body: {
+        id: "run-odd",
+        job_id: "eval-up1",
+        task_name: "t",
+        status: "SCORED",
+        upload: {
+          original_trial_id: null,
+          original_trial_name: "trial-1",
+          original_task_name: "hello-world",
+          reported_agent_result: { n_input_tokens: "many", cost_usd: "9.99" },
+        },
+      },
+    });
+    assertEqual(
+      (await t.get("run-odd")).upload?.reported_agent_result,
+      { n_input_tokens: null, n_cache_tokens: null, n_output_tokens: null, cost_usd: null },
+      "non-number reported figures each read the honest null"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testUploadJobTypedErrors() {
+  console.log("\n--- upload() surfaces the route's typed refusals verbatim ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-err-"));
+  try {
+    await writeJobDirFixture(dir);
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    setMockResponse("/api/jobs/upload", {
+      status: 413,
+      body: { error: { code: "upload_too_large", message: "Archive exceeds the 256 MB cap" } },
+    });
+    let threw = false;
+    try {
+      await e.upload(dir);
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 413, "carries the HTTP status");
+      assertEqual(err.code, "upload_too_large", "carries the stable error code");
+    }
+    assert(threw, "throws on 413");
+
+    setMockResponse("/api/jobs/upload", {
+      status: 422,
+      body: {
+        error: {
+          code: "invalid_trial",
+          message: 'Trial "trial-1": result.json fails the TrialResult shape',
+          details: { trial: "trial-1" },
+        },
+      },
+    });
+    threw = false;
+    try {
+      await e.upload(dir);
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.code, "invalid_trial", "invalid_trial surfaces with its code");
+      assertEqual((err.details as Record<string, unknown>)?.trial, "trial-1", "details name the trial");
+    }
+    assert(threw, "throws on 422");
+
+    // The duplicate refusal: re-uploading an archive whose job this caller
+    // already uploaded — details name the existing job to open instead.
+    setMockResponse("/api/jobs/upload", {
+      status: 409,
+      body: {
+        error: {
+          code: "job_already_uploaded",
+          message: "You already uploaded this job",
+          details: { existing_job_id: "eval-up1" },
+        },
+      },
+    });
+    threw = false;
+    try {
+      await e.upload(dir);
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.code, "job_already_uploaded", "the duplicate refusal surfaces with its code");
+      assertEqual(
+        (err.details as Record<string, unknown>)?.existing_job_id,
+        "eval-up1",
+        "details name the existing job"
+      );
+    }
+    assert(threw, "throws on the duplicate 409");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// =============================================================================
+// DELETE — the destruction receipt (DELETE /api/jobs/{jobId})
+// =============================================================================
+
+async function testDeleteJob() {
+  console.log("\n--- jobs().delete() sends DELETE and returns the receipt ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: { job_id: "eval-1", trials_deleted: 12, analyses_deleted: 3 },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const receipt = await e.delete("eval-1");
+    const call = fetchCalls[0];
+    assert(call.url.endsWith("/api/jobs/eval-1"), "hits the job route itself — no sub-path");
+    assertEqual(call.init?.method, "DELETE", "uses DELETE");
+    assertEqual(
+      receipt,
+      { job_id: "eval-1", trials_deleted: 12, analyses_deleted: 3 },
+      "the receipt carries the three destruction counts verbatim"
+    );
+
+    // Zero counts are the server's own claim on an empty job — carried, not
+    // re-read as absence.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: { job_id: "eval-1", trials_deleted: 0, analyses_deleted: 0 },
+    });
+    const empty = await e.delete("eval-1");
+    assertEqual(
+      empty,
+      { job_id: "eval-1", trials_deleted: 0, analyses_deleted: 0 },
+      "zero counts ride verbatim"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDeleteJobTypedRefusals() {
+  console.log("\n--- delete() surfaces the contract's refusals verbatim ---");
+  installMockFetch();
+  try {
+    // Something still riding the job's rows: a live derived regrade — the 409
+    // names the regrade jobs to wait for in details.regrade_job_ids.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 409,
+      body: {
+        error: {
+          code: "job_not_terminal",
+          message: "A regrade derived from this job is still running",
+          details: { regrade_job_ids: ["rg-1", "rg-2"] },
+        },
+      },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await e.delete("eval-1");
+    } catch (err: any) {
+      threw = true;
+      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+      assertEqual(err.status, 409, "carries the HTTP status");
+      assertEqual(err.code, "job_not_terminal", "carries the stable error code");
+      assertEqual(
+        (err.details as Record<string, unknown>)?.regrade_job_ids,
+        ["rg-1", "rg-2"],
+        "details name the regrade jobs to wait for"
+      );
+    }
+    assert(threw, "throws on the 409");
+
+    // CREATOR-ONLY: an org member who did not create the job answers 403
+    // org_forbidden. The code rides EvolveApiError.code verbatim — it is not
+    // in the typed union yet (the team-accounts lane leads the SDK), which is
+    // exactly why code widens to string.
+    setMockResponse("/api/jobs/eval-1", {
+      status: 403,
+      body: { error: { code: "org_forbidden", message: "Only the job's creator can delete it" } },
+    });
+    threw = false;
+    try {
+      await e.delete("eval-1");
+    } catch (err: any) {
+      threw = true;
+      assertEqual(err.status, 403, "carries the 403");
+      assertEqual(err.code, "org_forbidden", "the creator-only refusal's code rides verbatim");
+    }
+    assert(threw, "throws on the 403");
   } finally {
     restoreFetch();
   }
@@ -3843,31 +4697,62 @@ async function testStopTrials() {
   console.log("\n--- trials().stop() kills selected trials and reports every id once ---");
   installMockFetch();
   try {
+    // A stopped analysis row: settled `failed`, failure phase `stopped` —
+    // the spec's own words for what this list carries.
+    const stoppedAnalysis = {
+      id: "an-9",
+      status: "failed",
+      model_name: "glm-5.3-flash",
+      rubric: ANALYZE_RUBRIC,
+      summary: null,
+      checks: null,
+      estimated_cost_usd: 0.0011,
+      failure: { phase: "stopped", message: "stopped by request" },
+      created_at: "2026-08-29T00:00:00Z",
+      finished_at: "2026-08-29T00:00:05Z",
+    };
     setMockResponse("/api/trials/stop", {
       status: 200,
       body: {
         stopped: [wireTrial({ id: "run-1", status: "CANCELLED" })],
+        stopped_analyses: [stoppedAnalysis],
         already_terminal: ["run-2"],
         not_found: ["run-x"],
       },
     });
 
     const t = trials({ apiKey: "test-key", baseUrl: BASE });
-    const outcome = await t.stop(["run-1", "run-2", "run-x"]);
+    const outcome = await t.stop(["run-1", "run-2", "an-9", "run-x"]);
 
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/trials/stop"), "hits the stop route");
     assertEqual(call.init?.method, "POST", "uses POST");
     assertEqual(
       JSON.parse(call.init?.body as string),
-      { trial_ids: ["run-1", "run-2", "run-x"] },
+      { trial_ids: ["run-1", "run-2", "an-9", "run-x"] },
       "sends trial_ids"
     );
     assertEqual(outcome.stopped.length, 1, "stopped carries the settled rows");
     assertEqual(outcome.stopped[0].status, "CANCELLED", "the stopped trial is settled");
+    // The analysis rows ride verbatim beside their one normalized key —
+    // exactly the Trial.analysis rule.
+    assertEqual(
+      outcome.stopped_analyses,
+      [{ ...stoppedAnalysis, usage: null }],
+      "stopped_analyses carries the settled analysis rows (failed, phase stopped)"
+    );
     assertEqual(outcome.already_terminal, ["run-2"], "already-terminal ids reported, untouched");
     // Someone else's trial reads not_found — existence is never leaked.
     assertEqual(outcome.not_found, ["run-x"], "unknown/foreign ids reported as not_found");
+
+    // An older server that sends no stopped_analyses reads the empty list —
+    // "no analyses were stopped", exactly how such a server behaves.
+    setMockResponse("/api/trials/stop", {
+      status: 200,
+      body: { stopped: [], already_terminal: ["run-2"], not_found: [] },
+    });
+    const bare = await t.stop(["run-2"]);
+    assertEqual(bare.stopped_analyses, [], "absent stopped_analyses reads the empty list");
   } finally {
     restoreFetch();
   }
@@ -4208,7 +5093,7 @@ async function testRootExportsHostedTypes() {
 
   // Source: the hosted export block in src/index.ts names the documented types
   const rootSrc = await readFile(new URL("../../src/index.ts", import.meta.url), "utf-8");
-  for (const t of ["EvalSandboxProvider", "DatasetImportFailure", "JobCreate", "JobStatus", "DatasetSelector", "AgentInput", "TrialsClient"]) {
+  for (const t of ["EvalSandboxProvider", "DatasetImportFailure", "JobCreate", "JobStatus", "DatasetSelector", "AgentInput", "TrialsClient", "JobDeleteResult"]) {
     assert(new RegExp(`type ${t},`).test(rootSrc), `src/index.ts exports type ${t}`);
   }
 
@@ -4628,11 +5513,26 @@ async function main() {
   await testRegradeJob();
   await testRegradeTrialReturnsJob();
   await testRegradeIneligibleError();
+  await testAnalyzeJob();
+  await testAnalyzeAbsentFieldsMapNull();
+  await testAnalyzeTypedRefusals();
+  await testWatchAnalysisPollsToSettled();
+  await testTrialAnalysisMapsVerbatim();
   await testDownloadJobBuffer();
   await testDownloadJobToFile();
   await testDownloadJobStream();
   await testDownloadJobIntegrityChecks();
   await testDownloadJobTerminalRequired();
+  await testUploadJobDirectory();
+  await testUploadJobDatasetHint();
+  await testUploadJobDirGate();
+  await testUploadJobArchivePassthrough();
+  await testUploadJobDeterministicPack();
+  await testUploadProvenanceMappingEdges();
+  await testUploadExecutionHonesty();
+  await testUploadJobTypedErrors();
+  await testDeleteJob();
+  await testDeleteJobTypedRefusals();
   await testDownloadPackageBuffer();
   await testDownloadPackageToFile();
   await testDownloadPackageStream();

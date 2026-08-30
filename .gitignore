@@ -56,3 +56,4 @@ docs-site/content
 
 # Staged copy of the repo-root API contract (built artifact)
 packages/sdk-ts/spec/
+output_browser_use/

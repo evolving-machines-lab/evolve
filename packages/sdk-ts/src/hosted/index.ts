@@ -17,6 +17,8 @@ import type {
   AgentSource,
   AgentUpsertInput,
   AgentsClient,
+  AnalyzeConfig,
+  AnalyzeConfigInput,
   AttemptPhase,
   AuthClient,
   AuthStatus,
@@ -50,6 +52,7 @@ import type {
   Job,
   JobBuildExclusion,
   JobCreate,
+  JobDeleteResult,
   JobEvent,
   JobFailure,
   JobGrepGroup,
@@ -97,6 +100,7 @@ import type {
   TraceEventPage,
   TraceOptions,
   Trial,
+  TrialAnalysis,
   TrialArtifactStream,
   TrialCounts,
   TrialFile,
@@ -108,10 +112,12 @@ import type {
   TrialRetry,
   TrialStatus,
   TrialsClient,
+  UploadJobOptions,
   UpstreamStatus,
   UsageReading,
   VerifierEnvironmentMode,
   VerifierResult,
+  WatchAnalysisOptions,
   WatchImportOptions,
   WatchJobOptions,
 } from "./types";
@@ -145,6 +151,10 @@ export type {
   AgentSourceInput,
   AgentUpsertInput,
   AgentsClient,
+  AnalysisCheck,
+  AnalysisFailure,
+  AnalyzeConfig,
+  AnalyzeConfigInput,
   ApiKey,
   AttemptPhase,
   AuthClient,
@@ -185,10 +195,12 @@ export type {
   Job,
   JobBuildExclusion,
   JobCreate,
+  JobDeleteResult,
   JobEvent,
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobAnalysisStats,
   JobList,
   JobPage,
   JobStats,
@@ -222,6 +234,8 @@ export type {
   RetryConfig,
   RetryConfigInput,
   RetryRequest,
+  Rubric,
+  RubricCriterion,
   SkillLock,
   SkillUpload,
   SkillUploadList,
@@ -243,6 +257,7 @@ export type {
   TraceEventPage,
   TraceOptions,
   Trial,
+  TrialAnalysis,
   TrialArtifactStream,
   TrialCounts,
   TrialFile,
@@ -254,11 +269,15 @@ export type {
   TrialRetry,
   TrialStatus,
   TrialStatusTally,
+  TrialUploadProvenance,
   TrialsClient,
+  UploadJobOptions,
+  UploadProvenance,
   UpstreamStatus,
   UsageReading,
   VerifierEnvironmentMode,
   VerifierResult,
+  WatchAnalysisOptions,
   WatchImportOptions,
   WatchJobOptions,
 } from "./types";
@@ -814,6 +833,50 @@ function mapBuildExclusions(raw: unknown): JobBuildExclusion[] {
     });
 }
 
+/**
+ * The upload provenance echo — what an uploaded archive's own record files
+ * said about themselves. Defensive like every mapper here: absent (a job this
+ * platform executed, or an older server) and malformed both read null — "not
+ * an uploaded job", never a crash. `uploaded_at` is the one required member;
+ * an echo without it reads null whole rather than as a fabricated
+ * half-provenance, and the two originals pass through as the null the archive
+ * stated when it stated nothing.
+ */
+function mapUploadProvenance(raw: unknown): Job["upload"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (typeof blob.uploaded_at !== "string") return null;
+  // The job-level sum of the trials' REPORTED figures. Null when absent (a
+  // pre-field ingest) or malformed — n_trials_reporting is the one member
+  // the shape cannot stand without, since the figures only mean anything
+  // against how many trials claimed them.
+  const totals = blob.reported_totals;
+  const reportedNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  const reportedTotals =
+    totals &&
+    typeof totals === "object" &&
+    !Array.isArray(totals) &&
+    // A genuine integer, as the contract states — a fractional count is a
+    // malformed object and voids the totals whole (the Python mapper's rule).
+    Number.isInteger((totals as Record<string, unknown>).n_trials_reporting)
+      ? {
+          cost_usd: reportedNumber((totals as Record<string, unknown>).cost_usd),
+          n_input_tokens: reportedNumber((totals as Record<string, unknown>).n_input_tokens),
+          n_cache_tokens: reportedNumber((totals as Record<string, unknown>).n_cache_tokens),
+          n_output_tokens: reportedNumber((totals as Record<string, unknown>).n_output_tokens),
+          n_trials_reporting: (totals as Record<string, unknown>).n_trials_reporting as number,
+        }
+      : null;
+  return {
+    original_job_id: typeof blob.original_job_id === "string" ? blob.original_job_id : null,
+    original_job_name:
+      typeof blob.original_job_name === "string" ? blob.original_job_name : null,
+    uploaded_at: blob.uploaded_at,
+    reported_totals: reportedTotals,
+  };
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
@@ -827,6 +890,13 @@ function mapJob(raw: Record<string, unknown>): Job {
     max_trial_spend_usd: raw.max_trial_spend_usd as number,
     worst_case_spend_usd: raw.worst_case_spend_usd as number,
     retry: mapRetryConfig(raw.retry),
+    // The resolved embedded-analysis policy, or null: a create that named
+    // none, and an older server that sends nothing, both mean "no embedded
+    // analysis" — exactly what null states.
+    analyze:
+      raw.analyze && typeof raw.analyze === "object" && !Array.isArray(raw.analyze)
+        ? (raw.analyze as AnalyzeConfig)
+        : null,
     // Timeout multipliers, tolerant of an OLDER server that sends none: the
     // absent-field reading is every phase at 1.0 — exactly how such a server
     // behaves.
@@ -838,7 +908,9 @@ function mapJob(raw: Record<string, unknown>): Job {
     environment_build_timeout_multiplier: optionalNumber(
       raw.environment_build_timeout_multiplier
     ),
-    sandbox_provider: raw.sandbox_provider as EvalSandboxProvider,
+    // Null exactly on an uploaded job — the record executed on no platform
+    // sandbox, so naming a provider would be an execution claim.
+    sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
     counts: raw.counts as Job["counts"],
     // THE RESULTS-HONESTY LABEL (partial-publish model): always an array —
     // absent (an older server) reads as "nothing was excluded".
@@ -853,6 +925,7 @@ function mapJob(raw: Record<string, unknown>): Job {
     failure: (raw.failure as JobFailure | null) ?? null,
     source_jobs: ((raw.source_jobs as Record<string, unknown>[]) ?? []).map(mapSourceJob),
     is_regrade: raw.is_regrade === true,
+    upload: mapUploadProvenance(raw.upload),
     idempotent_replay: raw.idempotent_replay === true,
     started_at: raw.started_at as string,
     updated_at: raw.updated_at as string,
@@ -915,6 +988,21 @@ function mapAgentInfo(raw: Record<string, unknown>): AgentInfo {
   };
 }
 
+/**
+ * The wire's trial analysis, defensively: absent (an older server, or a
+ * never-analyzed trial) and malformed both read null — "never analyzed",
+ * never a fabricated empty object. The object rides otherwise verbatim; its
+ * one nested reading, `usage`, goes through the same one rule as the trial's
+ * own (mapUsageReading), so absent and malformed both read null there too.
+ */
+function mapTrialAnalysis(raw: unknown): TrialAnalysis | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return {
+    ...(raw as TrialAnalysis),
+    usage: mapUsageReading((raw as Record<string, unknown>).usage),
+  };
+}
+
 /** The wire degrade object, defensively: anything malformed answers null. */
 function mapProviderDegrade(raw: unknown): Trial["sandbox_provider_degrade"] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -939,6 +1027,9 @@ function mapTrial(raw: Record<string, unknown>): Trial {
     // The judge share of the bill, itemized (absent on older servers and on
     // every non-judge trial — null either way, and null never means $0).
     judge_result: (raw.judge_result as JudgeResult | null) ?? null,
+    // The trial's LATEST trace analysis, its nested usage reading through
+    // the one shared rule — see mapTrialAnalysis.
+    analysis: mapTrialAnalysis(raw.analysis),
     environment_setup: mapTimingInfo(raw.environment_setup),
     agent_setup: mapTimingInfo(raw.agent_setup),
     agent_execution: mapTimingInfo(raw.agent_execution),
@@ -992,8 +1083,44 @@ function mapTrial(raw: Record<string, unknown>): Trial {
       ? (raw.retries as Record<string, unknown>[]).map(mapTrialRetry)
       : [],
     session_ref: (raw.session_ref as string | null) ?? null,
+    upload: mapTrialUploadProvenance(raw.upload),
     started_at: (raw.started_at as string | null) ?? null,
     finished_at: (raw.finished_at as string | null) ?? null,
+  };
+}
+
+/**
+ * The trial-level upload provenance, defensively: absent (a native trial, or
+ * an older server) and malformed both read null. The two names are the
+ * spec's required strings — an echo missing either reads null whole rather
+ * than as a fabricated half-identity — and `reported_agent_result` is the
+ * archive's OWN claim: present it maps its four figures (each null when
+ * unstated), absent or malformed it is null, and it never leaks into the
+ * platform-metered fields beside it.
+ */
+function mapTrialUploadProvenance(raw: unknown): Trial["upload"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (typeof blob.original_trial_name !== "string" || typeof blob.original_task_name !== "string") {
+    return null;
+  }
+  const reported = blob.reported_agent_result;
+  const reportedNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    original_trial_id:
+      typeof blob.original_trial_id === "string" ? blob.original_trial_id : null,
+    original_trial_name: blob.original_trial_name,
+    original_task_name: blob.original_task_name,
+    reported_agent_result:
+      reported && typeof reported === "object" && !Array.isArray(reported)
+        ? {
+            n_input_tokens: reportedNumber((reported as Record<string, unknown>).n_input_tokens),
+            n_cache_tokens: reportedNumber((reported as Record<string, unknown>).n_cache_tokens),
+            n_output_tokens: reportedNumber((reported as Record<string, unknown>).n_output_tokens),
+            cost_usd: reportedNumber((reported as Record<string, unknown>).cost_usd),
+          }
+        : null,
   };
 }
 
@@ -2501,6 +2628,62 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return mapJob((await res.json()) as Record<string, unknown>);
     },
 
+    async analyze(id: string, req?: AnalyzeConfigInput): Promise<Job> {
+      // The config rides the body verbatim ({} = all defaults) and the server
+      // owns every refusal — the rubric grammar, the model roster, the
+      // one-wave-at-a-time law. THE RESPONSE IS THE JOB, analyses enqueued.
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req ?? {}),
+      });
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
+    async watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job> {
+      // Analyses have no event stream — the contract says "poll the job's
+      // trials to watch them settle" — so this is the poll, in one home,
+      // watchImport's posture: a 429/503 mid-watch is a delay, not an
+      // outcome. Settled means stats.analysis reports nothing pending; a
+      // still-null tally is the enqueue race after an accepted POST, watched
+      // through rather than misread as "never analyzed".
+      const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      let lastTally: string | null = null;
+      for (;;) {
+        throwIfAborted(options?.signal);
+        let current: Job;
+        try {
+          current = await getJob(id);
+        } catch (error) {
+          if (
+            error instanceof EvolveApiError &&
+            (error.status === 429 || error.status === 503)
+          ) {
+            await sleep(
+              Math.max((error.retryAfterSec ?? 0) * 1000, pollIntervalMs),
+              options?.signal
+            );
+            continue;
+          }
+          throw error;
+        }
+        const analysis = current.stats.analysis ?? null;
+        if (analysis) {
+          const tally = JSON.stringify([
+            analysis.n_completed,
+            analysis.n_failed,
+            analysis.n_pending,
+          ]);
+          if (tally !== lastTally) {
+            lastTally = tally;
+            options?.onStats?.(current);
+          }
+          if (analysis.n_pending === 0) return current;
+        }
+        await sleep(pollIntervalMs, options?.signal);
+      }
+    },
+
     download: (async (
       id: string,
       options?: DownloadJobOptions
@@ -2521,6 +2704,63 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       await verifyPackageDigest(res, bytes);
       return bytes;
     }) as JobsClient["download"],
+
+    async upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job> {
+      // download()'s inverse: a Harbor job directory in, the ordinary Job
+      // shape out. A path to a regular file is a ready-packed .tar.gz (our
+      // own download() output, or Harbor's) and rides the wire byte-for-byte;
+      // anything else is treated as the job directory Harbor's CLI takes.
+      if (typeof dirOrArchive !== "string" || !dirOrArchive.trim()) {
+        throw new Error("jobs().upload() requires a job directory (or .tar.gz archive) path");
+      }
+      const { readFile, stat } = await import("node:fs/promises");
+      const target = await stat(dirOrArchive).catch(() => null);
+      let archive: Buffer;
+      if (target?.isFile()) {
+        archive = await readFile(dirOrArchive);
+      } else {
+        // Harbor's own gate (their cli/upload.py checks result.json, then
+        // config.json), applied client-side with their sentences — the cheap
+        // refusal that saves tarring and shipping a tree the server would
+        // refuse the same way (`not_a_job_dir`). A nonexistent path lands
+        // here too and reads as the first refusal, exactly as their CLI does.
+        const { existsSync } = await import("node:fs");
+        const { join, resolve } = await import("node:path");
+        const root = resolve(dirOrArchive);
+        for (const required of ["result.json", "config.json"]) {
+          if (!existsSync(join(root, required))) {
+            throw new Error(`${root} does not contain ${required}`);
+          }
+        }
+        const { tarGzipDirectory } = await import("./tar");
+        archive = await tarGzipDirectory(root);
+      }
+      const res = await request(cfg, "/api/jobs/upload", {
+        method: "POST",
+        body: uploadForm(
+          { dataset: options?.dataset },
+          { bytes: archive, filename: "job.tar.gz" }
+        ),
+      });
+      return mapJob((await res.json()) as Record<string, unknown>);
+    },
+
+    async delete(id: string): Promise<JobDeleteResult> {
+      // The verb is the wire, verbatim — the server owns every rule (creator
+      // only, terminal only, no live analysis wave or derived regrade) and
+      // every refusal arrives typed. The 200 is the receipt, its three
+      // fields required by the contract, read in the same shape mapJob
+      // reads required counts.
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as Record<string, unknown>;
+      return {
+        job_id: (data.job_id as string) ?? id,
+        trials_deleted: (data.trials_deleted as number) ?? 0,
+        analyses_deleted: (data.analyses_deleted as number) ?? 0,
+      };
+    },
 
     async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {
       const res = await request(
@@ -2657,6 +2897,16 @@ export function trials(config?: HostedClientConfig): TrialsClient {
       const body = (await res.json()) as Record<string, unknown>;
       return {
         stopped: ((body.stopped as Record<string, unknown>[]) ?? []).map(mapTrial),
+        // Stopped trace analyses ride the same answer under their own list
+        // (they are not Trials). Each row rides verbatim beside its one
+        // normalized key — the Trial.analysis rule, one home
+        // (mapTrialAnalysis); a non-object row cannot become an analysis and
+        // reads nothing, and an older server that sends no list reads the
+        // empty one — "no analyses were stopped", exactly how such a server
+        // behaves.
+        stopped_analyses: ((body.stopped_analyses as unknown[]) ?? [])
+          .map(mapTrialAnalysis)
+          .filter((row): row is TrialAnalysis => row !== null),
         already_terminal: (body.already_terminal as string[]) ?? [],
         not_found: (body.not_found as string[]) ?? [],
       };
@@ -2766,7 +3016,7 @@ export interface HostedEvolve {
   readonly datasets: DatasetsClient;
   /** Your own bring-your-own agent registrations. */
   readonly agents: AgentsClient;
-  /** Jobs: start, watch, compare, resume, retry, regrade, download. */
+  /** Jobs: start, watch, compare, resume, retry, regrade, analyze, download. */
   readonly jobs: JobsClient;
   /** Platform-stored skills, referenced as `upload:<id>` in agents[].skills. */
   readonly skills: SkillsClient;
