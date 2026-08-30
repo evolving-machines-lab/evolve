@@ -462,25 +462,44 @@ export interface Rubric {
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
- * wave. `{}` is legal and means "all defaults": claude-haiku-4-5 over
+ * wave. `{}` is legal and means "all defaults": glm-5.3-flash over
  * Harbor's default rubric (reward_hacking, task_specification — their
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
  * The analyzer always runs the claude-code harness (Harbor's default analyze
- * agent) in its own sealed sandbox on the platform's default eval provider;
- * its spend is capped per analysis and metered as its own line, never blended
- * into the trial's own bill.
+ * agent) in its own sealed sandbox — on the provider `sandbox_provider`
+ * names, or the platform's analysis default when it names none; its spend is
+ * capped per analysis and metered as its own line, never blended into the
+ * trial's own bill.
  */
 export interface AnalyzeConfigInput {
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * Harbor's own default model (cli/analyze.py `claude-haiku-4-5`) under its
-   * wire id on this platform's claude roster. Must be on that roster
-   * (`GET /api/meta`, `harnesses[].models`, either spelling); anything else
-   * is refused at accept (`invalid_input`, roster in the message).
+   * glm-5.3-flash on this platform's claude roster — a recorded deviation
+   * from Harbor's default analyze model (their cli/analyze.py
+   * `claude-haiku-4-5`): analysis is input-dominated, and flash is the
+   * input-price frontier; name `glm-5.3` (or any roster member) to
+   * escalate. The value speaks the same vocabulary as
+   * `agents[].model_name`: either advertised spelling is accepted and
+   * stored AS GIVEN (the default is the roster alias), the wire id is
+   * resolved only when the analyzer runs, and every stored analysis serves
+   * the spelling it was created under. Must be on the claude roster
+   * (`GET /api/meta`, `harnesses[].models`); anything else is refused at
+   * accept (`invalid_input`, roster in the message).
    */
   model_name?: string;
   rubric?: Rubric;
+  /**
+   * The provider whose sandbox the analyzer boots — the job lineup, the same
+   * vocabulary as `JobCreate.sandbox_provider` and held to the same rule: an
+   * unknown value is refused `invalid_input` naming the lineup. Stored as
+   * given and honored wherever this config enqueues an analysis — every
+   * embedded analysis of the job, or the manual wave this body configures.
+   * Omitted, the platform's analysis default applies at each enqueue
+   * (daytona unless the operator retuned the fleet) — the value the resolved
+   * `AnalyzeConfig.sandbox_provider` echo reports.
+   */
+  sandbox_provider?: EvalSandboxProvider;
 }
 
 /**
@@ -494,6 +513,17 @@ export interface AnalyzeConfigInput {
 export interface AnalyzeConfig {
   model_name: string;
   rubric: Rubric;
+  /**
+   * The provider this policy's analyses run on. Named at create it is served
+   * as stored, forever. When the create named none, this echoes the
+   * platform's analysis default OF THE DAY — the value the next enqueue
+   * under this policy would stamp — because that default is an operator
+   * fleet knob, resolved where an analysis is actually enqueued rather than
+   * baked into the stored policy (the one deliberate nuance to the
+   * resolved-at-accept law above, stated so the echo is never read as
+   * history).
+   */
+  sandbox_provider: EvalSandboxProvider;
 }
 
 /** The job-creation body — POST /api/jobs. */
@@ -910,6 +940,55 @@ export function passAtK(job: Job): PassAtKGroup[] {
 }
 
 /**
+ * Provenance of an UPLOADED job (`jobs().upload()`) — what the archive's own
+ * record files said about themselves: the job id its result.json carried and
+ * the job_name its config.json carried (each null when the file did not state
+ * one — never fabricated), plus when the platform ingested it. The
+ * platform-minted row ids replace the archive's ids everywhere else on the
+ * surface; these fields are where the originals remain readable. Null on
+ * every job this platform executed; non-null marks a terminal RECORD — resume,
+ * retry and regrade refuse it (`job_uploaded`), analyze works on it unchanged.
+ */
+export interface UploadProvenance {
+  original_job_id: string | null;
+  original_job_name: string | null;
+  uploaded_at: string;
+  /**
+   * The job-level sum of the trials' `upload.reported_agent_result` figures
+   * — the uploader's own claims aggregated once at ingest, REPORTED like
+   * their per-trial parts and never entering the platform-metered fields
+   * (`stats.cost_usd` and the token stats stay null for an uploaded job).
+   * Each total sums the trials that reported that field and is null when
+   * none did (a zero would be a claim); `n_trials_reporting` counts the
+   * trials that carried any reported figure, against the job's
+   * `n_total_trials` — the honesty note for a partially reporting archive.
+   * Null only on jobs ingested before this field existed.
+   */
+  reported_totals: {
+    cost_usd: number | null;
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    n_trials_reporting: number;
+  } | null;
+}
+
+/**
+ * The deletion receipt of `DELETE /api/jobs/{jobId}`: what was destroyed.
+ * The contract's own minimal shape — Harbor's hub delete answers no wire
+ * body, so there was no shape to mirror. `trials_deleted` counts the trial
+ * rows destroyed with the job (their trace events, attempts and stored
+ * trace objects went with them); `analyses_deleted` the trial-analysis
+ * rows, their stored analyzer streams included.
+ */
+export interface JobDeleteResult {
+  /** The deleted job. */
+  job_id: string;
+  trials_deleted: number;
+  analyses_deleted: number;
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -990,7 +1069,13 @@ export interface Job {
   verifier_timeout_multiplier: number | null;
   agent_setup_timeout_multiplier: number | null;
   environment_build_timeout_multiplier: number | null;
-  sandbox_provider: EvalSandboxProvider;
+  /**
+   * Where this job's trials execute. Null exactly on an UPLOADED job
+   * (`upload` non-null): an ingested record never executed on any platform
+   * sandbox, and naming a provider would be an execution claim. Never null
+   * on a job this platform ran.
+   */
+  sandbox_provider: EvalSandboxProvider | null;
   /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
   /**
@@ -1015,6 +1100,11 @@ export interface Job {
   source_jobs: SourceJob[];
   /** Derived: any source_jobs entry with action "regrade". */
   is_regrade: boolean;
+  /**
+   * The upload provenance echo — null for every job this platform executed,
+   * non-null only on a job ingested by jobs().upload(). See UploadProvenance.
+   */
+  upload: UploadProvenance | null;
   /** True only on a response that replayed an existing job for an Idempotency-Key. */
   idempotent_replay: boolean;
   started_at: string;
@@ -1156,6 +1246,16 @@ export interface TrialAnalysis {
    */
   checks: Record<string, AnalysisCheck> | null;
   estimated_cost_usd: number | null;
+  /**
+   * The analyzer's one-home usage reading — the SAME object, same keys, the
+   * trial and session surfaces serve, built from the analyzer's OWN gateway
+   * records. Present and ticking while the analysis runs — a mid-run reading
+   * is a lagging LOWER BOUND, always `provisional: true` — and settled by
+   * the same read that writes `estimated_cost_usd`, which stays Harbor's
+   * word for the FINAL figure. Null = the meter never answered, never zero.
+   * Absent on servers predating the field.
+   */
+  usage?: UsageReading | null;
   /** Non-null exactly when status is `failed`. */
   failure: AnalysisFailure | null;
   /** When this analysis was enqueued. */
@@ -1393,8 +1493,48 @@ export interface Trial {
   retries: TrialRetry[];
   /** Reference to the agent session/trace, when recorded. */
   session_ref: string | null;
+  /**
+   * Provenance of an UPLOADED trial (its job's `upload` is non-null): the
+   * identity and reported figures the archive's own record files carried.
+   * Null for every trial this platform executed. An uploaded trial keeps
+   * its execution facts (`sandbox_provider`, `agent_result`, `usage`,
+   * `spend_source`) null forever — this platform's meter never saw the run;
+   * the archive's own figures live under `upload.reported_agent_result` and
+   * nowhere else.
+   */
+  upload: TrialUploadProvenance | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+/**
+ * What the uploaded archive said about THIS trial: its own ids, the full
+ * task name verbatim, and the uploader's own usage figures. REPORTED means
+ * exactly that — `reported_agent_result` is the archive's claim, served for
+ * the reader; it never populates the platform-metered fields
+ * (`agent_result`, `usage`, `spend_source`), which stay null because this
+ * platform's meter never saw the run.
+ */
+export interface TrialUploadProvenance {
+  /** The archive trial result.json's own `id`; null when it stated none. */
+  original_trial_id: string | null;
+  /** The archive's own `trial_name` (the trial directory). */
+  original_trial_name: string;
+  /**
+   * The archive's task name VERBATIM — possibly registry-qualified
+   * (`org/name`); the trial's `task_name` serves the parsed leaf.
+   */
+  original_task_name: string;
+  /**
+   * The uploaded `agent_result`'s own token and cost figures, or null when
+   * the archive carried none. Uploader-reported, never platform-measured.
+   */
+  reported_agent_result: {
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    cost_usd: number | null;
+  } | null;
 }
 
 /**
@@ -1415,10 +1555,16 @@ export interface TrialRetry {
   settled_at: string | null;
 }
 
-/** Per-trial outcome of POST /api/trials/stop; every requested id appears in exactly one list. */
+/** Per-id outcome of POST /api/trials/stop; every requested id appears in exactly one list. */
 export interface StopResponse {
   /** Trials killed and settled by this request, with their settled rows. */
   stopped: Trial[];
+  /**
+   * Trace analyses killed and settled by this request, with their settled
+   * rows (`failed`, failure phase `stopped`). Always served; a separate list
+   * because `stopped` is an array of Trial.
+   */
+  stopped_analyses: TrialAnalysis[];
   /** Ids that were already terminal; untouched. */
   already_terminal: string[];
   /** Ids that do not exist or are not the caller's. */
@@ -2480,6 +2626,19 @@ export interface DownloadJobOptions {
   stream?: boolean;
 }
 
+/** Options for jobs().upload() */
+export interface UploadJobOptions {
+  /**
+   * "name" or "name@version" of a published dataset — links the uploaded
+   * trials to that version's tasks by task name (a bare name resolves to the
+   * active version). Matched trials analyze against the real task content;
+   * unmatched or unhinted trials analyze through the task-not-available
+   * branch, exactly Harbor's fallback for a trial without a local task
+   * directory.
+   */
+  dataset?: string;
+}
+
 // =============================================================================
 // CLIENTS
 // =============================================================================
@@ -2764,7 +2923,7 @@ export interface JobsClient {
    * with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
-   * (or `{}`) means the defaults: claude-haiku-4-5 over Harbor's default
+   * (or `{}`) means the defaults: glm-5.3-flash over Harbor's default
    * rubric. CANCELLED trials are never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
@@ -2811,6 +2970,52 @@ export interface JobsClient {
     id: string,
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+  /**
+   * Upload a Harbor job directory as a first-class TERMINAL job — Harbor's
+   * `harbor upload` in reverse, taking their CLI's own input (a `job_dir`
+   * with result.json + config.json at its root, one subdirectory per trial;
+   * the same gate applies here, client-side, with their refusal sentences).
+   * `dirOrArchive` is that directory — packed into a gzipped tar with the
+   * same deterministic packer every upload route here uses — or a
+   * ready-packed `.tar.gz` of one, uploaded byte-for-byte: the platform's own
+   * download() produces exactly this format, so a downloaded job re-uploads
+   * as-is, and any real `harbor run` job dir works the same way.
+   *
+   * Trial facts land verbatim: rewards are never re-scored, a trial without a
+   * verdict lands INDETERMINATE, exceptions are carried, and the trajectory /
+   * raw streams / verifier log / reward.txt are stored byte-for-byte in the
+   * native trial slots. THE RESPONSE IS THE JOB — COMPLETED on creation, with
+   * `upload` carrying the provenance echo. It is a record, not a run: resume,
+   * retry and regrade refuse it (`job_uploaded`); analyze() works on it
+   * unchanged. `{ dataset }` links the uploaded trials to a published dataset
+   * version by task name. The caps live on `GET /api/meta` under
+   * `limits.uploads` (`job_archive_bytes`, `job_trials`,
+   * `job_trial_file_bytes`, `job_trial_session_bytes`).
+   */
+  upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job>;
+  /**
+   * Permanently delete one of your jobs — trials, trace events, analyses and
+   * every stored trace object included (Harbor's `harbor hub job delete`:
+   * "Permanently delete Hub jobs you own, including their trials"). Works on
+   * uploaded and native jobs alike; deleting an uploaded job frees its
+   * duplicate lock, so delete-then-reupload is the replace path.
+   *
+   * CREATOR-ONLY: org members may operate a job (cancel, retry), never
+   * destroy its record — a member who did not create it is refused
+   * (`org_forbidden`, 403). TERMINAL ONLY — never a delete under a live
+   * worker: a QUEUED/RUNNING/CANCELLING job refuses `job_not_terminal`
+   * (409; cancel first), a queued or running analysis wave refuses
+   * `analysis_already_running` (409), and a live regrade derived from this
+   * job refuses `job_not_terminal` with the regrade jobs to wait for in
+   * `details.regrade_job_ids`. A regrade job id is itself not deletable
+   * here (`job_not_found`, 404) — a regrade's results are deleted from the
+   * traces surface. What stays: regrade JOB rows and `source_jobs` history,
+   * which keep naming the deleted id; the model gateway's own ledger
+   * remains the billing truth.
+   *
+   * The response is the receipt: what was destroyed, counted.
+   */
+  delete(id: string): Promise<JobDeleteResult>;
   /**
    * Grep the parsed trace of EVERY trial of the job in one server-side pass.
    * `q` is the trace filter's grammar: a case-insensitive POSIX regex over
@@ -2901,9 +3106,12 @@ export interface TrialsClient {
   /**
    * Stop selected in-flight trials without cancelling their job: each trial's
    * sandbox is killed and the trial is settled with its spend read from the
-   * gateway. Only the caller's own trials; ids belonging to someone else are
-   * reported in `not_found` (existence is never leaked). Idempotent —
-   * already-terminal trials are reported as such and left untouched.
+   * gateway. Ids may be eval trials and trace analyses, freely mixed — what
+   * each id is gets resolved server-side; a stopped analysis settles `failed`
+   * (failure phase `stopped`) and is reported under `stopped_analyses`. Only
+   * the caller's own work; ids belonging to someone else are reported in
+   * `not_found` (existence is never leaked). Idempotent — already-terminal
+   * ids are reported as such and left untouched.
    */
   stop(trialIds: string[]): Promise<StopResponse>;
   /**
@@ -3044,6 +3252,24 @@ export const HOSTED_ERROR_CODES = [
   "invalid_rubric",
   "analysis_already_running",
   "no_analyzable_trials",
+  // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
+  // directory (no result.json / config.json at its root, or they do not
+  // parse); one trial directory that cannot be ingested (the refusal names
+  // the trial and the reason, 422); the archive over the byte cap (413,
+  // distinct from import_too_large — that one belongs to dataset corpora);
+  // and a run-lifecycle verb (resume / retry / regrade) on an UPLOADED job —
+  // a terminal record of a run that happened elsewhere, never runnable here
+  // (409; analyze is deliberately not among the refusers).
+  "not_a_job_dir",
+  "invalid_trial",
+  "upload_too_large",
+  "job_uploaded",
+  // Re-uploading an archive whose job this caller already uploaded (409),
+  // detected by (uploading user, the archive result.json's own job id);
+  // details name the existing job. Deliberately NOT Harbor's update-in-place:
+  // our trial rows carry analyses and analysis history — silently replacing
+  // trials would destroy them; Harbor's hub rows have no such children.
+  "job_already_uploaded",
   "import_not_found",
   "import_too_large",
   "invalid_archive",
@@ -3281,6 +3507,14 @@ export interface CapabilityDocument {
       skill_archive_bytes: number;
       /** Uploaded-skill records one caller may hold (`skill_limit_reached` past it). */
       skill_uploads_per_user: number;
+      /** Compressed cap on one uploaded job archive (`upload_too_large` past it). */
+      job_archive_bytes: number;
+      /** Most trials one uploaded job archive may carry (`job_too_large` past it). */
+      job_trials: number;
+      /** Per-file cap on the trial artifacts an upload stores (`invalid_trial` past it). */
+      job_trial_file_bytes: number;
+      /** Total cap on one trial's `agent/sessions/` tree (`invalid_trial` past it). */
+      job_trial_session_bytes: number;
     };
     dataset_names: {
       pattern: string;

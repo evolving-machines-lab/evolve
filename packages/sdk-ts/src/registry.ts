@@ -414,6 +414,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
       { alias: "opus[1m]", modelId: "opus[1m]", description: "Complex reasoning with 1M context window" },
       { alias: "sonnet[1m]", modelId: "sonnet[1m]", description: "Daily coding with 1M context window" },
+      { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
+      { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
     ],
     systemPromptFile: "CLAUDE.md",
     mcpConfig: {
@@ -741,7 +743,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/google/gemini-3.6-flash", modelId: "openrouter/google/gemini-3.6-flash", description: "Gemini 3.6 Flash via OpenRouter" },
       { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
       { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
-      { alias: "openrouter/z-ai/glm-5.2", modelId: "openrouter/z-ai/glm-5.2", description: "Zhipu GLM-5.2 via OpenRouter" },
+      { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
+      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via OpenRouter" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -796,7 +799,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "gemini-3.6-flash", modelId: "gemini-3.6-flash", description: "Factory-managed Gemini 3.6 Flash" },
       { alias: "qwen3.7-max", modelId: "qwen3.7-max", description: "Qwen 3.7 Max via the Evolve gateway" },
       { alias: "kimi-k3", modelId: "kimi-k3", description: "Factory-managed Droid Core Kimi K3" },
-      { alias: "glm-5.2", modelId: "glm-5.2", description: "Factory-managed Droid Core GLM-5.2" },
+      { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
+      { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -810,7 +814,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     skipApiKeyEnvInGateway: true,
     gatewayModelAliases: {
       "kimi-k3": "moonshot/kimi-k3",
-      "glm-5.2": "openrouter/z-ai/glm-5.2",
+      "glm-5.3": "openrouter/z-ai/glm-5.3",
+      "glm-5.3-flash": "openrouter/z-ai/glm-5.3-flash",
       "qwen3.7-max": "dashscope/qwen3.7-max",
     },
     droidGatewaySettings: {

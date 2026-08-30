@@ -1641,7 +1641,8 @@ async function testDroidBuildCommand(): Promise<void> {
     "Droid gateway uses LiteLLM-compatible multi-provider API shape"
   );
   assertEqual(droid.gatewayModelAliases?.["kimi-k3"], "moonshot/kimi-k3", "Droid gateway maps Kimi alias");
-  assertEqual(droid.gatewayModelAliases?.["glm-5.2"], "openrouter/z-ai/glm-5.2", "Droid gateway maps GLM alias");
+  assertEqual(droid.gatewayModelAliases?.["glm-5.3"], "openrouter/z-ai/glm-5.3", "Droid gateway maps GLM alias");
+  assertEqual(droid.gatewayModelAliases?.["glm-5.3-flash"], "openrouter/z-ai/glm-5.3-flash", "Droid gateway maps GLM Flash alias");
   assertEqual(droid.gatewayModelAliases?.["qwen3.7-max"], "dashscope/qwen3.7-max", "Droid gateway maps Qwen alias");
 
   const gatewayCmd = droid.buildCommand({
@@ -1693,7 +1694,8 @@ async function testDroidGatewayModelAliases(): Promise<void> {
   } as any, {});
 
   assertEqual((gatewayAgent as any).resolveGatewayModel("kimi-k3"), "moonshot/kimi-k3", "gateway maps Kimi to Moonshot route");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.2"), "openrouter/z-ai/glm-5.2", "gateway maps GLM to OpenRouter route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.3"), "openrouter/z-ai/glm-5.3", "gateway maps GLM to OpenRouter route");
+  assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.3-flash"), "openrouter/z-ai/glm-5.3-flash", "gateway maps GLM Flash to OpenRouter route");
   assertEqual((gatewayAgent as any).resolveGatewayModel("qwen3.7-max"), "dashscope/qwen3.7-max", "gateway maps Qwen to DashScope route");
   assertEqual((gatewayAgent as any).resolveGatewayModel("claude-sonnet-5"), "claude-sonnet-5", "gateway leaves Claude model unchanged");
   assertEqual((directAgent as any).resolveGatewayModel("kimi-k3"), "kimi-k3", "direct mode leaves Droid-native Kimi model unchanged");

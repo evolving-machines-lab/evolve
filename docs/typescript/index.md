@@ -111,6 +111,8 @@ await evolve.run({ prompt: "Hello world" });
 | Analyze (`analyze()` / `watchAnalysis()` — rubric-driven trace analysis) | [Hosted Evals → Analyze](./06-hosted-evals.md#analyze) |
 | `compare()` (aggregates + task matrix) | [Hosted Evals → Compare](./06-hosted-evals.md#compare) |
 | `download()` (the results archive) | [Hosted Evals → Download the Archive](./06-hosted-evals.md#download-the-archive) |
+| `upload()` (a Harbor job dir in — Harbor's upload, in reverse) | [Hosted Evals → Upload a Job](./06-hosted-evals.md#upload-a-job) |
+| `delete()` (permanent job deletion — delete-then-reupload is the replace path) | [Hosted Evals → Delete a Job](./06-hosted-evals.md#delete-a-job) |
 | `evolve` CLI (noun-verb grammar, top-level `run`, short flags, `-c` config) | [Hosted Evals → CLI](./06-hosted-evals.md#cli) |
 | Auth (`auth status` today; `auth login` with its release) | [Hosted Evals → Signing In](./06-hosted-evals.md#signing-in) |
 | `meta()` / `GET /api/meta` — the public capability document | [Hosted Evals → What the Platform Supports](./06-hosted-evals.md#what-the-platform-supports) |

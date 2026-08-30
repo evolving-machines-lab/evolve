@@ -3011,7 +3011,12 @@ async function testJobStopAllTerminalIsHonest() {
     );
     assertEqual(
       JSON.parse(out[out.length - 1]),
-      { stopped: [], already_terminal: ["run-1", "run-2"], not_found: [] },
+      {
+        stopped: [],
+        stopped_analyses: [],
+        already_terminal: ["run-1", "run-2"],
+        not_found: [],
+      },
       "an all-terminal dataset reports its ids under already_terminal"
     );
 
@@ -3625,13 +3630,31 @@ function testBuildJobInputAnalyze() {
       "-m", "m",
       "--analyze-model", "claude-haiku-4-5-20251001",
       "--analyze-rubric", "rubric.json",
+      "--analyze-provider", "modal",
     ]),
     () => JSON.stringify(CLI_RUBRIC)
   );
   assertEqual(
     withFields.analyze,
-    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC },
-    "--analyze-model/--analyze-rubric imply --analyze and fill their fields"
+    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC, sandbox_provider: "modal" },
+    "--analyze-model/--analyze-rubric/--analyze-provider imply --analyze and fill their fields"
+  );
+
+  // The provider VALUE is the server's to rule (the lineup lives on GET
+  // /api/meta, one home): the CLI passes it verbatim, no client-side roster.
+  const providerOnly = buildJobInput(
+    parseArgs([
+      "job", "start",
+      "-d", "deep-swe",
+      "-a", "codex",
+      "-m", "m",
+      "--analyze-provider", "not-a-provider",
+    ])
+  );
+  assertEqual(
+    providerOnly.analyze,
+    { sandbox_provider: "not-a-provider" },
+    "--analyze-provider alone arms --analyze and rides verbatim — the server owns the lineup refusal"
   );
 
   const minimal = buildJobInput(
@@ -3644,25 +3667,29 @@ function testBuildJobInputAnalyze() {
     console.log(`  - ${SPEC_SKIP_REASON}`);
     return;
   }
+  // The file's analyze.sandbox_provider passes the spec-derived -c validation
+  // (the key is in the spec's own AnalyzeConfigInput vocabulary — zero CLI
+  // edits), and each flag still overrides exactly its own field.
   const merged = buildJobInput(
     parseArgs([
       "job", "start",
       "--config", "job.json",
       "--analyze-model", "claude-haiku-4-5-20251001",
+      "--analyze-provider", "modal",
     ]),
     (path) =>
       path === "job.json"
         ? JSON.stringify({
             datasets: [{ name: "deep-swe" }],
             agents: [{ name: "codex", model_name: "m" }],
-            analyze: { model_name: "other-model", rubric: CLI_RUBRIC },
+            analyze: { model_name: "other-model", rubric: CLI_RUBRIC, sandbox_provider: "e2b" },
           })
         : ""
   );
   assertEqual(
     merged.analyze,
-    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC },
-    "the flag overrides its field; the file's rubric survives"
+    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC, sandbox_provider: "modal" },
+    "each flag overrides its field; the file's rubric survives; the file's provider is spec-legal"
   );
 }
 
@@ -3707,7 +3734,7 @@ async function testAnalyzeVerbEndToEnd() {
     });
     const { io, out } = captureIO();
     const code = await runCli(
-      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", ...AUTH],
+      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0 when every analysis completed");
@@ -3715,8 +3742,8 @@ async function testAnalyzeVerbEndToEnd() {
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001" },
-      "-m rides the body as model_name; no rubric key when none given"
+      { model_name: "claude-haiku-4-5-20251001", sandbox_provider: "daytona" },
+      "-m/-e ride the body as model_name/sandbox_provider; no rubric key when none given"
     );
     assert(jobReads >= 2, "follows the wave by polling the job");
     assert(
@@ -4070,6 +4097,115 @@ async function testCompareCancelDownload() {
   }
 }
 
+async function testJobDelete() {
+  console.log("\n--- runCli: job delete — Harbor's confirm posture, the receipt counts ---");
+
+  // Grammar: exactly one id.
+  assertThrowsUsage(() => parseArgs(["job", "delete"]), "requires", "delete needs an id");
+  assertThrowsUsage(() => parseArgs(["job", "delete", "a", "b"]), "unexpected argument", "one id only");
+
+  installMockFetch();
+  try {
+    const receipt = { job_id: "eval-1", trials_deleted: 12, analyses_deleted: 3 };
+
+    // Non-interactive without --yes: refused BEFORE any request — Harbor's
+    // own posture ("Re-run with --yes to confirm", their hub delete on a
+    // non-TTY stdin). io without a confirm hook IS the non-interactive case.
+    const bare = captureIO();
+    const before = fetchCalls.length;
+    const bareCode = await runCli(["job", "delete", "eval-1", ...AUTH], bare.io);
+    assertEqual(bareCode, 1, "a bare non-interactive delete refuses with exit 1");
+    assert(
+      bare.err.some((l) => l.includes("--yes")),
+      "the refusal names the --yes flag"
+    );
+    assertEqual(fetchCalls.length, before, "nothing was requested — the refusal is local");
+
+    // --yes goes straight to DELETE and renders the receipt counts.
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: receipt });
+    const yes = captureIO();
+    const yesCode = await runCli(["job", "delete", "eval-1", "--yes", ...AUTH], yes.io);
+    assertEqual(yesCode, 0, "--yes deletes without a prompt");
+    const deleteCall = fetchCalls.find((c) => c.init?.method === "DELETE");
+    assert(
+      deleteCall !== undefined && deleteCall.url.endsWith("/api/jobs/eval-1"),
+      "DELETE hits the job route itself"
+    );
+    assert(
+      yes.out.some((l) => l.includes("12") && l.includes("3")),
+      "the human receipt states the destruction counts"
+    );
+
+    // --json emits the receipt verbatim — the machine envelope.
+    const json = captureIO();
+    assertEqual(
+      await runCli(["job", "delete", "eval-1", "-y", "--json", ...AUTH], json.io),
+      0,
+      "-y is --yes (Harbor's short flag)"
+    );
+    assertEqual(JSON.parse(json.out.join("\n")), receipt, "--json prints the JobDeleteResult verbatim");
+
+    // Interactive declined: the job is fetched and NAMED before the question
+    // (Harbor prints id + name, then asks), no DELETE fires, exit 1.
+    installMockFetch();
+    let deleted = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      fetchCalls.push({ url: urlStr, init });
+      if (init?.method === "DELETE") {
+        deleted++;
+        return buildMockResponse({ status: 200, body: receipt });
+      }
+      return buildMockResponse({ status: 200, body: wireJob({ id: "eval-1", job_name: "nightly" }) });
+    };
+    const asked: string[] = [];
+    const declined = captureIO(true);
+    declined.io.confirm = async (q: string) => {
+      asked.push(q);
+      return false;
+    };
+    const declinedCode = await runCli(["job", "delete", "eval-1", ...AUTH], declined.io);
+    assertEqual(declinedCode, 1, "a declined confirmation exits 1");
+    assertEqual(deleted, 0, "nothing was deleted");
+    assert(asked.length === 1 && asked[0].includes("Permanently delete"), "the question states permanence");
+    assert(
+      declined.err.some((l) => l.includes("eval-1") && l.includes("nightly")),
+      "what would die is named — id and job name — before the question"
+    );
+    assert(declined.err.some((l) => l.includes("cancelled")), "the outcome is stated");
+
+    // Interactive accepted: DELETE fires and the receipt renders.
+    const accepted = captureIO(true);
+    accepted.io.confirm = async () => true;
+    const acceptedCode = await runCli(["job", "delete", "eval-1", ...AUTH], accepted.io);
+    assertEqual(acceptedCode, 0, "an accepted confirmation deletes");
+    assertEqual(deleted, 1, "exactly one DELETE fired");
+    assert(
+      accepted.out.some((l) => l.includes("12") && l.includes("3")),
+      "the receipt counts render after an accepted prompt"
+    );
+
+    // A typed refusal surfaces verbatim through the standard error path.
+    installMockFetch();
+    setMockResponse("/api/jobs/eval-1", {
+      status: 409,
+      body: { error: { code: "job_not_terminal", message: "Cancel the job first" } },
+    });
+    const refused = captureIO();
+    assertEqual(
+      await runCli(["job", "delete", "eval-1", "--yes", ...AUTH], refused.io),
+      1,
+      "a server refusal exits 1"
+    );
+    assert(
+      refused.err.some((l) => l.includes("Cancel the job first")),
+      "the server's sentence reaches stderr unrewritten"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobDownloadUnpackGuards() {
   console.log("\n--- runCli: job download unpack guards ---");
   installMockFetch();
@@ -4173,6 +4309,61 @@ async function testTrialShow() {
     assertEqual(code, 0, "exit 0");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/trials/run-1"), "one positional, the trial id");
     assert(out.join("\n").includes("abs-module-cache-flags"), "renders the detail");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTrialShowUploaded() {
+  console.log("\n--- runCli: trial show renders an uploaded trial's REPORTED record beside empty meters ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/trials/run-up1", {
+      status: 200,
+      body: trialFixture({
+        id: "run-up1",
+        status: "SCORED",
+        reward: 1,
+        // The platform-metered facts stay empty for an upload: the meter
+        // never saw the run.
+        agent_result: null,
+        usage: null,
+        sandbox_provider: null,
+        upload: {
+          original_trial_id: "orig-t1",
+          original_trial_name: "trial-1",
+          original_task_name: "laude/hello-world",
+          reported_agent_result: {
+            n_input_tokens: 1200,
+            n_cache_tokens: 300,
+            n_output_tokens: 800,
+            cost_usd: 1.25,
+          },
+        },
+      }),
+    });
+    const { io, out } = captureIO();
+    assertEqual(await runCli(["trial", "show", "run-up1", ...AUTH], io), 0, "exit 0");
+    const text = out.join("\n");
+    // Metered spend is honestly absent, and the archive's claim sits beside
+    // it clearly labeled REPORTED — never folded into the platform's rows.
+    assert(out.some((l) => l.includes("spent") && l.trim().endsWith("-")), "metered spend renders '-'");
+    assert(
+      text.includes("reported cost") && text.includes("$1.2500") && text.includes("not platform-metered"),
+      "reported cost row carries the figure and the label"
+    );
+    assert(
+      out.some((l) => l.includes("reported tokens") && l.includes("in 1200") && l.includes("out 800")),
+      "reported tokens row carries the archive's counts"
+    );
+    assert(
+      out.some((l) => l.includes("uploaded from") && l.includes("trial-1") && l.includes("laude/hello-world")),
+      "the provenance identity row names the original trial and full task name"
+    );
+    assert(
+      out.some((l) => l.includes("provider") && l.includes("ported")),
+      "the provider cell renders ported"
+    );
   } finally {
     restoreFetch();
   }
@@ -4485,21 +4676,26 @@ async function testTrialStop() {
       status: 200,
       body: {
         stopped: [trialFixture({ status: "INDETERMINATE" })],
+        stopped_analyses: [{ id: "an-9", status: "failed" }],
         already_terminal: ["run-2"],
         not_found: ["run-3"],
       },
     });
     const { io, out } = captureIO();
-    const code = await runCli(["trial", "stop", "run-1", "run-2", "run-3", ...AUTH], io);
+    const code = await runCli(["trial", "stop", "run-1", "run-2", "an-9", "run-3", ...AUTH], io);
     assertEqual(code, 0, "exit 0 — the report is the outcome");
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/trials/stop"), "hits the stop route");
     assertEqual(
       JSON.parse(call.init?.body as string),
-      { trial_ids: ["run-1", "run-2", "run-3"] },
+      { trial_ids: ["run-1", "run-2", "an-9", "run-3"] },
       "posts every requested id"
     );
     assert(out.some((l) => l.includes("stopped run-1")), "reports the stopped trial");
+    assert(
+      out.some((l) => l.includes("stopped analysis an-9 failed")),
+      "a stopped trace analysis gets its own report row, never silently absent"
+    );
     assert(out.some((l) => l.includes("already terminal run-2")), "reports the already-terminal id");
     assert(out.some((l) => l.includes("not found run-3")), "reports the unknown id (existence never leaked)");
   } finally {
@@ -5506,6 +5702,161 @@ async function testSkillNamePassThroughOnStart() {
 // AUTH
 // =============================================================================
 
+async function testUploadVerb() {
+  console.log("\n--- runCli: evolve upload posts a job directory and renders the created record ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-"));
+  const jobDir = join(dir, "2026-08-27__12-00-00");
+  try {
+    await mkdir(join(jobDir, "trial-1"), { recursive: true });
+    await writeFile(join(jobDir, "result.json"), JSON.stringify({ id: "orig-123" }));
+    await writeFile(join(jobDir, "config.json"), JSON.stringify({ job_name: "2026-08-27__12-00-00" }));
+    await writeFile(join(jobDir, "trial-1", "result.json"), JSON.stringify({ trial_name: "trial-1" }));
+    const uploaded = wireJob({
+      id: "eval-up1",
+      job_name: "2026-08-27__12-00-00",
+      status: "COMPLETED",
+      // Null exactly on an uploaded job: nothing executed here.
+      sandbox_provider: null,
+      trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
+      upload: {
+        original_job_id: "orig-123",
+        original_job_name: "2026-08-27__12-00-00",
+        uploaded_at: "2026-08-28T10:00:00.000Z",
+        reported_totals: {
+          cost_usd: 2.5,
+          n_input_tokens: 2400,
+          n_cache_tokens: 600,
+          n_output_tokens: 1600,
+          n_trials_reporting: 1,
+        },
+      },
+      finished_at: "2026-08-28T10:00:00.000Z",
+    });
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploaded });
+
+    const { io, out, err } = captureIO();
+    const code = await runCli(["upload", jobDir, "-d", "deep-swe@1.1", ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/jobs/upload"), "POSTs /api/jobs/upload");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "body is multipart/form-data");
+    assertEqual(form.get("dataset"), "deep-swe@1.1", "-d rides as the dataset part");
+    assert(form.get("archive") instanceof Blob, "the packed tree is the archive part");
+
+    const text = out.join("\n");
+    assert(text.includes("eval-up1"), "prints the minted job id");
+    assert(text.includes("COMPLETED"), "prints the terminal status");
+    assert(text.includes("2 trial(s)"), "prints the trial count");
+    assert(
+      text.includes("2026-08-28T10:00:00.000Z") && text.includes("orig-123"),
+      "prints the upload provenance (when + the archive's own identity)"
+    );
+    // The provider cell: the wire is null (nothing executed), and the render
+    // says `ported` — derived from the provenance, never a stored value.
+    assert(
+      out.some((l) => l.includes("provider") && l.includes("ported")),
+      "the provider cell renders ported for an ingested record"
+    );
+    // THE RULED MONEY SLOT: the spent row itself carries the archive's
+    // aggregated REPORTED figure, labeled, with the completeness count —
+    // never blended with metered spend, which is null for uploads.
+    assert(
+      out.some(
+        (l) =>
+          l.includes("spent") &&
+          l.includes("reported $2.50") &&
+          l.includes("(1/2 trials reporting)")
+      ),
+      "the spent slot renders `reported $X.XX (N/M trials reporting)`"
+    );
+    assert(
+      out.some((l) => l.includes("reported tokens") && l.includes("in 2400") && l.includes("out 1600")),
+      "the reported-tokens row carries the archive's counts"
+    );
+
+    // The list's SPENT cell follows the same law, compactly labeled.
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [uploaded], nextCursor: null, hasMore: false },
+    });
+    const list = captureIO();
+    assertEqual(await runCli(["job", "list", ...AUTH], list.io), 0, "job list exits 0");
+    assert(
+      list.out.some((l) => l.includes("eval-up1") && l.includes("reported $2.50")),
+      "the SPENT cell renders the reported figure with the label"
+    );
+    assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadVerbJsonAndGate() {
+  console.log("\n--- runCli: evolve upload --json, the dir gate, and usage errors ---");
+  installMockFetch();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-gate-"));
+  const jobDir = join(dir, "job");
+  try {
+    await mkdir(jobDir, { recursive: true });
+
+    // The dir gate refuses client-side with Harbor's own sentence — exit 1,
+    // nothing uploaded.
+    const gate = captureIO();
+    assertEqual(await runCli(["upload", jobDir, ...AUTH], gate.io), 1, "a non-job dir exits 1");
+    assertEqual(
+      gate.err[0],
+      `Error: ${jobDir} does not contain result.json`,
+      "Harbor's refusal sentence, verbatim"
+    );
+    assertEqual(fetchCalls.length, 0, "nothing is uploaded for a refused directory");
+
+    // --json prints the created job as one document.
+    await writeFile(join(jobDir, "result.json"), "{}");
+    await writeFile(join(jobDir, "config.json"), "{}");
+    const uploaded = wireJob({
+      id: "eval-up2",
+      status: "COMPLETED",
+      upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+    });
+    setMockResponse("/api/jobs/upload", { status: 201, body: uploaded });
+    const json = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--json", ...AUTH], json.io), 0, "--json exits 0");
+    const doc = JSON.parse(json.out[0]);
+    assertEqual(doc.id, "eval-up2", "--json prints the job document");
+    assertEqual(doc.upload.uploaded_at, "2026-08-28T10:00:00.000Z", "--json carries the provenance");
+
+    // A typed refusal renders like every other API error, and --json wraps it.
+    setMockResponse("/api/jobs/upload", {
+      status: 400,
+      body: { error: { code: "not_a_job_dir", message: "Archive holds no result.json at its root" } },
+    });
+    const refused = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--json", ...AUTH], refused.io), 1, "a typed refusal exits 1");
+    assertEqual(
+      JSON.parse(refused.out[0]).error.code,
+      "not_a_job_dir",
+      "--json error envelope carries the server's code"
+    );
+    assert(refused.err[0].includes("no result.json"), "stderr carries the server's sentence");
+
+    // Usage: the positional is required; help documents the top-level verb.
+    const usage = captureIO();
+    assertEqual(await runCli(["upload", ...AUTH], usage.io), 2, "no positional is a usage error");
+    const help = captureIO();
+    assertEqual(await runCli(["upload", "--help"], help.io), 0, "upload --help exits 0");
+    assert(help.out.join("\n").includes("Usage: evolve upload <job_dir>"), "help documents evolve upload");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function testAuthStatus() {
   console.log("\n--- runCli: auth status identifies the caller ---");
   installMockFetch();
@@ -5922,8 +6273,10 @@ async function main() {
   await testJobShowAnalysisRows();
   testTrialDetailAnalysisRows();
   await testCompareCancelDownload();
+  await testJobDelete();
   await testJobDownloadUnpackGuards();
   await testTrialShow();
+  await testTrialShowUploaded();
   await testGpuSurfaces();
   await testTrialDownloadStream();
   await testTrialDownloadTrajectoryRefused();
@@ -5944,6 +6297,8 @@ async function main() {
   await testSkillListShowDelete();
   await testSkillDeleteInUseVerbatim();
   await testSkillNamePassThroughOnStart();
+  await testUploadVerb();
+  await testUploadVerbJsonAndGate();
   await testAuthStatus();
   await testSecretsVerbs();
 
