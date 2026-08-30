@@ -1271,9 +1271,10 @@ class AnalyzeConfigInput(TypedDict, total=False):
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
     means "all defaults" — glm-5.3-flash over Harbor's default rubric
     (reward_hacking, task_specification). The analyzer always runs the
-    claude-code harness in its own sealed sandbox; its spend is capped per
-    analysis and metered as its own line, never blended into the trial's own
-    bill.
+    claude-code harness in its own sealed sandbox — on the provider
+    ``sandbox_provider`` names, or the platform's analysis default when it
+    names none; its spend is capped per analysis and metered as its own
+    line, never blended into the trial's own bill.
     """
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
     #: glm-5.3-flash on this platform's claude roster (a recorded deviation
@@ -1285,6 +1286,14 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: Off-roster models are refused typed (``invalid_input``).
     model_name: str
     rubric: Rubric
+    #: The provider whose sandbox the analyzer boots — the job lineup, the
+    #: same vocabulary as ``sandbox_provider`` on ``jobs().start()`` and held
+    #: to the same rule: an unknown value is refused ``invalid_input`` naming
+    #: the lineup. Stored as given and honored wherever this config enqueues
+    #: an analysis. Omitted, the platform's analysis default applies at each
+    #: enqueue (daytona unless the operator retuned the fleet) — the value
+    #: the resolved ``AnalyzeConfig['sandbox_provider']`` echo reports.
+    sandbox_provider: EvalSandboxProvider
 
 
 class AnalyzeConfig(TypedDict):
@@ -1297,6 +1306,15 @@ class AnalyzeConfig(TypedDict):
     """
     model_name: str
     rubric: Rubric
+    #: The provider this policy's analyses run on. Named at create it is
+    #: served as stored, forever. When the create named none, this echoes the
+    #: platform's analysis default OF THE DAY — the value the next enqueue
+    #: under this policy would stamp — because that default is an operator
+    #: fleet knob, resolved where an analysis is actually enqueued rather
+    #: than baked into the stored policy (the one deliberate nuance to the
+    #: resolved-at-accept law above, stated so the echo is never read as
+    #: history).
+    sandbox_provider: EvalSandboxProvider
 
 
 class AnalysisCheck(TypedDict):
@@ -5366,6 +5384,7 @@ class JobsClient:
         *,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
+        sandbox_provider: Optional[EvalSandboxProvider] = None,
     ) -> Job:
         """Analyze a terminal job's trial traces (rubric-driven, Harbor's
         ``harbor analyze``), server-side.
@@ -5377,15 +5396,20 @@ class JobsClient:
         enqueued — analyses are not a separate resource; follow them with
         :meth:`watch_analysis`, or poll the job's trials. This is also the
         RE-analysis path: calling again (same job, different rubric or
-        model) runs a fresh wave once the previous one has settled. Both
-        arguments omitted means the defaults: glm-5.3-flash over Harbor's
-        default rubric (reward_hacking, task_specification). CANCELLED
-        trials are never analyzed.
+        model) runs a fresh wave once the previous one has settled.
+        ``sandbox_provider`` picks the provider whose sandbox the analyzer
+        boots — the job lineup; omitted, the platform's analysis default
+        applies (daytona unless the operator retuned the fleet). Every
+        argument omitted means the defaults: glm-5.3-flash over Harbor's
+        default rubric (reward_hacking, task_specification), on the
+        platform's analysis default provider. CANCELLED trials are never
+        analyzed.
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
-        or duplicate criteria, bounds), ``invalid_input`` (off-roster
-        model), ``analysis_already_running`` (one wave at a time),
+        or duplicate criteria, bounds), ``invalid_input`` (off-roster model,
+        or a provider outside the lineup — the message names the roster),
+        ``analysis_already_running`` (one wave at a time),
         ``no_analyzable_trials`` (every trial CANCELLED).
         """
         body: Dict[str, Any] = {}
@@ -5393,6 +5417,8 @@ class JobsClient:
             body['model_name'] = model_name
         if rubric is not None:
             body['rubric'] = rubric
+        if sandbox_provider is not None:
+            body['sandbox_provider'] = sandbox_provider
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}/analyze', method='POST', body=body
         )

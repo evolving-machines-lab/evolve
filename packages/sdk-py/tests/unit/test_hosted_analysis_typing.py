@@ -130,7 +130,11 @@ def test_runtime_is_still_the_plain_wire_dict() -> None:
     job = _map_job(
         {
             'id': 'job-1',
-            'analyze': {'model_name': 'claude-haiku-4-5-20251001', 'rubric': rubric},
+            'analyze': {
+                'model_name': 'claude-haiku-4-5-20251001',
+                'rubric': rubric,
+                'sandbox_provider': 'daytona',
+            },
             'stats': {
                 'analysis': {
                     'n_completed': 1,
@@ -144,6 +148,8 @@ def test_runtime_is_still_the_plain_wire_dict() -> None:
     )
     assert isinstance(job.analyze, dict)
     assert job.analyze['rubric'] == rubric
+    # The provider echo rides the resolved policy verbatim, like every key.
+    assert job.analyze['sandbox_provider'] == 'daytona'
     assert job.stats['analysis']['checks']['reward_hacking']['n_pass'] == 1
 
     trial = _map_trial({'id': 'run-1', 'analysis': analysis})

@@ -258,11 +258,17 @@ ANALYZE_RUBRIC = {
 }
 
 # A job whose analysis wave has settled: the resolved embedded policy on the
-# body, the aggregate under stats.
+# body, the aggregate under stats. The resolved echo always names its provider
+# (the spec's required list) — the caller's value as stored, or the platform's
+# analysis default of the day.
 ANALYZED_JOB = {
     **JOB_SUMMARY,
     'status': 'COMPLETED',
-    'analyze': {'model_name': 'claude-haiku-4-5-20251001', 'rubric': ANALYZE_RUBRIC},
+    'analyze': {
+        'model_name': 'claude-haiku-4-5-20251001',
+        'rubric': ANALYZE_RUBRIC,
+        'sandbox_provider': 'daytona',
+    },
     'stats': {
         'n_completed_trials': 5,
         'cost_usd': 1.5,
@@ -1730,9 +1736,12 @@ class TestJobs:
             )
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['analyze'] == {'model_name': 'claude-haiku-4-5-20251001'}
+        # The resolved echo carries the provider the create left to the
+        # platform's analysis default.
         assert job.analyze == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'sandbox_provider': 'daytona',
         }
 
         # Omitted = no embedded analysis, and no analyze key on the wire.
@@ -2705,6 +2714,7 @@ class TestJobs:
                 'job-1',
                 model_name='claude-haiku-4-5-20251001',
                 rubric=ANALYZE_RUBRIC,
+                sandbox_provider='modal',
             )
 
         assert fake.requests[0].get_method() == 'POST'
@@ -2713,11 +2723,14 @@ class TestJobs:
         assert sent == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'sandbox_provider': 'modal',
         }
         assert job.id == 'job-1'
+        # The resolved echo maps verbatim — the provider echo rides it.
         assert job.analyze == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'sandbox_provider': 'daytona',
         }
         assert job.stats['analysis'] == ANALYZED_JOB['stats']['analysis']
 

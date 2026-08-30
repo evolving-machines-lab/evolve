@@ -676,7 +676,7 @@ await evals.analyze(
 )
 ```
 
-The rubric is Harbor's `{'criteria': [{'name', 'description', 'guidance'}]}` shape, frozen into the wave at accept: every stored result is validated against exactly that criteria set, and a result missing a criterion (or inventing one) is a stored typed **failure**, never a partial pass. A rubric with unknown keys, empty or duplicate criteria, or out-of-bounds lengths is refused at accept with `400 invalid_rubric` naming the problem; an off-roster model refuses `invalid_input` with the roster in the message.
+The rubric is Harbor's `{'criteria': [{'name', 'description', 'guidance'}]}` shape, frozen into the wave at accept: every stored result is validated against exactly that criteria set, and a result missing a criterion (or inventing one) is a stored typed **failure**, never a partial pass. A rubric with unknown keys, empty or duplicate criteria, or out-of-bounds lengths is refused at accept with `400 invalid_rubric` naming the problem; an off-roster model refuses `invalid_input` with the roster in the message. `sandbox_provider` chooses where the analyzer box runs — a provider from the job lineup (`e2b | daytona | modal`, an unknown value refused `invalid_input` naming it); omitted, the platform's analysis default applies (daytona), and either way the resolved `job.analyze['sandbox_provider']` echoes the provider in force.
 
 Analysis can also run **embedded**: create the job with `analyze` and each trial is analyzed automatically the moment it settles, so a long sweep finishes with its analyses already in place. Presence of the argument is the switch — `{}` means "analyze with all defaults" — and the job body echoes the resolved policy as `job.analyze`:
 
@@ -686,7 +686,7 @@ sweep = await evals.start(
     agents=[AgentArm(name='codex', model_name='gpt-5.5')],
     analyze={},                         # every settling trial is analyzed, defaults
 )
-print(sweep.analyze)                    # {'model_name': 'glm-5.3-flash', 'rubric': {…}}
+print(sweep.analyze)                    # {'model_name': 'glm-5.3-flash', 'rubric': {…}, 'sandbox_provider': 'daytona'}
 ```
 
 Calling `analyze()` again — a different rubric, a different model — is the **re-analysis** path: a fresh wave runs once the previous one has settled (one wave at a time; `409 analysis_already_running` meanwhile), and each trial then serves its newest analysis, earlier ones staying stored as the audit record. The whole-job preconditions are typed too: `409 job_not_terminal` on a live job, `409 no_analyzable_trials` when every trial is `CANCELLED` — cancelled trials are never analyzed, embedded or manual.
@@ -906,7 +906,7 @@ evolve dataset show deep-swe@1.1
 evolve auth status
 ```
 
-`evolve analyze <job-id>` is [Analyze](#analyze) end to end: it POSTs the wave, follows it to its settled end (analyses have no event stream, so the follow is the SDK's poll), then prints one row per analyzed trial — the criterion outcomes, the analyzer's own cost, a summary excerpt — with every failed analysis shown typed below the table. `-m/--model` and `-r/--rubric <file>` are Harbor's own two knobs; the rubric file is TOML, YAML, or JSON in Harbor's `{criteria}` shape (a `[[criteria]]` entry per criterion in TOML), parsed at the keyboard with unknown fields refused by name — the server still owns the bounds. `-q` suppresses the progress lines; `--json` emits NDJSON envelopes (`analysis.accepted`, `analysis.stats` per tally change, `analysis.final` carrying the job and the analyzed trials). Exit 0 only when every analysis completed — a wave with failed analyses exits 1, Harbor's own law. On `job start` / `run`, `--analyze` arms the embedded trigger (each trial analyzed as it settles; bare `--analyze` = all defaults), with `--analyze-model` and `--analyze-rubric <file>` as the passthrough pair — either implies `--analyze`, and over a `-c` config file's `analyze` object each flag overrides its own field, the retry merge rule. `job show` then carries an `analyze` row (the resolved policy) and an `analysis` row (the tally plus the analyzer's own spend, with a per-criterion line each); `trial show` prints the trial's latest analysis in full — verdicts with their explanations, the summary, the typed failure when there is one.
+`evolve analyze <job-id>` is [Analyze](#analyze) end to end: it POSTs the wave, follows it to its settled end (analyses have no event stream, so the follow is the SDK's poll), then prints one row per analyzed trial — the criterion outcomes, the analyzer's own cost, a summary excerpt — with every failed analysis shown typed below the table. `-m/--model`, `-r/--rubric <file>` and `-e/--env <provider>` are Harbor's own three knobs (their cli/analyze.py); the rubric file is TOML, YAML, or JSON in Harbor's `{criteria}` shape (a `[[criteria]]` entry per criterion in TOML), parsed at the keyboard with unknown fields refused by name — the server still owns the bounds. `-e` is re-aimed with the verb itself: Harbor's flag picks a local environment type (docker, daytona); here it picks which **hosted** provider's sandbox the analyzer boots — there is no local backend server-side — defaulting to the platform's analysis default, daytona. `-q` suppresses the progress lines; `--json` emits NDJSON envelopes (`analysis.accepted`, `analysis.stats` per tally change, `analysis.final` carrying the job and the analyzed trials). Exit 0 only when every analysis completed — a wave with failed analyses exits 1, Harbor's own law. On `job start` / `run`, `--analyze` arms the embedded trigger (each trial analyzed as it settles; bare `--analyze` = all defaults), with `--analyze-model`, `--analyze-rubric <file>` and `--analyze-provider <provider>` as the passthrough trio — any of them implies `--analyze`, and over a `-c` config file's `analyze` object each flag overrides its own field, the retry merge rule. `job show` then carries an `analyze` row (the resolved policy) and an `analysis` row (the tally plus the analyzer's own spend, with a per-criterion line each); `trial show` prints the trial's latest analysis in full — verdicts with their explanations, the summary, the typed failure when there is one.
 
 Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
 
@@ -916,7 +916,7 @@ Wherever a verb takes a **job id**, an unambiguous prefix of at least 8 characte
 
 A rate limit is a delay, not a mystery: a `429` prints one line naming the limit and the server's `Retry-After` delay (exit 1), and the SDK's watch loops honor that delay and keep watching instead of dying mid-poll.
 
-Closed sets are validated at the keyboard: a typo in `--stream`, `--status`, or `-e/--env` is a usage error naming the legal values, never a round trip.
+Closed sets are validated at the keyboard: a typo in `--stream`, `--status`, or `run`'s `-e/--env` is a usage error naming the legal values, never a round trip. The analyzer's provider knobs (`analyze -e`, `--analyze-provider`) deliberately ride to the server instead: their lineup is the server's roster, and its `invalid_input` refusal names it — no client-side copy to drift.
 
 Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish SETTLED — the version `READY`, built and, on a dataset you own, active), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`; for a publish, a version that settled `FAILED` or could not be confirmed settled in time), `2` usage error.
 
@@ -2009,10 +2009,12 @@ class Rubric(TypedDict):
 class AnalyzeConfigInput(TypedDict, total=False):  # analyze() kwargs, and start(analyze=...)
     model_name: str                 # Harbor's --model; default glm-5.3-flash
     rubric: Rubric                  # Harbor's --rubric; default reward_hacking + task_specification
+    sandbox_provider: EvalSandboxProvider  # where the analyzer box runs; default: the platform's analysis default (daytona)
 
 class AnalyzeConfig(TypedDict):     # the RESOLVED policy, echoed as Job.analyze
     model_name: str
     rubric: Rubric
+    sandbox_provider: EvalSandboxProvider  # as stored when the create named one; else the default of the day
 
 class AnalysisCheck(TypedDict):     # one criterion's verdict — Harbor's QualityCheckModel
     outcome: str                    # 'pass' | 'fail' | 'not_applicable'

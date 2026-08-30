@@ -467,9 +467,10 @@ export interface Rubric {
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
  * The analyzer always runs the claude-code harness (Harbor's default analyze
- * agent) in its own sealed sandbox on the platform's default eval provider;
- * its spend is capped per analysis and metered as its own line, never blended
- * into the trial's own bill.
+ * agent) in its own sealed sandbox — on the provider `sandbox_provider`
+ * names, or the platform's analysis default when it names none; its spend is
+ * capped per analysis and metered as its own line, never blended into the
+ * trial's own bill.
  */
 export interface AnalyzeConfigInput {
   /**
@@ -488,6 +489,17 @@ export interface AnalyzeConfigInput {
    */
   model_name?: string;
   rubric?: Rubric;
+  /**
+   * The provider whose sandbox the analyzer boots — the job lineup, the same
+   * vocabulary as `JobCreate.sandbox_provider` and held to the same rule: an
+   * unknown value is refused `invalid_input` naming the lineup. Stored as
+   * given and honored wherever this config enqueues an analysis — every
+   * embedded analysis of the job, or the manual wave this body configures.
+   * Omitted, the platform's analysis default applies at each enqueue
+   * (daytona unless the operator retuned the fleet) — the value the resolved
+   * `AnalyzeConfig.sandbox_provider` echo reports.
+   */
+  sandbox_provider?: EvalSandboxProvider;
 }
 
 /**
@@ -501,6 +513,17 @@ export interface AnalyzeConfigInput {
 export interface AnalyzeConfig {
   model_name: string;
   rubric: Rubric;
+  /**
+   * The provider this policy's analyses run on. Named at create it is served
+   * as stored, forever. When the create named none, this echoes the
+   * platform's analysis default OF THE DAY — the value the next enqueue
+   * under this policy would stamp — because that default is an operator
+   * fleet knob, resolved where an analysis is actually enqueued rather than
+   * baked into the stored policy (the one deliberate nuance to the
+   * resolved-at-accept law above, stated so the echo is never read as
+   * history).
+   */
+  sandbox_provider: EvalSandboxProvider;
 }
 
 /** The job-creation body — POST /api/jobs. */
