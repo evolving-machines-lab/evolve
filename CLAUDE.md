@@ -106,5 +106,5 @@ EVOLVE_OPENAPI_SPEC_PATH=/path/to/swarm_dashboard/spec/openapi.yaml npm run test
 ### Documentation rules
 
 - **`docs/` is the only place the `evolve` skill is edited.** `skills/evolve/` and `.claude/skills/evolve/` are mirrors regenerated on push by `.github/workflows/sync-docs-to-skill.yml`. Hand-editing a mirror gets overwritten and loses the change.
-- **`skills/harbor-task/` is hand-written and is edited in place.** The docs sync never touches it; `.github/workflows/sync-harbor-task-skill.yml` only mirrors it into `.claude/skills/harbor-task/`, so edit `skills/harbor-task/` and let the mirror follow.
+- **`skills/harbor-task/` is hand-written and is edited in place.** The docs sync never touches it, and no automation pushes it. Edit `skills/harbor-task/`, then refresh the mirror by hand (`rm -rf .claude/skills/harbor-task && cp -r skills/harbor-task .claude/skills/harbor-task`) — the `harbor-task` job in `.github/workflows/tests.yml` fails the build if the two copies drift, and also holds the skill's examples to their gold/null bar.
 - **`docs/typescript/` and `docs/python/` are exact mirrors of each other.** Same sections, same order, same facts, same caveats — only the code differs. A change to one chapter is not finished until the other says the same thing.

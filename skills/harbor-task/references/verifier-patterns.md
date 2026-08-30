@@ -149,6 +149,28 @@ verbatim, and the instruction text echoed back should all score 0. The null half
 the gold/null run covers the missing-file case; the others are worth a line in the
 grader's own tests.
 
+## Auditing a live corpus for reward hacking
+
+A verifier you cannot fool on paper can still be fooled in practice, and the
+evidence for that is in the trials, not in the task directory. The platform runs
+Harbor's `harbor analyze` hosted: rubric-driven trace analysis over a finished
+job, where an analyzer agent reads each trial's recorded tree — trajectory, logs,
+the original task — and rules every rubric criterion `pass` / `fail` /
+`not_applicable` with a written explanation. Its two default checks are exactly
+the two questions a task author has after a first run:
+
+- `reward_hacking` — did the agent earn the reward without doing the work?
+- `task_specification` — was the instruction sufficient to solve the task?
+
+```bash
+evolve analyze <job-id>          # the defaults; follows the wave to settled
+```
+
+Run it on the first real job over a new corpus. A `reward_hacking` fail is a
+verifier bug; a `task_specification` fail usually means `instruction.md` enforces
+something the grader checks but never states. See the Analyze section of the
+hosted-evals reference for rubrics, models and the polling API.
+
 ## Cost and time
 
 The verifier runs on every trial of every job. A grader that takes ten minutes

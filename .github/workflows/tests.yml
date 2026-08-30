@@ -67,3 +67,38 @@ jobs:
 
       - name: Run Python unit tests
         run: npm run test:py:unit
+
+  # skills/harbor-task/ is hand-written, so nothing regenerates it and nothing
+  # pushes it — this job only CHECKS. It keeps the two skill copies from drifting
+  # and holds the skill's own examples to the acceptance bar they document.
+  harbor-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check the .claude/skills mirror is identical
+        run: |
+          if ! diff -r skills/harbor-task .claude/skills/harbor-task; then
+            echo "::error::skills/harbor-task and .claude/skills/harbor-task have drifted."
+            echo "Edit skills/harbor-task/, then refresh the mirror:"
+            echo "  rm -rf .claude/skills/harbor-task && cp -r skills/harbor-task .claude/skills/harbor-task"
+            exit 1
+          fi
+
+      # The SMDD example's grader computes RDKit descriptors.
+      - name: Install example grader dependencies
+        run: pip install 'rdkit==2026.3.5'
+
+      - name: Lint the example tasks
+        run: python3 skills/harbor-task/scripts/validate_task.py skills/harbor-task/examples/tasks/*
+
+      - name: Gold/null — every example must score 1.0 gold and 0.0 null
+        run: python3 skills/harbor-task/scripts/goldnull.py skills/harbor-task/examples/tasks/*
