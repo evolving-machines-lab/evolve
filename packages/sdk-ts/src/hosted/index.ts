@@ -2897,6 +2897,16 @@ export function trials(config?: HostedClientConfig): TrialsClient {
       const body = (await res.json()) as Record<string, unknown>;
       return {
         stopped: ((body.stopped as Record<string, unknown>[]) ?? []).map(mapTrial),
+        // Stopped trace analyses ride the same answer under their own list
+        // (they are not Trials). Each row rides verbatim beside its one
+        // normalized key — the Trial.analysis rule, one home
+        // (mapTrialAnalysis); a non-object row cannot become an analysis and
+        // reads nothing, and an older server that sends no list reads the
+        // empty one — "no analyses were stopped", exactly how such a server
+        // behaves.
+        stopped_analyses: ((body.stopped_analyses as unknown[]) ?? [])
+          .map(mapTrialAnalysis)
+          .filter((row): row is TrialAnalysis => row !== null),
         already_terminal: (body.already_terminal as string[]) ?? [],
         not_found: (body.not_found as string[]) ?? [],
       };

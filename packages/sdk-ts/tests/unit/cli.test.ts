@@ -3011,7 +3011,12 @@ async function testJobStopAllTerminalIsHonest() {
     );
     assertEqual(
       JSON.parse(out[out.length - 1]),
-      { stopped: [], already_terminal: ["run-1", "run-2"], not_found: [] },
+      {
+        stopped: [],
+        stopped_analyses: [],
+        already_terminal: ["run-1", "run-2"],
+        not_found: [],
+      },
       "an all-terminal dataset reports its ids under already_terminal"
     );
 
@@ -4671,21 +4676,26 @@ async function testTrialStop() {
       status: 200,
       body: {
         stopped: [trialFixture({ status: "INDETERMINATE" })],
+        stopped_analyses: [{ id: "an-9", status: "failed" }],
         already_terminal: ["run-2"],
         not_found: ["run-3"],
       },
     });
     const { io, out } = captureIO();
-    const code = await runCli(["trial", "stop", "run-1", "run-2", "run-3", ...AUTH], io);
+    const code = await runCli(["trial", "stop", "run-1", "run-2", "an-9", "run-3", ...AUTH], io);
     assertEqual(code, 0, "exit 0 — the report is the outcome");
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/trials/stop"), "hits the stop route");
     assertEqual(
       JSON.parse(call.init?.body as string),
-      { trial_ids: ["run-1", "run-2", "run-3"] },
+      { trial_ids: ["run-1", "run-2", "an-9", "run-3"] },
       "posts every requested id"
     );
     assert(out.some((l) => l.includes("stopped run-1")), "reports the stopped trial");
+    assert(
+      out.some((l) => l.includes("stopped analysis an-9 failed")),
+      "a stopped trace analysis gets its own report row, never silently absent"
+    );
     assert(out.some((l) => l.includes("already terminal run-2")), "reports the already-terminal id");
     assert(out.some((l) => l.includes("not found run-3")), "reports the unknown id (existence never leaked)");
   } finally {

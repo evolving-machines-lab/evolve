@@ -3898,24 +3898,57 @@ class TestTrials:
 
     @pytest.mark.asyncio
     async def test_stop_posts_ids_and_maps_the_three_way_answer(self):
+        # A stopped analysis row: settled ``failed``, failure phase
+        # ``stopped`` — the spec's own words for what this list carries.
+        stopped_analysis = {
+            'id': 'an-9',
+            'status': 'failed',
+            'model_name': 'glm-5.3-flash',
+            'rubric': ANALYZE_RUBRIC,
+            'summary': None,
+            'checks': None,
+            'estimated_cost_usd': 0.0011,
+            'failure': {'phase': 'stopped', 'message': 'stopped by request'},
+            'created_at': '2026-08-29T00:00:00Z',
+            'finished_at': '2026-08-29T00:00:05Z',
+        }
         fake = FakeUrlopen([
             ('/api/trials/stop', {
                 'stopped': [wire_trial(id='run-1', status='INFRASTRUCTURE_ERROR', reward=None)],
+                'stopped_analyses': [stopped_analysis],
                 'already_terminal': ['run-2'],
                 'not_found': ['run-3'],
             }),
         ])
         with patch('evolve._http.urlopen', fake):
-            outcome = await trials_factory(CONFIG).stop(['run-1', 'run-2', 'run-3'])
+            outcome = await trials_factory(CONFIG).stop(['run-1', 'run-2', 'an-9', 'run-3'])
 
         assert fake.requests[0].get_method() == 'POST'
         sent = json.loads(fake.requests[0].data.decode('utf-8'))
-        assert sent == {'trial_ids': ['run-1', 'run-2', 'run-3']}
+        assert sent == {'trial_ids': ['run-1', 'run-2', 'an-9', 'run-3']}
         # Every requested id appears in exactly one list.
         assert [t.id for t in outcome.stopped] == ['run-1']
         assert outcome.stopped[0].status == 'INFRASTRUCTURE_ERROR'
+        # The analysis rows ride verbatim beside their one normalized key —
+        # exactly the ``Trial.analysis`` rule.
+        assert outcome.stopped_analyses == [{**stopped_analysis, 'usage': None}]
         assert outcome.already_terminal == ['run-2']
         assert outcome.not_found == ['run-3']
+
+    @pytest.mark.asyncio
+    async def test_stop_without_stopped_analyses_reads_the_empty_list(self):
+        """An older server that sends no ``stopped_analyses`` reads [] —
+        "no analyses were stopped", exactly how such a server behaves."""
+        fake = FakeUrlopen([
+            ('/api/trials/stop', {
+                'stopped': [],
+                'already_terminal': ['run-2'],
+                'not_found': [],
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            outcome = await trials_factory(CONFIG).stop(['run-2'])
+        assert outcome.stopped_analyses == []
 
 
 class TestDatasetDownload:

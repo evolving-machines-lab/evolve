@@ -20,6 +20,7 @@ The law of the shapes:
   does — absent and malformed both read None, never a fabricated zero.
 """
 
+import dataclasses
 import re
 import typing
 from typing import List, Optional
@@ -34,6 +35,7 @@ from evolve import (
     JobStats,
     Rubric,
     RubricCriterion,
+    StopResponse,
     Trial,
     TrialAnalysis,
     UsageReading,
@@ -87,6 +89,18 @@ def test_every_analysis_shape_equals_its_spec_schema() -> None:
         assert list(typed_dict.__annotations__) == _spec_schema_properties(schema_name), (
             f'{schema_name} keys drifted from the spec schema'
         )
+
+
+def test_stop_response_equals_its_spec_schema() -> None:
+    # The analysis lane's tail: ``stopped_analyses`` rides the stop answer,
+    # so the whole StopResponse shape is pinned here — dataclass fields equal
+    # the spec schema's properties byte-exactly, in spec order, by the same
+    # parse as every shape above.
+    assert [
+        f.name for f in dataclasses.fields(StopResponse)
+    ] == _spec_schema_properties('StopResponse'), (
+        'StopResponse fields drifted from the spec schema'
+    )
 
 
 def test_input_is_optional_and_resolved_is_required() -> None:
