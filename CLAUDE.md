@@ -86,7 +86,6 @@ evolve/
 ## Development
 
 - **Commits**: Conventional (`feat:`, `fix:`, `docs:`, `chore:`), single line, no co-authors
-- **Base branch**: `project-sable`. Branch from it and open PRs against it, not `main`.
 - **Code**: TypeScript SDK is primary (Python wraps via bridge), registry-based (agent differences = data)
 - **Edit existing files**, don't create new ones unless necessary
 - **Versioning is the publish workflow's job.** Do not hand-edit `version` in `packages/sdk-ts/package.json` or `packages/sdk-py/pyproject.toml`.
