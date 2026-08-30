@@ -5566,7 +5566,7 @@ class JobsClient:
         ``dataset`` (``"name"`` or ``"name@version"``) links the uploaded
         trials to a published dataset version by task name. The caps live on
         ``GET /api/meta`` under ``limits['uploads']`` (``job_archive_bytes``,
-        ``job_trials``, ``job_trial_file_bytes``).
+        ``job_trials``, ``job_trial_file_bytes``, ``job_trial_session_bytes``).
         """
         if not isinstance(dir_or_archive, str) or not dir_or_archive.strip():
             raise ValueError(

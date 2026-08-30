@@ -2984,7 +2984,7 @@ export interface JobsClient {
    * unchanged. `{ dataset }` links the uploaded trials to a published dataset
    * version by task name. The caps live on `GET /api/meta` under
    * `limits.uploads` (`job_archive_bytes`, `job_trials`,
-   * `job_trial_file_bytes`).
+   * `job_trial_file_bytes`, `job_trial_session_bytes`).
    */
   upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job>;
   /**
@@ -3504,6 +3504,8 @@ export interface CapabilityDocument {
       job_trials: number;
       /** Per-file cap on the trial artifacts an upload stores (`invalid_trial` past it). */
       job_trial_file_bytes: number;
+      /** Total cap on one trial's `agent/sessions/` tree (`invalid_trial` past it). */
+      job_trial_session_bytes: number;
     };
     dataset_names: {
       pattern: string;
