@@ -58,9 +58,15 @@ relax the gates.
 **Three published gates are not implemented.** `boltz_binding`, `boltz_affinity`
 and `fragment_rmsd` need Boltz2 and a GPU in the verifier image. They are named at
 the bottom of `tests/grader.py` as not-run, because a task that silently drops a
-third of its criteria is easier than the benchmark it claims to reproduce. Adding
-them is a `tests/Dockerfile` change plus three entries in `GATES` — the task
-structure does not change.
+third of its criteria is easier than the benchmark it claims to reproduce.
+
+This is a size decision, not a platform limit: the format takes `gpus` in
+`[environment]`, and a GPU trial runs on Modal whichever provider the job picks
+(see [task-format § Where your task can run](../references/task-format.md#where-your-task-can-run)).
+Adding the gates is a `tests/Dockerfile` change, a `gpus` declaration, and three
+more entries in `GATES` — the task structure does not change. What keeps them out
+of a *committed example* is the image weight and the model checkpoints, which
+would make this directory unusable as a quick reference.
 
 ### Why the pocket file is not committed
 
@@ -100,7 +106,9 @@ move is to claim all 45 candidate formulas; with it, that submission scores 0.
 Materials Project API and its ML potentials (ORB, MACE) want GPU-scale
 checkpoints. This conversion pins MADE's **Analytic** oracle — one of its three
 supported options — so the campaign is deterministic, offline, CPU-only, and
-standard-library-only. `environment/made_model.py` documents the surrogate in full.
+standard-library-only. A GPU oracle would be runnable (declare `gpus` and the
+trial routes to Modal), but it would trade a reference example anyone can run in
+a second for one that needs a fleet GPU slot. `environment/made_model.py` documents the surrogate in full.
 It is this task's ground truth and nothing more: not a physical potential, and not
 Materials Project data.
 

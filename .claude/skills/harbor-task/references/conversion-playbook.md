@@ -123,6 +123,12 @@ external data into `environment/` at build time; or, only if the task genuinely
 cannot work without it, declare `allowlist` with the specific hosts and use
 `[verifier.env]` for a judge credential.
 
+Model weights are a size decision, not a wall: a task may declare `gpus`, and GPU
+trials run on Modal whichever provider the job picks — see
+[task-format § Where your task can run](task-format.md#where-your-task-can-run).
+Weigh that against the fleet's GPU concurrency cap and the fact that a CPU-only
+task runs anywhere, immediately.
+
 Never put a live credential in `task.toml`, `instruction.md` or `environment/`.
 All of it is published content, readable by everyone the dataset is published to.
 

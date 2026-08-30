@@ -144,8 +144,36 @@ def check_environment(task: Path, cfg: dict, rep: Report) -> None:
     elif mode == "allowlist" and not env.get("allowed_hosts"):
         rep.error("[environment] network_mode is \"allowlist\" but allowed_hosts is empty")
 
-    if env.get("gpus", 0) and "gpu_types" not in env:
-        rep.warn("[environment] requests gpus but declares no gpu_types (any type accepted)")
+    multi_container = any(
+        (task / "environment" / name).is_file()
+        for name in ("docker-compose.yaml", "docker-compose.yml")
+    )
+
+    if multi_container and mode == "no-network":
+        rep.error(
+            "a multi-container task with network_mode \"no-network\" is declined on "
+            "every sandbox provider today — give it \"allowlist\" or \"public\""
+        )
+
+    if env.get("gpus", 0):
+        if "gpu_types" not in env or env.get("gpu_types") is None:
+            rep.warn(
+                "[environment] requests gpus but declares no gpu_types (any type is "
+                "accepted; note a task that accepts any type has no single list price, "
+                "so its GPU cost estimate stays unpriced)"
+            )
+        if multi_container:
+            rep.error(
+                "a multi-container task cannot request gpus — GPU trials run on Modal, "
+                "and Modal does not run multi-container tasks today"
+            )
+        else:
+            rep.warn(
+                "[environment] requests gpus — the trial runs on Modal whichever "
+                "provider the job picks (e2b has no GPUs at any tier; the current "
+                "Daytona tier provisions none). Recorded as providers.<p>.degrades_to, "
+                "not a silent fallback"
+            )
 
 
 def check_verifier(task: Path, cfg: dict, rep: Report) -> None:

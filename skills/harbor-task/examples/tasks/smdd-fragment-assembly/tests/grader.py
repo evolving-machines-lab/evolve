@@ -125,7 +125,9 @@ if __name__ == "__main__":
 #   boltz_affinity   affinity_pred_value < -1.5780
 #   fragment_rmsd    docked pose vs input fragment pose, < 2.0 A per fragment
 #
-# All three need Boltz2 (and a GPU) in the verifier image. Adding them is a
-# tests/Dockerfile change plus three more entries in GATES — the task structure
-# does not change, which is the point. A task that ships without them is easier
-# than the published benchmark; say so rather than implying parity.
+# All three need Boltz2 (and a GPU) in the verifier image. That is supported —
+# declare `gpus` in [environment] and the trial runs on Modal whichever provider
+# the job picked — so adding them is a tests/Dockerfile change, a gpus
+# declaration, and three more entries in GATES. The task structure does not
+# change, which is the point. A task that ships without them is easier than the
+# published benchmark; say so rather than implying parity.

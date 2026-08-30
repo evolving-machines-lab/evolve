@@ -69,7 +69,7 @@ environment_mode = "shared"     # or "separate"
 | `network_mode` | `[environment]` | no — **but declare it** | `no-network` \| `allowlist` \| `public`. **Omitted means `public`.** |
 | `allowed_hosts` | `[environment]` | iff `allowlist` | Hosts the agent box may reach. |
 | `docker_image` | `[environment]` | no | Pinned image instead of a Dockerfile. Never `:latest`. |
-| `gpus`, `gpu_types` | `[environment]` | no | `gpu_types = null` means any type. |
+| `gpus`, `gpu_types` | `[environment]` | no | `gpu_types` null/omitted means any type. A GPU task routes to Modal — see [Where your task can run](#where-your-task-can-run). |
 | `build_timeout_sec` | `[environment]` | no | Image build budget. |
 | `env` | `[environment]` | no | Literal env values for the agent box. Published content — never secrets. |
 | `timeout_sec` | `[agent]` | no | Default 3600 s. A declared value always wins. |
@@ -201,6 +201,71 @@ Agent 3600 s, verifier 600 s when undeclared. A declared `timeout_sec` always
 wins — the corpus is the authority on how long its own task needs, and the
 fallback never shortens one. Per-run stretching is the job's
 `timeout_multiplier`, which never rewrites the task.
+
+## Where your task can run
+
+A task's own declarations decide which sandbox providers can run it. The job picks
+the provider (`e2b`, `daytona` — the default — or `modal`), but the **task** is what
+constrains the choice, so decide these while authoring rather than discovering them
+on a job that gets refused.
+
+The catalog carries a per-provider verdict on every task, so this is answerable
+before any money is spent: `task.providers.<provider>` is `{ ok: true }`,
+`{ ok: false, reason }`, or `{ ok: true, degrades_to, reason }`. Starting a job
+whose tasks include one refused on the chosen provider is a `400
+provider_unsupported` naming each task and its reason.
+
+### GPUs route to Modal
+
+Declare GPUs like any other resource:
+
+```toml
+[environment]
+gpus = 1
+gpu_types = ["H100"]     # omit, or null, means any type is acceptable
+```
+
+**Modal is the provider that reserves GPUs today, so a GPU task runs on Modal
+whichever provider the job picked.** e2b offers no GPU machines at any tier; the
+current Daytona tier provisions none, and the platform re-checks Daytona's live
+quota on a timer, so a raised tier turns Daytona GPU on without a release.
+
+That re-route is a **recorded degrade, never a silent fallback** — it shows up as
+`{ ok: true, degrades_to: "modal", reason }` on the task's verdict before the run,
+and as `trial.sandbox_provider_degrade` (`{ from, to, reason }`) on the trial
+afterwards. `ok` keeps its meaning: a job stamped there still runs the task. (A
+*bogus* provider name is different — that is a `400` at creation, with no fallback
+of any kind.)
+
+Two consequences for an author. GPU compute is platform-paid and capped by a
+fleet-wide `gpu_concurrency_cap`, so a queued GPU trial waits for a slot rather
+than being refused. And a GPU count above Modal's per-container ceiling is refused
+**at import** with the numbers, so keep the request to what one container can hold.
+
+GPU time is reported as a separate estimate — `trial.gpu_cost`,
+`stats.gpu_cost_usd` — and is deliberately never folded into the metered model
+spend.
+
+### Shapes that narrow the choice
+
+- **Multi-container tasks run on `e2b` and `daytona` only.** Modal cannot run them
+  today; the task stays runnable on the other two.
+- **Multi-container plus `no-network` is declined on every provider.** Give such a
+  task an `allowlist` or `public` policy.
+- **Daytona's allowlist carries one kind of entry per sandbox, and your task's
+  shape picks the kind.** A single-container task gets an IP list (IPv4 addresses
+  and CIDRs, ~10 entries, shared with the model address), so a hostname in its
+  `allowlist` fails when the sandbox is created. A multi-container task gets a
+  hostname list instead (`*.` wildcards allowed, ~20 entries, shared with the model
+  address and the registry endpoints), where an IP or CIDR is what fails. Both
+  failures name the entry and the fix; e2b and Modal serve both kinds together.
+- **Modal caps every sandbox at 24 hours,** so a task whose timeout exceeds that
+  fails fast at sandbox creation rather than being truncated mid-run.
+- **Sizing above a provider's ceiling** refuses on that provider only.
+
+The full provider matrix, the capability document's `gpus` block, and the
+GPU-cost accounting live in the hosted-evals reference under
+[Where it runs](https://github.com/evolving-machines-lab/evolve/blob/main/docs/typescript/06-hosted-evals.md#where-it-runs).
 
 ## `solution/`
 

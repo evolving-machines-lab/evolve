@@ -78,6 +78,11 @@ that always returns 1.0 passes gold and is worthless.
 - **`task.toml`, `instruction.md` and `tests/test.sh` are required.** A task
   without `tests/test.sh` fails import by name.
 - **`docker_image` must be a pinned tag, never `:latest`.**
+- **Your declarations decide where the task can run.** A GPU task runs on Modal
+  whichever provider the job picked (a recorded degrade, not a silent fallback);
+  multi-container runs on e2b and Daytona only, and multi-container plus
+  `no-network` is declined everywhere.
+  → [task-format § Where your task can run](references/task-format.md#where-your-task-can-run)
 - **Never import the agent's code as ground truth** — the grader's copy lives in
   `tests/`, even when it duplicates `environment/`.
   → [verifier-patterns § Making a verifier hard to fool](references/verifier-patterns.md#making-a-verifier-hard-to-fool)
