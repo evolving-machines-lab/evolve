@@ -1572,6 +1572,57 @@ That's the whole format. The rules that matter when converting:
 
 Then publish and run it — exactly the [flow above](#publishing).
 
+### Converting a task, and proving it before you publish
+
+Nothing above runs on your machine. `dataset publish` is the first thing that
+reads a task, and it reads it server-side — so the first feedback on a new task is
+an import result, and the failures that matter most are not import failures at
+all. A task can import perfectly and still score every agent zero.
+
+The [`harbor-task` skill](https://github.com/evolving-machines-lab/evolve/tree/main/skills/harbor-task)
+in this repository carries the authoring path and closes that loop locally. Three
+scripts, no credentials, no daemon:
+
+| Script | Does |
+|---|---|
+| `scaffold_task.py` | Emits a **working** task, not a form — it passes the lint and produces a real 1.0/0.0 pair before you have edited anything |
+| `validate_task.py` | Offline structural lint — the import refusals above, plus the silent-zero traps below |
+| `goldnull.py` | Runs the gold/null pair |
+
+**The gold/null pair is the bar.** Apply `solution/` and verify: the reward must be
+`1.0`. Verify with no solution at all: the reward must be `0.0`.
+
+```bash
+python3 skills/harbor-task/scripts/validate_task.py ./corpus/tasks/my-task
+python3 skills/harbor-task/scripts/goldnull.py     ./corpus/tasks/my-task
+```
+
+A gold below 1.0 means the task is unsolvable as written, or the verifier is
+wrong. A null above 0 means the environment already contains the answer and every
+agent scores for free. Never publish on the gold run alone: a verifier that returns
+1.0 unconditionally passes gold and measures nothing.
+
+`goldnull.py` runs the phases as ordinary subprocesses against a scratch sandbox,
+so no Docker daemon is needed for the check that matters — the verifier's logic.
+For that to work, task scripts read `${LOGS_DIR:-/logs}` and `${TASK_WORKDIR:-/app}`
+instead of hardcoding the paths. The defaults are the real in-container paths, so
+it is a no-op under Harbor and costs nothing. `--docker` runs the real image when a
+daemon is available.
+
+Two mistakes import cleanly and then score every agent zero, so the lint calls both
+by name:
+
+- A `separate` verifier with no top-level `artifacts = [...]`. The verifier boots a
+  pristine environment, nothing carries over, and even the gold solution scores 0.
+- A `tests/test.sh` that never writes a reward file. The reward file is the verdict,
+  never the exit code — a script that exits 0 without writing one has passed
+  nothing.
+
+Once a corpus is live, [Analyze](#analyze) answers the questions the local checks
+cannot: its default `reward_hacking` and `task_specification` rubrics read the real
+trials and say whether agents earned the reward without doing the work, and whether
+the instruction was sufficient to solve the task at all.
+
 ---
 
 ## Bring your own agent

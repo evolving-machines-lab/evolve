@@ -1,0 +1,8 @@
+{
+  "system": "Li-Sn",
+  "elements": ["Li", "Sn"],
+  "max_atoms_per_formula_unit": 12,
+  "oracle": "analytic",
+  "oracle_budget": 15,
+  "note": "Elemental Li and Sn are the references and have zero formation energy by definition."
+}

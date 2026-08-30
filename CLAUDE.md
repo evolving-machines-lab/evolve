@@ -55,15 +55,13 @@ evolve/
 │   ├── docker/                  # Docker image (Dockerfile, build.ts)
 │   ├── build.sh                 # Master build script
 │   └── README.md
-├── skills/                      # Agent skills (41 total) — CI-OWNED MIRROR of docs/
-│   ├── pdf, docx, pptx, xlsx   # Document processing
-│   ├── agent-browser, dev-browser, webapp-testing  # Browser automation
-│   ├── frontend-design, shadcn-webapp-design, web-design-guidelines  # Design
-│   ├── evolve                   # SDK development (generated from docs/)
-│   ├── skill-creator, skill-share, template-skill  # Skill tooling
-│   ├── remotion, slides-as-code, canvas-design  # Media & presentations
-│   ├── mcp-builder              # MCP server builder
-│   └── ...                      # content-research, lead-research, invoice, image-enhancer, etc.
+├── skills/                      # Agent skills
+│   ├── evolve/                  # SDK development — CI-OWNED MIRROR, generated from docs/
+│   └── harbor-task/             # Task conversion — HAND-WRITTEN, edit here
+│       ├── SKILL.md
+│       ├── references/          # format, playbook, verifier patterns, validation
+│       ├── scripts/             # scaffold_task, validate_task, goldnull
+│       └── examples/tasks/      # two converted benchmarks (SMDD-Bench, MADE)
 ├── cookbooks/                   # Example applications
 │   ├── typescript/
 │   └── python/
@@ -107,5 +105,6 @@ EVOLVE_OPENAPI_SPEC_PATH=/path/to/swarm_dashboard/spec/openapi.yaml npm run test
 
 ### Documentation rules
 
-- **`docs/` is the only place documentation is edited.** `skills/` and `.claude/skills/` are mirrors regenerated on push by `.github/workflows/sync-docs-to-skill.yml`. Hand-editing a mirror gets overwritten and loses the change.
+- **`docs/` is the only place the `evolve` skill is edited.** `skills/evolve/` and `.claude/skills/evolve/` are mirrors regenerated on push by `.github/workflows/sync-docs-to-skill.yml`. Hand-editing a mirror gets overwritten and loses the change.
+- **`skills/harbor-task/` is hand-written and is edited in place.** The docs sync never touches it, and no automation pushes it. Edit `skills/harbor-task/`, then refresh the mirror by hand (`rm -rf .claude/skills/harbor-task && cp -r skills/harbor-task .claude/skills/harbor-task`) — the `harbor-task` job in `.github/workflows/tests.yml` fails the build if the two copies drift, and also holds the skill's examples to their gold/null bar.
 - **`docs/typescript/` and `docs/python/` are exact mirrors of each other.** Same sections, same order, same facts, same caveats — only the code differs. A change to one chapter is not finished until the other says the same thing.

@@ -147,6 +147,7 @@ Read on demand when the user's task requires them:
 | Listing imports (listImports/list_imports) | [TS](references/typescript/06-hosted-evals.md#publishing) | [PY](references/python/06-hosted-evals.md#publishing) |
 | Deleting a dataset (reclaim a name) | [TS](references/typescript/06-hosted-evals.md#deleting-one) | [PY](references/python/06-hosted-evals.md#deleting-one) |
 | Upstream version awareness (upstream, moved, auto_import) | [TS](references/typescript/06-hosted-evals.md#when-upstream-moves) | [PY](references/python/06-hosted-evals.md#when-upstream-moves) |
+| Converting a task + the gold/null bar (the `harbor-task` skill) | [TS](references/typescript/06-hosted-evals.md#converting-a-task-and-proving-it-before-you-publish) | [PY](references/python/06-hosted-evals.md#converting-a-task-and-proving-it-before-you-publish) |
 | Bring your own agent (agents(), upsert, run contract) | [TS](references/typescript/06-hosted-evals.md#bring-your-own-agent) | [PY](references/python/06-hosted-evals.md#bring-your-own-agent) |
 | Statuses (job, trial, import, dataset version) | [TS](references/typescript/06-hosted-evals.md#statuses) | [PY](references/python/06-hosted-evals.md#statuses) |
 | Types | [TS](references/typescript/06-hosted-evals.md#types) | [PY](references/python/06-hosted-evals.md#types) |
