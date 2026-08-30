@@ -1555,10 +1555,16 @@ export interface TrialRetry {
   settled_at: string | null;
 }
 
-/** Per-trial outcome of POST /api/trials/stop; every requested id appears in exactly one list. */
+/** Per-id outcome of POST /api/trials/stop; every requested id appears in exactly one list. */
 export interface StopResponse {
   /** Trials killed and settled by this request, with their settled rows. */
   stopped: Trial[];
+  /**
+   * Trace analyses killed and settled by this request, with their settled
+   * rows (`failed`, failure phase `stopped`). Always served; a separate list
+   * because `stopped` is an array of Trial.
+   */
+  stopped_analyses: TrialAnalysis[];
   /** Ids that were already terminal; untouched. */
   already_terminal: string[];
   /** Ids that do not exist or are not the caller's. */
@@ -3100,9 +3106,12 @@ export interface TrialsClient {
   /**
    * Stop selected in-flight trials without cancelling their job: each trial's
    * sandbox is killed and the trial is settled with its spend read from the
-   * gateway. Only the caller's own trials; ids belonging to someone else are
-   * reported in `not_found` (existence is never leaked). Idempotent —
-   * already-terminal trials are reported as such and left untouched.
+   * gateway. Ids may be eval trials and trace analyses, freely mixed — what
+   * each id is gets resolved server-side; a stopped analysis settles `failed`
+   * (failure phase `stopped`) and is reported under `stopped_analyses`. Only
+   * the caller's own work; ids belonging to someone else are reported in
+   * `not_found` (existence is never leaked). Idempotent — already-terminal
+   * ids are reported as such and left untouched.
    */
   stop(trialIds: string[]): Promise<StopResponse>;
   /**

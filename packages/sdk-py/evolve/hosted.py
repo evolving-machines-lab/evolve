@@ -1926,10 +1926,14 @@ class TrialRetry:
 
 @dataclass
 class StopResponse:
-    """Per-trial outcome of ``trials().stop()``; every requested id appears in
+    """Per-id outcome of ``trials().stop()``; every requested id appears in
     exactly one list."""
     #: Trials killed and settled by this request, with their settled rows.
     stopped: List[Trial]
+    #: Trace analyses killed and settled by this request, with their settled
+    #: rows (``failed``, failure phase ``stopped``). Always served; a separate
+    #: list because ``stopped`` is a list of Trial.
+    stopped_analyses: List[TrialAnalysis]
     #: Ids that were already terminal; untouched.
     already_terminal: List[str]
     #: Ids that do not exist or are not the caller's.
@@ -5910,19 +5914,38 @@ class TrialsClient:
         """Stop selected in-flight trials without cancelling their job.
 
         Each trial's sandbox is killed and the trial is settled with its spend
-        read from the gateway. Only the caller's own trials; ids belonging to
-        someone else are reported in ``not_found`` (existence is never leaked).
-        Idempotent — already-terminal trials are reported as such and left
-        untouched.
+        read from the gateway. Ids may be eval trials and trace analyses,
+        freely mixed — what each id is gets resolved server-side; a stopped
+        analysis settles ``failed`` (failure phase ``stopped``) and is
+        reported under ``stopped_analyses``. Only the caller's own work; ids
+        belonging to someone else are reported in ``not_found`` (existence is
+        never leaked). Idempotent — already-terminal ids are reported as such
+        and left untouched.
         """
         raw = await self._http.request_json(
             '/api/trials/stop', method='POST', body={'trial_ids': trial_ids}
         )
         stopped = raw.get('stopped')
+        stopped_analyses = raw.get('stopped_analyses')
         return StopResponse(
             stopped=(
                 [_map_trial(item) for item in stopped]
                 if isinstance(stopped, list)
+                else []
+            ),
+            # Stopped trace analyses ride the same answer under their own
+            # list (they are not Trials). Each row rides verbatim beside its
+            # one normalized key — the ``Trial.analysis`` rule; a non-dict
+            # row cannot become an analysis and reads nothing, and an older
+            # server that sends no list reads the empty one — "no analyses
+            # were stopped", exactly how such a server behaves.
+            stopped_analyses=(
+                [
+                    {**item, 'usage': _usage_reading_from_data(item.get('usage'))}
+                    for item in stopped_analyses
+                    if isinstance(item, dict)
+                ]
+                if isinstance(stopped_analyses, list)
                 else []
             ),
             already_terminal=raw.get('already_terminal') or [],

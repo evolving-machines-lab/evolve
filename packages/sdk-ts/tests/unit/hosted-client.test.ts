@@ -4697,31 +4697,62 @@ async function testStopTrials() {
   console.log("\n--- trials().stop() kills selected trials and reports every id once ---");
   installMockFetch();
   try {
+    // A stopped analysis row: settled `failed`, failure phase `stopped` —
+    // the spec's own words for what this list carries.
+    const stoppedAnalysis = {
+      id: "an-9",
+      status: "failed",
+      model_name: "glm-5.3-flash",
+      rubric: ANALYZE_RUBRIC,
+      summary: null,
+      checks: null,
+      estimated_cost_usd: 0.0011,
+      failure: { phase: "stopped", message: "stopped by request" },
+      created_at: "2026-08-29T00:00:00Z",
+      finished_at: "2026-08-29T00:00:05Z",
+    };
     setMockResponse("/api/trials/stop", {
       status: 200,
       body: {
         stopped: [wireTrial({ id: "run-1", status: "CANCELLED" })],
+        stopped_analyses: [stoppedAnalysis],
         already_terminal: ["run-2"],
         not_found: ["run-x"],
       },
     });
 
     const t = trials({ apiKey: "test-key", baseUrl: BASE });
-    const outcome = await t.stop(["run-1", "run-2", "run-x"]);
+    const outcome = await t.stop(["run-1", "run-2", "an-9", "run-x"]);
 
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/trials/stop"), "hits the stop route");
     assertEqual(call.init?.method, "POST", "uses POST");
     assertEqual(
       JSON.parse(call.init?.body as string),
-      { trial_ids: ["run-1", "run-2", "run-x"] },
+      { trial_ids: ["run-1", "run-2", "an-9", "run-x"] },
       "sends trial_ids"
     );
     assertEqual(outcome.stopped.length, 1, "stopped carries the settled rows");
     assertEqual(outcome.stopped[0].status, "CANCELLED", "the stopped trial is settled");
+    // The analysis rows ride verbatim beside their one normalized key —
+    // exactly the Trial.analysis rule.
+    assertEqual(
+      outcome.stopped_analyses,
+      [{ ...stoppedAnalysis, usage: null }],
+      "stopped_analyses carries the settled analysis rows (failed, phase stopped)"
+    );
     assertEqual(outcome.already_terminal, ["run-2"], "already-terminal ids reported, untouched");
     // Someone else's trial reads not_found — existence is never leaked.
     assertEqual(outcome.not_found, ["run-x"], "unknown/foreign ids reported as not_found");
+
+    // An older server that sends no stopped_analyses reads the empty list —
+    // "no analyses were stopped", exactly how such a server behaves.
+    setMockResponse("/api/trials/stop", {
+      status: 200,
+      body: { stopped: [], already_terminal: ["run-2"], not_found: [] },
+    });
+    const bare = await t.stop(["run-2"]);
+    assertEqual(bare.stopped_analyses, [], "absent stopped_analyses reads the empty list");
   } finally {
     restoreFetch();
   }

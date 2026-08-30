@@ -3678,7 +3678,9 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
   }
   if (trialIds.length === 0) {
     if (inv.flags.json === true) {
-      io.out(JSON.stringify({ stopped: [], already_terminal: [], not_found: [] }));
+      io.out(
+        JSON.stringify({ stopped: [], stopped_analyses: [], already_terminal: [], not_found: [] })
+      );
     } else {
       io.out(`No trials in ${dataset}.`);
     }
@@ -3688,7 +3690,12 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
   // dataset slice can hold thousands of trials — page the batch under the
   // cap and merge the reports into the one outcome the caller reads.
   const trialClient = trials(clientConfig(inv));
-  const result: StopResponse = { stopped: [], already_terminal: [], not_found: [] };
+  const result: StopResponse = {
+    stopped: [],
+    stopped_analyses: [],
+    already_terminal: [],
+    not_found: [],
+  };
   let reported = 0;
   try {
     for (let i = 0; i < trialIds.length; i += 100) {
@@ -3696,6 +3703,9 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
       const page = await trialClient.stop(batch);
       reported += batch.length;
       result.stopped.push(...page.stopped);
+      // Trial ids only ride this door, so the server's list is empty here —
+      // merged anyway so the report is the wire shape, never a subset of it.
+      result.stopped_analyses.push(...page.stopped_analyses);
       result.already_terminal.push(...page.already_terminal);
       result.not_found.push(...page.not_found);
     }
@@ -4248,6 +4258,11 @@ async function cmdTrialStop(inv: Invocation, io: CliIO): Promise<number> {
   }
   for (const run of result.stopped) {
     io.out(`stopped ${run.id} (${run.task_name}) ${run.status}`);
+  }
+  // A stopped trace analysis is its own row — settled failed, phase
+  // stopped — never silently absent from the report.
+  for (const analysis of result.stopped_analyses) {
+    io.out(`stopped analysis ${analysis.id} ${analysis.status}`);
   }
   for (const id of result.already_terminal) io.out(`already terminal ${id}`);
   for (const id of result.not_found) io.out(`not found ${id}`);
