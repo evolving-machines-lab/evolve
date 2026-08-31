@@ -3341,6 +3341,16 @@ export const HOSTED_ERROR_CODES = [
   "skill_in_use",
   "skill_too_large",
   "skill_limit_reached",
+  // The server is already processing its bound of concurrent skill uploads
+  // on POST /api/skills (429; details carry max_concurrent) — each in-flight
+  // upload owns up to its tarball plus its extracted tree of server disk
+  // while the request is in flight. Refused before the first uploaded byte
+  // is read; retry
+  // when an in-flight upload finishes. The skill-door sibling of
+  // too_many_concurrent_job_uploads / too_many_concurrent_imports below, and
+  // distinct from rate_limited for the same reason: nothing was rate-counted
+  // and there is no Retry-After — the server's disk is busy.
+  "too_many_concurrent_skill_uploads",
   "secret_not_found",
   "secret_ambiguous",
   "secret_brokered_unsupported",
@@ -3386,13 +3396,36 @@ export const HOSTED_ERROR_CODES = [
   // our trial rows carry analyses and analysis history — silently replacing
   // trials would destroy them; Harbor's hub rows have no such children.
   "job_already_uploaded",
+  // The server is already spooling its bound of concurrent job-archive
+  // uploads on POST /api/jobs/upload (429; details carry max_concurrent).
+  // Refused before the first uploaded byte lands; retry when an in-flight
+  // upload finishes. The jobs-door twin of too_many_concurrent_imports
+  // below, and distinct from rate_limited for the same reason: nothing was
+  // rate-counted and there is no Retry-After — the server's disk is busy.
+  "too_many_concurrent_job_uploads",
   "import_not_found",
   "import_too_large",
+  // The server is already spooling its bound of concurrent corpus uploads
+  // (429; details carry max_concurrent). Refused before the first uploaded
+  // byte lands; retry when an in-flight upload finishes. Distinct from
+  // rate_limited: nothing was rate-counted and there is no Retry-After —
+  // the server's disk is busy.
+  "too_many_concurrent_imports",
   "invalid_archive",
   "unpinned_git_ref",
   "package_not_retained",
   "package_corrupt",
   "package_missing",
+  // The server is already serving its bound of concurrent package downloads
+  // on GET /api/datasets/{name}/download (429; details carry max_concurrent)
+  // — each in-flight download holds up to a full operator archive cap of
+  // server disk from the store fetch through the digest pre-read and the
+  // entire client download. Refused before the first fetched byte; retry
+  // when an in-flight download finishes. The download twin of the three
+  // too_many_concurrent_* upload codes above, and distinct from rate_limited
+  // for the same reason: nothing was rate-counted and there is no
+  // Retry-After — the server's disk is busy.
+  "too_many_concurrent_package_downloads",
   "internal_error",
 ] as const;
 

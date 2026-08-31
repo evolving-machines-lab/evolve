@@ -47,6 +47,7 @@
     "skill_in_use",
     "skill_too_large",
     "skill_limit_reached",
+    "too_many_concurrent_skill_uploads",
     "secret_not_found",
     "secret_ambiguous",
     "secret_brokered_unsupported",
@@ -75,13 +76,16 @@
     "upload_too_large",
     "job_uploaded",
     "job_already_uploaded",
+    "too_many_concurrent_job_uploads",
     "import_not_found",
     "import_too_large",
+    "too_many_concurrent_imports",
     "invalid_archive",
     "unpinned_git_ref",
     "package_not_retained",
     "package_corrupt",
     "package_missing",
+    "too_many_concurrent_package_downloads",
     "internal_error"
   ]
 }
