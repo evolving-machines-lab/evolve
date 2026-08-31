@@ -29,6 +29,8 @@
  */
 import { createHash } from "node:crypto";
 import { open, stat } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 
 /**
  * Switch point: archives at or under this ride the classic single POST
@@ -103,6 +105,65 @@ async function boundedFetch(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The finalize POST, over node:http rather than fetch — the same reason
+ * upload.ts exists: fetch (undici) holds its own fixed internal deadlines
+ * (headersTimeout, 300 s by default) that no RequestInit can raise, and a
+ * multi-GB finalize legitimately keeps the response silent longer than that
+ * while the server streams the assembled archive through its digest pass
+ * (measured live: 301 s for 2.5 GiB on a residential downlink — the fetch
+ * path aborted at exactly 300 s, twice, and each aborted attempt burned a
+ * full server-side digest pass). Here the ONLY bound is ours: `timeoutMs`
+ * of response silence, then a destroy and a thrown Error. The chunk/probe
+ * verbs stay on fetch on purpose — their responses arrive in seconds and
+ * a second transport would buy them nothing.
+ */
+function postCompletion(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const target = new URL(url);
+    const requestFn = target.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = requestFn(target, { method: "POST", headers });
+    const timer = setTimeout(() => {
+      req.destroy(new Error(`finalize timed out: no response for ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    timer.unref?.();
+    req.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    req.on("response", (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      res.on("end", () => {
+        clearTimeout(timer);
+        const responseHeaders = new Headers();
+        for (const [name, value] of Object.entries(res.headers)) {
+          if (typeof value === "string") responseHeaders.set(name, value);
+          else if (Array.isArray(value)) for (const one of value) responseHeaders.append(name, one);
+        }
+        const status = res.statusCode ?? 0;
+        const bodyAllowed = status !== 204 && status !== 205 && status !== 304;
+        resolve(
+          new Response(bodyAllowed ? Buffer.concat(chunks) : null, {
+            status,
+            statusText: res.statusMessage ?? "",
+            headers: responseHeaders,
+          }),
+        );
+      });
+    });
+    req.end();
+  });
 }
 
 /**
@@ -223,11 +284,7 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
     let lastError: unknown;
     for (let attempt = 1; attempt <= RESUMABLE_UPLOAD_MAX_ATTEMPTS; attempt++) {
       try {
-        return await boundedFetch(
-          `${sessionUrl}/complete`,
-          { method: "POST", headers: post.headers },
-          timeoutMs,
-        );
+        return await postCompletion(`${sessionUrl}/complete`, post.headers, timeoutMs);
       } catch (transportError) {
         lastError = transportError;
         if (attempt < RESUMABLE_UPLOAD_MAX_ATTEMPTS) await sleep(backoffMs(attempt));

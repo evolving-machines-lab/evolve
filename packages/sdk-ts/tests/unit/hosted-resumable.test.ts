@@ -441,6 +441,62 @@ async function main(): Promise<void> {
     server.close();
   }
 
+  console.log("\nthe finalize wait is bounded by OUR budget, not a transport's hidden one");
+  {
+    // A finalize whose headers arrive late (the server is mid-digest over a
+    // multi-GB archive) must be WAITED OUT — the live failure this pins was
+    // fetch's own 300 s headersTimeout aborting a 301 s digest pass, twice,
+    // each abort burning a full server-side pass. node:http has no hidden
+    // deadline; the delay here stands in for the long silent pass.
+    const { server, url } = sessionServer({
+      onComplete: (_state, res) => {
+        setTimeout(() => {
+          res.statusCode = 202;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ id: "version-1", status: "QUEUED" }));
+        }, 1_500);
+        return true;
+      },
+    });
+    await listen(server);
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: {},
+      file: { path: archivePath },
+      fields: {},
+      chunkBytes: CHUNK,
+      timeoutMs: 10_000,
+    });
+    assert(res.status === 202, "a finalize slower than a fetch default still completes");
+    server.close();
+  }
+
+  {
+    // And the bound is REAL: a finalize that never answers is destroyed at
+    // timeoutMs and, once the attempts are spent, throws — never a hang.
+    const { server, url } = sessionServer({
+      onComplete: () => true, // swallow: no response, ever
+    });
+    await listen(server);
+    let message = "";
+    const started = Date.now();
+    try {
+      await uploadArchiveResumable({
+        baseUrl: url(),
+        headers: {},
+        file: { path: archivePath },
+        fields: {},
+        chunkBytes: CHUNK,
+        timeoutMs: 700,
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert(message.includes("finalize timed out"), "the silent finalize throws OUR typed timeout");
+    assert(Date.now() - started < 30_000, "and does so within the bounded attempts, not a hang");
+    server.close();
+  }
+
   rmSync(dir, { recursive: true, force: true });
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══`);
   if (failed > 0) process.exit(1);
