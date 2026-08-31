@@ -979,6 +979,60 @@ async function testPublishGitSource() {
   }
 }
 
+async function testPublishFetchedSources() {
+  console.log("\n--- datasets().publish() POSTs the fetched-source contracts (archive_url, hub_package) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/publish", {
+      status: 202,
+      body: { id: "imp-9", name: "hello-world", version: "3", status: "QUEUED", warnings: [] },
+    });
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+
+    // archive_url: the server fetches the tarball — no archive part, no git
+    // parts, name+version REQUIRED.
+    await d.publish({
+      source: { archive_url: "https://static.example/corpus.tar.gz" },
+      name: "fetched",
+      version: "1.0",
+    });
+    const urlForm = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(
+      urlForm.get("archive_url"),
+      "https://static.example/corpus.tar.gz",
+      "archive_url is a named part"
+    );
+    assertEqual(urlForm.get("archive"), null, "no archive part — the server fetches");
+    assertEqual(urlForm.get("git_url"), null, "no git parts for a fetched url");
+    let threw = false;
+    try {
+      await d.publish({ source: { archive_url: "https://static.example/c.tar.gz" }, name: "x" });
+    } catch (e: unknown) {
+      threw = true;
+      assert(
+        (e as Error).message.includes("archive_url"),
+        "missing version refusal names the archive_url rule"
+      );
+    }
+    assert(threw, "archive_url without version throws before any request");
+
+    // hub_package: the reference rides verbatim; name/version only when given
+    // (absent parts default server-side to the package's own identity).
+    await d.publish({ source: { hub_package: "cookbook/hello-world@3" } });
+    const hubForm = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(hubForm.get("hub_package"), "cookbook/hello-world@3", "hub_package is a named part");
+    assertEqual(hubForm.get("name"), null, "no name part when omitted — the server defaults it");
+    assertEqual(hubForm.get("version"), null, "no version part when omitted");
+
+    await d.publish({ source: { hub_package: "cookbook/test" }, name: "renamed", version: "9" });
+    const namedHubForm = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(namedHubForm.get("name"), "renamed", "explicit name rides beside the reference");
+    assertEqual(namedHubForm.get("version"), "9", "explicit version rides beside the reference");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testPublishRequiresGitSource() {
   console.log("\n--- datasets().publish() requires a complete git source ---");
   installMockFetch();
@@ -6051,6 +6105,7 @@ async function main() {
   await testDatasetRouteSegmentsEncodeEveryCharacter();
   await testListImportsFiltersFormEncoded();
   await testPublishGitSource();
+  await testPublishFetchedSources();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();
   await testPublishManifestDerivedIdentity();

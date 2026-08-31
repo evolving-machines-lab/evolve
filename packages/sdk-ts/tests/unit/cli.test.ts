@@ -6530,6 +6530,61 @@ function testBuildInputsDirect() {
     "git publish without --version still refuses"
   );
 
+  // --from, hub spelling: hub:org/name[@ref] — the reference part is Harbor's
+  // own grammar; name/version pass through only when given (the server
+  // defaults them from the resolved package).
+  const hub = buildPublishInput(
+    parseArgs(["dataset", "publish", "--from", "hub:cookbook/hello-world@3"])
+  );
+  assertEqual(
+    hub,
+    { source: { hub_package: "cookbook/hello-world@3" } },
+    "hub publish input carries the bare reference and neither default"
+  );
+  const hubNamed = buildPublishInput(
+    parseArgs(["dataset", "publish", "--from", "hub:cookbook/test", "--name", "n", "--version", "9"])
+  );
+  assertEqual(
+    hubNamed,
+    { source: { hub_package: "cookbook/test" }, name: "n", version: "9" },
+    "explicit --name/--version ride beside the hub reference"
+  );
+  // --from, url spelling: a public https tarball; name/version are REQUIRED
+  // (the server fetches only after the 202 has promised a name).
+  const fromUrl = buildPublishInput(
+    parseArgs(["dataset", "publish", "--from", "https://x.test/c.tar.gz", "--name", "n", "--version", "1"])
+  );
+  assertEqual(
+    fromUrl,
+    { source: { archive_url: "https://x.test/c.tar.gz" }, name: "n", version: "1" },
+    "url publish input maps to archive_url"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "https://x.test/c.tar.gz", "--version", "1"])),
+    "--name",
+    "--from <url> without --name refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "http://x.test/c.tar.gz", "--name", "n", "--version", "1"])),
+    "https",
+    "--from with a non-https, non-hub value refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "hub:"])),
+    "hub:org/name",
+    "--from hub: with no reference refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "hub:a/b", "--dir", "/tmp/c"])),
+    "EXACTLY ONE source",
+    "--from beside --dir refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "hub:a/b", "--git", "g", "--ref", "r"])),
+    "EXACTLY ONE source",
+    "--from beside --git refuses"
+  );
+
   const agent = buildAgentInput(
     parseArgs(["agent", "add", "acme", "--install-script", "/x.sh", "--run", "acme", "--ae", "A=1"]),
     () => "SCRIPT"

@@ -1328,7 +1328,7 @@ What you publish is **private to your account**. It never appears in anyone else
 
 ### Publishing
 
-Publish from a git repository pinned to a ref, or upload a local corpus directory — the same corpus, the same pipeline, the same rules either way.
+Publish from a git repository pinned to a ref, upload a local corpus directory, or hand the platform a fetchable source — a public tarball URL or a Harbor hub package ([below](#publishing-from-a-fetchable-source)) — the same corpus, the same pipeline, the same rules every way.
 
 A git ref must be **pinned**: a full 40-hex commit sha, or a tag. A tag is resolved to the commit it points at when the publish is accepted, the sha is stored, and the import verifies the tag still points there — a tag re-pointed in between fails loudly instead of importing different bytes. A branch name is refused with `unpinned_git_ref`, and the refusal's `details` carry the commit the branch points at right now, so pinning it is one copy-paste:
 
@@ -1417,6 +1417,36 @@ evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 ```
 
 Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url. A git publish may name one repository subfolder (`git_path` / `--path`) and the platform fetches just that folder via git sparse checkout — the subfolder becomes the corpus root, the recorded provenance keeps the path beside the resolved commit, and a path that is not a directory at the pinned ref fails the import loudly rather than landing an empty version.
+
+### Publishing from a fetchable source
+
+Two more sources move **zero bytes from your machine** — the platform fetches the corpus itself. `archive_url` points at a public https tarball of a corpus directory; `hub_package` names a public package on the Harbor hub, in Harbor's own reference grammar:
+
+```ts
+// A public tarball the platform downloads itself
+const fromUrl = await catalog.publish({
+    source: { archive_url: "https://github.com/acme/my-swe/releases/download/v1/corpus.tar.gz" },
+    name: "my-swe",
+    version: "1.0",               // both required: the fetch happens server-side, after the 202
+});
+
+// A Harbor hub package: org/name[@ref] — no ref means the latest tag, a number
+// is a revision, sha256:<digest> pins exact content. name/version may be
+// omitted: they default to the package's short name and its resolved revision.
+const fromHub = await catalog.publish({ source: { hub_package: "cookbook/hello-world" } });
+fromHub.name;     // "hello-world"
+fromHub.version;  // "3" — the revision the reference resolved to
+```
+
+```bash
+evolve dataset publish --from https://static.example/corpus.tar.gz --name my-swe --version 1.0 --watch
+evolve dataset publish --from hub:cookbook/hello-world --watch
+evolve dataset publish --from hub:cookbook/test@sha256:51b00e00… --watch   # digest-pinned
+```
+
+A hub reference is resolved when the publish is **accepted**, and the resolved content digest is what the platform later fetches by — the same pinning rule as a git tag, so a hub tag moved after your 202 can never deliver different bytes. A task package imports as a one-task dataset; a dataset package fetches every member task the hub pins by digest — and every fetched archive is verified against the hub's own digest with Harbor's exact content-hash recipe before anything lands. A reference the hub does not show — nonexistent, or private — is refused with `hub_package_not_found` (the platform reads the hub anonymously; private packages need credentials, which are not supported yet), and a hub that cannot be reached at accept time is `hub_unreachable` (502): nothing was created, retry the publish.
+
+Both fetched sources are **public only**: `archive_url` must be https, resolve to a public host, and carry no credentials in the URL — authenticated sources are a planned follow-up. The fetched bytes pass exactly the validation and size caps an uploaded archive does, plus one earlier gate: where the source declares its size up front (the hub publishes per-file sizes; a server's `Content-Length` counts too), a corpus over the cap is refused before the download spends anything.
 
 ### The dataset manifest (dataset.toml)
 

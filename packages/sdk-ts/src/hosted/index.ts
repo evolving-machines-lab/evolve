@@ -2027,6 +2027,41 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       // without git_ref is already a compile error for a typed caller — and
       // for an untyped one, the server refuses it with a named param, which is
       // a better error than this function's generic sentence.
+      // The two FETCHED sources move zero client bytes: the server pulls the
+      // corpus itself. archive_url needs explicit name+version (the server
+      // only fetches after the 202 has promised a name); hub_package may omit
+      // both — the server defaults them from the resolved package.
+      if (src && "archive_url" in src && src.archive_url) {
+        if (input.name === undefined || input.version === undefined) {
+          throw new Error(
+            "datasets().publish() requires name and version for an archive_url source — the " +
+              "server fetches the tarball only after the publish is accepted, so a manifest " +
+              "cannot supply them"
+          );
+        }
+        const res = await request(cfg, "/api/datasets/publish", {
+          method: "POST",
+          body: uploadForm({
+            name: input.name,
+            version: input.version,
+            archive_url: src.archive_url,
+          }),
+        });
+        return mapDatasetImport((await res.json()) as Record<string, unknown>);
+      }
+      if (src && "hub_package" in src && src.hub_package) {
+        const res = await request(cfg, "/api/datasets/publish", {
+          method: "POST",
+          body: uploadForm({
+            // Optional by design: absent parts default server-side to the
+            // package's short name and resolved revision.
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.version !== undefined ? { version: input.version } : {}),
+            hub_package: src.hub_package,
+          }),
+        });
+        return mapDatasetImport((await res.json()) as Record<string, unknown>);
+      }
       if (src && "git_url" in src && src.git_url) {
         // A git source cannot lean on its manifest: the server only reads it
         // after the clone, long after the 202 has promised a name. Refuse
@@ -2053,9 +2088,11 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
       throw new Error(
-        "datasets().publish() requires either a git source ({ source: { git_url, git_ref } }) " +
-          "or a local corpus directory ({ source: { directory } }), plus name and version " +
-          "(both optional for a directory whose corpus carries a dataset.toml manifest)"
+        "datasets().publish() requires a source: a git source ({ source: { git_url, git_ref } }), " +
+          "a local corpus directory ({ source: { directory } }), a public tarball url " +
+          "({ source: { archive_url } }), or a Harbor hub package ({ source: { hub_package } }); " +
+          "plus name and version (optional for a directory whose corpus carries a dataset.toml " +
+          "manifest, and for a hub package, which supplies its own defaults)"
       );
     },
 

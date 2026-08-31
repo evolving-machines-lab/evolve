@@ -699,19 +699,20 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve dataset show deep-swe@1.1",
       },
       publish: {
-        summary: "Publish a dataset version from a git source or a local directory",
+        summary: "Publish a dataset version from a git source, a local directory, or a fetchable source (public tarball url / Harbor hub package)",
         flags: {
           git: { kind: "string", value: "<url>", help: "Git repository URL (with --ref)" },
           ref: { kind: "string", value: "<ref>", help: "Pinned git ref: a full 40-hex commit sha, or a tag (resolved to its commit at publish and verified at import). Branch names are refused — unpinned_git_ref (with --git)" },
           path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus (with --git; sparse checkout — only that folder is imported)" },
           dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
-          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
-          version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
+          from: { kind: "string", value: "<url|hub:org/name[@ref]>", help: "Fetchable source the SERVER pulls itself (no local bytes): a public https tarball url, or hub:org/name[@ref] — a public Harbor hub package (ref: latest tag by default, a revision number, or sha256:<digest>; resolved and digest-pinned when the publish is accepted)" },
+          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest, and with --from hub:… which defaults to the package's short name; required with --git and --from <url>)" },
+          version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one, and with --from hub:… which defaults to the resolved revision; required with --git and --from <url>)" },
           watch: { kind: "boolean", help: "Poll until the publish settles: the version READY (built and active) or FAILED" },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve dataset publish --name my-swe --version 1.0 --dir ./corpus --watch",
+        example: "evolve dataset publish --from hub:cookbook/hello-world --watch",
       },
       download: {
         summary: "Download the original corpus package (owner only)",
@@ -2347,19 +2348,65 @@ export function buildJobInput(
 
 /**
  * Build the datasets().publish() input from a parsed `dataset publish`
- * invocation. `--name`/`--version` are optional with `--dir`: a corpus
- * carrying a dataset.toml manifest supplies them server-side (Harbor's
- * dataset layout), and the SDK refuses before uploading when neither the
- * flags nor a manifest exist. A git source always requires both — its
- * manifest is only readable after the server clones it.
+ * invocation. `--name`/`--version` are optional with `--dir` (a corpus
+ * carrying a dataset.toml manifest supplies them server-side — Harbor's
+ * dataset layout — and the SDK refuses before uploading when neither the
+ * flags nor a manifest exist) and with `--from hub:…` (the server defaults
+ * them from the resolved package). A git or `--from <url>` source requires
+ * both — its corpus is only fetched after the server accepts the publish.
+ *
+ * `--from` takes the FETCHABLE sources, one flag for both spellings: a plain
+ * https URL is a public tarball (`archive_url` on the wire), and the `hub:`
+ * prefix marks a Harbor hub package whose reference part is exactly Harbor's
+ * own grammar (`org/name[@ref]` — their CLI takes the same reference as a
+ * bare positional; the prefix exists only because this one flag also accepts
+ * URLs).
  */
 export function buildPublishInput(inv: Invocation): PublishDatasetInput {
   const f = inv.flags;
   const hasDir = typeof f.dir === "string";
   const hasGit =
     typeof f.git === "string" || typeof f.ref === "string" || typeof f.path === "string";
-  if (hasDir && hasGit) {
-    throw new CliUsageError('"dataset publish" takes EITHER --dir OR --git/--ref/--path, not both');
+  const hasFrom = typeof f.from === "string";
+  const offered = [hasDir, hasGit, hasFrom].filter(Boolean).length;
+  if (offered > 1) {
+    throw new CliUsageError(
+      '"dataset publish" takes EXACTLY ONE source: --dir, --git/--ref/--path, or --from'
+    );
+  }
+  if (hasFrom) {
+    const from = (f.from as string).trim();
+    if (from.startsWith("hub:")) {
+      const hubRef = from.slice("hub:".length);
+      if (hubRef === "") {
+        throw new CliUsageError(
+          '"--from hub:" needs a package reference — hub:org/name[@ref], e.g. hub:cookbook/hello-world'
+        );
+      }
+      return {
+        source: { hub_package: hubRef },
+        ...(typeof f.name === "string" ? { name: f.name } : {}),
+        ...(typeof f.version === "string" ? { version: f.version } : {}),
+      };
+    }
+    if (!from.startsWith("https://")) {
+      throw new CliUsageError(
+        `"--from" takes a public https tarball url or hub:org/name[@ref] (got "${from}")`
+      );
+    }
+    for (const req of ["name", "version"] as const) {
+      if (typeof f[req] !== "string") {
+        throw new CliUsageError(
+          `"dataset publish" requires --${req} with --from <url> — the server fetches the tarball ` +
+            "only after the publish is accepted, so nothing can supply it later"
+        );
+      }
+    }
+    return {
+      source: { archive_url: from },
+      name: f.name as string,
+      version: f.version as string,
+    };
   }
   if (hasDir) {
     return {

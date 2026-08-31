@@ -867,6 +867,72 @@ class TestDatasets:
         }
 
     @pytest.mark.asyncio
+    async def test_publish_posts_archive_url_source(self):
+        # archive_url: the SERVER fetches the tarball — no archive part, no
+        # git parts; name/version REQUIRED (fetched only after the 202).
+        fake = FakeUrlopen([
+            ('/api/datasets/publish', {
+                'id': 'imp-7', 'status': 'QUEUED', 'name': 'fetched', 'version': '1.0',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).publish(
+                archive_url='https://static.example/corpus.tar.gz',
+                name='fetched',
+                version='1.0',
+            )
+        parts = _multipart_parts(fake.requests[0])
+        assert parts == {
+            'name': b'fetched',
+            'version': b'1.0',
+            'archive_url': b'https://static.example/corpus.tar.gz',
+        }
+
+    @pytest.mark.asyncio
+    async def test_publish_archive_url_requires_name_and_version(self):
+        with pytest.raises(ValueError, match='archive_url'):
+            await datasets_factory(CONFIG).publish(
+                archive_url='https://static.example/corpus.tar.gz', name='x',
+            )
+
+    @pytest.mark.asyncio
+    async def test_publish_posts_hub_package_source(self):
+        # hub_package: the reference rides verbatim; absent name/version send
+        # NO parts — the server defaults them from the resolved package.
+        fake = FakeUrlopen([
+            ('/api/datasets/publish', {
+                'id': 'imp-8', 'status': 'QUEUED', 'name': 'hello-world', 'version': '3',
+            }),
+            ('/api/datasets/publish', {
+                'id': 'imp-9', 'status': 'QUEUED', 'name': 'renamed', 'version': '9',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).publish(hub_package='cookbook/hello-world@3')
+            await datasets_factory(CONFIG).publish(
+                hub_package='cookbook/test', name='renamed', version='9',
+            )
+        assert _multipart_parts(fake.requests[0]) == {
+            'hub_package': b'cookbook/hello-world@3',
+        }
+        assert _multipart_parts(fake.requests[1]) == {
+            'hub_package': b'cookbook/test', 'name': b'renamed', 'version': b'9',
+        }
+
+    @pytest.mark.asyncio
+    async def test_publish_refuses_two_sources(self, tmp_path):
+        with pytest.raises(ValueError, match='EXACTLY ONE source'):
+            await datasets_factory(CONFIG).publish(
+                hub_package='a/b', directory=str(tmp_path),
+            )
+        with pytest.raises(ValueError, match='EXACTLY ONE source'):
+            await datasets_factory(CONFIG).publish(
+                archive_url='https://x.test/c.tar.gz',
+                git_url='https://github.com/a/b.git', git_ref='v1',
+                name='n', version='1',
+            )
+
+    @pytest.mark.asyncio
     async def test_publish_git_path_refused_with_a_directory(self, tmp_path):
         # A subfolder narrows a git clone, not a local directory — for a local
         # corpus the caller points directory= at the subfolder itself.
