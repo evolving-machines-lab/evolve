@@ -1356,27 +1356,82 @@ function makePaginated<TRow>(
 }
 
 /**
- * Build the multipart/form-data body both upload routes take: metadata as
- * named parts FIRST, then the bytes as an `archive` part. Order matters — the
- * server refuses a name it will never accept before receiving the upload, and
- * it can only do that if the metadata arrives first.
+ * Build the multipart/form-data body the metadata-only upload routes take
+ * (an agent registered from an install script, a dataset published from a
+ * git source). Anything carrying an ARCHIVE goes through requestUpload
+ * instead, which streams the file from disk — bytes never ride a FormData
+ * here, because a Blob part holds them whole in memory (the F1 incident:
+ * ~10x a corpus's size in RSS).
  */
-function uploadForm(
-  fields: Record<string, string | undefined>,
-  archive?: { bytes: Uint8Array; filename: string }
-): FormData {
+function uploadForm(fields: Record<string, string | undefined>): FormData {
   const form = new FormData();
   for (const [name, value] of Object.entries(fields)) {
     if (value !== undefined) form.set(name, value);
   }
-  if (archive) {
-    form.set(
-      "archive",
-      new Blob([archive.bytes as unknown as BlobPart], { type: "application/gzip" }),
-      archive.filename
-    );
-  }
   return form;
+}
+
+/**
+ * One archive upload: metadata parts first, then `file` streamed from disk
+ * as the `archive` part (hosted/upload.ts), the shared error mapping applied
+ * to the reply. The streaming transport exists because both FormData-with-a-
+ * Blob and fetch itself hold the whole body in memory — see upload.ts.
+ */
+async function requestUpload(
+  cfg: ResolvedConfig,
+  path: string,
+  opts: {
+    method?: "POST" | "PUT";
+    fields: Record<string, string | undefined>;
+    file: { path: string; filename: string };
+  }
+): Promise<Response> {
+  const { postMultipartFile } = await import("./upload");
+  const res = await postMultipartFile({
+    url: `${cfg.baseUrl}${path}`,
+    method: opts.method ?? "POST",
+    headers: { Authorization: `Bearer ${cfg.apiKey}` },
+    fields: opts.fields,
+    file: opts.file,
+  });
+  if (!res.ok) {
+    await throwApiError(res);
+  }
+  return res;
+}
+
+/**
+ * Tar + gzip `directory` into a temp file and upload it via requestUpload —
+ * the one flow every publish-a-directory surface (datasets, agents, skills,
+ * jobs) shares. The archive only ever exists on disk; the temp dir is
+ * removed however the upload ends.
+ */
+async function uploadDirectory(
+  cfg: ResolvedConfig,
+  path: string,
+  opts: {
+    method?: "POST" | "PUT";
+    fields: Record<string, string | undefined>;
+    directory: string;
+    filename: string;
+  }
+): Promise<Response> {
+  const { tarGzipDirectoryToFile } = await import("./tar");
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const tmp = await mkdtemp(join(tmpdir(), "evolve-upload-"));
+  try {
+    const archive = join(tmp, opts.filename);
+    await tarGzipDirectoryToFile(opts.directory, archive);
+    return await requestUpload(cfg, path, {
+      method: opts.method,
+      fields: opts.fields,
+      file: { path: archive, filename: opts.filename },
+    });
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -1420,6 +1475,10 @@ function makeWatch(
     },
   };
 }
+
+// The streaming upload transport's typed timeout, re-exported so callers can
+// tell a dead-socket upload from a refused one without importing internals.
+export { EvolveUploadTimeoutError, UPLOAD_TIMEOUT_MS } from "./upload";
 
 /**
  * The server states the verified digest of a package here. When it is present
@@ -1932,14 +1991,10 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             );
           }
         }
-        const { tarGzipDirectory } = await import("./tar");
-        const gzipped = await tarGzipDirectory(src.directory);
-        const res = await request(cfg, "/api/datasets/publish", {
-          method: "POST",
-          body: uploadForm(
-            { name: input.name, version: input.version },
-            { bytes: gzipped, filename: "corpus.tar.gz" }
-          ),
+        const res = await uploadDirectory(cfg, "/api/datasets/publish", {
+          fields: { name: input.name, version: input.version },
+          directory: src.directory,
+          filename: "corpus.tar.gz",
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
@@ -2136,8 +2191,14 @@ export function agents(config?: HostedClientConfig): AgentsClient {
       // env are named PARTS — they used to ride the query string of an upload,
       // which put a shell command and a set of environment values into every
       // access log and proxy buffer on the way here.
-      const body = await agentUploadBody("agents().create()", input);
-      const res = await request(cfg, "/api/agents", { method: "POST", body });
+      const parts = agentUploadParts("agents().create()", input);
+      const res = parts.directory
+        ? await uploadDirectory(cfg, "/api/agents", {
+            fields: parts.fields,
+            directory: parts.directory,
+            filename: "source.tar.gz",
+          })
+        : await request(cfg, "/api/agents", { method: "POST", body: uploadForm(parts.fields) });
       return mapAgent((await res.json()) as Record<string, unknown>);
     },
 
@@ -2163,27 +2224,38 @@ export function agents(config?: HostedClientConfig): AgentsClient {
 
     async upsert(name: string, input: AgentUpsertInput): Promise<Agent> {
       // One request, so the name never briefly stops resolving the way
-      // delete()+create() makes it. Same body grammar as create(), minus the
-      // name part — the URL carries it.
-      const body = await agentUploadBody("agents().upsert()", { ...input, name });
-      const res = await request(cfg, `/api/agents/${encodeURIComponent(name)}`, {
-        method: "PUT",
-        body,
-      });
+      // delete()+create() makes it. Same body grammar as create(), name part
+      // included — the URL names the agent too, and the server treats the
+      // path as authoritative.
+      const parts = agentUploadParts("agents().upsert()", { ...input, name });
+      const res = parts.directory
+        ? await uploadDirectory(cfg, `/api/agents/${encodeURIComponent(name)}`, {
+            method: "PUT",
+            fields: parts.fields,
+            directory: parts.directory,
+            filename: "source.tar.gz",
+          })
+        : await request(cfg, `/api/agents/${encodeURIComponent(name)}`, {
+            method: "PUT",
+            body: uploadForm(parts.fields),
+          });
       return mapAgent((await res.json()) as Record<string, unknown>);
     },
   };
 }
 
 /**
- * The multipart body both create() and upsert() send. Shared because the two
+ * The metadata parts both create() and upsert() send, plus the directory to
+ * stream when the agent ships as an uploaded tarball. Shared because the two
  * differ only in method and URL: one grammar means an agent registered by
- * either route is byte-identical on the wire.
+ * either route is byte-identical on the wire. The caller picks the transport
+ * — plain multipart for an install script, the streaming archive upload for
+ * a directory — because only the caller knows its URL and method.
  */
-async function agentUploadBody(
+function agentUploadParts(
   caller: string,
   input: AgentInput
-): Promise<FormData> {
+): { fields: Record<string, string | undefined>; directory?: string } {
   // Same division of labour as datasets().publish(): AgentSourceInput is a
   // union, so a TypeScript caller cannot pass both or neither. These checks
   // are for JavaScript callers and for values that crossed a JSON boundary
@@ -2208,12 +2280,7 @@ async function agentUploadBody(
     ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
     ...(hasInstallScript ? { install_script: input.install_script } : {}),
   };
-  if (hasDirectory) {
-    const { tarGzipDirectory } = await import("./tar");
-    const gzipped = await tarGzipDirectory(input.directory as string);
-    return uploadForm(fields, { bytes: gzipped, filename: "source.tar.gz" });
-  }
-  return uploadForm(fields);
+  return hasDirectory ? { fields, directory: input.directory as string } : { fields };
 }
 
 // =============================================================================
@@ -2258,19 +2325,15 @@ export function skills(config?: HostedClientConfig): SkillsClient {
       if (typeof directory !== "string" || !directory.trim()) {
         throw new Error("skills().upload() requires a local skill directory path");
       }
-      const { tarGzipDirectory } = await import("./tar");
       const { basename, resolve } = await import("node:path");
       // The archive packs the folder's CONTENT (SKILL.md at the archive
       // root); the folder's own name travels beside it, so a single-skill
       // upload is recorded — and later mounted — under its folder name.
       const folderName = basename(resolve(directory));
-      const gzipped = await tarGzipDirectory(directory);
-      const res = await request(cfg, "/api/skills", {
-        method: "POST",
-        body: uploadForm(
-          { name: folderName || undefined },
-          { bytes: gzipped, filename: "skill.tar.gz" },
-        ),
+      const res = await uploadDirectory(cfg, "/api/skills", {
+        fields: { name: folderName || undefined },
+        directory,
+        filename: "skill.tar.gz",
       });
       const body = (await res.json()) as Record<string, unknown>;
       const items = Array.isArray(body.skills) ? (body.skills as Record<string, unknown>[]) : [body];
@@ -2713,34 +2776,34 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       if (typeof dirOrArchive !== "string" || !dirOrArchive.trim()) {
         throw new Error("jobs().upload() requires a job directory (or .tar.gz archive) path");
       }
-      const { readFile, stat } = await import("node:fs/promises");
+      const { stat } = await import("node:fs/promises");
       const target = await stat(dirOrArchive).catch(() => null);
-      let archive: Buffer;
       if (target?.isFile()) {
-        archive = await readFile(dirOrArchive);
-      } else {
-        // Harbor's own gate (their cli/upload.py checks result.json, then
-        // config.json), applied client-side with their sentences — the cheap
-        // refusal that saves tarring and shipping a tree the server would
-        // refuse the same way (`not_a_job_dir`). A nonexistent path lands
-        // here too and reads as the first refusal, exactly as their CLI does.
-        const { existsSync } = await import("node:fs");
-        const { join, resolve } = await import("node:path");
-        const root = resolve(dirOrArchive);
-        for (const required of ["result.json", "config.json"]) {
-          if (!existsSync(join(root, required))) {
-            throw new Error(`${root} does not contain ${required}`);
-          }
-        }
-        const { tarGzipDirectory } = await import("./tar");
-        archive = await tarGzipDirectory(root);
+        // A ready-packed archive streams from where it lies — never read
+        // into memory, never re-packed, byte-for-byte on the wire.
+        const res = await requestUpload(cfg, "/api/jobs/upload", {
+          fields: { dataset: options?.dataset },
+          file: { path: dirOrArchive, filename: "job.tar.gz" },
+        });
+        return mapJob((await res.json()) as Record<string, unknown>);
       }
-      const res = await request(cfg, "/api/jobs/upload", {
-        method: "POST",
-        body: uploadForm(
-          { dataset: options?.dataset },
-          { bytes: archive, filename: "job.tar.gz" }
-        ),
+      // Harbor's own gate (their cli/upload.py checks result.json, then
+      // config.json), applied client-side with their sentences — the cheap
+      // refusal that saves tarring and shipping a tree the server would
+      // refuse the same way (`not_a_job_dir`). A nonexistent path lands
+      // here too and reads as the first refusal, exactly as their CLI does.
+      const { existsSync } = await import("node:fs");
+      const { join, resolve } = await import("node:path");
+      const root = resolve(dirOrArchive);
+      for (const required of ["result.json", "config.json"]) {
+        if (!existsSync(join(root, required))) {
+          throw new Error(`${root} does not contain ${required}`);
+        }
+      }
+      const res = await uploadDirectory(cfg, "/api/jobs/upload", {
+        fields: { dataset: options?.dataset },
+        directory: root,
+        filename: "job.tar.gz",
       });
       return mapJob((await res.json()) as Record<string, unknown>);
     },

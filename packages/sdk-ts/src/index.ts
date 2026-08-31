@@ -392,6 +392,7 @@ export {
   EvolveApiError,
   EvolveDigestMismatchError,
   EvolveIncompleteDownloadError,
+  EvolveUploadTimeoutError,
   ImportSettleError,
   NoActiveVersionError,
   type ImportSettleErrorCode,

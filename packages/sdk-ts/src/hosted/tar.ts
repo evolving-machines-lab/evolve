@@ -23,13 +23,18 @@
  * directory on disk.
  *
  * Entries stream from disk through `tar-stream` (already this repo's tar
- * writer, see packages/modal), so the corpus is never resident in memory as a
- * whole — only the compressed output is collected, since the upload takes one
- * body.
+ * writer, see packages/modal), and the compressed output streams to a FILE
+ * (`tarGzipDirectoryToFile`) — neither the corpus nor its archive is ever
+ * resident in memory as a whole. The upload side then streams that file onto
+ * the wire (see hosted/upload.ts). A 7.7 GB corpus once cost ~10x its size in
+ * RSS through the old collect-everything Buffer path and crashed the machine;
+ * the only Buffer-returning surface left is `tarGzipDirectory`, kept for the
+ * sandbox skill mount, which needs bytes and is size-guarded.
  */
 import { createGunzip, createGzip } from "node:zlib";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdir, readdir } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { extract, pack } from "tar-stream";
@@ -76,21 +81,22 @@ async function listFiles(root: string): Promise<Entry[]> {
 }
 
 /**
- * Deterministically tar + gzip a corpus directory into a single gzipped-tar
- * buffer, ready to upload to POST /api/datasets/publish.
+ * Deterministically tar + gzip a corpus directory into `outPath`, ready for
+ * the streaming multipart upload (hosted/upload.ts) to put on the wire.
+ *
+ * Everything flows in O(read-buffer) memory: files feed the tar pack one read
+ * buffer at a time, gzip drains the pack, and the compressed stream lands on
+ * disk instead of in a Buffer. The BYTES are identical to what the old
+ * in-memory path produced (same entry walk, same headers, same gzip level 9,
+ * same zlib stream) — the server-side sha256 of a corpus does not move.
  */
-export async function tarGzipDirectory(root: string): Promise<Buffer> {
+export async function tarGzipDirectoryToFile(root: string, outPath: string): Promise<void> {
   const files = await listFiles(root);
   const tar = pack();
   const gzip = createGzip({ level: 9 });
 
-  const chunks: Buffer[] = [];
-  const collect = (async () => {
-    for await (const chunk of gzip) chunks.push(Buffer.from(chunk));
-  })();
-
-  // Feed the pack while gzip drains it: a file crosses one read buffer at a
-  // time and is never held whole.
+  // Feed the pack while gzip drains it into the file: a source file crosses
+  // one read buffer at a time and is never held whole.
   const feed = (async () => {
     for (const { rel, abs, mode, size } of files) {
       const entry = tar.entry({
@@ -109,8 +115,44 @@ export async function tarGzipDirectory(root: string): Promise<Buffer> {
     tar.finalize();
   })();
 
-  await Promise.all([pipeline(tar, gzip), feed, collect]);
-  return Buffer.concat(chunks);
+  await Promise.all([pipeline(tar, gzip, createWriteStream(outPath)), feed]);
+}
+
+/**
+ * The one Buffer-returning packer left, for the single caller that NEEDS the
+ * archive as bytes: the sandbox skill mount (skills.ts), whose provider
+ * `files.write()` seam takes a value, not a path. Every hosted upload streams
+ * from disk via `tarGzipDirectoryToFile` instead — never add an upload caller
+ * here.
+ *
+ * Size-guarded so this path can never recreate the incident that killed the
+ * in-memory uploads (a multi-GB archive held whole): past `maxBytes`
+ * (default 256 MiB — generous for a skill folder, far below harm) it refuses
+ * with the measured size rather than degrade into an OOM. `maxBytes` is a
+ * parameter only so tests can prove the guard without a 256 MiB fixture.
+ */
+export const MAX_INLINE_ARCHIVE_BYTES = 256 * 1024 * 1024;
+
+export async function tarGzipDirectory(
+  root: string,
+  maxBytes: number = MAX_INLINE_ARCHIVE_BYTES
+): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), "evolve-tar-"));
+  try {
+    const archive = join(dir, "archive.tar.gz");
+    await tarGzipDirectoryToFile(root, archive);
+    const { size } = await stat(archive);
+    if (size > maxBytes) {
+      throw new Error(
+        `directory ${root} tars to ${size} bytes compressed — over the ` +
+          `${maxBytes}-byte cap for in-memory archives. Only the sandbox ` +
+          `skill mount uses this path; a skill folder this large is not mountable.`
+      );
+    }
+    return await readFile(archive);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /**

@@ -5575,32 +5575,51 @@ const CLI_SKILL = {
 };
 
 async function testSkillUpload() {
-  console.log("\n--- runCli: skill upload posts the folder and prints both handles ---");
-  installMockFetch();
+  console.log("\n--- runCli: skill upload streams the folder and prints both handles ---");
+  // The archive rides node:http, not fetch (the F1 fix), so this test runs a
+  // real local server and points --base-url at it.
+  const { createServer } = await import("node:http");
+  const calls: { url: string; method: string; body: Buffer }[] = [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      calls.push({ url: req.url ?? "", method: req.method ?? "", body: Buffer.concat(chunks) });
+      res.statusCode = 201;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ skills: [CLI_SKILL] }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
   const dir = await mkdtemp(join(tmpdir(), "evolve-skill-cli-"));
   const skillDir = join(dir, "my-skill");
   try {
     await mkdir(skillDir);
     await writeFile(join(skillDir, "SKILL.md"), "# my-skill\n\nDoes one thing well.\n");
-    setMockResponse("/api/skills", { status: 201, body: { skills: [CLI_SKILL] } });
 
     const { io, out, err } = captureIO();
-    const code = await runCli(["skill", "upload", skillDir, ...AUTH], io);
+    const code = await runCli(
+      ["skill", "upload", skillDir, "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`],
+      io
+    );
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/skills"), "hits the skills route");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), "my-skill", "the folder's own name travels as the name part");
+    const call = calls[calls.length - 1];
+    assertEqual(call.url, "/api/skills", "hits the skills route");
+    assertEqual(call.method, "POST", "uses POST");
+    assert(
+      call.body.includes('name="name"') && call.body.includes("my-skill"),
+      "the folder's own name travels as the name part"
+    );
+    assert(call.body.includes('name="archive"'), "the content rides as the archive part");
     const text = out.join("\n");
     assert(text.includes(CLI_SKILL.ref), "prints the immutable upload:<id> handle");
     assert(text.includes("my-skill"), "prints the record's name");
     assert(text.includes(CLI_SKILL.digest), "prints the content digest");
     assert(text.includes("name:my-skill"), "the follow-up hint offers the moving name pointer");
   } finally {
-    restoreFetch();
+    await new Promise((resolve) => server.close(resolve));
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -5702,9 +5721,46 @@ async function testSkillNamePassThroughOnStart() {
 // AUTH
 // =============================================================================
 
+/**
+ * A local server for the CLI verbs whose archive rides node:http (the F1
+ * fix bypasses fetch, so the fetch mock never sees these uploads). The reply
+ * is mutable so one server can play a 201 and then a typed refusal.
+ */
+async function startUploadCaptureServer(): Promise<{
+  base: string;
+  calls: { url: string; method: string; body: Buffer }[];
+  setReply: (status: number, body: unknown) => void;
+  close: () => Promise<void>;
+}> {
+  const { createServer } = await import("node:http");
+  const calls: { url: string; method: string; body: Buffer }[] = [];
+  let reply: { status: number; body: unknown } = { status: 201, body: {} };
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      calls.push({ url: req.url ?? "", method: req.method ?? "", body: Buffer.concat(chunks) });
+      res.statusCode = reply.status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(reply.body));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = (server.address() as { port: number });
+  return {
+    base: `http://127.0.0.1:${port}`,
+    calls,
+    setReply: (status, body) => {
+      reply = { status, body };
+    },
+    close: () => new Promise((resolve) => server.close(() => resolve(undefined))),
+  };
+}
+
 async function testUploadVerb() {
-  console.log("\n--- runCli: evolve upload posts a job directory and renders the created record ---");
+  console.log("\n--- runCli: evolve upload streams a job directory and renders the created record ---");
   installMockFetch();
+  const server = await startUploadCaptureServer();
   const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-"));
   const jobDir = join(dir, "2026-08-27__12-00-00");
   try {
@@ -5733,20 +5789,24 @@ async function testUploadVerb() {
       },
       finished_at: "2026-08-28T10:00:00.000Z",
     });
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploaded });
+    server.setReply(201, uploaded);
 
     const { io, out, err } = captureIO();
-    const code = await runCli(["upload", jobDir, "-d", "deep-swe@1.1", ...AUTH], io);
+    const code = await runCli(
+      ["upload", jobDir, "-d", "deep-swe@1.1", "--api-key", "test-key", "--base-url", server.base],
+      io
+    );
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
 
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/jobs/upload"), "POSTs /api/jobs/upload");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("dataset"), "deep-swe@1.1", "-d rides as the dataset part");
-    assert(form.get("archive") instanceof Blob, "the packed tree is the archive part");
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/jobs/upload", "POSTs /api/jobs/upload");
+    assertEqual(call.method, "POST", "uses POST");
+    assert(
+      call.body.includes('name="dataset"') && call.body.includes("deep-swe@1.1"),
+      "-d rides as the dataset part"
+    );
+    assert(call.body.includes('name="archive"'), "the packed tree is the archive part");
 
     const text = out.join("\n");
     assert(text.includes("eval-up1"), "prints the minted job id");
@@ -5792,6 +5852,7 @@ async function testUploadVerb() {
     );
     assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
   } finally {
+    await server.close();
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
   }
@@ -5800,6 +5861,7 @@ async function testUploadVerb() {
 async function testUploadVerbJsonAndGate() {
   console.log("\n--- runCli: evolve upload --json, the dir gate, and usage errors ---");
   installMockFetch();
+  const server = await startUploadCaptureServer();
   const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-gate-"));
   const jobDir = join(dir, "job");
   try {
@@ -5824,20 +5886,27 @@ async function testUploadVerbJsonAndGate() {
       status: "COMPLETED",
       upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
     });
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploaded });
+    server.setReply(201, uploaded);
     const json = captureIO();
-    assertEqual(await runCli(["upload", jobDir, "--json", ...AUTH], json.io), 0, "--json exits 0");
+    assertEqual(
+      await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], json.io),
+      0,
+      "--json exits 0"
+    );
     const doc = JSON.parse(json.out[0]);
     assertEqual(doc.id, "eval-up2", "--json prints the job document");
     assertEqual(doc.upload.uploaded_at, "2026-08-28T10:00:00.000Z", "--json carries the provenance");
 
     // A typed refusal renders like every other API error, and --json wraps it.
-    setMockResponse("/api/jobs/upload", {
-      status: 400,
-      body: { error: { code: "not_a_job_dir", message: "Archive holds no result.json at its root" } },
+    server.setReply(400, {
+      error: { code: "not_a_job_dir", message: "Archive holds no result.json at its root" },
     });
     const refused = captureIO();
-    assertEqual(await runCli(["upload", jobDir, "--json", ...AUTH], refused.io), 1, "a typed refusal exits 1");
+    assertEqual(
+      await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], refused.io),
+      1,
+      "a typed refusal exits 1"
+    );
     assertEqual(
       JSON.parse(refused.out[0]).error.code,
       "not_a_job_dir",
@@ -5852,6 +5921,7 @@ async function testUploadVerbJsonAndGate() {
     assertEqual(await runCli(["upload", "--help"], help.io), 0, "upload --help exits 0");
     assert(help.out.join("\n").includes("Usage: evolve upload <job_dir>"), "help documents evolve upload");
   } finally {
+    await server.close();
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
   }
