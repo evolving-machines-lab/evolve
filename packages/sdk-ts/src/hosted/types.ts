@@ -3546,6 +3546,11 @@ export const HOSTED_ERROR_CODES = [
   "dataset_name_taken",
   "dataset_in_use",
   "dataset_not_owned",
+  // The visibility flip while a version is still importing (409): the import
+  // decides which registry its images land in from the dataset's visibility
+  // at import start, so a mid-import flip is refused — `details` names the
+  // live version and its import status; flip again once the import settles.
+  "dataset_import_in_progress",
   "upstream_not_watchable",
   "no_active_version",
   "version_not_ready",

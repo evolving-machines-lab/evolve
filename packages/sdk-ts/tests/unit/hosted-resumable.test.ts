@@ -217,12 +217,14 @@ async function main(): Promise<void> {
   {
     const { server, sessions, url } = sessionServer({});
     await listen(server);
+    const progress: Array<[number, number]> = [];
     const res = await uploadArchiveResumable({
       baseUrl: url(),
       headers: { Authorization: "Bearer k" },
       file: { path: archivePath },
       fields: { name: "deep-swe", version: "1.1", org: undefined },
       chunkBytes: CHUNK,
+      onBytes: (sent, total) => progress.push([sent, total]),
     });
     assert(res.status === 202, "the finalize's 202 comes back");
     const body = (await res.json()) as Record<string, unknown>;
@@ -233,6 +235,15 @@ async function main(): Promise<void> {
     const reassembled = Buffer.concat(state.received);
     assert(sha256(reassembled) === sha256(archive), "reassembled bytes hash identical");
     assert(state.received.length === 4, "3 full chunks + the small tail");
+    // Upload progress on THIS transport too — above the threshold is exactly
+    // the multi-GB shape the progress feature exists for.
+    assert(progress.length === 4, "onBytes fired once per acknowledged chunk");
+    assert(progress.every(([, total]) => total === archive.length),
+      "totalBytes is the archive's size on every call");
+    assert(progress[progress.length - 1]?.[0] === archive.length,
+      "the last call reports sent == total");
+    assert(progress.every(([sent], i) => i === 0 || progress[i - 1][0] < sent),
+      "sent advances monotonically");
     server.close();
   }
 

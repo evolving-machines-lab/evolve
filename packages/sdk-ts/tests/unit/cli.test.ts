@@ -5645,6 +5645,56 @@ async function testDatasetPublishRunsPreflightFirst() {
 }
 
 /**
+ * Non-watch --json is ONE parseable JSON document — the CLI's own header
+ * law (NDJSON is reserved for --watch event streams). A passing pre-flight
+ * must not prepend a second document: scripts do JSON.parse(stdout).
+ */
+async function testDatasetPublishJsonIsOneDocument() {
+  console.log("\n--- runCli: dataset publish --json (non-watch) prints exactly ONE JSON document ---");
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-json1-"));
+  await mkdir(join(dir, "tasks", "ok-task"), { recursive: true });
+  await writeFile(join(dir, "tasks", "ok-task", "task.toml"), 'schema_version = "1.4"\n');
+  // A REAL server for BOTH doors: the pre-flight rides fetch, the archive
+  // upload rides node:http — one origin serves them both.
+  const { createServer } = await import("node:http");
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/api/datasets/preflight") {
+        res.statusCode = 200;
+        res.end(JSON.stringify(preflightBody([
+          { name: "ok-task", ok: true, task_key: "ok-task", schema_version: "1.4", providers: { e2b: { ok: true } } },
+        ])));
+        return;
+      }
+      res.statusCode = 202;
+      res.end(JSON.stringify({ id: "imp-9", status: "QUEUED", name: "b", version: "1", failure: null, warnings: [] }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  try {
+    const { io, out } = captureIO();
+    const code = await runCli(
+      [
+        "dataset", "publish", "--dir", dir, "--name", "b", "--version", "1",
+        "--json", "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`,
+      ],
+      io
+    );
+    assertEqual(code, 0, "the publish succeeds");
+    assertEqual(out.length, 1, "stdout is exactly one line — no preflight.ok document before it");
+    const parsed = JSON.parse(out.join("\n")) as Record<string, unknown>;
+    assertEqual(parsed.id, "imp-9", "the one document is the bare import — parseable by JSON.parse(stdout)");
+    assert(!("kind" in parsed), "no NDJSON kind wrapper outside --watch");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Solutions archiving disabled is a warning about the missing
  * reference-solution record, never a settling dead end — the same publish
  * settles READY like any other and exits 0.
@@ -7012,6 +7062,7 @@ async function main() {
   await testDatasetPublishWatch();
   await testDatasetCheck();
   await testDatasetPublishRunsPreflightFirst();
+  await testDatasetPublishJsonIsOneDocument();
   await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
   await testPartialPublishCliSurfaces();

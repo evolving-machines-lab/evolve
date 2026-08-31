@@ -145,6 +145,11 @@ HostedErrorCode = Literal[
     'dataset_name_taken',
     'dataset_in_use',
     'dataset_not_owned',
+    # The visibility flip while a version is still importing (409): the import
+    # decides which registry its images land in from the dataset's visibility
+    # at import start, so a mid-import flip is refused — details name the
+    # live version and its import status; flip again once the import settles.
+    'dataset_import_in_progress',
     'upstream_not_watchable',
     'no_active_version',
     'version_not_ready',
@@ -4080,6 +4085,7 @@ def _upload_resumable_sync(
     http: '_HostedHttp',
     archive_path: str,
     fields: Dict[str, Optional[str]],
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """The chunked transfer loop, on a worker thread — Harbor's resumable
     client re-expressed against the platform's upload sessions
@@ -4169,6 +4175,13 @@ def _upload_resumable_sync(
                 raise RuntimeError('resumable upload did not advance Upload-Offset')
             offset = next_offset
             attempts = 0
+            if on_bytes is not None:
+                # Client-side upload progress: the server-acknowledged offset
+                # IS the sent count. Fires from this uploader thread (the
+                # loop runs in ``asyncio.to_thread``) — the same
+                # thread-of-fire discipline as the single-request branch
+                # (``_multipart_file_body``); keep it cheap and thread-safe.
+                on_bytes(offset, size)
 
     # 3. Finalize — idempotent server-side, so a lost response is retried.
     last_error: Optional[BaseException] = None
@@ -4190,12 +4203,15 @@ async def _upload_archive_resumable(
     http: '_HostedHttp',
     archive_path: str,
     fields: Dict[str, Optional[str]],
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """Chunked-resumable counterpart of :func:`_upload_archive_file` for the
     dataset publish surface. The loop is consumed on a worker thread, never
     the event loop — the ``_upload_sync`` convention.
     """
-    return await asyncio.to_thread(_upload_resumable_sync, http, archive_path, fields)
+    return await asyncio.to_thread(
+        _upload_resumable_sync, http, archive_path, fields, on_bytes
+    )
 
 
 async def _upload_directory_archive(
@@ -4225,8 +4241,7 @@ async def _upload_directory_archive(
             # dropped link resumes from the last acknowledged chunk. Same 202
             # either way; the switch is invisible to callers, exactly as
             # Harbor's uploader switches transports (upload/storage.py:55-67).
-            return await _upload_archive_resumable(http, archive_path, fields)
-        return await _upload_archive_file(http, path, fields, archive_path, filename, method)
+            return await _upload_archive_resumable(http, archive_path, fields, on_bytes)
         return await _upload_archive_file(
             http, path, fields, archive_path, filename, method, on_bytes
         )
@@ -4630,10 +4645,6 @@ class DatasetsClient:
         itself, no server call. It fires per chunk FROM THE UPLOADER THREAD
         (the upload runs in ``asyncio.to_thread``), so keep it cheap and
         thread-safe, and throttle any rendering in the callback.
-
-        Provide EITHER a git source (``git_url`` + pinned ``git_ref``) OR a
-        local corpus ``directory`` (tarred + gzipped deterministically on the
-        client and uploaded). Returns immediately; poll with
 
         Provide EXACTLY ONE source: a git source (``git_url`` + pinned
         ``git_ref``), a local corpus ``directory`` (tarred + gzipped

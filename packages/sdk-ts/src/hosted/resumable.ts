@@ -61,6 +61,13 @@ export interface ResumableUploadPost {
   file: { path: string };
   /** Create-session metadata (name/version/org); undefined values omitted. */
   fields: Record<string, string | undefined>;
+  /**
+   * Client-side upload progress: called `(sentBytes, totalBytes)` after each
+   * server-ACKNOWLEDGED chunk — the served offset IS the sent count, so a
+   * resumed transfer reports the true position, never a re-count. Same
+   * signature as the single-request transport's onBytes (upload.ts).
+   */
+  onBytes?: (sentBytes: number, totalBytes: number) => void;
   /** Chunk-size override for tests that prove the loop without 6 MiB buffers. */
   chunkBytes?: number;
   /** Per-request timeout override, for tests. Production takes the default. */
@@ -278,6 +285,7 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
       }
       offset = served;
       attempts = 0;
+      post.onBytes?.(offset, size);
     }
 
     // 3. Finalize — idempotent server-side, so a lost response is retried.

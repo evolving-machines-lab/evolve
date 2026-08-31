@@ -22,6 +22,7 @@
     "dataset_name_taken",
     "dataset_in_use",
     "dataset_not_owned",
+    "dataset_import_in_progress",
     "upstream_not_watchable",
     "no_active_version",
     "version_not_ready",

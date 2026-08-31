@@ -4966,7 +4966,13 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
         return 1;
       }
       if (json) {
-        io.out(JSON.stringify({ kind: "preflight.ok", preflight: answer }));
+        // NDJSON is reserved for --watch streams (the header's law): there
+        // the passing pre-flight is one event among the others. Non-watch
+        // --json stays ONE parseable document — the import the publish
+        // answers below — so JSON.parse(stdout) always works.
+        if (inv.flags.watch === true) {
+          io.out(JSON.stringify({ kind: "preflight.ok", preflight: answer }));
+        }
       } else {
         for (const line of preflightLines(answer)) io.out(line);
       }

@@ -247,6 +247,9 @@ export type {
   PassAtKPoint,
   ProviderCapability,
   PreflightDatasetInput,
+  PreflightDeferredCheck,
+  PreflightManifestVerdict,
+  PreflightTaskVerdict,
   PublishDatasetInput,
   PublishDatasetOptions,
   RegradeRequest,
@@ -1565,6 +1568,7 @@ async function uploadDirectory(
           headers: { Authorization: `Bearer ${cfg.apiKey}` },
           file: { path: archive },
           fields: opts.fields,
+          ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
         });
         if (!res.ok) await throwApiError(res);
         return res;

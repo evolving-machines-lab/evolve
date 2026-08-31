@@ -498,6 +498,14 @@ export {
   type DatasetPatch,
   type PublishDatasetInput,
   type PublishDatasetOptions,
+  // The pre-flight answer and its parts — the Python package exports the
+  // same names from its root, and a caller must be able to name the answer
+  // type its preflight() returns.
+  type DatasetPreflight,
+  type PreflightDatasetInput,
+  type PreflightDeferredCheck,
+  type PreflightManifestVerdict,
+  type PreflightTaskVerdict,
   type DatasetSource,
   type DatasetImportStatus,
   type DatasetImportFailure,

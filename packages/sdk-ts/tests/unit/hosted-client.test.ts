@@ -1070,11 +1070,15 @@ async function testPublishDirectorySource() {
     await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
 
     const d = datasets({ apiKey: "test-key", baseUrl: server.base });
-    const imported = await d.publish({
-      source: { directory: dir },
-      name: "my-set",
-      version: "0.1",
-    });
+    const progress: Array<[number, number]> = [];
+    const imported = await d.publish(
+      {
+        source: { directory: dir },
+        name: "my-set",
+        version: "0.1",
+      },
+      { onUploadProgress: (sent, total) => progress.push([sent, total]) }
+    );
 
     const call = server.calls[server.calls.length - 1];
     // Metadata is named PARTS; the corpus is the `archive` part. The URL is bare.
@@ -1107,6 +1111,17 @@ async function testPublishDirectorySource() {
       { id: "imp-2", status: "QUEUED", name: "my-set", version: "0.1", failure: null, warnings: [], progress: null },
       "202 response mapped (id, status, name, version, failure, warnings, progress)"
     );
+
+    // onUploadProgress ACTUALLY fires — the byte-progress pin. The train
+    // merge once left the Python twin of this wiring dead with no test to
+    // notice; sent counts the archive part's bytes and ends at its size.
+    assert(progress.length > 0, "onUploadProgress fired");
+    assert(progress.every(([, total]) => total === body.length),
+      "totalBytes is the archive's size on every call");
+    assert(progress[progress.length - 1]?.[0] === body.length,
+      "the last call reports sent == total");
+    assert(progress.every(([sent], i) => i === 0 || progress[i - 1][0] <= sent),
+      "sent never decreases");
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
