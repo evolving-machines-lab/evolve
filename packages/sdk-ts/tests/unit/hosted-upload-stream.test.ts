@@ -25,16 +25,22 @@
  *   - an early refusal — the server answering and hanging up BEFORE reading
  *     the body, which the metadata-first grammar exists to allow — surfaces
  *     as that response, never as a broken-pipe crash or a hang;
- *   - a dead socket (no response at all) rejects with the transport error.
+ *   - a dead socket (no response at all) rejects with the transport error;
+ *   - the F1 wedge shape — the socket dying while the transport sits in
+ *     the file-read loop, so the death is fully processed before the
+ *     final write — settles within the bound instead of pending forever
+ *     (deterministic FIFO reproduction of the 12m55s hang).
  *
  * Usage:
  *   npm run test:unit:upload-stream
  *   npx tsx tests/unit/hosted-upload-stream.test.ts
  */
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -281,6 +287,92 @@ async function testDeadSocketRejects(fixture: string): Promise<void> {
   }
 }
 
+async function testDeadSocketSettlesMidStream(fixture: string): Promise<void> {
+  console.log("\n[4b] The socket dies mid-file — every await still settles (the F1 wedge shape)");
+  // Deterministic reproduction of the hang that wedged the commanded gate
+  // for 12m55s (a rare race in [4]; sampled with the event loop idle in
+  // uv__io_poll and no timer armed). The archive is a FIFO the test holds
+  // open, so the transport sits in the file-read loop while the server
+  // resets the connection and the client FULLY processes the socket death
+  // ('error', then 'close'). Only then does the file end and the transport
+  // issue its final write+end against the destroyed request — the window
+  // where node:http calls no completion callback it still owes, the one
+  // 'error' event has already fired, and a socket-inactivity timer armed
+  // via req.setTimeout has died with the socket. An unbounded transport
+  // pends here forever; a bounded one settles.
+  const fifoPath = join(fixture, "stalled.tar.gz");
+  execFileSync("mkfifo", [fifoPath]);
+  // O_RDWR opens a FIFO without blocking and counts as its writer: the
+  // transport's read stream opens cleanly, then waits — EOF arrives only
+  // when this descriptor closes.
+  const holdOpen = openSync(fifoPath, "r+");
+  let holdOpenClosed = false;
+  const releaseFifo = (): void => {
+    if (!holdOpenClosed) {
+      holdOpenClosed = true;
+      closeSync(holdOpen);
+    }
+  };
+
+  // A raw TCP server: reset the connection (RST — the hard kill, no FIN to
+  // soften it) the moment the request's first bytes arrive.
+  let clientGone!: () => void;
+  const clientClosed = new Promise<void>((resolve) => {
+    clientGone = resolve;
+  });
+  const server = createTcpServer((socket) => {
+    socket.once("data", () => socket.resetAndDestroy());
+    socket.once("close", clientGone);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+
+  try {
+    let outcome: "pending" | "resolved" | "rejected" = "pending";
+    let caught: unknown;
+    const attempt = postMultipartFile({
+      url: `http://127.0.0.1:${port}/api/skills`,
+      method: "POST",
+      headers: {},
+      fields: {},
+      file: { path: fifoPath, filename: "skill.tar.gz" },
+      timeoutMs: 1000,
+    }).then(
+      () => {
+        outcome = "resolved";
+      },
+      (err) => {
+        outcome = "rejected";
+        caught = err;
+      }
+    );
+
+    // The server-side socket is gone; give the client turns to process the
+    // RST (microseconds on loopback — 300 ms is the margin) so its 'error'
+    // and 'close' handling completes while the transport still sits in the
+    // file-read loop. Then end the file: the transport walks into the
+    // destroyed request.
+    await clientClosed;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    releaseFifo();
+
+    // The whole point: the call settles within its bound. 5 s is 5x the
+    // injected 1 s bound; an unbounded transport sits here forever.
+    await Promise.race([attempt, new Promise((resolve) => setTimeout(resolve, 5000))]);
+    assert(
+      outcome !== "pending",
+      "the mid-file dead socket settles within the bound — never a hang"
+    );
+    assert(
+      outcome === "rejected" && caught instanceof Error,
+      "and it settles by rejecting with a transport error"
+    );
+  } finally {
+    releaseFifo();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 async function testSilentServerTimesOutTyped(fixture: string): Promise<void> {
   console.log("\n[5b] A server that drains but never answers hits the bounded wait");
   const archivePath = join(fixture, "quiet.tar.gz");
@@ -350,6 +442,7 @@ async function main(): Promise<void> {
     await testPutMethod(fixture);
     await testEarlyRefusal(fixture);
     await testDeadSocketRejects(fixture);
+    await testDeadSocketSettlesMidStream(fixture);
     await testSilentServerTimesOutTyped(fixture);
     await testMissingFileRejects(fixture);
   } finally {
