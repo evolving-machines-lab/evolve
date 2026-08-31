@@ -3839,7 +3839,13 @@ def _upload_resumable_sync(
                 if attempts >= RESUMABLE_UPLOAD_MAX_ATTEMPTS:
                     raise
                 time.sleep(_resumable_backoff_sec(attempts))
-                offset = probe_offset()
+                try:
+                    offset = probe_offset()
+                except (urllib.error.URLError, TimeoutError, OSError):
+                    # The link is still down — the probe spends nothing but
+                    # this attempt; the next round re-probes (Harbor's outer
+                    # retry wraps its probes the same way, resumable.py:34-40).
+                    pass
                 continue
             next_offset = int(served) if served is not None else -1
             if next_offset <= offset:

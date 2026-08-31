@@ -191,7 +191,13 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
         attempts += 1;
         if (attempts >= RESUMABLE_UPLOAD_MAX_ATTEMPTS) throw transportError;
         await sleep(backoffMs(attempts));
-        offset = await probeOffset();
+        try {
+          offset = await probeOffset();
+        } catch {
+          // The link is still down — the probe spends nothing but this
+          // attempt; the next round re-probes (Harbor's outer retry wraps
+          // its probes the same way, resumable.py:34-40).
+        }
         continue;
       }
       if (response.status === 409) {
