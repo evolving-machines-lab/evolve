@@ -19,6 +19,7 @@ the message plus the stable machine-readable ``code``.
 """
 
 import asyncio
+import base64
 import gzip
 import hashlib
 import json
@@ -72,6 +73,16 @@ DOWNLOAD_TIMEOUT_SEC = 600
 # Mirrored by the TS SDK's UPLOAD_TIMEOUT_MS (packages/sdk-ts/src/hosted/
 # upload.ts) — the two SDKs hold ONE bound; change them together or not at all.
 UPLOAD_TIMEOUT_SEC = DOWNLOAD_TIMEOUT_SEC
+# Resumable uploads: above the threshold a dataset corpus rides the chunked
+# publish door (sequential verified chunks, dropped links resume from the last
+# acknowledged one) instead of one fragile request. Chunk size and attempt
+# budget are Harbor's own resumable client verbatim (REFERENCES/Harbor
+# src/harbor/storage/resumable.py:20-21); the higher threshold is recorded in
+# the spec (createDatasetUpload description). Mirrored by the TS SDK's
+# hosted/resumable.ts — the two SDKs hold ONE set of numbers.
+RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024
+RESUMABLE_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024
+RESUMABLE_UPLOAD_MAX_ATTEMPTS = 4
 META_TIMEOUT_SEC = 30
 SSE_SOCKET_TIMEOUT_SEC = 60
 
@@ -147,6 +158,15 @@ HostedErrorCode = Literal[
     # named task with its reason under the failed-tasks key).
     'task_not_found',
     'task_failed_to_build',
+    # Resumable corpus uploads (the chunked publish door publish() switches
+    # to automatically above the size threshold — _upload_archive_resumable).
+    'upload_session_not_found',
+    'upload_offset_mismatch',
+    'upload_chunk_digest_mismatch',
+    'upload_incomplete',
+    'upload_archive_digest_mismatch',
+    'upload_session_failed',
+    'too_many_concurrent_upload_chunks',
     'agent_not_found',
     'agent_name_taken',
     'agent_name_reserved',
@@ -4032,6 +4052,142 @@ async def _upload_archive_file(
     )
 
 
+def _file_sha256(path: str) -> str:
+    """sha256 (hex) of a whole file, streamed off disk — never held whole."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _resumable_backoff_sec(attempt: int) -> float:
+    """Harbor's backoff: 0.5 * 2^(attempt-1), capped at 4 s (resumable.py:129)."""
+    return min(0.5 * (2 ** (attempt - 1)), 4.0)
+
+
+def _upload_resumable_sync(
+    http: '_HostedHttp',
+    archive_path: str,
+    fields: Dict[str, Optional[str]],
+) -> Dict[str, Any]:
+    """The chunked transfer loop, on a worker thread — Harbor's resumable
+    client re-expressed against the platform's upload sessions
+    (REFERENCES/Harbor src/harbor/storage/resumable.py:106-149): strictly
+    sequential chunks, at most RESUMABLE_UPLOAD_MAX_ATTEMPTS transport
+    stumbles with exponential backoff, the offset re-read from the server
+    (HEAD) after every stumble and the file re-seeked there, a served offset
+    that fails to advance treated as a hard error, and the attempt budget
+    reset whenever a chunk lands. One chunk buffer lives at a time. Typed
+    refusals raise EvolveAPIError through the shared mapper; only transport
+    failure past the budget raises the transport error.
+    """
+    size = os.path.getsize(archive_path)
+    sha256 = _file_sha256(archive_path)
+    base = f'{http.base_url()}/api/datasets/publish/uploads'
+    auth = {'Authorization': f'Bearer {http.api_key()}', 'Accept': 'application/json'}
+
+    def request(url: str, method: str, headers: Dict[str, str], data: Optional[bytes] = None):
+        req = urllib.request.Request(url, data=data, headers={**auth, **headers}, method=method)
+        return _http.urlopen(req, timeout=UPLOAD_TIMEOUT_SEC)
+
+    # 1. Open the session (a refusal here raises typed; nothing transferred yet).
+    body = {'size': size, 'sha256': sha256}
+    body.update({k: v for k, v in fields.items() if v is not None})
+    try:
+        with request(base, 'POST', {'Content-Type': 'application/json'},
+                     json.dumps(body).encode('utf-8')) as response:
+            session = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        _raise_api_error(exc)
+    session_url = f'{base}/{session["id"]}'
+
+    def probe_offset() -> int:
+        with request(session_url, 'HEAD', {}) as response:
+            offset_header = response.headers.get('Upload-Offset')
+        if offset_header is None:
+            raise RuntimeError('upload session probe did not return Upload-Offset')
+        return int(offset_header)
+
+    # 2. The sequential chunk loop.
+    with open(archive_path, 'rb') as handle:
+        offset = 0
+        attempts = 0
+        while offset < size:
+            handle.seek(offset)
+            chunk = handle.read(RESUMABLE_UPLOAD_CHUNK_BYTES)
+            chunk_digest = hashlib.sha256(chunk).digest()
+            headers = {
+                'Content-Type': 'application/offset+octet-stream',
+                'Upload-Offset': str(offset),
+                # TUS's checksum-extension spelling; required by our door.
+                'Upload-Checksum': f'sha256 {base64.b64encode(chunk_digest).decode()}',
+            }
+            try:
+                with request(session_url, 'PATCH', headers, chunk) as response:
+                    served = response.headers.get('Upload-Offset')
+            except urllib.error.HTTPError as exc:
+                if exc.code == 409:
+                    # A racer advanced the session, or our view is stale — the
+                    # answer is the server's offset, never a guess.
+                    exc.read()
+                    attempts += 1
+                    if attempts >= RESUMABLE_UPLOAD_MAX_ATTEMPTS:
+                        _raise_api_error(exc)
+                    offset = probe_offset()
+                    continue
+                _raise_api_error(exc)
+            except (urllib.error.URLError, TimeoutError, OSError):
+                # The dropped-link seam: bounded attempts, Harbor's backoff,
+                # then the offset re-read — acknowledged chunks stay sent.
+                attempts += 1
+                if attempts >= RESUMABLE_UPLOAD_MAX_ATTEMPTS:
+                    raise
+                time.sleep(_resumable_backoff_sec(attempts))
+                try:
+                    offset = probe_offset()
+                except (urllib.error.URLError, TimeoutError, OSError):
+                    # The link is still down — the probe spends nothing but
+                    # this attempt; the next round re-probes (Harbor's outer
+                    # retry wraps its probes the same way, resumable.py:34-40).
+                    pass
+                continue
+            next_offset = int(served) if served is not None else -1
+            if next_offset <= offset:
+                # Harbor's own hard error: an offset that does not advance
+                # would loop forever (resumable.py:143-146).
+                raise RuntimeError('resumable upload did not advance Upload-Offset')
+            offset = next_offset
+            attempts = 0
+
+    # 3. Finalize — idempotent server-side, so a lost response is retried.
+    last_error: Optional[BaseException] = None
+    for attempt in range(1, RESUMABLE_UPLOAD_MAX_ATTEMPTS + 1):
+        try:
+            with request(f'{session_url}/complete', 'POST', {}) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as exc:
+            _raise_api_error(exc)
+        except (urllib.error.URLError, TimeoutError, OSError) as transport_error:
+            last_error = transport_error
+            if attempt < RESUMABLE_UPLOAD_MAX_ATTEMPTS:
+                time.sleep(_resumable_backoff_sec(attempt))
+    assert last_error is not None
+    raise last_error
+
+
+async def _upload_archive_resumable(
+    http: '_HostedHttp',
+    archive_path: str,
+    fields: Dict[str, Optional[str]],
+) -> Dict[str, Any]:
+    """Chunked-resumable counterpart of :func:`_upload_archive_file` for the
+    dataset publish surface. The loop is consumed on a worker thread, never
+    the event loop — the ``_upload_sync`` convention.
+    """
+    return await asyncio.to_thread(_upload_resumable_sync, http, archive_path, fields)
+
+
 async def _upload_directory_archive(
     http: '_HostedHttp',
     path: str,
@@ -4039,6 +4195,7 @@ async def _upload_directory_archive(
     directory: str,
     filename: str,
     method: str = 'POST',
+    resumable_over: Optional[int] = None,
     on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """Tar + gzip ``directory`` into a temp file and stream it to ``path`` —
@@ -4050,6 +4207,16 @@ async def _upload_directory_archive(
     try:
         archive_path = os.path.join(tmp, filename)
         await asyncio.to_thread(_tar_gzip_directory_to_file, directory, archive_path)
+        if (
+            resumable_over is not None
+            and os.path.getsize(archive_path) > resumable_over
+        ):
+            # Big corpora ride the resumable chunked door automatically — a
+            # dropped link resumes from the last acknowledged chunk. Same 202
+            # either way; the switch is invisible to callers, exactly as
+            # Harbor's uploader switches transports (upload/storage.py:55-67).
+            return await _upload_archive_resumable(http, archive_path, fields)
+        return await _upload_archive_file(http, path, fields, archive_path, filename, method)
         return await _upload_archive_file(
             http, path, fields, archive_path, filename, method, on_bytes
         )
@@ -4509,6 +4676,7 @@ class DatasetsClient:
                 {'name': name, 'version': version},
                 directory,
                 'corpus.tar.gz',
+                resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
                 on_bytes=on_upload_progress,
             )
             return _map_dataset_import(raw)

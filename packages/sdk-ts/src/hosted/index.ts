@@ -4,6 +4,7 @@ import { basename, join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
+import { RESUMABLE_UPLOAD_THRESHOLD_BYTES } from "./resumable";
 import type {
   ActiveDataset,
   Agent,
@@ -1533,16 +1534,42 @@ async function uploadDirectory(
     filename: string;
     /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
     onBytes?: (sentBytes: number, totalBytes: number) => void;
+    /**
+     * When set, an archive OVER this many bytes rides the resumable chunked
+     * door instead of one single-request POST (hosted/resumable.ts — a
+     * dropped link then resumes from the last acknowledged chunk instead of
+     * restarting a multi-GB transfer from zero). Only the dataset publish
+     * surface has that door; the callers without one leave this unset. The
+     * switch is automatic, exactly as Harbor's uploader switches
+     * (REFERENCES/Harbor src/harbor/upload/storage.py:55-67) — never a
+     * caller-facing flag.
+     */
+    resumableThreshold?: number;
   }
 ): Promise<Response> {
   const { tarGzipDirectoryToFile } = await import("./tar");
   const { mkdtemp, rm } = await import("node:fs/promises");
+  const { stat } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const tmp = await mkdtemp(join(tmpdir(), "evolve-upload-"));
   try {
     const archive = join(tmp, opts.filename);
     await tarGzipDirectoryToFile(opts.directory, archive);
+    if (opts.resumableThreshold !== undefined) {
+      const { size } = await stat(archive);
+      if (size > opts.resumableThreshold) {
+        const { uploadArchiveResumable } = await import("./resumable");
+        const res = await uploadArchiveResumable({
+          baseUrl: cfg.baseUrl,
+          headers: { Authorization: `Bearer ${cfg.apiKey}` },
+          file: { path: archive },
+          fields: opts.fields,
+        });
+        if (!res.ok) await throwApiError(res);
+        return res;
+      }
+    }
     return await requestUpload(cfg, path, {
       method: opts.method,
       fields: opts.fields,
@@ -2144,6 +2171,10 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           ...(options?.onUploadProgress !== undefined
             ? { onBytes: options.onUploadProgress }
             : {}),
+          // Big corpora ride the resumable chunked door automatically — a
+          // dropped link resumes from the last acknowledged chunk. Same 202
+          // either way; the switch is invisible to callers.
+          resumableThreshold: RESUMABLE_UPLOAD_THRESHOLD_BYTES,
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }

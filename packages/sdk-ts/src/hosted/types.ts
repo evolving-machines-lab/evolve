@@ -3513,6 +3513,15 @@ export const HOSTED_ERROR_CODES = [
   // every named one with its reason).
   "task_not_found",
   "task_failed_to_build",
+  // Resumable corpus uploads (the chunked publish door datasets().publish()
+  // switches to automatically above the threshold — hosted/resumable.ts).
+  "upload_session_not_found",
+  "upload_offset_mismatch",
+  "upload_chunk_digest_mismatch",
+  "upload_incomplete",
+  "upload_archive_digest_mismatch",
+  "upload_session_failed",
+  "too_many_concurrent_upload_chunks",
   "agent_not_found",
   "agent_name_taken",
   "agent_name_reserved",
