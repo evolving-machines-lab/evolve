@@ -139,6 +139,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   agents,
+  analyses,
   datasets,
   jobs,
   skills,
@@ -4693,6 +4694,263 @@ async function testTrialArtifact() {
   }
 }
 
+// =============================================================================
+// ANALYSES TESTS (the traces-feed doors — deliberately off-contract)
+// =============================================================================
+
+/** The verdict object as the feed's ?what=analysis door serves it. */
+function fixtureAnalysisVerdict(): Record<string, unknown> {
+  return {
+    id: "an-1",
+    status: "failed",
+    model_name: "glm-5.3-flash",
+    rubric: { criteria: [{ name: "reward_hacking", description: "d", guidance: "g" }] },
+    summary: null,
+    checks: null,
+    estimated_cost_usd: 0.0366,
+    usage: {
+      provisional: true,
+      spent_usd: 0.0366,
+      input_tokens: 960596,
+      cached_input_tokens: 912640,
+      output_tokens: 77018,
+      as_of: "2026-08-30T22:24:22.619Z",
+    },
+    failure: { phase: "artifact_read", message: "MISSING /app/analysis.json" },
+    created_at: "2026-08-30T21:50:09.010Z",
+    finished_at: "2026-08-30T22:24:22.619Z",
+  };
+}
+
+async function testAnalysisGet() {
+  console.log("\n--- analyses().get() reads the verdict off the feed's ?what=analysis door ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: fixtureAnalysisVerdict() },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    const verdict = await a.get("an-1");
+    assertEqual(verdict.id, "an-1", "maps the analysis id");
+    assertEqual(verdict.status, "failed", "wire status rides verbatim (lowercase vocabulary)");
+    assertEqual(verdict.model_name, "glm-5.3-flash", "model rides verbatim");
+    assertEqual(verdict.estimated_cost_usd, 0.0366, "the analyzer's own metered figure rides verbatim");
+    assertEqual(
+      verdict.usage,
+      {
+        provisional: true,
+        spent_usd: 0.0366,
+        input_tokens: 960596,
+        cached_input_tokens: 912640,
+        output_tokens: 77018,
+        as_of: "2026-08-30T22:24:22.619Z",
+      },
+      "usage goes through the one-home reading rule"
+    );
+    assertEqual(
+      verdict.failure,
+      { phase: "artifact_read", message: "MISSING /app/analysis.json" },
+      "a failed analysis carries its typed failure"
+    );
+    assert(
+      fetchCalls[0].url === `${BASE}/api/traces/trials/an-1/artifacts?what=analysis`,
+      "one GET on the feed's artifacts door"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisGetMalformedFailsClosed() {
+  console.log("\n--- analyses().get() fails closed on a body with no readable verdict ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-x/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: "not-an-object" },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await a.get("an-x");
+    } catch (e) {
+      threw = true;
+      assert(
+        e instanceof Error && e.message.includes("an-x"),
+        "the refusal names the id — never a fabricated empty verdict"
+      );
+    }
+    assert(threw, "malformed verdict throws instead of inventing an object");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisTranscript() {
+  console.log("\n--- analyses().transcript() maps the feed envelope; seq/type synthesized ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-1/events?since=2", {
+      status: 200,
+      body: {
+        session: {
+          id: "an-1",
+          tag: "roy-polymorph-cn",
+          provider: "daytona",
+          sandboxId: "box-1",
+          agent: "claude",
+          model: "glm-5.3-flash",
+          isEnded: true,
+          type: "trial",
+          kind: "analysis",
+          analyzedTrialId: "trial-9",
+          status: "FAILED",
+          jobId: "job-7",
+        },
+        // The feed serves BARE parsed events (the rows' `data` verbatim,
+        // no seq/type wrapper) — the SDK synthesizes both.
+        events: [
+          { update: { sessionUpdate: "tool_call", title: "Read" } },
+          { _prompt: { text: "You are analyzing an agent trial run." } },
+        ],
+        total: 4,
+        traceSource: "db",
+      },
+    });
+    setMockResponse("/api/traces/trials/an-1/events", {
+      status: 200,
+      body: {
+        session: { id: "an-1", kind: "analysis", analyzedTrialId: "trial-9" },
+        events: [{ update: { sessionUpdate: "agent_message_chunk" } }],
+        total: 1,
+        traceSource: "db",
+      },
+    });
+
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    const t = await a.transcript("an-1", { since: 2 });
+    assertEqual(t.id, "an-1", "id maps");
+    assertEqual(t.analyzed_trial_id, "trial-9", "the walk back to the analyzed trial maps");
+    assertEqual(t.job_id, "job-7", "job id maps");
+    assertEqual(t.task_name, "roy-polymorph-cn", "the task key maps (the envelope's tag)");
+    assertEqual(t.model_name, "glm-5.3-flash", "model maps");
+    assertEqual(t.sandbox_provider, "daytona", "provider maps");
+    assertEqual(t.sandbox_id, "box-1", "the ANALYZER's own box maps");
+    assertEqual(t.is_ended, true, "is_ended maps");
+    assertEqual(t.total, 4, "total is the feed's own count of ALL rows");
+    assertEqual(
+      t.events,
+      [
+        { seq: 2, type: "tool_call", data: { update: { sessionUpdate: "tool_call", title: "Read" } } },
+        { seq: 3, type: "unknown", data: { _prompt: { text: "You are analyzing an agent trial run." } } },
+      ],
+      "seqs are since+index (dense-from-0 law); type is the viewer's own extraction, 'unknown' otherwise"
+    );
+    assert(
+      fetchCalls[0].url === `${BASE}/api/traces/trials/an-1/events?since=2`,
+      "since rides the wire as the feed's own parameter"
+    );
+
+    const whole = await a.transcript("an-1");
+    assertEqual(whole.events[0].seq, 0, "no since = the whole transcript, seqs from 0");
+    assert(
+      fetchCalls[1].url === `${BASE}/api/traces/trials/an-1/events`,
+      "omitted since sends no parameter"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisTranscriptRefusesOtherSpecies() {
+  console.log("\n--- analyses().transcript() refuses an id the feed resolves to another species ---");
+  installMockFetch();
+  try {
+    // The feed resolves trial ids first (the route's resolution order); a
+    // trial envelope carries NO kind, a regrade kind: 'regrade'. Both must
+    // refuse typed rather than hand back the wrong species' transcript.
+    setMockResponse("/api/traces/trials/trial-1/events", {
+      status: 200,
+      body: { session: { id: "trial-1", type: "trial" }, events: [{}], total: 1, traceSource: "db" },
+    });
+    setMockResponse("/api/traces/trials/rr-1/events", {
+      status: 200,
+      body: { session: { id: "rr-1", type: "trial", kind: "regrade" }, events: [], total: 0, traceSource: "db" },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    for (const id of ["trial-1", "rr-1"]) {
+      let threw = false;
+      try {
+        await a.transcript(id);
+      } catch (e) {
+        threw = true;
+        assert(
+          e instanceof Error && e.message.includes(id) && e.message.includes("not an analysis"),
+          `${id}: the refusal names the id and the reason`
+        );
+      }
+      assert(threw, `${id}: wrong species refuses instead of answering with its transcript`);
+    }
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisTranscriptSinceValidation() {
+  console.log("\n--- analyses().transcript() refuses a non-integer since at the keyboard ---");
+  installMockFetch();
+  try {
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    for (const bad of [-1, 1.5, Number.NaN]) {
+      let threw = false;
+      try {
+        await a.transcript("an-1", { since: bad });
+      } catch (e) {
+        threw = true;
+        assert(e instanceof Error && !(e instanceof EvolveApiError), `since=${bad} refuses client-side`);
+      }
+      assert(threw, `since=${bad} is refused (the seq synthesis would lie otherwise)`);
+    }
+    assertEqual(fetchCalls.length, 0, "no request is spent on an invalid since");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisArtifact() {
+  console.log("\n--- analyses().artifact() reads the feed's stored selectors; null = never stored ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=trace-stdout", {
+      status: 200,
+      body: { log: "analyzer stdout" },
+    });
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=agent-home", {
+      status: 200,
+      body: { files: { "/root/.claude/session.jsonl": "{}" } },
+    });
+    setMockResponse("/api/traces/trials/an-2/artifacts?what=trace-stderr", {
+      status: 200,
+      body: { log: null },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    assertEqual(await a.artifact("an-1", "trace-stdout"), "analyzer stdout", "log selectors answer the text");
+    assertEqual(
+      await a.artifact("an-1", "agent-home"),
+      { "/root/.claude/session.jsonl": "{}" },
+      "agent-home answers the sandbox-path → text map"
+    );
+    assertEqual(
+      await a.artifact("an-2", "trace-stderr"),
+      null,
+      "null = never stored — a normal answer, not an error"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testStopTrials() {
   console.log("\n--- trials().stop() kills selected trials and reports every id once ---");
   installMockFetch();
@@ -5560,6 +5818,12 @@ async function main() {
   await testTraceEventsIterator();
   await testInspectionSurface();
   await testTrialArtifact();
+  await testAnalysisGet();
+  await testAnalysisGetMalformedFailsClosed();
+  await testAnalysisTranscript();
+  await testAnalysisTranscriptRefusesOtherSpecies();
+  await testAnalysisTranscriptSinceValidation();
+  await testAnalysisArtifact();
   await testStopTrials();
   await testCompare();
   await testCompareBadIdsError();

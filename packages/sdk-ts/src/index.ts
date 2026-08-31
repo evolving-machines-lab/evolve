@@ -375,6 +375,7 @@ export {
 
 export {
   agents,
+  analyses,
   auth,
   datasets,
   jobs,
@@ -383,6 +384,7 @@ export {
   hosted,
   meta,
   AGENT_EFFORT_SUPPORT_VALUES,
+  ANALYSIS_ARTIFACT_STREAMS,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   TRIAL_ARTIFACT_STREAMS,
@@ -414,6 +416,7 @@ export {
   type AgentsClient,
   type JobsClient,
   type TrialsClient,
+  type AnalysesClient,
   type AuthClient,
   type AuthStatus,
   type ApiKey,
@@ -528,11 +531,19 @@ export {
   type TrialUploadProvenance,
   type JobDeleteResult,
   // Remote inspection: job-wide grep, the per-trial file tree, and the
-  // client-side Harbor-tree assembly behind trial/job download.
+  // client-side Harbor-tree assembly behind trial/analysis/job download.
+  analysisEvolveRecord,
+  assembleAnalysisTree,
   assembleTrialTree,
   jobEvolveRecord,
   trialEvolveRecord,
+  type AnalysisTreeParts,
   type TrialTreeParts,
+  // Analysis runs off the traces feed (deliberately off-contract — see
+  // AnalysesClient): the verdict, the analyzer's transcript, its artifacts.
+  type AnalysisArtifactStream,
+  type AnalysisTranscript,
+  type AnalysisTranscriptOptions,
   type GrepJobOptions,
   type JobGrepGroup,
   type JobGrepPage,

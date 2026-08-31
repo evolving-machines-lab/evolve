@@ -17,6 +17,10 @@ import type {
   AgentSource,
   AgentUpsertInput,
   AgentsClient,
+  AnalysesClient,
+  AnalysisArtifactStream,
+  AnalysisTranscript,
+  AnalysisTranscriptOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
   AttemptPhase,
@@ -125,6 +129,7 @@ import type {
 // Re-exported from the hosted barrel so the package root can hand them on.
 export {
   AGENT_EFFORT_SUPPORT_VALUES,
+  ANALYSIS_ARTIFACT_STREAMS,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   TRIAL_ARTIFACT_STREAMS,
@@ -151,8 +156,12 @@ export type {
   AgentSourceInput,
   AgentUpsertInput,
   AgentsClient,
+  AnalysesClient,
+  AnalysisArtifactStream,
   AnalysisCheck,
   AnalysisFailure,
+  AnalysisTranscript,
+  AnalysisTranscriptOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
   ApiKey,
@@ -290,13 +299,16 @@ import {
 } from "./types";
 
 // The client-side Harbor-tree assembly behind `evolve trial download` /
-// `evolve job download` — pure functions, re-exported so callers can
-// materialize the same tree the CLI writes.
+// `evolve analysis download` / `evolve job download` — pure functions,
+// re-exported so callers can materialize the same trees the CLI writes.
 export {
+  analysisEvolveRecord,
+  assembleAnalysisTree,
   assembleTrialTree,
   jobEvolveRecord,
   trialEvolveRecord,
   visibleHomeTree,
+  type AnalysisTreeParts,
   type TrialTreeParts,
 } from "./trial-tree";
 
@@ -2942,6 +2954,143 @@ export function trials(config?: HostedClientConfig): TrialsClient {
 }
 
 // =============================================================================
+// ANALYSES CLIENT (globally addressable analyzer runs)
+// =============================================================================
+
+/**
+ * The one event-type law of the traces feed, mirrored: the viewer names an
+ * event by its ACP `update.sessionUpdate` string and calls everything else
+ * "unknown" (swarm_dashboard lib/trace-events.ts traceEventType). The feed
+ * serves the stored payloads bare — unlike /api/trials/{id}/trace, which
+ * stamps `type` server-side through that same function — so this client
+ * applies the identical reading to keep one vocabulary across both doors.
+ */
+function feedEventType(data: unknown): string {
+  const update = (data as { update?: { sessionUpdate?: unknown } } | null)?.update;
+  return typeof update?.sessionUpdate === "string" ? update.sessionUpdate : "unknown";
+}
+
+/**
+ * Create an AnalysesClient. An analysis id is globally addressable, exactly
+ * like a trial's; the transcript carries `analyzed_trial_id` and `job_id` as
+ * the reverse pointers.
+ *
+ * DELIBERATELY OFF-CONTRACT — the reads ride the dashboard's traces feed
+ * (`/api/traces/trials/{id}/events`, `…/artifacts`), which spec/openapi.yaml
+ * deliberately omits: `traces` is not a contract prefix in the platform's
+ * drift gate (swarm_dashboard __tests__/api/spec-drift-gate.test.ts
+ * CONTRACT_PREFIXES), the same viewer-plane precedent that keeps the
+ * dashboard's own session routes out of the spec. The feed authenticates
+ * Bearer API keys through the same dual-auth door as every contract route
+ * (swarm_dashboard lib/auth-dual.ts authenticateRequest), so no server
+ * change is involved — see AnalysesClient in ./types for the full note.
+ *
+ * Requires EVOLVE_API_KEY (or { apiKey } in config).
+ */
+export function analyses(config?: HostedClientConfig): AnalysesClient {
+  const cfg = resolveConfig("analyses", config);
+
+  async function getArtifact(
+    analysisId: string,
+    stream: Exclude<AnalysisArtifactStream, "agent-home">
+  ): Promise<string | null>;
+  async function getArtifact(
+    analysisId: string,
+    stream: "agent-home"
+  ): Promise<Record<string, string> | null>;
+  async function getArtifact(
+    analysisId: string,
+    stream: AnalysisArtifactStream
+  ): Promise<string | Record<string, string> | null> {
+    const res = await request(
+      cfg,
+      `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=${stream}`
+    );
+    const body = (await res.json()) as { log?: string | null; files?: Record<string, string> | null };
+    return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
+  }
+
+  return {
+    async get(analysisId: string): Promise<TrialAnalysis> {
+      // The feed's own verdict door: ?what=analysis answers { analysis } —
+      // the wire's TrialAnalysis for EVERY analysis, not only completed ones
+      // (the same document its &format=log form downloads as Harbor's
+      // analysis.json). A trial id refuses typed server-side ("analysis.json
+      // belongs to an analysis run"), so the wrong species never answers.
+      const res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=analysis`
+      );
+      const body = (await res.json()) as Record<string, unknown>;
+      const verdict = mapTrialAnalysis(body.analysis);
+      if (verdict === null) {
+        // mapTrialAnalysis reads malformed as "never analyzed" for the
+        // OPTIONAL Trial.analysis slot; here the verdict IS the answer, so
+        // absence fails closed instead of fabricating an empty object.
+        throw new Error(`The analysis feed served no readable verdict object for "${analysisId}"`);
+      }
+      return verdict;
+    },
+
+    async transcript(
+      analysisId: string,
+      options?: AnalysisTranscriptOptions
+    ): Promise<AnalysisTranscript> {
+      const since = options?.since;
+      if (since !== undefined && (!Number.isInteger(since) || since < 0)) {
+        // Refused at the keyboard: the feed would parseInt a fraction into a
+        // different position and the synthesized seqs below would lie.
+        throw new Error(`transcript() since must be a non-negative integer, got ${since}`);
+      }
+      const res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(analysisId)}/events` +
+          (since !== undefined ? `?since=${since}` : "")
+      );
+      const raw = (await res.json()) as Record<string, unknown>;
+      const session = (raw.session ?? {}) as Record<string, unknown>;
+      // THE SPECIES GATE. The feed resolves trial ids first (its resolution
+      // order), and a trial envelope carries no `kind` while a regrade says
+      // 'regrade' — either way these are not the analyzer's events, and
+      // handing them back would be the wrong run's transcript.
+      if (session.kind !== "analysis") {
+        const species = typeof session.kind === "string" ? session.kind : "trial";
+        throw new Error(
+          `"${analysisId}" is not an analysis run (the feed resolves it as a ${species}) — ` +
+            `for a trial's trace use trials()`
+        );
+      }
+      const base = since ?? 0;
+      const events = (Array.isArray(raw.events) ? raw.events : []) as unknown[];
+      return {
+        id: typeof session.id === "string" ? session.id : analysisId,
+        analyzed_trial_id:
+          typeof session.analyzedTrialId === "string" ? session.analyzedTrialId : null,
+        job_id: typeof session.jobId === "string" ? session.jobId : null,
+        task_name: typeof session.tag === "string" ? session.tag : null,
+        model_name: typeof session.model === "string" ? session.model : null,
+        sandbox_provider: typeof session.provider === "string" ? session.provider : null,
+        sandbox_id: typeof session.sandboxId === "string" ? session.sandboxId : null,
+        is_ended: session.isEnded === true,
+        total: typeof raw.total === "number" ? raw.total : base + events.length,
+        // seq = since + index is exact, not an estimate: an analysis's rows
+        // are seq-allocated densely from 0 in arrival order (the feed's own
+        // stated law), and `since` means "everything from seq N on".
+        events: events.map((data, i) => ({
+          seq: base + i,
+          type: feedEventType(data),
+          data: (data && typeof data === "object" && !Array.isArray(data)
+            ? data
+            : {}) as Record<string, unknown>,
+        })),
+      };
+    },
+
+    artifact: getArtifact,
+  };
+}
+
+// =============================================================================
 // AUTH CLIENT
 // =============================================================================
 
@@ -3022,6 +3171,8 @@ export interface HostedEvolve {
   readonly skills: SkillsClient;
   /** Globally addressable trials: get, trace, artifact, regrade, stop. */
   readonly trials: TrialsClient;
+  /** Analysis runs: verdict, the analyzer's own transcript, stored artifacts. */
+  readonly analyses: AnalysesClient;
   /**
    * The capability document — every agent, provider, status, limit, and
    * error code the platform supports. Public: no API key required.
@@ -3057,6 +3208,7 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
   let agentsClient: AgentsClient | undefined;
   let jobsClient: JobsClient | undefined;
   let trialsClient: TrialsClient | undefined;
+  let analysesClient: AnalysesClient | undefined;
   let skillsClient: SkillsClient | undefined;
 
   return {
@@ -3071,6 +3223,9 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
     },
     get trials(): TrialsClient {
       return (trialsClient ??= trials(config));
+    },
+    get analyses(): AnalysesClient {
+      return (analysesClient ??= analyses(config));
     },
     get skills(): SkillsClient {
       return (skillsClient ??= skills(config));
