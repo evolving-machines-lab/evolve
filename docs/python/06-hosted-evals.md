@@ -695,6 +695,23 @@ Money stays separate by law: the analyzer runs on its own capped gateway key, an
 
 Two deviations from Harbor are deliberate and named. Harbor's `harbor analyze` is a client-side command over a local job directory; here the analysis runs **server-side** and lands on the trial body instead of a local `analysis.json` — same rubric grammar, same result shape, no download required. And the embedded `analyze` trigger has no Harbor equivalent — their analyze is always a manual follow-up; `analyze()` is that manual verb, the create-time switch is the extension.
 
+### Reading one analysis run
+
+An analysis is itself an agent run — the analyzer boots in its own sandbox, reads the trial's tree, and leaves its own record: a transcript, raw stdout/stderr, a session home, and the verdict document. That record is readable by analysis id (the id is on `trial.analysis['id']`, and `evolve trial show` prints it on the `analysis` row) — **through the TypeScript SDK's `analyses()` client and the CLI today; the Python SDK has no `analyses` client yet**. The CLI covers the gap without any Python code:
+
+```bash
+evolve analysis show <analysis-id>                       # the verdict document, human-rendered (--json = the wire object)
+evolve analysis trace <analysis-id> --since 200          # the analyzer's transcript; --since resumes
+evolve analysis download <analysis-id> -o analyses/      # the whole run: analysis.json + agent/ streams + evolve.json
+evolve analysis download <analysis-id> --stream trace-stdout   # or: analysis | trace-parsed | trace-stderr | agent-home
+```
+
+`show` serves the verdict for **every** analysis — a `failed` one carries its typed failure where `trial.analysis` on the trial body only ever shows the latest wave; earlier analyses stay readable here by their own ids. `trace` answers everything after `--since` in one read (there is no server-side paging); an id that names a trial or a regrade refuses with the species named rather than answering with the wrong run's events. The stream selectors speak the trial surface's null grammar — an unstored artifact is stated as absent, never printed empty — and an analysis run stores no verifier log and no ATIF trajectory, so those selectors are refused typed rather than answered null.
+
+One boundary is deliberate and recorded: these reads ride the dashboard's traces feed, which is not part of the OpenAPI contract (the feed is the trace viewer's own plane; the contract-side verdict remains `trial.analysis`).
+
+Saved whole, the run lands as `analysis.json` at the root (Harbor's name for the per-trial analysis artifact — their analyzer writes it into the analyzed trial's directory; here the tree IS the analysis run), the analyzer's streams and visible session home under `agent/`, and `evolve.json` carrying what Harbor's shape has no slot for: the analyzed trial/job/task, the analyzer's own sandbox, and its metered spend and tokens. Absent artifacts are absent files.
+
 ---
 
 ## Compare

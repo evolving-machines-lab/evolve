@@ -707,6 +707,36 @@ Money stays separate by law: the analyzer runs on its own capped gateway key, an
 
 Two deviations from Harbor are deliberate and named. Harbor's `harbor analyze` is a client-side command over a local job directory; here the analysis runs **server-side** and lands on the trial body instead of a local `analysis.json` — same rubric grammar, same result shape, no download required. And the embedded `analyze` trigger has no Harbor equivalent — their analyze is always a manual follow-up; `analyze()` is that manual verb, the create-time switch is the extension.
 
+### Reading one analysis run
+
+An analysis is itself an agent run — the analyzer boots in its own sandbox, reads the trial's tree, and leaves its own record: a transcript, raw stdout/stderr, a session home, and the verdict document. `analyses()` reads that record by analysis id (the id is on `trial.analysis.id`, and `evolve trial show` prints it on the `analysis` row):
+
+```typescript
+import { analyses } from "@evolvingmachines/sdk";
+
+const a = analyses();
+const verdict = await a.get(analysisId);          // the wire's TrialAnalysis — every status, typed failure included
+const t = await a.transcript(analysisId);         // the ANALYZER's own parsed events + identity facts
+console.log(t.analyzed_trial_id, t.total);        // the walk back to the analyzed trial; how many rows exist
+const later = await a.transcript(analysisId, { since: t.total });   // resume: everything after what you hold
+const stdout = await a.artifact(analysisId, "trace-stdout");        // "trace-stderr" | "agent-home" too; null = never stored
+```
+
+`get()` serves the verdict for **every** analysis — a `failed` one carries its typed failure where `Trial.analysis` on the trial body only ever shows the latest wave; earlier analyses stay readable here by their own ids. `transcript()` answers everything after `since` in one read (there is no server-side paging), with `total` counting all stored rows; an id that names a trial or a regrade refuses with the species named rather than answering with the wrong run's events. `artifact()` speaks the trial surface's null grammar: null = never stored, a normal answer. An analysis run stores no verifier log and no ATIF trajectory — those selectors are refused typed, never answered null.
+
+One boundary is deliberate and recorded: these reads ride the dashboard's traces feed, which is not part of the OpenAPI contract (the feed is the trace viewer's own plane; the contract-side verdict remains `Trial.analysis`). The surface is TypeScript-and-CLI today — the Python SDK has no `analyses` client yet.
+
+The CLI wraps the same three reads:
+
+```bash
+evolve analysis show <analysis-id>                       # the verdict document, human-rendered (--json = the wire object)
+evolve analysis trace <analysis-id> --since 200          # the analyzer's transcript; --since resumes
+evolve analysis download <analysis-id> -o analyses/      # the whole run: analysis.json + agent/ streams + evolve.json
+evolve analysis download <analysis-id> --stream trace-stdout   # or: analysis | trace-parsed | trace-stderr | agent-home
+```
+
+Saved whole, the run lands as `analysis.json` at the root (Harbor's name for the per-trial analysis artifact — their analyzer writes it into the analyzed trial's directory; here the tree IS the analysis run), the analyzer's streams and visible session home under `agent/`, and `evolve.json` carrying what Harbor's shape has no slot for: the analyzed trial/job/task, the analyzer's own sandbox, and its metered spend and tokens. Absent artifacts are absent files.
+
 ---
 
 ## Compare
@@ -821,11 +851,12 @@ evolve job delete cme12ab34 -y --json  # {"job_id":"…","trials_deleted":12,"an
 
 ## CLI
 
-The SDK ships an `evolve` binary — a thin shell over the five clients. The grammar is noun-verb: `evolve <noun> <verb>`. Three commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint — it prints the created record and the analyze hint, since an uploaded job is already terminal). Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
+The SDK ships an `evolve` binary — a thin shell over the SDK clients. The grammar is noun-verb: `evolve <noun> <verb>`. Three commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint — it prints the created record and the analyze hint, since an uploaded job is already terminal). Singular nouns are canonical; `job`, `trial`, `analysis` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
 job      start | list | show | trials | tasks | compare | cancel | delete | stop | resume | retry | regrade | download | grep
 trial    show | trace | download | retry | regrade | stop
+analysis show | trace | download
 dataset  list | show | publish | download | activate
 skill    list | upload | show | delete
 agent    list | show | add | remove
@@ -914,6 +945,10 @@ evolve trial download <trial-id> -o trials/
 evolve trial retry <trial-id>
 evolve trial regrade <trial-id>
 evolve trial stop <trial-id> [trial-id...]
+
+evolve analysis show <analysis-id>         # the analyzer's verdict document (id: trial show's analysis row)
+evolve analysis trace <analysis-id>        # the analyzer's own transcript; --since resumes
+evolve analysis download <analysis-id> --stream trace-stdout   # or save whole with -o
 
 evolve dataset list -q
 evolve dataset show deep-swe@1.1
