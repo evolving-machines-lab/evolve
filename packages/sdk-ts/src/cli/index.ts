@@ -7,11 +7,11 @@
  * `job start`'s flags), `analyze`, and `upload`, each spelled, helped and
  * dispatched as a command in its own right (Harbor registers all three the
  * same way, as top-level commands: their cli/main.py). Singular
- * nouns are canonical; `job`/`trial`/`dataset`/`skill` also answer to their
- * plurals as hidden aliases, but `agents` does NOT — that word is reserved for
- * the managed-agents CLI and refuses with the reason. The CLI speaks ONLY
- * through the SDK clients (datasets() / agents() / jobs() / trials() /
- * skills() / auth()) — no raw HTTP lives here.
+ * nouns are canonical; `job`/`trial`/`analysis`/`dataset`/`skill` also answer
+ * to their plurals as hidden aliases, but `agents` does NOT — that word is
+ * reserved for the managed-agents CLI and refuses with the reason. The CLI
+ * speaks ONLY through the SDK clients (datasets() / agents() / jobs() /
+ * trials() / analyses() / skills() / auth()) — no raw HTTP lives here.
  *
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
@@ -25,12 +25,15 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { LineCounter, type Tags, parse as parseYaml, parseDocument } from "yaml";
 import { parse as parseToml } from "smol-toml";
 import {
+  ANALYSIS_ARTIFACT_STREAMS,
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
   ImportSettleError,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
+  analyses,
+  assembleAnalysisTree,
   assembleTrialTree,
   auth,
   datasets,
@@ -51,6 +54,7 @@ import type {
   AgentArm,
   AgentArmInput,
   AgentInput,
+  AnalysisArtifactStream,
   AnalyzeConfigInput,
   AuthStatus,
   CompareResponse,
@@ -607,6 +611,69 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
+  // An analysis run is the ANALYZER's own agent run — its id comes from the
+  // `analysis` row of `trial show` (or `trial show --json` / the traces
+  // page). These verbs read the analyzer's side of the record: the verdict
+  // document, the analyzer's own transcript, and its stored artifacts —
+  // never the analyzed trial's, which keep their own verbs above.
+  analysis: {
+    summary: "Inspect and download trace-analysis runs",
+    commands: {
+      show: {
+        summary: "Show one analysis run in full (the verdict document)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        example: "evolve analysis show cma56ef12",
+      },
+      trace: {
+        summary: "Print the analyzer's own parsed transcript",
+        flags: {
+          since: {
+            kind: "number",
+            value: "<n>",
+            help:
+              "Skip the first N events — to resume, pass the count you already hold " +
+              "(seqs are dense from 0, so N is also the next seq)",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        example: "evolve analysis trace cma56ef12 --since 200",
+      },
+      download: {
+        summary:
+          "Save an analysis run whole (verdict + analyzer artifacts + evolve.json), or stream one artifact",
+        flags: {
+          "output-dir": {
+            kind: "string",
+            short: "o",
+            value: "<dir>",
+            help: "Directory to save under (default: analyses/); files land in <dir>/<analysis-id>/",
+          },
+          overwrite: { kind: "boolean", help: "Replace an existing <dir>/<analysis-id>/" },
+          stream: {
+            kind: "string",
+            value: "<artifact>",
+            help:
+              "Print ONE artifact to stdout instead of saving: analysis (the verdict " +
+              "document) | trace-parsed | trace-stdout | trace-stderr | agent-home",
+          },
+          since: {
+            kind: "number",
+            value: "<n>",
+            help: "With --stream trace-parsed: skip the first N events",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        example: "evolve analysis download cma56ef12 --stream trace-stdout",
+      },
+    },
+  },
   dataset: {
     summary: "Browse and publish the dataset catalog",
     commands: {
@@ -938,6 +1005,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
 const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
   trials: "trial",
+  analyses: "analysis",
   datasets: "dataset",
   skills: "skill",
   secret: "secrets",
@@ -3078,7 +3146,9 @@ export function trialDetailLines(run: Trial): string[] {
   // shows its typed failure, never a silent absence.
   if (run.analysis) {
     const analysis = run.analysis;
-    rows.push(["analysis", `${analysis.status} · ${analysis.model_name}`]);
+    // The id closes the loop to the analysis verbs: `evolve analysis
+    // show|trace|download <id>` read the ANALYZER's own side of this row.
+    rows.push(["analysis", `${analysis.status} · ${analysis.model_name} · ${analysis.id}`]);
     for (const [name, check] of Object.entries(analysis.checks ?? {})) {
       rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
     }
@@ -3093,6 +3163,43 @@ export function trialDetailLines(run: Trial): string[] {
   if (run.session_ref) rows.push(["session", run.session_ref]);
   if (run.started_at) rows.push(["started", run.started_at]);
   if (run.finished_at) rows.push(["finished", run.finished_at]);
+  return table(rows);
+}
+
+/**
+ * Full-detail rendering of one analysis run — evolve analysis show. The same
+ * facts `trial show` folds into its `analysis` rows, standing on their own:
+ * status and model, one row per criterion verdict, the summary, the
+ * analyzer's own metered spend (four decimals like every analyzer-spend
+ * figure — an analysis costs cents), and the typed failure when there is
+ * one. Exported for tests, like the other line renderers.
+ */
+export function analysisDetailLines(analysis: TrialAnalysis): string[] {
+  const criteria = analysis.rubric.criteria.length;
+  const rows: string[][] = [
+    ["analysis id", analysis.id],
+    ["status", analysis.status],
+    ["model", analysis.model_name],
+    ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
+  ];
+  for (const [name, check] of Object.entries(analysis.checks ?? {})) {
+    rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
+  }
+  if (analysis.summary) rows.push(["summary", analysis.summary]);
+  if (analysis.estimated_cost_usd !== null) {
+    rows.push(["spent", `$${analysis.estimated_cost_usd.toFixed(4)}`]);
+  }
+  // The token half of the analyzer's one-home usage reading — same row, same
+  // renderer, as a trial's.
+  if (analysis.usage) {
+    const tokens = fmtUsageTokens(analysis.usage);
+    if (tokens) rows.push(["tokens", tokens]);
+  }
+  if (analysis.failure) {
+    rows.push(["failure", `${analysis.failure.phase}: ${analysis.failure.message}`]);
+  }
+  rows.push(["created", analysis.created_at]);
+  if (analysis.finished_at) rows.push(["finished", analysis.finished_at]);
   return table(rows);
 }
 
@@ -4269,6 +4376,159 @@ async function cmdTrialStop(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+async function cmdAnalysisShow(inv: Invocation, io: CliIO): Promise<number> {
+  const analysis = await analyses(clientConfig(inv)).get(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(analysis));
+  } else {
+    for (const line of analysisDetailLines(analysis)) io.out(line);
+  }
+  return 0;
+}
+
+async function cmdAnalysisTrace(inv: Invocation, io: CliIO): Promise<number> {
+  const client = analyses(clientConfig(inv));
+  const json = inv.flags.json === true;
+  // One read answers everything after --since — the feed has no server-side
+  // paging or filters, so there is nothing here for --type/--grep/--tail to
+  // ride (client-side filtering would be opinion, not wire).
+  const since = inv.flags.since as number | undefined;
+  const transcript = await client.transcript(
+    inv.positionals[0],
+    since !== undefined ? { since } : undefined
+  );
+  for (const event of transcript.events) {
+    io.out(json ? JSON.stringify(event) : traceEventLine(event));
+  }
+  if (!json && transcript.events.length === 0) io.out("No trace events.");
+  return 0;
+}
+
+/**
+ * The five artifact names `analysis download --stream` accepts: the verdict
+ * document and the parsed transcript (each with its own richer verb), plus
+ * the SDK's own stored-selector list — no second copy of that vocabulary.
+ * `verifier`/`trace-atif`/`trajectory` are deliberately absent: an analysis
+ * never has them, and the server refuses them typed at its own door.
+ */
+const ANALYSIS_STREAM_ARTIFACTS = [
+  "analysis",
+  "trace-parsed",
+  ...ANALYSIS_ARTIFACT_STREAMS,
+] as const;
+type AnalysisStreamArtifact = (typeof ANALYSIS_STREAM_ARTIFACTS)[number];
+
+async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> {
+  const client = analyses(clientConfig(inv));
+  const analysisId = inv.positionals[0];
+  const json = inv.flags.json === true;
+  const stream = inv.flags.stream as string | undefined;
+
+  // The trial-download law verbatim: --stream prints to stdout, -o/--overwrite
+  // save to disk, mixing them is a usage error; --since pages only the parsed
+  // events, so anywhere else it would be an accepted-but-dead flag.
+  if (stream !== undefined && (inv.flags["output-dir"] !== undefined || inv.flags.overwrite === true)) {
+    throw new CliUsageError('"analysis download" takes EITHER --stream OR -o/--overwrite, not both');
+  }
+  if (
+    (stream === undefined || stream !== "trace-parsed") &&
+    inv.flags.since !== undefined
+  ) {
+    throw new CliUsageError("--since pages the parsed events; it applies only to --stream trace-parsed");
+  }
+
+  if (stream !== undefined) {
+    if (!ANALYSIS_STREAM_ARTIFACTS.includes(stream as AnalysisStreamArtifact)) {
+      throw new CliUsageError(`--stream must be one of: ${ANALYSIS_STREAM_ARTIFACTS.join(", ")}`);
+    }
+    if (stream === "analysis") {
+      // The verdict document itself — the same object the feed's
+      // &format=log form downloads under Harbor's analysis.json name.
+      // --json keeps the wire's {analysis} envelope, like {log} below.
+      const analysis = await client.get(analysisId);
+      io.out(json ? JSON.stringify({ analysis }) : JSON.stringify(analysis, null, 2));
+      return 0;
+    }
+    if (stream === "trace-parsed") {
+      const since = inv.flags.since as number | undefined;
+      const transcript = await client.transcript(
+        analysisId,
+        since !== undefined ? { since } : undefined
+      );
+      for (const event of transcript.events) {
+        io.out(json ? JSON.stringify(event) : traceEventLine(event));
+      }
+      if (!json && transcript.events.length === 0) io.out("No trace events.");
+      return 0;
+    }
+    if (stream === "agent-home") {
+      const files = await client.artifact(analysisId, stream);
+      if (files === null) {
+        io.out(json ? JSON.stringify({ files: null }) : `No ${stream} content was stored for this analysis.`);
+        return 0;
+      }
+      if (json) {
+        io.out(JSON.stringify({ files }));
+      } else {
+        for (const [path, content] of Object.entries(files)) {
+          io.out(`===== ${path} (${Buffer.byteLength(content, "utf8")} bytes) =====`);
+          io.out(content);
+        }
+      }
+      return 0;
+    }
+    const log = await client.artifact(
+      analysisId,
+      stream as Exclude<AnalysisArtifactStream, "agent-home">
+    );
+    if (log === null) {
+      io.out(json ? JSON.stringify({ log: null }) : `No ${stream} log was stored for this analysis.`);
+      return 0;
+    }
+    io.out(json ? JSON.stringify({ log }) : log);
+    return 0;
+  }
+
+  // Save mode: the run as the analysis tree under <output-dir>/<analysis-id>/
+  // — analysis.json at the run's root, the analyzer's streams and home under
+  // agent/, plus evolve.json (the platform record: the analyzed trial/job/
+  // task, the analyzer's box, its meter). The assembly is the SDK's
+  // (assembleAnalysisTree); absent artifacts are absent files.
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const targetDir = join((inv.flags["output-dir"] as string | undefined) ?? "analyses", analysisId);
+  if (existsSync(targetDir) && inv.flags.overwrite !== true) {
+    throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
+  }
+  // The verdict resolves FIRST: its door refuses a non-analysis id typed (a
+  // trial id answers "analysis.json belongs to an analysis run"), so the
+  // wrong species dies before any artifact byte is fetched.
+  const analysis = await client.get(analysisId);
+  const files = assembleAnalysisTree({
+    analysis,
+    transcript: await client.transcript(analysisId),
+    stdout: await client.artifact(analysisId, "trace-stdout"),
+    stderr: await client.artifact(analysisId, "trace-stderr"),
+    home: await client.artifact(analysisId, "agent-home"),
+    userId: await callerUserId(inv),
+  });
+  await mkdir(targetDir, { recursive: true });
+  const saved: string[] = [];
+  for (const path of Object.keys(files).sort()) {
+    const target = join(targetDir, ...path.split("/"));
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, files[path]);
+    saved.push(path);
+    if (!json) io.out(path);
+  }
+  if (json) {
+    io.out(JSON.stringify({ path: targetDir, saved }));
+  } else {
+    io.out(`Saved ${targetDir}`);
+  }
+  return 0;
+}
+
 function datasetDetailLines(b: Dataset): string[] {
   const lines = table([
     ["name", b.name],
@@ -4979,6 +5239,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "trial retry": cmdTrialRetry,
   "trial regrade": cmdTrialRegrade,
   "trial stop": cmdTrialStop,
+  "analysis show": cmdAnalysisShow,
+  "analysis trace": cmdAnalysisTrace,
+  "analysis download": cmdAnalysisDownload,
   "dataset list": cmdDatasetList,
   "dataset show": cmdDatasetShow,
   "dataset publish": cmdDatasetPublish,
