@@ -26,8 +26,10 @@ import math
 import os
 import re
 import secrets
+import shutil
 import stat
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -3389,9 +3391,21 @@ class _HostedHttp:
         )
 
     async def request_upload(
-        self, path: str, data: bytes, headers: Dict[str, str], method: str = 'POST'
+        self,
+        path: str,
+        data: 'Union[bytes, Iterator[bytes]]',
+        headers: Dict[str, str],
+        method: str = 'POST',
     ) -> Dict[str, Any]:
-        """Send raw bytes (e.g. a gzipped tarball) and parse the JSON reply.
+        """Send an upload body and parse the JSON reply.
+
+        ``data`` is either a small ready-made body (bytes) or an iterator of
+        chunks — urllib sends both, and an iterator is how an archive streams
+        off disk without ever being whole in memory. An iterator body MUST
+        arrive with its exact Content-Length in ``headers``
+        (``_multipart_file_body`` computes it), or urllib would fall back to
+        chunked transfer encoding. The iterator is consumed on the worker
+        thread this runs on, never the event loop.
 
         ``method`` exists for the agent upsert, which is the same body grammar
         at the same content type under PUT.
@@ -3399,7 +3413,11 @@ class _HostedHttp:
         return await asyncio.to_thread(self._upload_sync, path, data, headers, method)
 
     def _upload_sync(
-        self, path: str, data: bytes, headers: Dict[str, str], method: str = 'POST'
+        self,
+        path: str,
+        data: 'Union[bytes, Iterator[bytes]]',
+        headers: Dict[str, str],
+        method: str = 'POST',
     ) -> Dict[str, Any]:
         request_headers = {
             'Authorization': f'Bearer {self.api_key()}',
@@ -3558,18 +3576,14 @@ def _safe_download_filename(candidate: Optional[str], fallback: str) -> str:
     return name
 
 
-def _multipart_body(
-    fields: Dict[str, Optional[str]],
-    archive: Optional['tuple[str, bytes]'] = None,
-) -> 'tuple[bytes, str]':
-    """Build the multipart/form-data body both upload routes take.
-
-    Metadata goes in named parts FIRST, then the bytes as the ``archive`` part —
-    order matters, because the server refuses a name it will never accept
-    before receiving the upload, and it can only do that if the metadata
-    arrives first. Nothing rides the query string: a run command and a set of
-    environment values in a URL land in every access log and proxy buffer
-    between the caller and the server.
+def _multipart_body(fields: Dict[str, Optional[str]]) -> 'tuple[bytes, str]':
+    """Build the multipart/form-data body the metadata-only upload routes take
+    (an agent registered from an install script). Metadata is named parts —
+    nothing rides the query string, where a run command and a set of
+    environment values would land in every access log and proxy buffer
+    between the caller and the server. Anything carrying an ARCHIVE goes
+    through ``_multipart_file_body`` instead, which streams the file from
+    disk — archive bytes never enter a body built here.
     """
     boundary = f'----evolve{uuid.uuid4().hex}'
     parts: List[bytes] = []
@@ -3581,19 +3595,116 @@ def _multipart_body(
             + value.encode('utf-8')
             + b'\r\n'
         )
-    if archive is not None:
-        filename, data = archive
-        parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="archive"; '
-            f'filename="{filename}"\r\nContent-Type: application/gzip\r\n\r\n'.encode('utf-8')
-        )
-        parts.append(data)
-        parts.append(b'\r\n')
     parts.append(f'--{boundary}--\r\n'.encode('utf-8'))
     return b''.join(parts), f'multipart/form-data; boundary={boundary}'
 
 
-def _agent_upload_body(
+#: Read size for streaming an archive off disk — one buffer in memory at a time.
+_UPLOAD_READ_CHUNK = 1024 * 1024
+
+
+def _multipart_file_body(
+    fields: Dict[str, Optional[str]],
+    archive_path: str,
+    filename: str,
+) -> 'tuple[Iterator[bytes], str, int]':
+    """The multipart body every archive upload route sends, streamed.
+
+    Metadata goes in named parts FIRST, then the file as the ``archive`` part —
+    order matters, because the server refuses a name it will never accept
+    before receiving the upload, and it can only do that if the metadata
+    arrives first. The archive itself is YIELDED from disk a read buffer at a
+    time, never held whole; ``urllib`` sends an iterable body chunk by chunk
+    (urllib.request.Request: "The supported object types include bytes,
+    file-like objects, and iterables of bytes-like objects").
+
+    Returns ``(body_iterator, content_type, content_length)``. The exact
+    Content-Length matters: urllib only falls back to chunked transfer
+    encoding for an iterable "if no Content-Length nor Transfer-Encoding
+    header field has been provided", so stating the length keeps the request
+    identity-framed — no chunked encoding for a proxy to refuse. Field names
+    and filenames here are the SDK's own fixed literals, never caller data,
+    so no header escaping is needed — do not route arbitrary form fields
+    through this.
+    """
+    boundary = f'----evolve{uuid.uuid4().hex}'
+    head_parts: List[bytes] = []
+    for name, value in fields.items():
+        if value is None:
+            continue
+        head_parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode('utf-8')
+            + value.encode('utf-8')
+            + b'\r\n'
+        )
+    head_parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="archive"; '
+        f'filename="{filename}"\r\nContent-Type: application/gzip\r\n\r\n'.encode('utf-8')
+    )
+    head = b''.join(head_parts)
+    tail = f'\r\n--{boundary}--\r\n'.encode('utf-8')
+    size = os.path.getsize(archive_path)
+    # Opened HERE, eagerly, not inside the generator: the caller removes the
+    # archive's temp directory the moment the request returns, and an already-
+    # open handle keeps the bytes readable regardless (POSIX unlink
+    # semantics). A lazily-opening generator would race that cleanup.
+    handle = open(archive_path, 'rb')
+
+    def body() -> Iterator[bytes]:
+        with handle:
+            yield head
+            while True:
+                chunk = handle.read(_UPLOAD_READ_CHUNK)
+                if not chunk:
+                    break
+                yield chunk
+            yield tail
+
+    content_type = f'multipart/form-data; boundary={boundary}'
+    return body(), content_type, len(head) + size + len(tail)
+
+
+async def _upload_archive_file(
+    http: '_HostedHttp',
+    path: str,
+    fields: Dict[str, Optional[str]],
+    archive_path: str,
+    filename: str,
+    method: str = 'POST',
+) -> Dict[str, Any]:
+    """Stream one on-disk archive to ``path`` as the multipart grammar above."""
+    body, content_type, content_length = _multipart_file_body(fields, archive_path, filename)
+    return await http.request_upload(
+        path,
+        body,
+        {'Content-Type': content_type, 'Content-Length': str(content_length)},
+        method=method,
+    )
+
+
+async def _upload_directory_archive(
+    http: '_HostedHttp',
+    path: str,
+    fields: Dict[str, Optional[str]],
+    directory: str,
+    filename: str,
+    method: str = 'POST',
+) -> Dict[str, Any]:
+    """Tar + gzip ``directory`` into a temp file and stream it to ``path`` —
+    the one flow every publish-a-directory surface (datasets, agents, skills,
+    jobs) shares. The archive only ever exists on disk; the temp dir is
+    removed however the upload ends.
+    """
+    tmp = tempfile.mkdtemp(prefix='evolve-upload-')
+    try:
+        archive_path = os.path.join(tmp, filename)
+        await asyncio.to_thread(_tar_gzip_directory_to_file, directory, archive_path)
+        return await _upload_archive_file(http, path, fields, archive_path, filename, method)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _agent_upload_fields(
     caller: str,
     *,
     name: str,
@@ -3601,11 +3712,15 @@ def _agent_upload_body(
     install_script: Optional[str],
     directory: Optional[str],
     env: Optional[Dict[str, str]],
-) -> 'tuple[bytes, str]':
-    """The multipart body both ``create()`` and ``upsert()`` send.
+) -> 'tuple[Dict[str, Optional[str]], Optional[str]]':
+    """The metadata parts both ``create()`` and ``upsert()`` send, plus the
+    directory to stream when the agent ships as an uploaded tarball.
 
     Shared because the two differ only in method and URL: one grammar means an
-    agent registered by either route is byte-identical on the wire.
+    agent registered by either route is byte-identical on the wire. The caller
+    picks the transport — plain multipart for an install script, the streaming
+    archive upload for a directory — because only the caller knows its URL and
+    method.
     """
     if install_script is not None and directory is not None:
         raise ValueError(
@@ -3622,10 +3737,7 @@ def _agent_upload_body(
         fields['env'] = json.dumps(env)
     if install_script is not None:
         fields['install_script'] = install_script
-    archive: Optional['tuple[str, bytes]'] = None
-    if directory is not None:
-        archive = ('source.tar.gz', _tar_gzip_directory(directory))
-    return _multipart_body(fields, archive)
+    return fields, directory
 
 
 #: Names never packed, matched at any depth: version-control metadata, a macOS
@@ -3635,25 +3747,6 @@ def _agent_upload_body(
 #: packer's SKIP set (packages/sdk-ts/src/hosted/tar.ts) so both SDKs publish
 #: the same corpus from the same directory.
 _TAR_SKIP_NAMES = frozenset({'.git', '.DS_Store', '.venv'})
-
-
-class _ChunkSink:
-    """A write-only file object that keeps the gzip output as a list of chunks.
-
-    Standing in for ``io.BytesIO`` so the archive is never held twice: BytesIO
-    grows by reallocating and ``getvalue()`` copies the whole thing again,
-    while a chunk list is joined exactly once at the end.
-    """
-
-    def __init__(self) -> None:
-        self.chunks: List[bytes] = []
-
-    def write(self, data: bytes) -> int:
-        self.chunks.append(bytes(data))
-        return len(data)
-
-    def flush(self) -> None:
-        return None
 
 
 def _list_corpus_files(root: str) -> 'List[tuple[str, str, int]]':
@@ -3693,8 +3786,8 @@ def _list_corpus_files(root: str) -> 'List[tuple[str, str, int]]':
     return out
 
 
-def _tar_gzip_directory(directory: str) -> bytes:
-    """Deterministically tar + gzip a corpus directory for the directory publish.
+def _tar_gzip_directory_to_file(directory: str, out_path: str) -> None:
+    """Deterministically tar + gzip a corpus directory into ``out_path``.
 
     Same content -> same bytes (so the tarball sha256 the server records as the
     import's source identity is reproducible): entries sorted by path, headers
@@ -3708,34 +3801,44 @@ def _tar_gzip_directory(directory: str) -> bytes:
     not match it, because the two languages' gzip implementations differ; the
     contract is that each SDK is reproducible on its own.
 
-    Files stream off disk through the tar writer a read buffer at a time, and
-    only the compressed output is collected, since the upload takes one body.
+    Everything flows in O(read-buffer) memory: files stream off disk through
+    the tar writer a read buffer at a time, and the compressed output streams
+    to ``out_path`` — the archive is never held in memory (the old
+    bytes-returning path cost ~10x a corpus's size in RSS through the upload
+    stack and crashed a machine on a 7.7 GB corpus; ``_multipart_file_body``
+    then streams the file onto the wire).
     """
     root = os.path.abspath(directory)
     if not os.path.isdir(root):
         raise ValueError(f'directory not found: {directory}')
     files = _list_corpus_files(root)
 
-    sink = _ChunkSink()
-    with gzip.GzipFile(fileobj=sink, mode='wb', mtime=0, compresslevel=9) as gz:
-        # PAX rather than USTAR: a corpus path longer than the 100-byte USTAR
-        # name field is a hard error there, and the TypeScript packer accepts
-        # it. PAX emits an extended header only for the entries that need one,
-        # so ordinary names keep the same layout.
-        with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tar:
-            for rel, abs_path, mode in files:
-                info = tarfile.TarInfo(name=rel)
-                info.size = os.path.getsize(abs_path)
-                info.mtime = 0
-                info.mode = mode
-                info.uid = 0
-                info.gid = 0
-                info.uname = ''
-                info.gname = ''
-                info.type = tarfile.REGTYPE
-                with open(abs_path, 'rb') as handle:
-                    tar.addfile(info, handle)
-    return b''.join(sink.chunks)
+    with open(out_path, 'wb') as sink:
+        # filename='' suppresses the gzip FNAME header field: with a real
+        # file object GzipFile would otherwise embed the (random) temp file's
+        # name in the bytes, moving the digest per run. The old in-memory sink
+        # had no .name, so no FNAME — '' keeps the bytes exactly what they
+        # always were.
+        with gzip.GzipFile(
+            fileobj=sink, mode='wb', mtime=0, compresslevel=9, filename=''
+        ) as gz:
+            # PAX rather than USTAR: a corpus path longer than the 100-byte
+            # USTAR name field is a hard error there, and the TypeScript
+            # packer accepts it. PAX emits an extended header only for the
+            # entries that need one, so ordinary names keep the same layout.
+            with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tar:
+                for rel, abs_path, mode in files:
+                    info = tarfile.TarInfo(name=rel)
+                    info.size = os.path.getsize(abs_path)
+                    info.mtime = 0
+                    info.mode = mode
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ''
+                    info.gname = ''
+                    info.type = tarfile.REGTYPE
+                    with open(abs_path, 'rb') as handle:
+                        tar.addfile(info, handle)
 
 
 # =============================================================================
@@ -4014,12 +4117,14 @@ class DatasetsClient:
                         'dataset.toml manifest to the corpus directory (the server then '
                         'derives name and version from it)'
                     )
-            gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
-            fields = {'name': name, 'version': version}
-            body, content_type = _multipart_body(
-                {k: v for k, v in fields.items() if v is not None},
-                ('corpus.tar.gz', gzipped),
+            raw = await _upload_directory_archive(
+                self._http,
+                '/api/datasets/publish',
+                {'name': name, 'version': version},
+                directory,
+                'corpus.tar.gz',
             )
+            return _map_dataset_import(raw)
         elif git_url and git_ref:
             if name is None or version is None:
                 raise ValueError(
@@ -4465,7 +4570,7 @@ class AgentsClient:
         # declared env are named PARTS — they used to ride the query string of
         # an upload, which put a shell command and a set of environment values
         # into every access log and proxy buffer on the way here.
-        body, content_type = _agent_upload_body(
+        fields, source_directory = _agent_upload_fields(
             'create()',
             name=name,
             run_command=run_command,
@@ -4473,9 +4578,15 @@ class AgentsClient:
             directory=directory,
             env=env,
         )
-        raw = await self._http.request_upload(
-            '/api/agents', body, {'Content-Type': content_type}
-        )
+        if source_directory is not None:
+            raw = await _upload_directory_archive(
+                self._http, '/api/agents', fields, source_directory, 'source.tar.gz'
+            )
+        else:
+            body, content_type = _multipart_body(fields)
+            raw = await self._http.request_upload(
+                '/api/agents', body, {'Content-Type': content_type}
+            )
         return _map_agent(raw)
 
     def list(
@@ -4529,7 +4640,7 @@ class AgentsClient:
         This is a full REPLACEMENT, not a patch — every field comes from this
         call, and an omitted ``env`` becomes empty.
         """
-        body, content_type = _agent_upload_body(
+        fields, source_directory = _agent_upload_fields(
             'upsert()',
             name=name,
             run_command=run_command,
@@ -4537,12 +4648,23 @@ class AgentsClient:
             directory=directory,
             env=env,
         )
-        raw = await self._http.request_upload(
-            f'/api/agents/{urllib.parse.quote(name)}',
-            body,
-            {'Content-Type': content_type},
-            method='PUT',
-        )
+        if source_directory is not None:
+            raw = await _upload_directory_archive(
+                self._http,
+                f'/api/agents/{urllib.parse.quote(name)}',
+                fields,
+                source_directory,
+                'source.tar.gz',
+                method='PUT',
+            )
+        else:
+            body, content_type = _multipart_body(fields)
+            raw = await self._http.request_upload(
+                f'/api/agents/{urllib.parse.quote(name)}',
+                body,
+                {'Content-Type': content_type},
+                method='PUT',
+            )
         return _map_agent(raw)
 
     async def delete(self, name: str) -> None:
@@ -4612,15 +4734,13 @@ class SkillsClient:
         """
         if not isinstance(directory, str) or not directory.strip():
             raise ValueError('skills().upload() requires a local skill directory path')
-        gzipped = await asyncio.to_thread(_tar_gzip_directory, directory)
         # The archive packs the folder's CONTENT (SKILL.md at the archive
         # root); the folder's own name travels beside it, so a single-skill
         # upload is recorded — and later mounted — under its folder name.
         folder_name = os.path.basename(os.path.abspath(directory))
-        fields = {'name': folder_name} if folder_name else {}
-        body, content_type = _multipart_body(fields, ('skill.tar.gz', gzipped))
-        raw = await self._http.request_upload(
-            '/api/skills', body, {'Content-Type': content_type}
+        fields: Dict[str, Optional[str]] = {'name': folder_name} if folder_name else {}
+        raw = await _upload_directory_archive(
+            self._http, '/api/skills', fields, directory, 'skill.tar.gz'
         )
         items = raw.get('skills')
         if not isinstance(items, list):
@@ -5577,9 +5697,16 @@ class JobsClient:
                 'jobs().upload() requires a job directory (or .tar.gz archive) path'
             )
         path = os.path.abspath(dir_or_archive)
+        fields: Dict[str, Optional[str]] = {}
+        if dataset is not None:
+            fields['dataset'] = dataset
         if os.path.isfile(path):
-            # A regular file is a ready-packed archive and rides verbatim.
-            archive = await asyncio.to_thread(Path(path).read_bytes)
+            # A ready-packed archive streams from where it lies — never read
+            # into memory, never re-packed, byte-for-byte on the wire.
+            raw = await _upload_archive_file(
+                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz'
+            )
+            return _map_job(raw)
         else:
             # Harbor's own gate (their cli/upload.py checks result.json, then
             # config.json), applied client-side with their sentences — the
@@ -5590,15 +5717,10 @@ class JobsClient:
             for required in ('result.json', 'config.json'):
                 if not os.path.exists(os.path.join(path, required)):
                     raise ValueError(f'{path} does not contain {required}')
-            archive = await asyncio.to_thread(_tar_gzip_directory, path)
-        fields: Dict[str, Optional[str]] = {}
-        if dataset is not None:
-            fields['dataset'] = dataset
-        body, content_type = _multipart_body(fields, ('job.tar.gz', archive))
-        raw = await self._http.request_upload(
-            '/api/jobs/upload', body, {'Content-Type': content_type}
-        )
-        return _map_job(raw)
+            raw = await _upload_directory_archive(
+                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz'
+            )
+            return _map_job(raw)
 
     async def delete(self, id: str) -> JobDeleteResult:
         """Permanently delete one of your jobs — trials, trace events,

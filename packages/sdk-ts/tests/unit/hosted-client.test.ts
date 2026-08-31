@@ -53,6 +53,89 @@ function assertEqual(actual: unknown, expected: unknown, message: string): void 
 // MOCK FETCH
 // =============================================================================
 
+// =============================================================================
+// CAPTURE SERVER (archive uploads stream over node:http and BYPASS fetch —
+// that bypass is the F1 fix itself, so these tests capture the real wire)
+// =============================================================================
+
+import { createServer as createHttpServer } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
+
+interface UploadCall {
+  method: string;
+  url: string;
+  headers: IncomingHttpHeaders;
+  body: Buffer;
+}
+
+interface UploadPart {
+  name: string;
+  filename?: string;
+  type?: string;
+  data: Buffer;
+}
+
+/** A local server that records raw upload requests and answers with `reply`. */
+async function startCaptureServer(reply: { status: number; body: unknown }): Promise<{
+  base: string;
+  calls: UploadCall[];
+  close: () => Promise<void>;
+}> {
+  const calls: UploadCall[] = [];
+  const server = createHttpServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      calls.push({
+        method: req.method ?? "",
+        url: req.url ?? "",
+        headers: req.headers,
+        body: Buffer.concat(chunks),
+      });
+      res.statusCode = reply.status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(reply.body));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  return {
+    base: `http://127.0.0.1:${port}`,
+    calls,
+    close: () => new Promise((resolve) => server.close(() => resolve(undefined))),
+  };
+}
+
+/** Parse a captured multipart body into its ordered parts. */
+function multipartParts(call: UploadCall): UploadPart[] {
+  const contentType = call.headers["content-type"] ?? "";
+  const match = /boundary=(.+)$/.exec(contentType);
+  if (!match) throw new Error(`no boundary in content-type: ${contentType}`);
+  const delim = Buffer.from(`--${match[1]}`);
+  const parts: UploadPart[] = [];
+  let at = call.body.indexOf(delim);
+  while (at !== -1) {
+    const next = call.body.indexOf(delim, at + delim.length);
+    if (next === -1) break; // the closing `--boundary--`
+    const segment = call.body.subarray(at + delim.length + 2, next - 2);
+    const headerEnd = segment.indexOf("\r\n\r\n");
+    const headerText = segment.subarray(0, headerEnd).toString("utf8");
+    parts.push({
+      name: /name="([^"]*)"/.exec(headerText)?.[1] ?? "",
+      filename: /filename="([^"]*)"/.exec(headerText)?.[1],
+      type: /Content-Type: (.+)/.exec(headerText)?.[1],
+      data: Buffer.from(segment.subarray(headerEnd + 4)),
+    });
+    at = next;
+  }
+  return parts;
+}
+
+/** The part named `name`, or null — the form.get() of the raw wire. */
+function partData(parts: UploadPart[], name: string): Buffer | null {
+  return parts.find((p) => p.name === name)?.data ?? null;
+}
+
 const fetchCalls: { url: string; init?: RequestInit }[] = [];
 interface MockResponse {
   status: number;
@@ -820,45 +903,48 @@ async function testPublishRequiresGitSource() {
 }
 
 async function testPublishDirectorySource() {
-  console.log("\n--- datasets().publish() tars + gzips a local directory and uploads it ---");
-  installMockFetch();
+  console.log("\n--- datasets().publish() tars + gzips a local directory and STREAMS it ---");
+  // The archive rides node:http, not fetch — the F1 fix — so the wire is
+  // captured by a real local server rather than the fetch mock.
+  const server = await startCaptureServer({
+    status: 202,
+    body: { id: "imp-2", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-import-dir-"));
   try {
     await mkdir(join(dir, "tasks", "abc"), { recursive: true });
     await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
-    setMockResponse("/api/datasets/publish", {
-      status: 202,
-      body: { id: "imp-2", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
-    });
 
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const d = datasets({ apiKey: "test-key", baseUrl: server.base });
     const imported = await d.publish({
       source: { directory: dir },
       name: "my-set",
       version: "0.1",
     });
 
-    const call = fetchCalls[fetchCalls.length - 1];
+    const call = server.calls[server.calls.length - 1];
     // Metadata is named PARTS; the corpus is the `archive` part. The URL is bare.
-    assert(call.url.endsWith("/api/datasets/publish"), "the URL carries nothing");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const headers = call.init?.headers as Record<string, string>;
-    assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), "my-set", "name is a named part");
-    assertEqual(form.get("version"), "0.1", "version is a named part");
+    assertEqual(call.url, "/api/datasets/publish", "the URL carries nothing");
+    assertEqual(call.method, "POST", "uses POST");
+    assertEqual(call.headers.authorization, "Bearer test-key", "Bearer token sent");
+    assertEqual(
+      call.headers["content-length"],
+      String(call.body.length),
+      "Content-Length is exact — the upload is identity-framed, never chunked"
+    );
+    assertEqual(call.headers["transfer-encoding"], undefined, "no chunked transfer encoding");
+    const parts = multipartParts(call);
+    assertEqual(partData(parts, "name")?.toString(), "my-set", "name is a named part");
+    assertEqual(partData(parts, "version")?.toString(), "0.1", "version is a named part");
     // The metadata parts come FIRST so the server can refuse a name it will
     // never accept before receiving a half-gigabyte upload.
-    assertEqual([...form.keys()], ["name", "version", "archive"], "metadata precedes the archive part");
+    assertEqual(parts.map((p) => p.name), ["name", "version", "archive"], "metadata precedes the archive part");
 
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the corpus is the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    const body = partData(parts, "archive")!;
     assert(body.length > 0, "archive part is non-empty bytes");
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
     // The gzipped tar carries the corpus file path + content (USTAR stores both as plain bytes).
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("tasks/abc/task.toml"), "the tar carries the corpus file path");
     assert(tarText.includes('schema_version = "1.1"'), "the tar carries the file content");
 
@@ -868,14 +954,17 @@ async function testPublishDirectorySource() {
       "202 response mapped (id, status, name, version, failure, warnings)"
     );
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testPublishManifestDerivedIdentity() {
   console.log("\n--- datasets().publish() lets dataset.toml supply name/version for a directory source ---");
-  installMockFetch();
+  const server = await startCaptureServer({
+    status: 202,
+    body: { id: "imp-3", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-import-manifest-"));
   try {
     await mkdir(join(dir, "tasks", "abc"), { recursive: true });
@@ -886,25 +975,19 @@ async function testPublishManifestDerivedIdentity() {
         "0".repeat(64) +
         '"\n'
     );
-    setMockResponse("/api/datasets/publish", {
-      status: 202,
-      body: { id: "imp-3", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
-    });
 
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const d = datasets({ apiKey: "test-key", baseUrl: server.base });
     // No name, no version: the SERVER derives both from the manifest.
     const imported = await d.publish({ source: { directory: dir } });
 
-    const call = fetchCalls[fetchCalls.length - 1];
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), null, "no name part — the manifest supplies it server-side");
-    assertEqual(form.get("version"), null, "no version part — the manifest supplies it server-side");
-    assert(form.get("archive") instanceof Blob, "the corpus still rides the archive part");
+    const parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "name"), null, "no name part — the manifest supplies it server-side");
+    assertEqual(partData(parts, "version"), null, "no version part — the manifest supplies it server-side");
+    assert(partData(parts, "archive") !== null, "the corpus still rides the archive part");
     assertEqual(imported.name, "my-set", "202 echoes the server-derived name");
     assertEqual(imported.version, "0.1", "202 echoes the server-derived version");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -1625,18 +1708,17 @@ async function testAgentCreateInstallScript() {
 }
 
 async function testAgentCreateTarball() {
-  console.log("\n--- agents().create() tars a directory into a multipart archive part ---");
-  installMockFetch();
+  console.log("\n--- agents().create() tars a directory and STREAMS it as the archive part ---");
+  const server = await startCaptureServer({
+    status: 201,
+    body: { ...REGISTERED_AGENT, source: "tarball" },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-agent-dir-"));
   try {
     await mkdir(join(dir, "bin"), { recursive: true });
     await writeFile(join(dir, "bin", "acme-cli"), "#!/bin/sh\nexec acme \"$@\"\n");
-    setMockResponse("/api/agents", {
-      status: 201,
-      body: { ...REGISTERED_AGENT, source: "tarball" },
-    });
 
-    const a = agents({ apiKey: "test-key", baseUrl: BASE });
+    const a = agents({ apiKey: "test-key", baseUrl: server.base });
     const created = await a.create({
       name: "acme-cli",
       directory: dir,
@@ -1644,80 +1726,73 @@ async function testAgentCreateTarball() {
       env: { ACME_PROFILE: "bench", ACME_REGION: "us" },
     });
 
-    const call = fetchCalls[fetchCalls.length - 1];
+    const call = server.calls[server.calls.length - 1];
     // The run command and the declared env are named PARTS, never the query
     // string — a shell command and env values in a URL land in every access
     // log and proxy buffer on the way to the server.
-    assert(call.url.endsWith("/api/agents"), "the URL carries nothing");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), "acme-cli", "name is a named part");
-    assertEqual(form.get("run_command"), "acme-cli --headless", "run_command is a named part");
+    assertEqual(call.url, "/api/agents", "the URL carries nothing");
+    assertEqual(call.method, "POST", "uses POST");
+    const parts = multipartParts(call);
+    assertEqual(partData(parts, "name")?.toString(), "acme-cli", "name is a named part");
+    assertEqual(partData(parts, "run_command")?.toString(), "acme-cli --headless", "run_command is a named part");
     assertEqual(
-      form.get("env"),
+      partData(parts, "env")?.toString(),
       JSON.stringify({ ACME_PROFILE: "bench", ACME_REGION: "us" }),
       "env is one JSON part, not repeated query pairs"
     );
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the archive is the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    const body = partData(parts, "archive")!;
     assert(body.length > 0, "archive part is non-empty bytes");
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("bin/acme-cli"), "the tar carries the agent executable path");
     assertEqual(created.source, "tarball", "server echoes the tarball source");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testSkillsUploadCarriesFolderName() {
   console.log("\n--- skills().upload() sends the folder's name beside the content archive ---");
-  installMockFetch();
+  const server = await startCaptureServer({
+    status: 201,
+    body: {
+      skills: [
+        {
+          id: "sk_1",
+          name: "my-solo-skill",
+          digest: "sha256:" + "0".repeat(64),
+          size_bytes: 7,
+          description: null,
+          ref: "upload:sk_1",
+          created_at: "2026-08-01T00:00:00Z",
+        },
+      ],
+    },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-skill-upload-"));
   const skillDir = join(dir, "my-solo-skill");
   try {
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, "SKILL.md"), "# solo\n");
-    setMockResponse("/api/skills", {
-      status: 201,
-      body: {
-        skills: [
-          {
-            id: "sk_1",
-            name: "my-solo-skill",
-            digest: "sha256:" + "0".repeat(64),
-            size_bytes: 7,
-            description: null,
-            ref: "upload:sk_1",
-            created_at: "2026-08-01T00:00:00Z",
-          },
-        ],
-      },
-    });
 
-    const s = skills({ apiKey: "test-key", baseUrl: BASE });
+    const s = skills({ apiKey: "test-key", baseUrl: server.base });
     const uploaded = await s.upload(skillDir);
 
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/skills"), "posts to /api/skills, nothing in the query string");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/skills", "posts to /api/skills, nothing in the query string");
+    const parts = multipartParts(call);
     // The archive packs the folder's CONTENT (SKILL.md at the archive root),
     // so the folder's own name MUST travel as a named part — without it the
     // server cannot name a single-skill upload.
-    assertEqual(form.get("name"), "my-solo-skill", "the folder name is a named part");
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the content rides as the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    assertEqual(partData(parts, "name")?.toString(), "my-solo-skill", "the folder name is a named part");
+    const body = partData(parts, "archive")!;
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("SKILL.md"), "the tar packs the folder content at the archive root");
     assertEqual(uploaded[0]?.name, "my-solo-skill", "the mapped record carries the server's name");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -3333,27 +3408,23 @@ async function writeJobDirFixture(dir: string): Promise<void> {
 }
 
 async function testUploadJobDirectory() {
-  console.log("\n--- upload() packs a job directory and POSTs it as the archive part ---");
-  installMockFetch();
+  console.log("\n--- upload() packs a job directory and STREAMS it as the archive part ---");
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-"));
   try {
     await writeJobDirFixture(dir);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     const created = await e.upload(dir);
 
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/jobs/upload"), "the URL carries nothing");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual([...form.keys()], ["archive"], "no dataset hint = the archive part alone");
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the job tree is the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/jobs/upload", "the URL carries nothing");
+    assertEqual(call.method, "POST", "uses POST");
+    const parts = multipartParts(call);
+    assertEqual(parts.map((p) => p.name), ["archive"], "no dataset hint = the archive part alone");
+    const body = partData(parts, "archive")!;
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("result.json"), "the tar carries the job's result.json");
     assert(tarText.includes("trial-1/result.json"), "the tar carries the trial directory");
 
@@ -3376,29 +3447,28 @@ async function testUploadJobDirectory() {
       "the provenance echo rides Job.upload, aggregated REPORTED totals included"
     );
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testUploadJobDatasetHint() {
   console.log("\n--- upload() sends the dataset hint as a named part BEFORE the archive ---");
-  installMockFetch();
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-hint-"));
   try {
     await writeJobDirFixture(dir);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     await e.upload(dir, { dataset: "deep-swe@1.1" });
 
-    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
-    assertEqual(form.get("dataset"), "deep-swe@1.1", "dataset hint is a named part");
+    const parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "dataset")?.toString(), "deep-swe@1.1", "dataset hint is a named part");
     // Metadata first, so the server can refuse a bad hint before receiving the
     // upload — the same order every multipart route here keeps.
-    assertEqual([...form.keys()], ["dataset", "archive"], "the hint precedes the archive part");
+    assertEqual(parts.map((p) => p.name), ["dataset", "archive"], "the hint precedes the archive part");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -3451,49 +3521,45 @@ async function testUploadJobDirGate() {
 }
 
 async function testUploadJobArchivePassthrough() {
-  console.log("\n--- upload() sends an already-packed .tar.gz byte-for-byte, never re-packing ---");
-  installMockFetch();
+  console.log("\n--- upload() streams an already-packed .tar.gz byte-for-byte, never re-packing ---");
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-tgz-"));
   try {
     // Any gzip stream stands in for a downloaded job archive; the point is
-    // the bytes cross the wire untouched.
+    // the bytes cross the wire untouched — streamed from where the file
+    // lies, never read into memory, never re-packed.
     const packed = gzipSync(Buffer.from("the archive the server built"));
     const archivePath = join(dir, "job-eval-up1-results.tar.gz");
     await writeFile(archivePath, packed);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     await e.upload(archivePath);
 
-    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
-    const file = form.get("archive") as File;
-    const body = Buffer.from(new Uint8Array(await file.arrayBuffer()));
+    const parts = multipartParts(server.calls[server.calls.length - 1]);
+    const body = partData(parts, "archive")!;
     assert(body.equals(packed), "the file's bytes ride the archive part verbatim");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testUploadJobDeterministicPack() {
   console.log("\n--- upload() packs the same directory to the same bytes ---");
-  installMockFetch();
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-det-"));
   try {
     await writeJobDirFixture(dir);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     await e.upload(dir);
     await e.upload(dir);
 
-    const first = fetchCalls[0].init?.body as FormData;
-    const second = fetchCalls[1].init?.body as FormData;
-    const firstBytes = Buffer.from(new Uint8Array(await (first.get("archive") as File).arrayBuffer()));
-    const secondBytes = Buffer.from(new Uint8Array(await (second.get("archive") as File).arrayBuffer()));
+    const firstBytes = partData(multipartParts(server.calls[0]), "archive")!;
+    const secondBytes = partData(multipartParts(server.calls[1]), "archive")!;
     assert(firstBytes.equals(secondBytes), "two packs of one directory are byte-identical");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -3702,74 +3768,88 @@ async function testUploadExecutionHonesty() {
 
 async function testUploadJobTypedErrors() {
   console.log("\n--- upload() surfaces the route's typed refusals verbatim ---");
-  installMockFetch();
+  // Each refusal rides the STREAMED route and must still map through the
+  // shared throwApiError — the transport swap may not cost a single field.
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-err-"));
   try {
     await writeJobDirFixture(dir);
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
 
-    setMockResponse("/api/jobs/upload", {
-      status: 413,
-      body: { error: { code: "upload_too_large", message: "Archive exceeds the 256 MB cap" } },
-    });
-    let threw = false;
-    try {
-      await e.upload(dir);
-    } catch (err: any) {
-      threw = true;
-      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
-      assertEqual(err.status, 413, "carries the HTTP status");
-      assertEqual(err.code, "upload_too_large", "carries the stable error code");
+    {
+      const server = await startCaptureServer({
+        status: 413,
+        body: { error: { code: "upload_too_large", message: "Archive exceeds the 256 MB cap" } },
+      });
+      const e = jobs({ apiKey: "test-key", baseUrl: server.base });
+      let threw = false;
+      try {
+        await e.upload(dir);
+      } catch (err: any) {
+        threw = true;
+        assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+        assertEqual(err.status, 413, "carries the HTTP status");
+        assertEqual(err.code, "upload_too_large", "carries the stable error code");
+      } finally {
+        await server.close();
+      }
+      assert(threw, "throws on 413");
     }
-    assert(threw, "throws on 413");
 
-    setMockResponse("/api/jobs/upload", {
-      status: 422,
-      body: {
-        error: {
-          code: "invalid_trial",
-          message: 'Trial "trial-1": result.json fails the TrialResult shape',
-          details: { trial: "trial-1" },
+    {
+      const server = await startCaptureServer({
+        status: 422,
+        body: {
+          error: {
+            code: "invalid_trial",
+            message: 'Trial "trial-1": result.json fails the TrialResult shape',
+            details: { trial: "trial-1" },
+          },
         },
-      },
-    });
-    threw = false;
-    try {
-      await e.upload(dir);
-    } catch (err: any) {
-      threw = true;
-      assertEqual(err.code, "invalid_trial", "invalid_trial surfaces with its code");
-      assertEqual((err.details as Record<string, unknown>)?.trial, "trial-1", "details name the trial");
+      });
+      const e = jobs({ apiKey: "test-key", baseUrl: server.base });
+      let threw = false;
+      try {
+        await e.upload(dir);
+      } catch (err: any) {
+        threw = true;
+        assertEqual(err.code, "invalid_trial", "invalid_trial surfaces with its code");
+        assertEqual((err.details as Record<string, unknown>)?.trial, "trial-1", "details name the trial");
+      } finally {
+        await server.close();
+      }
+      assert(threw, "throws on 422");
     }
-    assert(threw, "throws on 422");
 
     // The duplicate refusal: re-uploading an archive whose job this caller
     // already uploaded — details name the existing job to open instead.
-    setMockResponse("/api/jobs/upload", {
-      status: 409,
-      body: {
-        error: {
-          code: "job_already_uploaded",
-          message: "You already uploaded this job",
-          details: { existing_job_id: "eval-up1" },
+    {
+      const server = await startCaptureServer({
+        status: 409,
+        body: {
+          error: {
+            code: "job_already_uploaded",
+            message: "You already uploaded this job",
+            details: { existing_job_id: "eval-up1" },
+          },
         },
-      },
-    });
-    threw = false;
-    try {
-      await e.upload(dir);
-    } catch (err: any) {
-      threw = true;
-      assertEqual(err.code, "job_already_uploaded", "the duplicate refusal surfaces with its code");
-      assertEqual(
-        (err.details as Record<string, unknown>)?.existing_job_id,
-        "eval-up1",
-        "details name the existing job"
-      );
+      });
+      const e = jobs({ apiKey: "test-key", baseUrl: server.base });
+      let threw = false;
+      try {
+        await e.upload(dir);
+      } catch (err: any) {
+        threw = true;
+        assertEqual(err.code, "job_already_uploaded", "the duplicate refusal surfaces with its code");
+        assertEqual(
+          (err.details as Record<string, unknown>)?.existing_job_id,
+          "eval-up1",
+          "details name the existing job"
+        );
+      } finally {
+        await server.close();
+      }
+      assert(threw, "throws on the duplicate 409");
     }
-    assert(threw, "throws on the duplicate 409");
   } finally {
-    restoreFetch();
     await rm(dir, { recursive: true, force: true });
   }
 }

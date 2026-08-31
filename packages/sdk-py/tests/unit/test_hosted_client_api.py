@@ -75,6 +75,20 @@ from evolve import (
 )
 
 
+def _request_body(request):
+    """The request's body as bytes, whatever shape it was sent in.
+
+    An archive upload's data is an ITERATOR (the archive streams off disk a
+    chunk at a time — the F1 fix), so materialize it once and cache the bytes
+    back onto the request for any later look.
+    """
+    data = request.data
+    if not isinstance(data, (bytes, bytearray)):
+        data = b''.join(data)
+        request.data = data
+    return bytes(data)
+
+
 def _multipart_parts(request):
     """Split a multipart/form-data request body into {part name: raw bytes}.
 
@@ -84,7 +98,7 @@ def _multipart_parts(request):
     content_type = request.get_header('Content-type')
     boundary = content_type.split('boundary=', 1)[1]
     parts = {}
-    for chunk in request.data.split(f'--{boundary}'.encode('utf-8')):
+    for chunk in _request_body(request).split(f'--{boundary}'.encode('utf-8')):
         if not chunk.strip() or chunk.startswith(b'--'):
             continue
         head, _, body = chunk.partition(b'\r\n\r\n')
@@ -866,7 +880,7 @@ class TestDatasets:
         import io
         import tarfile
 
-        from evolve.hosted import _tar_gzip_directory
+        from evolve.hosted import _tar_gzip_directory_to_file
 
         # A tiny corpus in the standard task layout on disk.
         task_dir = tmp_path / 'tasks' / 'abc'
@@ -891,6 +905,13 @@ class TestDatasets:
         # so the server can refuse a bad name before receiving the upload.
         assert request.full_url.endswith('/api/datasets/publish')
         assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
+        # The body STREAMS (an iterator, not bytes) with its exact length
+        # declared — identity-framed, so urllib never falls back to chunked
+        # transfer encoding (its documented behavior when Content-Length is
+        # absent for an iterable body).
+        assert not isinstance(request.data, (bytes, bytearray))
+        assert request.get_header('Content-length') == str(len(_request_body(request)))
+        assert not request.has_header('Transfer-encoding')
         parts = _multipart_parts(request)
         assert list(parts) == ['name', 'version', 'archive']
         assert parts['name'] == b'my-set'
@@ -902,8 +923,15 @@ class TestDatasets:
             names = tar.getnames()
         assert 'tasks/abc/task.toml' in names
 
-        # Deterministic: the same directory always tars to the same bytes.
-        assert _tar_gzip_directory(str(tmp_path)) == _tar_gzip_directory(str(tmp_path))
+        # Deterministic: the same directory always tars to the same bytes,
+        # whatever the archive file happens to be called (gzip's FNAME header
+        # field is suppressed — a real file object would otherwise leak the
+        # temp file's random name into the digest).
+        out_a = tmp_path / 'pack-one.tar.gz'
+        out_b = tmp_path / 'pack-two.tar.gz'
+        _tar_gzip_directory_to_file(str(tmp_path / 'tasks'), str(out_a))
+        _tar_gzip_directory_to_file(str(tmp_path / 'tasks'), str(out_b))
+        assert out_a.read_bytes() == out_b.read_bytes()
 
         assert job.id == 'imp-9'
         assert job.status == 'QUEUED'
@@ -1377,7 +1405,7 @@ class TestDatasets:
         ])
         with patch('evolve._http.urlopen', fake):
             imported = await datasets_factory(CONFIG).publish(directory=str(tmp_path))
-        body = fake.requests[0].data
+        body = _request_body(fake.requests[0])
         assert b'name="archive"' in body
         assert b'name="name"' not in body  # no name part — the manifest supplies it
         assert b'name="version"' not in body
@@ -2860,7 +2888,7 @@ class TestJobs:
 
     @pytest.mark.asyncio
     async def test_upload_packs_a_job_directory_and_posts_multipart(self, tmp_path):
-        from evolve.hosted import _tar_gzip_directory
+        from evolve.hosted import _tar_gzip_directory_to_file
 
         job_dir = tmp_path / 'job'
         self._write_job_dir(job_dir)
@@ -2887,7 +2915,9 @@ class TestJobs:
         # packer's bytes — packed once, never re-compressed.
         assert list(parts) == ['archive']
         assert parts['archive'][:2] == b'\x1f\x8b'
-        assert parts['archive'] == _tar_gzip_directory(str(job_dir))
+        reference = tmp_path / 'reference.tar.gz'
+        _tar_gzip_directory_to_file(str(job_dir), str(reference))
+        assert parts['archive'] == reference.read_bytes()
 
         assert job.id == 'job-up1'
         assert job.status == 'COMPLETED'
