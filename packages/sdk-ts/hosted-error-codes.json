@@ -47,6 +47,7 @@
     "skill_in_use",
     "skill_too_large",
     "skill_limit_reached",
+    "too_many_concurrent_skill_uploads",
     "secret_not_found",
     "secret_ambiguous",
     "secret_brokered_unsupported",

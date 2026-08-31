@@ -160,6 +160,16 @@ HostedErrorCode = Literal[
     'skill_in_use',
     'skill_too_large',
     'skill_limit_reached',
+    # The server is already processing its bound of concurrent skill uploads
+    # on POST /api/skills (429; details carry max_concurrent) — each in-flight
+    # upload owns up to its tarball plus its extracted tree of server disk
+    # while the request is in flight. Refused before the first uploaded byte
+    # is read; retry
+    # when an in-flight upload finishes. The skill-door sibling of
+    # too_many_concurrent_job_uploads / too_many_concurrent_imports below, and
+    # distinct from rate_limited for the same reason: nothing was rate-counted
+    # and there is no Retry-After — the server's disk is busy.
+    'too_many_concurrent_skill_uploads',
     'secret_not_found',
     'secret_ambiguous',
     'secret_brokered_unsupported',
