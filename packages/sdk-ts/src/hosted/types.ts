@@ -1256,6 +1256,17 @@ export interface TrialAnalysis {
    * Absent on servers predating the field.
    */
   usage?: UsageReading | null;
+  /**
+   * How many analyzer attempts this analysis has made: 1, or 2 when the
+   * bounded automatic re-run fired. An analyzer run that completes without
+   * producing a valid analysis.json (the missing file included) is re-run
+   * at most once — same model, same frozen rubric, fresh sandbox — and a
+   * second failure of that class settles `failed` with phase
+   * `invalid_result`, both attempts recorded. Infrastructure failures never
+   * auto re-run. When the re-run fired, `estimated_cost_usd` and the token
+   * totals cover BOTH attempts. Absent on servers predating the field.
+   */
+  attempts?: number;
   /** Non-null exactly when status is `failed`. */
   failure: AnalysisFailure | null;
   /** When this analysis was enqueued. */
@@ -3131,6 +3142,122 @@ export interface TrialsClient {
   file(trialId: string, path: string, range?: TrialFileRange): Promise<Buffer>;
 }
 
+// =============================================================================
+// ANALYSES (the analyzer's own runs, read off the dashboard's traces feed)
+// =============================================================================
+
+/**
+ * The stored artifacts an analysis run OWNS under its own id — the analyzer's
+ * raw process streams and its session home (the executor stores exactly these
+ * three at settle). A runtime value like TRIAL_ARTIFACT_STREAMS, for the same
+ * reason: the CLI builds its `--stream` validation from this list instead of
+ * a second copy. `verifier` and `trace-atif` are deliberately NOT members: an
+ * analysis never has them, and the server refuses them typed rather than
+ * answering a null that would read as "not stored".
+ */
+export const ANALYSIS_ARTIFACT_STREAMS = [
+  "trace-stdout",
+  "trace-stderr",
+  "agent-home",
+] as const;
+
+/** One stored-artifact selector of an analysis run. */
+export type AnalysisArtifactStream = (typeof ANALYSIS_ARTIFACT_STREAMS)[number];
+
+/** Options for analyses().transcript(). */
+export interface AnalysisTranscriptOptions {
+  /**
+   * Skip the first N events — the feed's own resume grammar ("everything
+   * after the N events I already hold"). An analysis's seqs are allocated
+   * densely from 0, so N is also the seq the returned events start at.
+   * A non-negative integer; anything else is refused client-side.
+   */
+  since?: number;
+}
+
+/**
+ * One analysis run's transcript: the ANALYZER's own parsed events — never the
+ * analyzed trial's agent trace — plus the identity facts the feed serves
+ * around them. Unlike a trial's trace there is no server-side paging: one
+ * read answers everything after `since`, and `total` counts ALL stored rows,
+ * so `events.length < total` with `since: 0` can only mean rows arrived
+ * between count and read (a live analysis).
+ */
+export interface AnalysisTranscript {
+  id: string;
+  /** The trial this analysis read — the walk back to the analyzed work. */
+  analyzed_trial_id: string | null;
+  /** The analyzed trial's job. */
+  job_id: string | null;
+  /** The analyzed task's key. */
+  task_name: string | null;
+  /** The model the analyzer ran. */
+  model_name: string | null;
+  /** Where the ANALYZER's own box ran — never the analyzed arm's. */
+  sandbox_provider: string | null;
+  sandbox_id: string | null;
+  /** True once the analysis has settled (completed or failed). */
+  is_ended: boolean;
+  /** ALL stored rows for this analysis, independent of `since`. */
+  total: number;
+  /**
+   * The events after `since`, in TraceEvent shape. The feed serves the bare
+   * parsed payloads; `seq` is synthesized as since+index (sound because seqs
+   * are dense from 0) and `type` by the viewer's own one extraction.
+   */
+  events: TraceEvent[];
+}
+
+/**
+ * Client for analysis runs — the analyzer's own transcript, verdict document,
+ * and stored artifacts, all globally addressable by analysis id.
+ *
+ * DELIBERATELY OFF-CONTRACT: these three reads ride the dashboard's traces
+ * feed (`/api/traces/trials/{id}/events` and `…/artifacts`), which is NOT in
+ * spec/openapi.yaml — `traces` is outside the prefixes the platform's drift
+ * gate walks (swarm_dashboard `__tests__/api/spec-drift-gate.test.ts`
+ * CONTRACT_PREFIXES), and the one precedent for a transcript door living
+ * off-contract is that gate's RUNTIME_INTERNAL_ROUTES: `api/sessions/[id]/
+ * events`, the dashboard UI's own session transcript view, is enumerated
+ * there as a route no SDK client calls. RECORDED TENSION: that gate names the
+ * excluded planes "planes no SDK client calls" — this client is the first to
+ * call one, so whether the feed joins the contract (spec + both SDK shadows)
+ * is an open ruling, not something settled here. The contract-side verdict
+ * stays where it always was — `Trial.analysis` on the trial body; this client
+ * adds the reads the contract does not carry today.
+ */
+export interface AnalysesClient {
+  /**
+   * The verdict document — the wire's TrialAnalysis, statuses and typed
+   * failure included, for EVERY analysis (not only completed ones). The same
+   * object the analyzed trial serves as `Trial.analysis` when this analysis
+   * is its latest; this door answers for earlier analyses too.
+   */
+  get(analysisId: string): Promise<TrialAnalysis>;
+  /**
+   * The analyzer's own transcript (see AnalysisTranscript). An id the feed
+   * resolves to a trial or a regrade — the route answers those first —
+   * refuses with an error naming the species rather than handing back the
+   * wrong run's events.
+   */
+  transcript(analysisId: string, options?: AnalysisTranscriptOptions): Promise<AnalysisTranscript>;
+  /**
+   * One stored artifact by selector: the analyzer's raw stdout/stderr answer
+   * the text, "agent-home" the sandbox-path → text map of its session home.
+   * Null = never stored (a normal answer, not an error): a QUEUED analysis,
+   * or one whose box died before the settle stored anything. Like
+   * transcript(), an id the feed resolves to a trial or a regrade refuses
+   * with an error — the feed's stored selectors would answer for either
+   * species, so the analysis-only ?what=analysis door is resolved first and
+   * the wrong run's bytes are never served.
+   */
+  artifact(
+    analysisId: string,
+    stream: Exclude<AnalysisArtifactStream, "agent-home">
+  ): Promise<string | null>;
+  artifact(analysisId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
+}
+
 /** A key descriptor. The secret is never returned. */
 export interface ApiKey {
   id: string;
@@ -3225,6 +3352,16 @@ export const HOSTED_ERROR_CODES = [
   "skill_in_use",
   "skill_too_large",
   "skill_limit_reached",
+  // The server is already processing its bound of concurrent skill uploads
+  // on POST /api/skills (429; details carry max_concurrent) — each in-flight
+  // upload owns up to its tarball plus its extracted tree of server disk
+  // while the request is in flight. Refused before the first uploaded byte
+  // is read; retry
+  // when an in-flight upload finishes. The skill-door sibling of
+  // too_many_concurrent_job_uploads / too_many_concurrent_imports below, and
+  // distinct from rate_limited for the same reason: nothing was rate-counted
+  // and there is no Retry-After — the server's disk is busy.
+  "too_many_concurrent_skill_uploads",
   "secret_not_found",
   "secret_ambiguous",
   "secret_brokered_unsupported",
@@ -3270,13 +3407,36 @@ export const HOSTED_ERROR_CODES = [
   // our trial rows carry analyses and analysis history — silently replacing
   // trials would destroy them; Harbor's hub rows have no such children.
   "job_already_uploaded",
+  // The server is already spooling its bound of concurrent job-archive
+  // uploads on POST /api/jobs/upload (429; details carry max_concurrent).
+  // Refused before the first uploaded byte lands; retry when an in-flight
+  // upload finishes. The jobs-door twin of too_many_concurrent_imports
+  // below, and distinct from rate_limited for the same reason: nothing was
+  // rate-counted and there is no Retry-After — the server's disk is busy.
+  "too_many_concurrent_job_uploads",
   "import_not_found",
   "import_too_large",
+  // The server is already spooling its bound of concurrent corpus uploads
+  // (429; details carry max_concurrent). Refused before the first uploaded
+  // byte lands; retry when an in-flight upload finishes. Distinct from
+  // rate_limited: nothing was rate-counted and there is no Retry-After —
+  // the server's disk is busy.
+  "too_many_concurrent_imports",
   "invalid_archive",
   "unpinned_git_ref",
   "package_not_retained",
   "package_corrupt",
   "package_missing",
+  // The server is already serving its bound of concurrent package downloads
+  // on GET /api/datasets/{name}/download (429; details carry max_concurrent)
+  // — each in-flight download holds up to a full operator archive cap of
+  // server disk from the store fetch through the digest pre-read and the
+  // entire client download. Refused before the first fetched byte; retry
+  // when an in-flight download finishes. The download twin of the three
+  // too_many_concurrent_* upload codes above, and distinct from rate_limited
+  // for the same reason: nothing was rate-counted and there is no
+  // Retry-After — the server's disk is busy.
+  "too_many_concurrent_package_downloads",
   "internal_error",
 ] as const;
 

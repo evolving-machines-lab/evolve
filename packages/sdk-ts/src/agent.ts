@@ -63,9 +63,11 @@ import {
   ENV_EVOLVE_API_KEY,
   LITELLM_CUSTOMER_ID_HEADER,
   LITELLM_TAGS_HEADER,
+  MANAGED_SANDBOX_PROVIDERS,
   RUN_TAG_PREFIX,
   getGatewayUrl,
   resolveHomeDir,
+  type ManagedSandboxProviderName,
 } from "./constants";
 import { buildWorkerSystemPrompt } from "./prompts";
 import {
@@ -1051,13 +1053,37 @@ export class Agent {
     }
   }
 
+  /**
+   * The provider declaration for a sandbox the platform did not create.
+   *
+   * Gateway mode with the user's OWN sandbox key (the documented way to
+   * control sandbox billing separately — resolveDefaultSandbox in
+   * utils/sandbox.ts) creates the box directly on the provider, so the
+   * dashboard holds no managed record to bind the runtime token against.
+   * Declaring the provider lets the dashboard bind it as a direct sandbox —
+   * with a real token expiry in place of managed-liveness revocation.
+   * Undefined for platform-managed providers (the managed record is the
+   * authority there) and for provider types the platform does not know.
+   */
+  private directSandboxProviderDeclaration():
+    ManagedSandboxProviderName | undefined {
+    const provider = this.options.sandboxProvider;
+    if (!provider || isEvolveManagedSandboxProvider(provider)) return undefined;
+    const type = provider.providerType;
+    return (MANAGED_SANDBOX_PROVIDERS as readonly string[]).includes(type)
+      ? (type as ManagedSandboxProviderName)
+      : undefined;
+  }
+
   private async bindProviderRuntimeToken(sandboxId: string): Promise<void> {
     if (!this.providerRuntimeToken || !this.options.providerRouting) return;
+    const directSandboxProvider = this.directSandboxProviderDeclaration();
     const ok = await bindProviderRuntimeTokenRequest(
       this.options.providerRouting,
       {
         token: this.providerRuntimeToken.token,
         sandboxId,
+        ...(directSandboxProvider ? { directSandboxProvider } : {}),
       },
     );
     if (!ok) {

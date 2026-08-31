@@ -1245,6 +1245,170 @@ async function testProviderRuntimeBindFailureKillsSandbox(): Promise<void> {
   }
 }
 
+async function testDirectSandboxProviderDeclaredOnBind(): Promise<void> {
+  console.log(
+    "\n[11b] direct (user-account) sandbox declares its provider on bind; managed-typed mocks do not",
+  );
+  const previousFetch = globalThis.fetch;
+  const previousDashboardUrl = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+  const bindBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "POST"
+    ) {
+      return new Response(
+        JSON.stringify({
+          enabled: true,
+          provider: "anthropic",
+          credentialMode: "evolve_key",
+          token: "evrt_direct_token",
+          bindingSecret: "evrb_direct_binding",
+          baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "PATCH"
+    ) {
+      bindBodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "DELETE"
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://dashboard.test/api/sessions/ingest") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  const commands = new MockCommands();
+  commands.mode = "instant";
+  const sandbox = new MockSandbox("sess-direct-bind", commands);
+  // A user's own-account provider: not marked Evolve-managed, with a real
+  // provider type — exactly what resolveDefaultSandbox() builds from
+  // E2B_API_KEY in gateway mode.
+  const provider = new MockProvider(sandbox);
+  (provider as { providerType: string }).providerType = "e2b";
+  const kit = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(provider);
+
+  try {
+    await kit.executeCommand("echo ok", { timeoutMs: 10_000 });
+    assert(bindBodies.length >= 1, "bind was called");
+    assertEqual(
+      bindBodies[0]?.directSandboxProvider,
+      "e2b",
+      "bind declares the direct sandbox provider",
+    );
+    assertEqual(
+      bindBodies[0]?.sandboxId,
+      "sess-direct-bind",
+      "bind names the created sandbox",
+    );
+  } finally {
+    await kit.kill().catch(() => {});
+    globalThis.fetch = previousFetch;
+    if (previousDashboardUrl === undefined)
+      delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+  }
+
+  // An unknown provider type (this mock's own "mock") stays undeclared: the
+  // platform's direct lane only knows e2b/daytona/modal, and a garbage
+  // declaration would be refused typed rather than bound.
+  const previousFetch2 = globalThis.fetch;
+  process.env.EVOLVE_DASHBOARD_URL = "https://dashboard.test";
+  const bindBodies2: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "POST"
+    ) {
+      return new Response(
+        JSON.stringify({
+          enabled: true,
+          provider: "anthropic",
+          credentialMode: "evolve_key",
+          token: "evrt_direct_token2",
+          bindingSecret: "evrb_direct_binding2",
+          baseUrl: "https://dashboard.test/api/model-proxy/anthropic",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "PATCH"
+    ) {
+      bindBodies2.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (
+      url === "https://dashboard.test/api/provider-secrets/runtime-token" &&
+      init?.method === "DELETE"
+    ) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url === "https://dashboard.test/api/sessions/ingest") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  const commands2 = new MockCommands();
+  commands2.mode = "instant";
+  const sandbox2 = new MockSandbox("sess-unknown-type", commands2);
+  const kit2 = new Evolve()
+    .withAgent({ type: "claude", apiKey: "evolve-key" })
+    .withSandbox(new MockProvider(sandbox2));
+
+  try {
+    await kit2.executeCommand("echo ok", { timeoutMs: 10_000 });
+    assert(bindBodies2.length >= 1, "bind was called for unknown type");
+    assert(
+      !("directSandboxProvider" in (bindBodies2[0] ?? {})),
+      "unknown provider type sends no direct declaration",
+    );
+  } finally {
+    await kit2.kill().catch(() => {});
+    globalThis.fetch = previousFetch2;
+    if (previousDashboardUrl === undefined)
+      delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = previousDashboardUrl;
+  }
+}
+
 async function testProviderRuntimeTokenDoesNotRefreshAndAddsCommandBindingEnv(): Promise<void> {
   console.log(
     "\n[12] provider runtime token is session-bound and command env includes binding",
@@ -2738,6 +2902,7 @@ async function main(): Promise<void> {
     await testProviderRuntimeEndpointMissingFailsClosed();
     await testProviderRuntimeTokenServerErrorFailsClosed();
     await testProviderRuntimeBindFailureKillsSandbox();
+    await testDirectSandboxProviderDeclaredOnBind();
     await testProviderRuntimeTokenDoesNotRefreshAndAddsCommandBindingEnv();
     await testProviderRuntimeTokenStaysBoundToSandbox();
     await testSetSessionRevokesProviderRuntimeToken();

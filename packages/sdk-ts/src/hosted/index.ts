@@ -17,6 +17,10 @@ import type {
   AgentSource,
   AgentUpsertInput,
   AgentsClient,
+  AnalysesClient,
+  AnalysisArtifactStream,
+  AnalysisTranscript,
+  AnalysisTranscriptOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
   AttemptPhase,
@@ -125,6 +129,7 @@ import type {
 // Re-exported from the hosted barrel so the package root can hand them on.
 export {
   AGENT_EFFORT_SUPPORT_VALUES,
+  ANALYSIS_ARTIFACT_STREAMS,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   TRIAL_ARTIFACT_STREAMS,
@@ -151,8 +156,12 @@ export type {
   AgentSourceInput,
   AgentUpsertInput,
   AgentsClient,
+  AnalysesClient,
+  AnalysisArtifactStream,
   AnalysisCheck,
   AnalysisFailure,
+  AnalysisTranscript,
+  AnalysisTranscriptOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
   ApiKey,
@@ -290,13 +299,16 @@ import {
 } from "./types";
 
 // The client-side Harbor-tree assembly behind `evolve trial download` /
-// `evolve job download` — pure functions, re-exported so callers can
-// materialize the same tree the CLI writes.
+// `evolve analysis download` / `evolve job download` — pure functions,
+// re-exported so callers can materialize the same trees the CLI writes.
 export {
+  analysisEvolveRecord,
+  assembleAnalysisTree,
   assembleTrialTree,
   jobEvolveRecord,
   trialEvolveRecord,
   visibleHomeTree,
+  type AnalysisTreeParts,
   type TrialTreeParts,
 } from "./trial-tree";
 
@@ -421,14 +433,16 @@ async function throwApiError(res: Response): Promise<never> {
 
   try {
     const body = JSON.parse(text) as {
-      error?: {
-        code?: unknown;
-        message?: unknown;
-        param?: unknown;
-        details?: unknown;
-        retryAfterSec?: unknown;
-        requestId?: unknown;
-      };
+      error?:
+        | string
+        | {
+            code?: unknown;
+            message?: unknown;
+            param?: unknown;
+            details?: unknown;
+            retryAfterSec?: unknown;
+            requestId?: unknown;
+          };
     };
     if (body?.error && typeof body.error === "object") {
       const code = typeof body.error.code === "string" ? body.error.code : "unknown_error";
@@ -443,6 +457,16 @@ async function throwApiError(res: Response): Promise<never> {
         retryAfterSec,
         requestId:
           typeof body.error.requestId === "string" ? body.error.requestId : headerRequestId,
+      });
+    }
+    if (typeof body?.error === "string") {
+      // The viewer plane's refusal grammar — {error: "<sentence>"}, no code
+      // (the traces feed analyses() rides; swarm_dashboard app/api/traces/…
+      // routes). The sentence is the message; the code stays the honest
+      // unknown_error, never one minted client-side.
+      throw new EvolveApiError(res.status, "unknown_error", body.error, {
+        retryAfterSec,
+        requestId: headerRequestId,
       });
     }
   } catch (error) {
@@ -1356,27 +1380,82 @@ function makePaginated<TRow>(
 }
 
 /**
- * Build the multipart/form-data body both upload routes take: metadata as
- * named parts FIRST, then the bytes as an `archive` part. Order matters — the
- * server refuses a name it will never accept before receiving the upload, and
- * it can only do that if the metadata arrives first.
+ * Build the multipart/form-data body the metadata-only upload routes take
+ * (an agent registered from an install script, a dataset published from a
+ * git source). Anything carrying an ARCHIVE goes through requestUpload
+ * instead, which streams the file from disk — bytes never ride a FormData
+ * here, because a Blob part holds them whole in memory (the F1 incident:
+ * ~10x a corpus's size in RSS).
  */
-function uploadForm(
-  fields: Record<string, string | undefined>,
-  archive?: { bytes: Uint8Array; filename: string }
-): FormData {
+function uploadForm(fields: Record<string, string | undefined>): FormData {
   const form = new FormData();
   for (const [name, value] of Object.entries(fields)) {
     if (value !== undefined) form.set(name, value);
   }
-  if (archive) {
-    form.set(
-      "archive",
-      new Blob([archive.bytes as unknown as BlobPart], { type: "application/gzip" }),
-      archive.filename
-    );
-  }
   return form;
+}
+
+/**
+ * One archive upload: metadata parts first, then `file` streamed from disk
+ * as the `archive` part (hosted/upload.ts), the shared error mapping applied
+ * to the reply. The streaming transport exists because both FormData-with-a-
+ * Blob and fetch itself hold the whole body in memory — see upload.ts.
+ */
+async function requestUpload(
+  cfg: ResolvedConfig,
+  path: string,
+  opts: {
+    method?: "POST" | "PUT";
+    fields: Record<string, string | undefined>;
+    file: { path: string; filename: string };
+  }
+): Promise<Response> {
+  const { postMultipartFile } = await import("./upload");
+  const res = await postMultipartFile({
+    url: `${cfg.baseUrl}${path}`,
+    method: opts.method ?? "POST",
+    headers: { Authorization: `Bearer ${cfg.apiKey}` },
+    fields: opts.fields,
+    file: opts.file,
+  });
+  if (!res.ok) {
+    await throwApiError(res);
+  }
+  return res;
+}
+
+/**
+ * Tar + gzip `directory` into a temp file and upload it via requestUpload —
+ * the one flow every publish-a-directory surface (datasets, agents, skills,
+ * jobs) shares. The archive only ever exists on disk; the temp dir is
+ * removed however the upload ends.
+ */
+async function uploadDirectory(
+  cfg: ResolvedConfig,
+  path: string,
+  opts: {
+    method?: "POST" | "PUT";
+    fields: Record<string, string | undefined>;
+    directory: string;
+    filename: string;
+  }
+): Promise<Response> {
+  const { tarGzipDirectoryToFile } = await import("./tar");
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const tmp = await mkdtemp(join(tmpdir(), "evolve-upload-"));
+  try {
+    const archive = join(tmp, opts.filename);
+    await tarGzipDirectoryToFile(opts.directory, archive);
+    return await requestUpload(cfg, path, {
+      method: opts.method,
+      fields: opts.fields,
+      file: { path: archive, filename: opts.filename },
+    });
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -1420,6 +1499,10 @@ function makeWatch(
     },
   };
 }
+
+// The streaming upload transport's typed timeout, re-exported so callers can
+// tell a dead-socket upload from a refused one without importing internals.
+export { EvolveUploadTimeoutError, UPLOAD_TIMEOUT_MS } from "./upload";
 
 /**
  * The server states the verified digest of a package here. When it is present
@@ -1932,14 +2015,10 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             );
           }
         }
-        const { tarGzipDirectory } = await import("./tar");
-        const gzipped = await tarGzipDirectory(src.directory);
-        const res = await request(cfg, "/api/datasets/publish", {
-          method: "POST",
-          body: uploadForm(
-            { name: input.name, version: input.version },
-            { bytes: gzipped, filename: "corpus.tar.gz" }
-          ),
+        const res = await uploadDirectory(cfg, "/api/datasets/publish", {
+          fields: { name: input.name, version: input.version },
+          directory: src.directory,
+          filename: "corpus.tar.gz",
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
@@ -2136,8 +2215,14 @@ export function agents(config?: HostedClientConfig): AgentsClient {
       // env are named PARTS — they used to ride the query string of an upload,
       // which put a shell command and a set of environment values into every
       // access log and proxy buffer on the way here.
-      const body = await agentUploadBody("agents().create()", input);
-      const res = await request(cfg, "/api/agents", { method: "POST", body });
+      const parts = agentUploadParts("agents().create()", input);
+      const res = parts.directory
+        ? await uploadDirectory(cfg, "/api/agents", {
+            fields: parts.fields,
+            directory: parts.directory,
+            filename: "source.tar.gz",
+          })
+        : await request(cfg, "/api/agents", { method: "POST", body: uploadForm(parts.fields) });
       return mapAgent((await res.json()) as Record<string, unknown>);
     },
 
@@ -2163,27 +2248,38 @@ export function agents(config?: HostedClientConfig): AgentsClient {
 
     async upsert(name: string, input: AgentUpsertInput): Promise<Agent> {
       // One request, so the name never briefly stops resolving the way
-      // delete()+create() makes it. Same body grammar as create(), minus the
-      // name part — the URL carries it.
-      const body = await agentUploadBody("agents().upsert()", { ...input, name });
-      const res = await request(cfg, `/api/agents/${encodeURIComponent(name)}`, {
-        method: "PUT",
-        body,
-      });
+      // delete()+create() makes it. Same body grammar as create(), name part
+      // included — the URL names the agent too, and the server treats the
+      // path as authoritative.
+      const parts = agentUploadParts("agents().upsert()", { ...input, name });
+      const res = parts.directory
+        ? await uploadDirectory(cfg, `/api/agents/${encodeURIComponent(name)}`, {
+            method: "PUT",
+            fields: parts.fields,
+            directory: parts.directory,
+            filename: "source.tar.gz",
+          })
+        : await request(cfg, `/api/agents/${encodeURIComponent(name)}`, {
+            method: "PUT",
+            body: uploadForm(parts.fields),
+          });
       return mapAgent((await res.json()) as Record<string, unknown>);
     },
   };
 }
 
 /**
- * The multipart body both create() and upsert() send. Shared because the two
+ * The metadata parts both create() and upsert() send, plus the directory to
+ * stream when the agent ships as an uploaded tarball. Shared because the two
  * differ only in method and URL: one grammar means an agent registered by
- * either route is byte-identical on the wire.
+ * either route is byte-identical on the wire. The caller picks the transport
+ * — plain multipart for an install script, the streaming archive upload for
+ * a directory — because only the caller knows its URL and method.
  */
-async function agentUploadBody(
+function agentUploadParts(
   caller: string,
   input: AgentInput
-): Promise<FormData> {
+): { fields: Record<string, string | undefined>; directory?: string } {
   // Same division of labour as datasets().publish(): AgentSourceInput is a
   // union, so a TypeScript caller cannot pass both or neither. These checks
   // are for JavaScript callers and for values that crossed a JSON boundary
@@ -2208,12 +2304,7 @@ async function agentUploadBody(
     ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
     ...(hasInstallScript ? { install_script: input.install_script } : {}),
   };
-  if (hasDirectory) {
-    const { tarGzipDirectory } = await import("./tar");
-    const gzipped = await tarGzipDirectory(input.directory as string);
-    return uploadForm(fields, { bytes: gzipped, filename: "source.tar.gz" });
-  }
-  return uploadForm(fields);
+  return hasDirectory ? { fields, directory: input.directory as string } : { fields };
 }
 
 // =============================================================================
@@ -2258,19 +2349,15 @@ export function skills(config?: HostedClientConfig): SkillsClient {
       if (typeof directory !== "string" || !directory.trim()) {
         throw new Error("skills().upload() requires a local skill directory path");
       }
-      const { tarGzipDirectory } = await import("./tar");
       const { basename, resolve } = await import("node:path");
       // The archive packs the folder's CONTENT (SKILL.md at the archive
       // root); the folder's own name travels beside it, so a single-skill
       // upload is recorded — and later mounted — under its folder name.
       const folderName = basename(resolve(directory));
-      const gzipped = await tarGzipDirectory(directory);
-      const res = await request(cfg, "/api/skills", {
-        method: "POST",
-        body: uploadForm(
-          { name: folderName || undefined },
-          { bytes: gzipped, filename: "skill.tar.gz" },
-        ),
+      const res = await uploadDirectory(cfg, "/api/skills", {
+        fields: { name: folderName || undefined },
+        directory,
+        filename: "skill.tar.gz",
       });
       const body = (await res.json()) as Record<string, unknown>;
       const items = Array.isArray(body.skills) ? (body.skills as Record<string, unknown>[]) : [body];
@@ -2713,34 +2800,34 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       if (typeof dirOrArchive !== "string" || !dirOrArchive.trim()) {
         throw new Error("jobs().upload() requires a job directory (or .tar.gz archive) path");
       }
-      const { readFile, stat } = await import("node:fs/promises");
+      const { stat } = await import("node:fs/promises");
       const target = await stat(dirOrArchive).catch(() => null);
-      let archive: Buffer;
       if (target?.isFile()) {
-        archive = await readFile(dirOrArchive);
-      } else {
-        // Harbor's own gate (their cli/upload.py checks result.json, then
-        // config.json), applied client-side with their sentences — the cheap
-        // refusal that saves tarring and shipping a tree the server would
-        // refuse the same way (`not_a_job_dir`). A nonexistent path lands
-        // here too and reads as the first refusal, exactly as their CLI does.
-        const { existsSync } = await import("node:fs");
-        const { join, resolve } = await import("node:path");
-        const root = resolve(dirOrArchive);
-        for (const required of ["result.json", "config.json"]) {
-          if (!existsSync(join(root, required))) {
-            throw new Error(`${root} does not contain ${required}`);
-          }
-        }
-        const { tarGzipDirectory } = await import("./tar");
-        archive = await tarGzipDirectory(root);
+        // A ready-packed archive streams from where it lies — never read
+        // into memory, never re-packed, byte-for-byte on the wire.
+        const res = await requestUpload(cfg, "/api/jobs/upload", {
+          fields: { dataset: options?.dataset },
+          file: { path: dirOrArchive, filename: "job.tar.gz" },
+        });
+        return mapJob((await res.json()) as Record<string, unknown>);
       }
-      const res = await request(cfg, "/api/jobs/upload", {
-        method: "POST",
-        body: uploadForm(
-          { dataset: options?.dataset },
-          { bytes: archive, filename: "job.tar.gz" }
-        ),
+      // Harbor's own gate (their cli/upload.py checks result.json, then
+      // config.json), applied client-side with their sentences — the cheap
+      // refusal that saves tarring and shipping a tree the server would
+      // refuse the same way (`not_a_job_dir`). A nonexistent path lands
+      // here too and reads as the first refusal, exactly as their CLI does.
+      const { existsSync } = await import("node:fs");
+      const { join, resolve } = await import("node:path");
+      const root = resolve(dirOrArchive);
+      for (const required of ["result.json", "config.json"]) {
+        if (!existsSync(join(root, required))) {
+          throw new Error(`${root} does not contain ${required}`);
+        }
+      }
+      const res = await uploadDirectory(cfg, "/api/jobs/upload", {
+        fields: { dataset: options?.dataset },
+        directory: root,
+        filename: "job.tar.gz",
       });
       return mapJob((await res.json()) as Record<string, unknown>);
     },
@@ -2942,6 +3029,188 @@ export function trials(config?: HostedClientConfig): TrialsClient {
 }
 
 // =============================================================================
+// ANALYSES CLIENT (globally addressable analyzer runs)
+// =============================================================================
+
+/**
+ * The one event-type law of the traces feed, mirrored: the viewer names an
+ * event by its ACP `update.sessionUpdate` string and calls everything else
+ * "unknown" (swarm_dashboard lib/trace-events.ts traceEventType). The feed
+ * serves the stored payloads bare — unlike /api/trials/{id}/trace, which
+ * stamps `type` server-side through that same function — so this client
+ * applies the identical reading to keep one vocabulary across both doors.
+ */
+function feedEventType(data: unknown): string {
+  const update = (data as { update?: { sessionUpdate?: unknown } } | null)?.update;
+  return typeof update?.sessionUpdate === "string" ? update.sessionUpdate : "unknown";
+}
+
+/**
+ * Create an AnalysesClient. An analysis id is globally addressable, exactly
+ * like a trial's; the transcript carries `analyzed_trial_id` and `job_id` as
+ * the reverse pointers.
+ *
+ * DELIBERATELY OFF-CONTRACT — the reads ride the dashboard's traces feed
+ * (`/api/traces/trials/{id}/events`, `…/artifacts`), which spec/openapi.yaml
+ * does not carry: `traces` is outside the platform drift gate's
+ * CONTRACT_PREFIXES (swarm_dashboard __tests__/api/spec-drift-gate.test.ts),
+ * the way that gate's RUNTIME_INTERNAL_ROUTES keeps the UI's own session
+ * transcript door (`api/sessions/[id]/events`) off the spec. The feed
+ * authenticates Bearer API keys through the same dual-auth door as every
+ * contract route (swarm_dashboard lib/auth-dual.ts authenticateRequest; both
+ * feed routes call it first), so no server change is involved — see
+ * AnalysesClient in ./types for the full note and the recorded tension.
+ *
+ * Requires EVOLVE_API_KEY (or { apiKey } in config).
+ */
+export function analyses(config?: HostedClientConfig): AnalysesClient {
+  const cfg = resolveConfig("analyses", config);
+
+  // Ids this client has already proven to be analysis runs. A run id's
+  // species never changes, so one proof per id is enough — the whole-tree
+  // download reads three streams and must not re-spend the gate on each.
+  const provenAnalyses = new Set<string>();
+
+  /**
+   * THE SPECIES GATE for the stored streams. The feed's artifacts door
+   * resolves trial and regrade ids BEFORE analyses (swarm_dashboard
+   * app/api/traces/trials/[trialId]/artifacts/route.ts — the analysis lookup
+   * is its not-found fallback), and the stored selectors (?what=trace-stdout
+   * / trace-stderr / agent-home) answer for EITHER species — so a
+   * wrong-species id typed at a stream selector would be answered with THAT
+   * run's bytes, silently. The ?what=analysis door is the one selector the
+   * server refuses typed for a trial or a regrade ("analysis.json belongs to
+   * an analysis run", 400; an analysis id can only answer 200 there), so
+   * every stream read resolves that door FIRST — the wrong species dies
+   * before any artifact byte is fetched, and the CLI inherits the refusal.
+   */
+  async function assertAnalysisRun(analysisId: string): Promise<void> {
+    if (provenAnalyses.has(analysisId)) return;
+    let res: Response;
+    try {
+      res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=analysis`
+      );
+    } catch (error) {
+      if (error instanceof EvolveApiError && error.status === 400) {
+        // The door's 400 IS the species refusal — rethrown in this client's
+        // own grammar, the sentence transcript() speaks for the same mistake.
+        throw new Error(
+          `"${analysisId}" is not an analysis run (the artifacts door refuses it typed) — ` +
+            `for a trial's artifacts use trials()`
+        );
+      }
+      throw error;
+    }
+    // Drain the small verdict body so the connection is reusable; the gate
+    // needs only the door's yes.
+    await res.text().catch(() => {});
+    provenAnalyses.add(analysisId);
+  }
+
+  async function getArtifact(
+    analysisId: string,
+    stream: Exclude<AnalysisArtifactStream, "agent-home">
+  ): Promise<string | null>;
+  async function getArtifact(
+    analysisId: string,
+    stream: "agent-home"
+  ): Promise<Record<string, string> | null>;
+  async function getArtifact(
+    analysisId: string,
+    stream: AnalysisArtifactStream
+  ): Promise<string | Record<string, string> | null> {
+    await assertAnalysisRun(analysisId);
+    const res = await request(
+      cfg,
+      `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=${stream}`
+    );
+    const body = (await res.json()) as { log?: string | null; files?: Record<string, string> | null };
+    return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
+  }
+
+  return {
+    async get(analysisId: string): Promise<TrialAnalysis> {
+      // The feed's own verdict door: ?what=analysis answers { analysis } —
+      // the wire's TrialAnalysis for EVERY analysis, not only completed ones
+      // (the same document its &format=log form downloads as Harbor's
+      // analysis.json). A trial id refuses typed server-side ("analysis.json
+      // belongs to an analysis run"), so the wrong species never answers.
+      const res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=analysis`
+      );
+      const body = (await res.json()) as Record<string, unknown>;
+      const verdict = mapTrialAnalysis(body.analysis);
+      if (verdict === null) {
+        // mapTrialAnalysis reads malformed as "never analyzed" for the
+        // OPTIONAL Trial.analysis slot; here the verdict IS the answer, so
+        // absence fails closed instead of fabricating an empty object.
+        throw new Error(`The analysis feed served no readable verdict object for "${analysisId}"`);
+      }
+      return verdict;
+    },
+
+    async transcript(
+      analysisId: string,
+      options?: AnalysisTranscriptOptions
+    ): Promise<AnalysisTranscript> {
+      const since = options?.since;
+      if (since !== undefined && (!Number.isInteger(since) || since < 0)) {
+        // Refused at the keyboard: the feed would parseInt a fraction into a
+        // different position and the synthesized seqs below would lie.
+        throw new Error(`transcript() since must be a non-negative integer, got ${since}`);
+      }
+      const res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(analysisId)}/events` +
+          (since !== undefined ? `?since=${since}` : "")
+      );
+      const raw = (await res.json()) as Record<string, unknown>;
+      const session = (raw.session ?? {}) as Record<string, unknown>;
+      // THE SPECIES GATE. The feed resolves trial ids first (its resolution
+      // order), and a trial envelope carries no `kind` while a regrade says
+      // 'regrade' — either way these are not the analyzer's events, and
+      // handing them back would be the wrong run's transcript.
+      if (session.kind !== "analysis") {
+        const species = typeof session.kind === "string" ? session.kind : "trial";
+        throw new Error(
+          `"${analysisId}" is not an analysis run (the feed resolves it as a ${species}) — ` +
+            `for a trial's trace use trials()`
+        );
+      }
+      const base = since ?? 0;
+      const events = (Array.isArray(raw.events) ? raw.events : []) as unknown[];
+      return {
+        id: typeof session.id === "string" ? session.id : analysisId,
+        analyzed_trial_id:
+          typeof session.analyzedTrialId === "string" ? session.analyzedTrialId : null,
+        job_id: typeof session.jobId === "string" ? session.jobId : null,
+        task_name: typeof session.tag === "string" ? session.tag : null,
+        model_name: typeof session.model === "string" ? session.model : null,
+        sandbox_provider: typeof session.provider === "string" ? session.provider : null,
+        sandbox_id: typeof session.sandboxId === "string" ? session.sandboxId : null,
+        is_ended: session.isEnded === true,
+        total: typeof raw.total === "number" ? raw.total : base + events.length,
+        // seq = since + index is exact, not an estimate: an analysis's rows
+        // are seq-allocated densely from 0 in arrival order (the feed's own
+        // stated law), and `since` means "everything from seq N on".
+        events: events.map((data, i) => ({
+          seq: base + i,
+          type: feedEventType(data),
+          data: (data && typeof data === "object" && !Array.isArray(data)
+            ? data
+            : {}) as Record<string, unknown>,
+        })),
+      };
+    },
+
+    artifact: getArtifact,
+  };
+}
+
+// =============================================================================
 // AUTH CLIENT
 // =============================================================================
 
@@ -3022,6 +3291,8 @@ export interface HostedEvolve {
   readonly skills: SkillsClient;
   /** Globally addressable trials: get, trace, artifact, regrade, stop. */
   readonly trials: TrialsClient;
+  /** Analysis runs: verdict, the analyzer's own transcript, stored artifacts. */
+  readonly analyses: AnalysesClient;
   /**
    * The capability document — every agent, provider, status, limit, and
    * error code the platform supports. Public: no API key required.
@@ -3057,6 +3328,7 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
   let agentsClient: AgentsClient | undefined;
   let jobsClient: JobsClient | undefined;
   let trialsClient: TrialsClient | undefined;
+  let analysesClient: AnalysesClient | undefined;
   let skillsClient: SkillsClient | undefined;
 
   return {
@@ -3071,6 +3343,9 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
     },
     get trials(): TrialsClient {
       return (trialsClient ??= trials(config));
+    },
+    get analyses(): AnalysesClient {
+      return (analysesClient ??= analyses(config));
     },
     get skills(): SkillsClient {
       return (skillsClient ??= skills(config));

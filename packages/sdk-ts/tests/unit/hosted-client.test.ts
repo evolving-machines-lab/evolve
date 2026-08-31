@@ -53,6 +53,89 @@ function assertEqual(actual: unknown, expected: unknown, message: string): void 
 // MOCK FETCH
 // =============================================================================
 
+// =============================================================================
+// CAPTURE SERVER (archive uploads stream over node:http and BYPASS fetch —
+// that bypass is the F1 fix itself, so these tests capture the real wire)
+// =============================================================================
+
+import { createServer as createHttpServer } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
+
+interface UploadCall {
+  method: string;
+  url: string;
+  headers: IncomingHttpHeaders;
+  body: Buffer;
+}
+
+interface UploadPart {
+  name: string;
+  filename?: string;
+  type?: string;
+  data: Buffer;
+}
+
+/** A local server that records raw upload requests and answers with `reply`. */
+async function startCaptureServer(reply: { status: number; body: unknown }): Promise<{
+  base: string;
+  calls: UploadCall[];
+  close: () => Promise<void>;
+}> {
+  const calls: UploadCall[] = [];
+  const server = createHttpServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      calls.push({
+        method: req.method ?? "",
+        url: req.url ?? "",
+        headers: req.headers,
+        body: Buffer.concat(chunks),
+      });
+      res.statusCode = reply.status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(reply.body));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  return {
+    base: `http://127.0.0.1:${port}`,
+    calls,
+    close: () => new Promise((resolve) => server.close(() => resolve(undefined))),
+  };
+}
+
+/** Parse a captured multipart body into its ordered parts. */
+function multipartParts(call: UploadCall): UploadPart[] {
+  const contentType = call.headers["content-type"] ?? "";
+  const match = /boundary=(.+)$/.exec(contentType);
+  if (!match) throw new Error(`no boundary in content-type: ${contentType}`);
+  const delim = Buffer.from(`--${match[1]}`);
+  const parts: UploadPart[] = [];
+  let at = call.body.indexOf(delim);
+  while (at !== -1) {
+    const next = call.body.indexOf(delim, at + delim.length);
+    if (next === -1) break; // the closing `--boundary--`
+    const segment = call.body.subarray(at + delim.length + 2, next - 2);
+    const headerEnd = segment.indexOf("\r\n\r\n");
+    const headerText = segment.subarray(0, headerEnd).toString("utf8");
+    parts.push({
+      name: /name="([^"]*)"/.exec(headerText)?.[1] ?? "",
+      filename: /filename="([^"]*)"/.exec(headerText)?.[1],
+      type: /Content-Type: (.+)/.exec(headerText)?.[1],
+      data: Buffer.from(segment.subarray(headerEnd + 4)),
+    });
+    at = next;
+  }
+  return parts;
+}
+
+/** The part named `name`, or null — the form.get() of the raw wire. */
+function partData(parts: UploadPart[], name: string): Buffer | null {
+  return parts.find((p) => p.name === name)?.data ?? null;
+}
+
 const fetchCalls: { url: string; init?: RequestInit }[] = [];
 interface MockResponse {
   status: number;
@@ -139,6 +222,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   agents,
+  analyses,
   datasets,
   jobs,
   skills,
@@ -734,6 +818,105 @@ async function testDatasetUpdate() {
   }
 }
 
+async function testDatasetRouteSegmentsEncodeEveryCharacter() {
+  console.log("\n--- dataset route name/version/task segments ride encodeURIComponent ---");
+  installMockFetch();
+  try {
+    // A value carrying "/" is the one character that PROVES the encoding:
+    // a bare slash would change the route (the server's router answers its
+    // HTML 404 page, not the typed dataset_not_found envelope %2F reaches),
+    // and manifest names genuinely wear the org/name form a caller can
+    // paste as a ref. This pins the byte parity with the Python SDK's
+    // quote(safe='') — same input, same bytes on the wire, both SDKs.
+    const name = "evolve-qa/rewardkit-control";
+    const encoded = "evolve-qa%2Frewardkit-control";
+    const detail = {
+      name,
+      title: null,
+      description: null,
+      active_version: null,
+      versions: [],
+      selected_version: null,
+      tasks: { items: [], nextCursor: null, hasMore: false },
+      created_at: "2026-08-30T00:00:00.000Z",
+      updated_at: "2026-08-30T00:00:00.000Z",
+    };
+    // Longest patterns first: the mock matches by substring in insertion
+    // order, and the bare-name route is a prefix of every other one.
+    setMockResponse(`/api/datasets/${encoded}/versions/rc%2F1/tasks/tasks%2Falpha/build`, {
+      status: 200,
+      body: { task_name: "tasks/alpha", state: "READY", failure: null, build_log_ref: null },
+    });
+    setMockResponse(`/api/datasets/${encoded}/versions/rc%2F1/activate`, {
+      status: 200,
+      body: detail,
+    });
+    setMockResponse(`/api/datasets/${encoded}/download`, {
+      status: 200,
+      bodyBytes: Buffer.from("corpus"),
+      body: null,
+    });
+    setMockResponse(`/api/datasets/${encoded}`, { status: 200, body: detail });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const last = () => fetchCalls[fetchCalls.length - 1];
+
+    await d.get(name);
+    assert(last().url.endsWith(`/api/datasets/${encoded}`), "get() sends the name as ONE encoded segment");
+
+    await d.getTaskBuild(`${name}@rc/1`, "tasks/alpha");
+    assert(
+      last().url.endsWith(`/api/datasets/${encoded}/versions/rc%2F1/tasks/tasks%2Falpha/build`),
+      "getTaskBuild() encodes name, version AND task segments"
+    );
+
+    await d.download(`${name}@rc/1`);
+    assert(
+      last().url.endsWith(`/api/datasets/${encoded}/download?version=rc%2F1`),
+      "download() encodes the name segment and the ?version= value"
+    );
+
+    await d.activate(name, "rc/1");
+    assert(
+      last().url.endsWith(`/api/datasets/${encoded}/versions/rc%2F1/activate`),
+      "activate() encodes name and version segments"
+    );
+
+    await d.update(name, { upstream_auto_import: false });
+    assert(last().url.endsWith(`/api/datasets/${encoded}`), "update() PATCHes the encoded name route");
+
+    await d.delete(name);
+    assert(last().url.endsWith(`/api/datasets/${encoded}`), "delete() targets the encoded name route");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testListImportsFiltersFormEncoded() {
+  console.log("\n--- datasets().listImports() filters ride URLSearchParams' form encoding ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/imports", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    // A slash-bearing dataset filter pins the byte parity with the Python
+    // SDK, which serializes the same filters through its shared _page_query
+    // form encoder: %2F from both SDKs, never a bare slash from one of them.
+    await d.listImports({ status: "FAILED", dataset: "evolve-qa/rewardkit-control", limit: 5 });
+    const url = fetchCalls[0].url;
+    assert(url.includes("limit=5"), "limit rides the query");
+    assert(url.includes("status=FAILED"), "status rides the query");
+    assert(
+      url.includes("dataset=evolve-qa%2Frewardkit-control"),
+      "the dataset filter's slash rides as %2F"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testPublishGitSource() {
   console.log("\n--- datasets().publish() POSTs the git-source contract ---");
   installMockFetch();
@@ -820,45 +1003,48 @@ async function testPublishRequiresGitSource() {
 }
 
 async function testPublishDirectorySource() {
-  console.log("\n--- datasets().publish() tars + gzips a local directory and uploads it ---");
-  installMockFetch();
+  console.log("\n--- datasets().publish() tars + gzips a local directory and STREAMS it ---");
+  // The archive rides node:http, not fetch — the F1 fix — so the wire is
+  // captured by a real local server rather than the fetch mock.
+  const server = await startCaptureServer({
+    status: 202,
+    body: { id: "imp-2", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-import-dir-"));
   try {
     await mkdir(join(dir, "tasks", "abc"), { recursive: true });
     await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
-    setMockResponse("/api/datasets/publish", {
-      status: 202,
-      body: { id: "imp-2", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
-    });
 
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const d = datasets({ apiKey: "test-key", baseUrl: server.base });
     const imported = await d.publish({
       source: { directory: dir },
       name: "my-set",
       version: "0.1",
     });
 
-    const call = fetchCalls[fetchCalls.length - 1];
+    const call = server.calls[server.calls.length - 1];
     // Metadata is named PARTS; the corpus is the `archive` part. The URL is bare.
-    assert(call.url.endsWith("/api/datasets/publish"), "the URL carries nothing");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const headers = call.init?.headers as Record<string, string>;
-    assertEqual(headers?.Authorization, "Bearer test-key", "Bearer token sent");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), "my-set", "name is a named part");
-    assertEqual(form.get("version"), "0.1", "version is a named part");
+    assertEqual(call.url, "/api/datasets/publish", "the URL carries nothing");
+    assertEqual(call.method, "POST", "uses POST");
+    assertEqual(call.headers.authorization, "Bearer test-key", "Bearer token sent");
+    assertEqual(
+      call.headers["content-length"],
+      String(call.body.length),
+      "Content-Length is exact — the upload is identity-framed, never chunked"
+    );
+    assertEqual(call.headers["transfer-encoding"], undefined, "no chunked transfer encoding");
+    const parts = multipartParts(call);
+    assertEqual(partData(parts, "name")?.toString(), "my-set", "name is a named part");
+    assertEqual(partData(parts, "version")?.toString(), "0.1", "version is a named part");
     // The metadata parts come FIRST so the server can refuse a name it will
     // never accept before receiving a half-gigabyte upload.
-    assertEqual([...form.keys()], ["name", "version", "archive"], "metadata precedes the archive part");
+    assertEqual(parts.map((p) => p.name), ["name", "version", "archive"], "metadata precedes the archive part");
 
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the corpus is the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    const body = partData(parts, "archive")!;
     assert(body.length > 0, "archive part is non-empty bytes");
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
     // The gzipped tar carries the corpus file path + content (USTAR stores both as plain bytes).
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("tasks/abc/task.toml"), "the tar carries the corpus file path");
     assert(tarText.includes('schema_version = "1.1"'), "the tar carries the file content");
 
@@ -868,14 +1054,17 @@ async function testPublishDirectorySource() {
       "202 response mapped (id, status, name, version, failure, warnings)"
     );
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testPublishManifestDerivedIdentity() {
   console.log("\n--- datasets().publish() lets dataset.toml supply name/version for a directory source ---");
-  installMockFetch();
+  const server = await startCaptureServer({
+    status: 202,
+    body: { id: "imp-3", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-import-manifest-"));
   try {
     await mkdir(join(dir, "tasks", "abc"), { recursive: true });
@@ -886,25 +1075,19 @@ async function testPublishManifestDerivedIdentity() {
         "0".repeat(64) +
         '"\n'
     );
-    setMockResponse("/api/datasets/publish", {
-      status: 202,
-      body: { id: "imp-3", name: "my-set", version: "0.1", status: "QUEUED", warnings: [] },
-    });
 
-    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const d = datasets({ apiKey: "test-key", baseUrl: server.base });
     // No name, no version: the SERVER derives both from the manifest.
     const imported = await d.publish({ source: { directory: dir } });
 
-    const call = fetchCalls[fetchCalls.length - 1];
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), null, "no name part — the manifest supplies it server-side");
-    assertEqual(form.get("version"), null, "no version part — the manifest supplies it server-side");
-    assert(form.get("archive") instanceof Blob, "the corpus still rides the archive part");
+    const parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "name"), null, "no name part — the manifest supplies it server-side");
+    assertEqual(partData(parts, "version"), null, "no version part — the manifest supplies it server-side");
+    assert(partData(parts, "archive") !== null, "the corpus still rides the archive part");
     assertEqual(imported.name, "my-set", "202 echoes the server-derived name");
     assertEqual(imported.version, "0.1", "202 echoes the server-derived version");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -1625,18 +1808,17 @@ async function testAgentCreateInstallScript() {
 }
 
 async function testAgentCreateTarball() {
-  console.log("\n--- agents().create() tars a directory into a multipart archive part ---");
-  installMockFetch();
+  console.log("\n--- agents().create() tars a directory and STREAMS it as the archive part ---");
+  const server = await startCaptureServer({
+    status: 201,
+    body: { ...REGISTERED_AGENT, source: "tarball" },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-agent-dir-"));
   try {
     await mkdir(join(dir, "bin"), { recursive: true });
     await writeFile(join(dir, "bin", "acme-cli"), "#!/bin/sh\nexec acme \"$@\"\n");
-    setMockResponse("/api/agents", {
-      status: 201,
-      body: { ...REGISTERED_AGENT, source: "tarball" },
-    });
 
-    const a = agents({ apiKey: "test-key", baseUrl: BASE });
+    const a = agents({ apiKey: "test-key", baseUrl: server.base });
     const created = await a.create({
       name: "acme-cli",
       directory: dir,
@@ -1644,80 +1826,130 @@ async function testAgentCreateTarball() {
       env: { ACME_PROFILE: "bench", ACME_REGION: "us" },
     });
 
-    const call = fetchCalls[fetchCalls.length - 1];
+    const call = server.calls[server.calls.length - 1];
     // The run command and the declared env are named PARTS, never the query
     // string — a shell command and env values in a URL land in every access
     // log and proxy buffer on the way to the server.
-    assert(call.url.endsWith("/api/agents"), "the URL carries nothing");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual(form.get("name"), "acme-cli", "name is a named part");
-    assertEqual(form.get("run_command"), "acme-cli --headless", "run_command is a named part");
+    assertEqual(call.url, "/api/agents", "the URL carries nothing");
+    assertEqual(call.method, "POST", "uses POST");
+    const parts = multipartParts(call);
+    assertEqual(partData(parts, "name")?.toString(), "acme-cli", "name is a named part");
+    assertEqual(partData(parts, "run_command")?.toString(), "acme-cli --headless", "run_command is a named part");
     assertEqual(
-      form.get("env"),
+      partData(parts, "env")?.toString(),
       JSON.stringify({ ACME_PROFILE: "bench", ACME_REGION: "us" }),
       "env is one JSON part, not repeated query pairs"
     );
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the archive is the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    const body = partData(parts, "archive")!;
     assert(body.length > 0, "archive part is non-empty bytes");
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("bin/acme-cli"), "the tar carries the agent executable path");
     assertEqual(created.source, "tarball", "server echoes the tarball source");
   } finally {
-    restoreFetch();
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testAgentUpsertTarball() {
+  console.log("\n--- agents().upsert() streams a directory as PUT to the agent's own route ---");
+  const server = await startCaptureServer({
+    status: 200,
+    body: { ...REGISTERED_AGENT, source: "tarball" },
+  });
+  const dir = await mkdtemp(join(tmpdir(), "evolve-agent-upsert-dir-"));
+  try {
+    await mkdir(join(dir, "bin"), { recursive: true });
+    await writeFile(join(dir, "bin", "acme-cli"), "#!/bin/sh\nexec acme \"$@\"\n");
+
+    const a = agents({ apiKey: "test-key", baseUrl: server.base });
+    // A name carrying "/" — the one character that PROVES the encoding:
+    // new URL() re-encodes a bare space on its own, so a space fixture
+    // passes even without encodeURIComponent; a bare slash would change
+    // the route, so only %2F on the wire means the name was encoded.
+    const replaced = await a.upsert("acme/cli", {
+      directory: dir,
+      run_command: "acme-cli --headless",
+      env: { ACME_PROFILE: "bench" },
+    });
+
+    const call = server.calls[server.calls.length - 1];
+    // One call, PUT, at the agent's OWN route — the name is encoded into the
+    // path, so there is never a window where the name stops resolving.
+    assertEqual(call.method, "PUT", "uses PUT — replace, never delete+create");
+    assertEqual(call.url, "/api/agents/acme%2Fcli", "PUTs the agent's own encoded route — the slash rides as %2F, never a path segment");
+    assertEqual(
+      call.headers["content-length"],
+      String(call.body.length),
+      "Content-Length is exact — the streamed upsert is identity-framed"
+    );
+    const parts = multipartParts(call);
+    // Same body grammar as create(), name part included (the URL names the
+    // agent too; the server treats the path as authoritative).
+    assertEqual(
+      parts.map((p) => p.name),
+      ["name", "run_command", "env", "archive"],
+      "metadata parts precede the archive part, create()'s exact grammar"
+    );
+    assertEqual(partData(parts, "run_command")?.toString(), "acme-cli --headless", "run_command is a named part");
+    assertEqual(
+      partData(parts, "env")?.toString(),
+      JSON.stringify({ ACME_PROFILE: "bench" }),
+      "env is one JSON part"
+    );
+    const body = partData(parts, "archive")!;
+    assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
+    const tarText = gunzipSync(body).toString("latin1");
+    assert(tarText.includes("bin/acme-cli"), "the tar carries the agent executable path");
+    assertEqual(replaced.source, "tarball", "the mapped agent carries the server's echo");
+  } finally {
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testSkillsUploadCarriesFolderName() {
   console.log("\n--- skills().upload() sends the folder's name beside the content archive ---");
-  installMockFetch();
+  const server = await startCaptureServer({
+    status: 201,
+    body: {
+      skills: [
+        {
+          id: "sk_1",
+          name: "my-solo-skill",
+          digest: "sha256:" + "0".repeat(64),
+          size_bytes: 7,
+          description: null,
+          ref: "upload:sk_1",
+          created_at: "2026-08-01T00:00:00Z",
+        },
+      ],
+    },
+  });
   const dir = await mkdtemp(join(tmpdir(), "evolve-skill-upload-"));
   const skillDir = join(dir, "my-solo-skill");
   try {
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, "SKILL.md"), "# solo\n");
-    setMockResponse("/api/skills", {
-      status: 201,
-      body: {
-        skills: [
-          {
-            id: "sk_1",
-            name: "my-solo-skill",
-            digest: "sha256:" + "0".repeat(64),
-            size_bytes: 7,
-            description: null,
-            ref: "upload:sk_1",
-            created_at: "2026-08-01T00:00:00Z",
-          },
-        ],
-      },
-    });
 
-    const s = skills({ apiKey: "test-key", baseUrl: BASE });
+    const s = skills({ apiKey: "test-key", baseUrl: server.base });
     const uploaded = await s.upload(skillDir);
 
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/skills"), "posts to /api/skills, nothing in the query string");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/skills", "posts to /api/skills, nothing in the query string");
+    const parts = multipartParts(call);
     // The archive packs the folder's CONTENT (SKILL.md at the archive root),
     // so the folder's own name MUST travel as a named part — without it the
     // server cannot name a single-skill upload.
-    assertEqual(form.get("name"), "my-solo-skill", "the folder name is a named part");
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the content rides as the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    assertEqual(partData(parts, "name")?.toString(), "my-solo-skill", "the folder name is a named part");
+    const body = partData(parts, "archive")!;
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("SKILL.md"), "the tar packs the folder content at the archive root");
     assertEqual(uploaded[0]?.name, "my-solo-skill", "the mapped record carries the server's name");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -3333,27 +3565,23 @@ async function writeJobDirFixture(dir: string): Promise<void> {
 }
 
 async function testUploadJobDirectory() {
-  console.log("\n--- upload() packs a job directory and POSTs it as the archive part ---");
-  installMockFetch();
+  console.log("\n--- upload() packs a job directory and STREAMS it as the archive part ---");
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-"));
   try {
     await writeJobDirFixture(dir);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     const created = await e.upload(dir);
 
-    const call = fetchCalls[fetchCalls.length - 1];
-    assert(call.url.endsWith("/api/jobs/upload"), "the URL carries nothing");
-    assertEqual(call.init?.method, "POST", "uses POST");
-    const form = call.init?.body as FormData;
-    assert(form instanceof FormData, "body is multipart/form-data");
-    assertEqual([...form.keys()], ["archive"], "no dataset hint = the archive part alone");
-    const file = form.get("archive") as File;
-    assert(file instanceof Blob, "the job tree is the archive part");
-    const body = new Uint8Array(await file.arrayBuffer());
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/jobs/upload", "the URL carries nothing");
+    assertEqual(call.method, "POST", "uses POST");
+    const parts = multipartParts(call);
+    assertEqual(parts.map((p) => p.name), ["archive"], "no dataset hint = the archive part alone");
+    const body = partData(parts, "archive")!;
     assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
-    const tarText = gunzipSync(Buffer.from(body)).toString("latin1");
+    const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("result.json"), "the tar carries the job's result.json");
     assert(tarText.includes("trial-1/result.json"), "the tar carries the trial directory");
 
@@ -3376,29 +3604,28 @@ async function testUploadJobDirectory() {
       "the provenance echo rides Job.upload, aggregated REPORTED totals included"
     );
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testUploadJobDatasetHint() {
   console.log("\n--- upload() sends the dataset hint as a named part BEFORE the archive ---");
-  installMockFetch();
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-hint-"));
   try {
     await writeJobDirFixture(dir);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     await e.upload(dir, { dataset: "deep-swe@1.1" });
 
-    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
-    assertEqual(form.get("dataset"), "deep-swe@1.1", "dataset hint is a named part");
+    const parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "dataset")?.toString(), "deep-swe@1.1", "dataset hint is a named part");
     // Metadata first, so the server can refuse a bad hint before receiving the
     // upload — the same order every multipart route here keeps.
-    assertEqual([...form.keys()], ["dataset", "archive"], "the hint precedes the archive part");
+    assertEqual(parts.map((p) => p.name), ["dataset", "archive"], "the hint precedes the archive part");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -3451,49 +3678,45 @@ async function testUploadJobDirGate() {
 }
 
 async function testUploadJobArchivePassthrough() {
-  console.log("\n--- upload() sends an already-packed .tar.gz byte-for-byte, never re-packing ---");
-  installMockFetch();
+  console.log("\n--- upload() streams an already-packed .tar.gz byte-for-byte, never re-packing ---");
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-tgz-"));
   try {
     // Any gzip stream stands in for a downloaded job archive; the point is
-    // the bytes cross the wire untouched.
+    // the bytes cross the wire untouched — streamed from where the file
+    // lies, never read into memory, never re-packed.
     const packed = gzipSync(Buffer.from("the archive the server built"));
     const archivePath = join(dir, "job-eval-up1-results.tar.gz");
     await writeFile(archivePath, packed);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     await e.upload(archivePath);
 
-    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
-    const file = form.get("archive") as File;
-    const body = Buffer.from(new Uint8Array(await file.arrayBuffer()));
+    const parts = multipartParts(server.calls[server.calls.length - 1]);
+    const body = partData(parts, "archive")!;
     assert(body.equals(packed), "the file's bytes ride the archive part verbatim");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function testUploadJobDeterministicPack() {
   console.log("\n--- upload() packs the same directory to the same bytes ---");
-  installMockFetch();
+  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-det-"));
   try {
     await writeJobDirFixture(dir);
-    setMockResponse("/api/jobs/upload", { status: 201, body: uploadedJobBody() });
 
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const e = jobs({ apiKey: "test-key", baseUrl: server.base });
     await e.upload(dir);
     await e.upload(dir);
 
-    const first = fetchCalls[0].init?.body as FormData;
-    const second = fetchCalls[1].init?.body as FormData;
-    const firstBytes = Buffer.from(new Uint8Array(await (first.get("archive") as File).arrayBuffer()));
-    const secondBytes = Buffer.from(new Uint8Array(await (second.get("archive") as File).arrayBuffer()));
+    const firstBytes = partData(multipartParts(server.calls[0]), "archive")!;
+    const secondBytes = partData(multipartParts(server.calls[1]), "archive")!;
     assert(firstBytes.equals(secondBytes), "two packs of one directory are byte-identical");
   } finally {
-    restoreFetch();
+    await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -3702,74 +3925,88 @@ async function testUploadExecutionHonesty() {
 
 async function testUploadJobTypedErrors() {
   console.log("\n--- upload() surfaces the route's typed refusals verbatim ---");
-  installMockFetch();
+  // Each refusal rides the STREAMED route and must still map through the
+  // shared throwApiError — the transport swap may not cost a single field.
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-err-"));
   try {
     await writeJobDirFixture(dir);
-    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
 
-    setMockResponse("/api/jobs/upload", {
-      status: 413,
-      body: { error: { code: "upload_too_large", message: "Archive exceeds the 256 MB cap" } },
-    });
-    let threw = false;
-    try {
-      await e.upload(dir);
-    } catch (err: any) {
-      threw = true;
-      assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
-      assertEqual(err.status, 413, "carries the HTTP status");
-      assertEqual(err.code, "upload_too_large", "carries the stable error code");
+    {
+      const server = await startCaptureServer({
+        status: 413,
+        body: { error: { code: "upload_too_large", message: "Archive exceeds the 256 MB cap" } },
+      });
+      const e = jobs({ apiKey: "test-key", baseUrl: server.base });
+      let threw = false;
+      try {
+        await e.upload(dir);
+      } catch (err: any) {
+        threw = true;
+        assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+        assertEqual(err.status, 413, "carries the HTTP status");
+        assertEqual(err.code, "upload_too_large", "carries the stable error code");
+      } finally {
+        await server.close();
+      }
+      assert(threw, "throws on 413");
     }
-    assert(threw, "throws on 413");
 
-    setMockResponse("/api/jobs/upload", {
-      status: 422,
-      body: {
-        error: {
-          code: "invalid_trial",
-          message: 'Trial "trial-1": result.json fails the TrialResult shape',
-          details: { trial: "trial-1" },
+    {
+      const server = await startCaptureServer({
+        status: 422,
+        body: {
+          error: {
+            code: "invalid_trial",
+            message: 'Trial "trial-1": result.json fails the TrialResult shape',
+            details: { trial: "trial-1" },
+          },
         },
-      },
-    });
-    threw = false;
-    try {
-      await e.upload(dir);
-    } catch (err: any) {
-      threw = true;
-      assertEqual(err.code, "invalid_trial", "invalid_trial surfaces with its code");
-      assertEqual((err.details as Record<string, unknown>)?.trial, "trial-1", "details name the trial");
+      });
+      const e = jobs({ apiKey: "test-key", baseUrl: server.base });
+      let threw = false;
+      try {
+        await e.upload(dir);
+      } catch (err: any) {
+        threw = true;
+        assertEqual(err.code, "invalid_trial", "invalid_trial surfaces with its code");
+        assertEqual((err.details as Record<string, unknown>)?.trial, "trial-1", "details name the trial");
+      } finally {
+        await server.close();
+      }
+      assert(threw, "throws on 422");
     }
-    assert(threw, "throws on 422");
 
     // The duplicate refusal: re-uploading an archive whose job this caller
     // already uploaded — details name the existing job to open instead.
-    setMockResponse("/api/jobs/upload", {
-      status: 409,
-      body: {
-        error: {
-          code: "job_already_uploaded",
-          message: "You already uploaded this job",
-          details: { existing_job_id: "eval-up1" },
+    {
+      const server = await startCaptureServer({
+        status: 409,
+        body: {
+          error: {
+            code: "job_already_uploaded",
+            message: "You already uploaded this job",
+            details: { existing_job_id: "eval-up1" },
+          },
         },
-      },
-    });
-    threw = false;
-    try {
-      await e.upload(dir);
-    } catch (err: any) {
-      threw = true;
-      assertEqual(err.code, "job_already_uploaded", "the duplicate refusal surfaces with its code");
-      assertEqual(
-        (err.details as Record<string, unknown>)?.existing_job_id,
-        "eval-up1",
-        "details name the existing job"
-      );
+      });
+      const e = jobs({ apiKey: "test-key", baseUrl: server.base });
+      let threw = false;
+      try {
+        await e.upload(dir);
+      } catch (err: any) {
+        threw = true;
+        assertEqual(err.code, "job_already_uploaded", "the duplicate refusal surfaces with its code");
+        assertEqual(
+          (err.details as Record<string, unknown>)?.existing_job_id,
+          "eval-up1",
+          "details name the existing job"
+        );
+      } finally {
+        await server.close();
+      }
+      assert(threw, "throws on the duplicate 409");
     }
-    assert(threw, "throws on the duplicate 409");
   } finally {
-    restoreFetch();
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -4693,6 +4930,324 @@ async function testTrialArtifact() {
   }
 }
 
+// =============================================================================
+// ANALYSES TESTS (the traces-feed doors — deliberately off-contract)
+// =============================================================================
+
+/** The verdict object as the feed's ?what=analysis door serves it. */
+function fixtureAnalysisVerdict(): Record<string, unknown> {
+  return {
+    id: "an-1",
+    status: "failed",
+    model_name: "glm-5.3-flash",
+    rubric: { criteria: [{ name: "reward_hacking", description: "d", guidance: "g" }] },
+    summary: null,
+    checks: null,
+    estimated_cost_usd: 0.0366,
+    usage: {
+      provisional: true,
+      spent_usd: 0.0366,
+      input_tokens: 960596,
+      cached_input_tokens: 912640,
+      output_tokens: 77018,
+      as_of: "2026-08-30T22:24:22.619Z",
+    },
+    failure: { phase: "artifact_read", message: "MISSING /app/analysis.json" },
+    created_at: "2026-08-30T21:50:09.010Z",
+    finished_at: "2026-08-30T22:24:22.619Z",
+  };
+}
+
+async function testAnalysisGet() {
+  console.log("\n--- analyses().get() reads the verdict off the feed's ?what=analysis door ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: fixtureAnalysisVerdict() },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    const verdict = await a.get("an-1");
+    assertEqual(verdict.id, "an-1", "maps the analysis id");
+    assertEqual(verdict.status, "failed", "wire status rides verbatim (lowercase vocabulary)");
+    assertEqual(verdict.model_name, "glm-5.3-flash", "model rides verbatim");
+    assertEqual(verdict.estimated_cost_usd, 0.0366, "the analyzer's own metered figure rides verbatim");
+    assertEqual(
+      verdict.usage,
+      {
+        provisional: true,
+        spent_usd: 0.0366,
+        input_tokens: 960596,
+        cached_input_tokens: 912640,
+        output_tokens: 77018,
+        as_of: "2026-08-30T22:24:22.619Z",
+      },
+      "usage goes through the one-home reading rule"
+    );
+    assertEqual(
+      verdict.failure,
+      { phase: "artifact_read", message: "MISSING /app/analysis.json" },
+      "a failed analysis carries its typed failure"
+    );
+    assert(
+      fetchCalls[0].url === `${BASE}/api/traces/trials/an-1/artifacts?what=analysis`,
+      "one GET on the feed's artifacts door"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisGetMalformedFailsClosed() {
+  console.log("\n--- analyses().get() fails closed on a body with no readable verdict ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-x/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: "not-an-object" },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await a.get("an-x");
+    } catch (e) {
+      threw = true;
+      assert(
+        e instanceof Error && e.message.includes("an-x"),
+        "the refusal names the id — never a fabricated empty verdict"
+      );
+    }
+    assert(threw, "malformed verdict throws instead of inventing an object");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisTranscript() {
+  console.log("\n--- analyses().transcript() maps the feed envelope; seq/type synthesized ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-1/events?since=2", {
+      status: 200,
+      body: {
+        session: {
+          id: "an-1",
+          tag: "roy-polymorph-cn",
+          provider: "daytona",
+          sandboxId: "box-1",
+          agent: "claude",
+          model: "glm-5.3-flash",
+          isEnded: true,
+          type: "trial",
+          kind: "analysis",
+          analyzedTrialId: "trial-9",
+          status: "FAILED",
+          jobId: "job-7",
+        },
+        // The feed serves BARE parsed events (the rows' `data` verbatim,
+        // no seq/type wrapper) — the SDK synthesizes both.
+        events: [
+          { update: { sessionUpdate: "tool_call", title: "Read" } },
+          { _prompt: { text: "You are analyzing an agent trial run." } },
+        ],
+        total: 4,
+        traceSource: "db",
+      },
+    });
+    setMockResponse("/api/traces/trials/an-1/events", {
+      status: 200,
+      body: {
+        session: { id: "an-1", kind: "analysis", analyzedTrialId: "trial-9" },
+        events: [{ update: { sessionUpdate: "agent_message_chunk" } }],
+        total: 1,
+        traceSource: "db",
+      },
+    });
+
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    const t = await a.transcript("an-1", { since: 2 });
+    assertEqual(t.id, "an-1", "id maps");
+    assertEqual(t.analyzed_trial_id, "trial-9", "the walk back to the analyzed trial maps");
+    assertEqual(t.job_id, "job-7", "job id maps");
+    assertEqual(t.task_name, "roy-polymorph-cn", "the task key maps (the envelope's tag)");
+    assertEqual(t.model_name, "glm-5.3-flash", "model maps");
+    assertEqual(t.sandbox_provider, "daytona", "provider maps");
+    assertEqual(t.sandbox_id, "box-1", "the ANALYZER's own box maps");
+    assertEqual(t.is_ended, true, "is_ended maps");
+    assertEqual(t.total, 4, "total is the feed's own count of ALL rows");
+    assertEqual(
+      t.events,
+      [
+        { seq: 2, type: "tool_call", data: { update: { sessionUpdate: "tool_call", title: "Read" } } },
+        { seq: 3, type: "unknown", data: { _prompt: { text: "You are analyzing an agent trial run." } } },
+      ],
+      "seqs are since+index (dense-from-0 law); type is the viewer's own extraction, 'unknown' otherwise"
+    );
+    assert(
+      fetchCalls[0].url === `${BASE}/api/traces/trials/an-1/events?since=2`,
+      "since rides the wire as the feed's own parameter"
+    );
+
+    const whole = await a.transcript("an-1");
+    assertEqual(whole.events[0].seq, 0, "no since = the whole transcript, seqs from 0");
+    assert(
+      fetchCalls[1].url === `${BASE}/api/traces/trials/an-1/events`,
+      "omitted since sends no parameter"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisTranscriptRefusesOtherSpecies() {
+  console.log("\n--- analyses().transcript() refuses an id the feed resolves to another species ---");
+  installMockFetch();
+  try {
+    // The feed resolves trial ids first (the route's resolution order); a
+    // trial envelope carries NO kind, a regrade kind: 'regrade'. Both must
+    // refuse typed rather than hand back the wrong species' transcript.
+    setMockResponse("/api/traces/trials/trial-1/events", {
+      status: 200,
+      body: { session: { id: "trial-1", type: "trial" }, events: [{}], total: 1, traceSource: "db" },
+    });
+    setMockResponse("/api/traces/trials/rr-1/events", {
+      status: 200,
+      body: { session: { id: "rr-1", type: "trial", kind: "regrade" }, events: [], total: 0, traceSource: "db" },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    for (const id of ["trial-1", "rr-1"]) {
+      let threw = false;
+      try {
+        await a.transcript(id);
+      } catch (e) {
+        threw = true;
+        assert(
+          e instanceof Error && e.message.includes(id) && e.message.includes("not an analysis"),
+          `${id}: the refusal names the id and the reason`
+        );
+      }
+      assert(threw, `${id}: wrong species refuses instead of answering with its transcript`);
+    }
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisTranscriptSinceValidation() {
+  console.log("\n--- analyses().transcript() refuses a non-integer since at the keyboard ---");
+  installMockFetch();
+  try {
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    for (const bad of [-1, 1.5, Number.NaN]) {
+      let threw = false;
+      try {
+        await a.transcript("an-1", { since: bad });
+      } catch (e) {
+        threw = true;
+        assert(e instanceof Error && !(e instanceof EvolveApiError), `since=${bad} refuses client-side`);
+      }
+      assert(threw, `since=${bad} is refused (the seq synthesis would lie otherwise)`);
+    }
+    assertEqual(fetchCalls.length, 0, "no request is spent on an invalid since");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisArtifact() {
+  console.log("\n--- analyses().artifact() reads the feed's stored selectors; null = never stored ---");
+  installMockFetch();
+  try {
+    // The species gate: every stream read resolves the ?what=analysis door
+    // first, so each id's expected traffic starts with the gate's 200.
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: { id: "an-1" } },
+    });
+    setMockResponse("/api/traces/trials/an-2/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: { id: "an-2" } },
+    });
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=trace-stdout", {
+      status: 200,
+      body: { log: "analyzer stdout" },
+    });
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=agent-home", {
+      status: 200,
+      body: { files: { "/root/.claude/session.jsonl": "{}" } },
+    });
+    setMockResponse("/api/traces/trials/an-2/artifacts?what=trace-stderr", {
+      status: 200,
+      body: { log: null },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    assertEqual(await a.artifact("an-1", "trace-stdout"), "analyzer stdout", "log selectors answer the text");
+    assertEqual(
+      await a.artifact("an-1", "agent-home"),
+      { "/root/.claude/session.jsonl": "{}" },
+      "agent-home answers the sandbox-path → text map"
+    );
+    assertEqual(
+      await a.artifact("an-2", "trace-stderr"),
+      null,
+      "null = never stored — a normal answer, not an error"
+    );
+    assertEqual(
+      fetchCalls.map((c) => c.url.replace(`${BASE}/api/traces/trials/`, "")),
+      [
+        "an-1/artifacts?what=analysis",
+        "an-1/artifacts?what=trace-stdout",
+        "an-1/artifacts?what=agent-home",
+        "an-2/artifacts?what=analysis",
+        "an-2/artifacts?what=trace-stderr",
+      ],
+      "the species gate resolves once per id, before that id's first stream byte"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisArtifactRefusesOtherSpecies() {
+  console.log("\n--- analyses().artifact() refuses an id the feed resolves to another species ---");
+  installMockFetch();
+  try {
+    // The artifacts door resolves trial and regrade ids BEFORE analyses, and
+    // its stored selectors answer for EITHER species — a trial id typed at
+    // ?what=trace-stdout would be served THAT trial's bytes, silently. The
+    // one selector the server refuses typed for the wrong species is
+    // ?what=analysis ("analysis.json belongs to an analysis run"), so
+    // artifact() must resolve that door first and die there.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" },
+    });
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", {
+      status: 200,
+      body: { log: "the TRIAL's stdout" },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await a.artifact("run-1", "trace-stdout");
+    } catch (e) {
+      threw = true;
+      assert(
+        e instanceof Error && e.message.includes("run-1") && e.message.includes("not an analysis"),
+        "the refusal names the id and the reason"
+      );
+    }
+    assert(threw, "wrong species refuses instead of answering with the trial's bytes");
+    assertEqual(
+      fetchCalls.map((c) => c.url),
+      [`${BASE}/api/traces/trials/run-1/artifacts?what=analysis`],
+      "the refusal lands before any stream byte is fetched"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testStopTrials() {
   console.log("\n--- trials().stop() kills selected trials and reports every id once ---");
   installMockFetch();
@@ -4906,6 +5461,30 @@ async function testApiErrorHandling() {
       assertEqual(e.code, "unknown_error", "unparseable body maps to unknown_error");
     }
     assert(threwRaw, "throws on unparseable error body");
+
+    // The traces feed's own refusal grammar — {error: "<sentence>"} with no
+    // code (the viewer plane never minted codes) — must serve the sentence as
+    // the message, never the JSON blob, under the honest unknown_error code.
+    installMockFetch();
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" },
+    });
+    let threwFeed = false;
+    try {
+      await analyses({ apiKey: "test-key", baseUrl: BASE }).get("run-1");
+    } catch (e: any) {
+      threwFeed = true;
+      assert(e instanceof EvolveApiError, "a feed refusal is still an EvolveApiError");
+      assertEqual(e.status, 400, "carries the HTTP status");
+      assertEqual(e.code, "unknown_error", "the feed names no code — unknown_error, never an invented one");
+      assertEqual(
+        e.message,
+        "analysis.json belongs to an analysis run — open the analysis row and download it there",
+        "the server's sentence is the message — not the raw {error: ...} body"
+      );
+    }
+    assert(threwFeed, "throws on a feed 400");
   } finally {
     restoreFetch();
   }
@@ -5469,6 +6048,8 @@ async function main() {
   await testGetActive();
   await testGetActiveNoActiveVersion();
   await testDatasetUpdate();
+  await testDatasetRouteSegmentsEncodeEveryCharacter();
+  await testListImportsFiltersFormEncoded();
   await testPublishGitSource();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();
@@ -5488,6 +6069,7 @@ async function main() {
   await testWatchImportFailureReReadIsBounded();
   await testAgentCreateInstallScript();
   await testAgentCreateTarball();
+  await testAgentUpsertTarball();
   await testSkillsUploadCarriesFolderName();
   await testAgentCreateRequiresOneSource();
   await testAgentListGetDelete();
@@ -5560,6 +6142,13 @@ async function main() {
   await testTraceEventsIterator();
   await testInspectionSurface();
   await testTrialArtifact();
+  await testAnalysisGet();
+  await testAnalysisGetMalformedFailsClosed();
+  await testAnalysisTranscript();
+  await testAnalysisTranscriptRefusesOtherSpecies();
+  await testAnalysisTranscriptSinceValidation();
+  await testAnalysisArtifact();
+  await testAnalysisArtifactRefusesOtherSpecies();
   await testStopTrials();
   await testCompare();
   await testCompareBadIdsError();

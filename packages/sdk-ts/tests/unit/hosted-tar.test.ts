@@ -1,15 +1,18 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: tarGzipDirectory() — the published corpus's bytes
+ * Unit Test: tarGzipDirectoryToFile() — the published corpus's bytes
  *
- * The sha256 of what this function returns IS the dataset version's source
+ * The sha256 of the archive this writes IS the dataset version's source
  * identity on the server, so its byte layout is a contract, not an
  * implementation detail. It also decides what a published corpus CONTAINS —
  * a file the writer drops is a file the eval never sees.
  *
  * What this pins down:
- *   - determinism: the same directory tars to the same sha256, twice in a row
- *     and across mtime / permission / creation-order differences;
+ *   - determinism: the same directory tars to the same sha256, twice in a row,
+ *     across mtime / permission / creation-order differences, AND across
+ *     different output file names (nothing about the destination may reach
+ *     the bytes — the Python twin once leaked the temp file's name into the
+ *     gzip FNAME header field);
  *   - dotfiles are PACKED (.gitignore, .env.example, .config/) and only the
  *     three junk names (.git, .DS_Store, .venv) are skipped;
  *   - the executable bit survives (a verifier script arrives runnable) and is
@@ -18,7 +21,11 @@
  *     uname/gname, and the gzip header carries no timestamp;
  *   - symlinks never enter the archive (the server rejects them);
  *   - names longer than a USTAR name field still pack;
- *   - the corpus streams off disk instead of being held whole in memory;
+ *   - the corpus streams off disk AND the archive streams to disk — neither
+ *     is ever held whole in memory (the F1 incident: the old Buffer path
+ *     cost ~10x a corpus's size in RSS);
+ *   - the size-guarded Buffer wrapper (tarGzipDirectory, kept only for the
+ *     sandbox skill mount) returns the same bytes and refuses past its cap;
  *   - an empty directory is valid bytes and a missing one rejects.
  *
  * Usage:
@@ -33,6 +40,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -44,7 +52,19 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { extract } from "tar-stream";
 
-import { tarGzipDirectory } from "../../src/hosted/tar.ts";
+import { tarGzipDirectory, tarGzipDirectoryToFile } from "../../src/hosted/tar.ts";
+
+/** Pack via the streaming engine and read the archive back for inspection. */
+async function pack(root: string): Promise<Buffer> {
+  const dir = mkdtempSync(join(tmpdir(), "hosted-tar-out-"));
+  try {
+    const out = join(dir, "archive.tar.gz");
+    await tarGzipDirectoryToFile(root, out);
+    return readFileSync(out);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 // =============================================================================
 // TEST HELPERS
@@ -145,8 +165,8 @@ async function testDeterministicAcrossRuns(): Promise<void> {
     write(r, ".gitignore", "__pycache__/\n");
   });
   try {
-    const a = await tarGzipDirectory(root);
-    const b = await tarGzipDirectory(root);
+    const a = await pack(root);
+    const b = await pack(root);
     assertEqual(sha256(a), sha256(b), "two runs over one directory produce one sha256");
     assert(a.length > 0, "the archive is not empty");
   } finally {
@@ -171,8 +191,8 @@ async function testDeterministicAcrossMachineState(): Promise<void> {
   });
   try {
     assertEqual(
-      sha256(await tarGzipDirectory(forward)),
-      sha256(await tarGzipDirectory(reverse)),
+      sha256(await pack(forward)),
+      sha256(await pack(reverse)),
       "creation order does not change the bytes",
     );
   } finally {
@@ -183,9 +203,9 @@ async function testDeterministicAcrossMachineState(): Promise<void> {
   // Touching a file must not move the digest — mtime is pinned to 0.
   const touched = fixture((r) => write(r, "a.txt", "a\n"));
   try {
-    const before = sha256(await tarGzipDirectory(touched));
+    const before = sha256(await pack(touched));
     utimesSync(join(touched, "a.txt"), new Date(1e9), new Date(1e9));
-    assertEqual(sha256(await tarGzipDirectory(touched)), before, "a changed mtime does not change the bytes");
+    assertEqual(sha256(await pack(touched)), before, "a changed mtime does not change the bytes");
   } finally {
     rmSync(touched, { recursive: true, force: true });
   }
@@ -195,8 +215,8 @@ async function testDeterministicAcrossMachineState(): Promise<void> {
   const loose = fixture((r) => write(r, "a.txt", "a\n", 0o644));
   try {
     assertEqual(
-      sha256(await tarGzipDirectory(tight)),
-      sha256(await tarGzipDirectory(loose)),
+      sha256(await pack(tight)),
+      sha256(await pack(loose)),
       "a stricter umask does not change the bytes",
     );
   } finally {
@@ -221,7 +241,7 @@ async function testDotfilesArePacked(): Promise<void> {
     write(r, "nested/.DS_Store", "junk");
   });
   try {
-    const names = (await unpack(await tarGzipDirectory(root))).map((e) => e.name);
+    const names = (await unpack(await pack(root))).map((e) => e.name);
     assertEqual(
       names,
       [".config/settings.json", ".dockerignore", ".env.example", ".gitignore", "nested/.hidden-rc", "task.toml"],
@@ -242,7 +262,7 @@ async function testExecutableBitSurvives(): Promise<void> {
     write(r, "tight.md", "hello\n", 0o600);
   });
   try {
-    const byName = new Map((await unpack(await tarGzipDirectory(root))).map((e) => [e.name, e]));
+    const byName = new Map((await unpack(await pack(root))).map((e) => [e.name, e]));
     assertEqual(byName.get("run.sh")?.mode, 0o755, "an executable file keeps +x (0o755)");
     assertEqual(byName.get("odd.sh")?.mode, 0o755, "an odd executable mode normalizes to 0o755");
     assertEqual(byName.get("notes.md")?.mode, 0o644, "a plain file is 0o644");
@@ -257,7 +277,7 @@ async function testHeadersAreFlattened(): Promise<void> {
   console.log("\n[5] Headers carry no machine identity");
   const root = fixture((r) => write(r, "a.txt", "a\n"));
   try {
-    const gzipped = await tarGzipDirectory(root);
+    const gzipped = await pack(root);
     const [entry] = await unpack(gzipped);
     assertEqual(entry.mtime, 0, "mtime is 0");
     assertEqual(entry.uid, 0, "uid is 0");
@@ -281,7 +301,7 @@ async function testSymlinksAreSkipped(): Promise<void> {
   symlinkSync(join(root, "real.txt"), join(root, "link.txt"));
   symlinkSync(join(root, "dir"), join(root, "dirlink"));
   try {
-    const names = (await unpack(await tarGzipDirectory(root))).map((e) => e.name);
+    const names = (await unpack(await pack(root))).map((e) => e.name);
     assertEqual(names, ["dir/inner.txt", "real.txt"], "neither a file symlink nor a directory symlink is packed");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -294,8 +314,8 @@ async function testLongPaths(): Promise<void> {
   const long = `${"d".repeat(120)}/${"f".repeat(120)}.txt`;
   const root = fixture((r) => write(r, long, "deep\n"));
   try {
-    const a = await tarGzipDirectory(root);
-    const b = await tarGzipDirectory(root);
+    const a = await pack(root);
+    const b = await pack(root);
     const entries = await unpack(a);
     assertEqual(entries.map((e) => e.name), [long], "a 245-byte path round-trips under its own name");
     assertEqual(entries[0]?.content.toString("utf8"), "deep\n", "its content round-trips");
@@ -306,18 +326,21 @@ async function testLongPaths(): Promise<void> {
 }
 
 /**
- * The corpus streams off disk. A whole-file read would hold the file as one
- * Buffer for the length of the gzip, which `arrayBuffers` would show; the
- * streaming path never holds more than a read buffer at a time.
+ * Neither side of the pack is ever whole in memory: the corpus streams off
+ * disk INTO the pack, and the compressed archive streams OUT to the file.
+ * Incompressible content makes the output side as heavy as the input side,
+ * so the sampler bounds BOTH — this is the F1 fence at the packer level
+ * (the old Buffer-collecting path held the whole archive).
  */
 async function testStreamsFromDisk(): Promise<void> {
-  console.log("\n[8] The corpus streams off disk");
+  console.log("\n[8] The corpus streams off disk and the archive streams to disk");
   const MB = 1024 * 1024;
   const SIZE = 64 * MB;
-  // Zeros: the file is large on disk but the gzip output is tiny, so anything
-  // the sampler sees is the INPUT side. Written a chunk at a time, so the test
-  // itself never holds the file either.
+  // Incompressible-ish: a deterministic byte mix gzip cannot flatten, so the
+  // large archive would show in `arrayBuffers` if the writer collected it.
+  // Written a chunk at a time, so the test itself never holds the file.
   const chunk = Buffer.alloc(4 * MB);
+  for (let i = 0; i < chunk.length; i++) chunk[i] = (i * 31 + ((i >> 9) * 131)) & 0xff;
   const root = fixture((r) => {
     const fd = openSync(join(r, "big.bin"), "w");
     try {
@@ -326,10 +349,10 @@ async function testStreamsFromDisk(): Promise<void> {
       closeSync(fd);
     }
   });
+  const outDir = mkdtempSync(join(tmpdir(), "hosted-tar-stream-"));
   try {
-    // Collect first, so what the sampler sees is memory still HELD, not
-    // read-buffer garbage that has not been swept yet. The suite runs this
-    // file with --expose-gc for exactly this measurement.
+    // Sample memory still HELD, not read-buffer garbage that has not been
+    // swept yet. The suite runs this file with --expose-gc for exactly this.
     const gc = (globalThis as { gc?: () => void }).gc;
     if (!gc) {
       failed++;
@@ -343,16 +366,77 @@ async function testStreamsFromDisk(): Promise<void> {
       gc();
       peak = Math.max(peak, process.memoryUsage().arrayBuffers - base);
     }, 20);
-    let gzipped: Buffer;
+    const out = join(outDir, "big.tar.gz");
     try {
-      gzipped = await tarGzipDirectory(root);
+      await tarGzipDirectoryToFile(root, out);
     } finally {
       clearInterval(sampler);
     }
-    assert(peak < 8 * MB, `held bytes stay far under the 64MB file (peak ${(peak / MB).toFixed(1)}MB)`);
-    const entries = await unpack(gzipped);
+    assert(peak < 8 * MB, `held bytes stay far under the 64MB corpus+archive (peak ${(peak / MB).toFixed(1)}MB)`);
+    const entries = await unpack(readFileSync(out));
     assertEqual(entries.length, 1, "the large file packs as one entry");
     assertEqual(entries[0]?.content.length, SIZE, "the large file round-trips at full length");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The destination must never reach the bytes: two different output paths,
+ * one digest. Pinned because the Python twin's gzip writer embedded the
+ * (random) temp file's name in the gzip FNAME header field the moment it
+ * got a real file object — moving the server-side source identity per run.
+ */
+async function testOutputNameNeverReachesTheBytes(): Promise<void> {
+  console.log("\n[8b] The output file name never reaches the bytes");
+  const root = fixture((r) => write(r, "a.txt", "a\n"));
+  const outDir = mkdtempSync(join(tmpdir(), "hosted-tar-names-"));
+  try {
+    const one = join(outDir, "first-name.tar.gz");
+    const two = join(outDir, "a-completely-different-name.tar.gz");
+    await tarGzipDirectoryToFile(root, one);
+    await tarGzipDirectoryToFile(root, two);
+    assertEqual(
+      sha256(readFileSync(one)),
+      sha256(readFileSync(two)),
+      "two output names, one sha256"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The Buffer wrapper exists for ONE caller (the sandbox skill mount, whose
+ * provider write seam takes bytes). It must return exactly the streamed
+ * engine's bytes, and refuse past its size cap instead of degrading into
+ * the incident it replaced.
+ */
+async function testBufferWrapper(): Promise<void> {
+  console.log("\n[8c] The size-guarded Buffer wrapper");
+  const root = fixture((r) => {
+    write(r, "SKILL.md", "# skill\n");
+    write(r, "run.sh", "#!/bin/sh\nexit 0\n", 0o755);
+  });
+  try {
+    const viaWrapper = await tarGzipDirectory(root);
+    const viaEngine = await pack(root);
+    assertEqual(sha256(viaWrapper), sha256(viaEngine), "wrapper bytes === engine bytes");
+
+    // The guard: a cap below the archive size refuses with the measured size.
+    let threw = false;
+    try {
+      await tarGzipDirectory(root, 16);
+    } catch (e) {
+      threw = true;
+      assert(
+        (e as Error).message.includes("16-byte cap"),
+        "the refusal names the cap it enforces"
+      );
+    }
+    assert(threw, "an archive over the cap refuses instead of returning a Buffer");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -363,7 +447,7 @@ async function testEmptyDirectory(): Promise<void> {
   console.log("\n[9] An empty directory is a valid empty archive");
   const root = fixture(() => {});
   try {
-    const gzipped = await tarGzipDirectory(root);
+    const gzipped = await pack(root);
     assertEqual((await unpack(gzipped)).length, 0, "no entries");
     assertEqual(gunzipSync(gzipped).length, 1024, "two zero blocks = end of archive");
   } finally {
@@ -377,7 +461,7 @@ async function testMissingDirectoryRejects(): Promise<void> {
   const root = fixture(() => {});
   rmSync(root, { recursive: true, force: true });
   try {
-    await tarGzipDirectory(root);
+    await pack(root);
     failed++;
     console.log("  ✗ a missing directory rejects (it resolved instead)");
   } catch (e) {
@@ -390,7 +474,7 @@ async function testMissingDirectoryRejects(): Promise<void> {
 // =============================================================================
 
 async function main(): Promise<void> {
-  console.log("tarGzipDirectory() — the published corpus's bytes\n" + "=".repeat(60));
+  console.log("tarGzipDirectoryToFile() — the published corpus's bytes\n" + "=".repeat(60));
 
   await testDeterministicAcrossRuns();
   await testDeterministicAcrossMachineState();
@@ -400,6 +484,8 @@ async function main(): Promise<void> {
   await testSymlinksAreSkipped();
   await testLongPaths();
   await testStreamsFromDisk();
+  await testOutputNameNeverReachesTheBytes();
+  await testBufferWrapper();
   await testEmptyDirectory();
   await testMissingDirectoryRejects();
 

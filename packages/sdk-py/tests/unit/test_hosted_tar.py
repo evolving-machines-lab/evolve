@@ -1,10 +1,10 @@
 """
-Unit tests for _tar_gzip_directory() — the published corpus's bytes.
+Unit tests for _tar_gzip_directory_to_file() — the published corpus's bytes.
 
-The sha256 of what this function returns IS the dataset version's source
-identity on the server, so its byte layout is a contract, not an implementation
-detail. It also decides what a published corpus CONTAINS — a file the writer
-drops is a file the eval never sees.
+The sha256 of the archive this writes IS the dataset version's source identity
+on the server, so its byte layout is a contract, not an implementation detail.
+It also decides what a published corpus CONTAINS — a file the writer drops is
+a file the eval never sees.
 
 Mirrors packages/sdk-ts/tests/unit/hosted-tar.test.ts. Cross-language byte
 identity is NOT the bar (the two gzip implementations differ); the bar is that
@@ -12,12 +12,17 @@ the two SDKs pack the same CONTENT and that each one is reproducible on its own.
 
 Tests:
 - determinism: one directory, one sha256, across runs / mtime / umask / order
+  AND across output file names (gzip would embed the destination's name in its
+  FNAME header field the moment it sees a real file object — suppressed, or
+  the digest would move per run with the temp file's random name)
 - dotfiles are PACKED; only .git, .DS_Store and .venv are skipped
 - the executable bit survives, normalized to 0o755 / 0o644
 - every other header field is flattened, and gzip carries no timestamp
 - symlinks never enter the archive
 - a path too long for a USTAR name field still packs
-- the corpus streams off disk instead of being held whole in memory
+- the corpus streams off disk AND the archive streams to disk — neither is
+  ever held whole in memory (the F1 incident: the old bytes-returning path
+  cost ~10x a corpus's size in RSS through the upload stack)
 - an empty directory is a valid empty archive; a missing one raises
 """
 
@@ -26,11 +31,21 @@ import hashlib
 import io
 import os
 import tarfile
+import tempfile
 import tracemalloc
 
 import pytest
 
-from evolve.hosted import _tar_gzip_directory
+from evolve.hosted import _tar_gzip_directory_to_file
+
+
+def _tar_gzip_directory(directory: str) -> bytes:
+    """Pack via the streaming engine and read the archive back for inspection."""
+    with tempfile.TemporaryDirectory(prefix='hosted-tar-test-') as tmp:
+        out = os.path.join(tmp, 'archive.tar.gz')
+        _tar_gzip_directory_to_file(directory, out)
+        with open(out, 'rb') as handle:
+            return handle.read()
 
 
 # =============================================================================
@@ -202,28 +217,48 @@ class TestContents:
 class TestStreamingAndEdges:
     """The corpus never sits in memory whole, and the boundaries behave."""
 
-    def test_corpus_streams_off_disk(self, tmp_path):
-        # Zeros: large on disk, tiny once gzipped, so anything tracemalloc sees
-        # is the INPUT side. Written a chunk at a time so the test itself never
-        # holds the file either.
+    def test_corpus_streams_off_disk_and_archive_streams_to_disk(self, tmp_path):
+        # Incompressible-ish content: the archive is ~as large as the corpus,
+        # so tracemalloc bounds the OUTPUT side too — the F1 fence at the
+        # packer level (the old bytes-returning path held the whole archive).
+        # Written a chunk at a time so the test itself never holds the file.
         megabyte = 1024 * 1024
         size = 64 * megabyte
-        chunk = bytes(4 * megabyte)
-        with open(str(tmp_path / 'big.bin'), 'wb') as handle:
+        chunk = bytes((i * 31 + (i >> 9) * 131) & 0xFF for i in range(4 * megabyte))
+        corpus = tmp_path / 'corpus'
+        corpus.mkdir()
+        with open(str(corpus / 'big.bin'), 'wb') as handle:
             for _ in range(size // len(chunk)):
                 handle.write(chunk)
 
+        out = str(tmp_path / 'big.tar.gz')
         tracemalloc.start()
         try:
-            gzipped = _tar_gzip_directory(str(tmp_path))
+            _tar_gzip_directory_to_file(str(corpus), out)
             _, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
 
-        assert peak < 8 * megabyte, f'held {peak / megabyte:.1f}MB for a 64MB file'
-        entries = unpack(gzipped)
+        assert peak < 8 * megabyte, f'held {peak / megabyte:.1f}MB for a 64MB corpus+archive'
+        with open(out, 'rb') as handle:
+            entries = unpack(handle.read())
         assert len(entries) == 1
         assert len(entries[0][1]) == size
+
+    def test_output_name_never_reaches_the_bytes(self, tmp_path):
+        # Two different destinations, one digest: gzip's FNAME header field is
+        # suppressed, or a real file object would leak the (random) temp
+        # file's name into the bytes and move the server-side source identity
+        # per run.
+        corpus = tmp_path / 'corpus'
+        corpus.mkdir()
+        write(corpus, 'a.txt', b'a\n')
+        out_a = str(tmp_path / 'first-name.tar.gz')
+        out_b = str(tmp_path / 'a-completely-different-name.tar.gz')
+        _tar_gzip_directory_to_file(str(corpus), out_a)
+        _tar_gzip_directory_to_file(str(corpus), out_b)
+        with open(out_a, 'rb') as fa, open(out_b, 'rb') as fb:
+            assert sha256(fa.read()) == sha256(fb.read())
 
     def test_empty_directory_is_a_valid_empty_archive(self, tmp_path):
         gzipped = _tar_gzip_directory(str(tmp_path))
