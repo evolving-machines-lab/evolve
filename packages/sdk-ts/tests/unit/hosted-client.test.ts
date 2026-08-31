@@ -808,6 +808,31 @@ async function testDatasetRouteSegmentsEncodeEveryCharacter() {
   }
 }
 
+async function testListImportsFiltersFormEncoded() {
+  console.log("\n--- datasets().listImports() filters ride URLSearchParams' form encoding ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/imports", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    // A slash-bearing dataset filter pins the byte parity with the Python
+    // SDK, which serializes the same filters through its shared _page_query
+    // form encoder: %2F from both SDKs, never a bare slash from one of them.
+    await d.listImports({ status: "FAILED", dataset: "evolve-qa/rewardkit-control", limit: 5 });
+    const url = fetchCalls[0].url;
+    assert(url.includes("limit=5"), "limit rides the query");
+    assert(url.includes("status=FAILED"), "status rides the query");
+    assert(
+      url.includes("dataset=evolve-qa%2Frewardkit-control"),
+      "the dataset filter's slash rides as %2F"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testPublishGitSource() {
   console.log("\n--- datasets().publish() POSTs the git-source contract ---");
   installMockFetch();
@@ -5544,6 +5569,7 @@ async function main() {
   await testGetActiveNoActiveVersion();
   await testDatasetUpdate();
   await testDatasetRouteSegmentsEncodeEveryCharacter();
+  await testListImportsFiltersFormEncoded();
   await testPublishGitSource();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();

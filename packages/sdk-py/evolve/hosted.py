@@ -4337,14 +4337,13 @@ class DatasetsClient:
         "FAILED"); ``dataset`` narrows to one dataset name.
         """
         async def fetch_page(page_limit, page_cursor) -> DatasetImportPage:
-            query = _page_query(page_limit, page_cursor)
-            extra = []
-            if status is not None:
-                extra.append(f'status={urllib.parse.quote(status)}')
-            if dataset is not None:
-                extra.append(f'dataset={urllib.parse.quote(dataset)}')
-            if extra:
-                query = f'{query}&{"&".join(extra)}' if query else f'?{"&".join(extra)}'
+            # status/dataset ride _page_query's form encoding, like every
+            # other collection filter (the TS SDK serializes the same
+            # filters with URLSearchParams) — a slash-bearing dataset
+            # filter reaches the server as %2F from both SDKs.
+            query = _page_query(
+                page_limit, page_cursor, status=status, dataset=dataset
+            )
             raw = await self._http.request_json(f'/api/datasets/imports{query}')
             items, next_cursor, has_more = _page_parts(raw)
             return DatasetImportPage(

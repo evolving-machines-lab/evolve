@@ -1545,6 +1545,25 @@ class TestDatasets:
         assert fake.requests[0].get_method() == 'DELETE'
         assert fake.requests[0].full_url.endswith(f'/api/datasets/{encoded}')
 
+    @pytest.mark.asyncio
+    async def test_list_imports_filters_ride_the_shared_form_encoding(self):
+        """The status/dataset filters ride ``_page_query``'s form encoding —
+        the serialization the TS SDK's URLSearchParams produces — so a
+        slash-bearing dataset filter reaches the server as %2F from both
+        SDKs, never as a bare slash from one of them."""
+        fake = FakeUrlopen([
+            ('/api/datasets/imports',
+             {'items': [], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).list_imports(
+                status='FAILED', dataset='evolve-qa/rewardkit-control', limit=5
+            )
+        url = fake.requests[0].full_url
+        assert 'limit=5' in url
+        assert 'status=FAILED' in url
+        assert 'dataset=evolve-qa%2Frewardkit-control' in url
+
 
 REGISTERED_AGENT = {
     'name': 'acme-cli',
