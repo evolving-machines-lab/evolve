@@ -3003,6 +3003,49 @@ function feedEventType(data: unknown): string {
 export function analyses(config?: HostedClientConfig): AnalysesClient {
   const cfg = resolveConfig("analyses", config);
 
+  // Ids this client has already proven to be analysis runs. A run id's
+  // species never changes, so one proof per id is enough — the whole-tree
+  // download reads three streams and must not re-spend the gate on each.
+  const provenAnalyses = new Set<string>();
+
+  /**
+   * THE SPECIES GATE for the stored streams. The feed's artifacts door
+   * resolves trial and regrade ids BEFORE analyses (swarm_dashboard
+   * app/api/traces/trials/[trialId]/artifacts/route.ts — the analysis lookup
+   * is its not-found fallback), and the stored selectors (?what=trace-stdout
+   * / trace-stderr / agent-home) answer for EITHER species — so a
+   * wrong-species id typed at a stream selector would be answered with THAT
+   * run's bytes, silently. The ?what=analysis door is the one selector the
+   * server refuses typed for a trial or a regrade ("analysis.json belongs to
+   * an analysis run", 400; an analysis id can only answer 200 there), so
+   * every stream read resolves that door FIRST — the wrong species dies
+   * before any artifact byte is fetched, and the CLI inherits the refusal.
+   */
+  async function assertAnalysisRun(analysisId: string): Promise<void> {
+    if (provenAnalyses.has(analysisId)) return;
+    let res: Response;
+    try {
+      res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=analysis`
+      );
+    } catch (error) {
+      if (error instanceof EvolveApiError && error.status === 400) {
+        // The door's 400 IS the species refusal — rethrown in this client's
+        // own grammar, the sentence transcript() speaks for the same mistake.
+        throw new Error(
+          `"${analysisId}" is not an analysis run (the artifacts door refuses it typed) — ` +
+            `for a trial's artifacts use trials()`
+        );
+      }
+      throw error;
+    }
+    // Drain the small verdict body so the connection is reusable; the gate
+    // needs only the door's yes.
+    await res.text().catch(() => {});
+    provenAnalyses.add(analysisId);
+  }
+
   async function getArtifact(
     analysisId: string,
     stream: Exclude<AnalysisArtifactStream, "agent-home">
@@ -3015,6 +3058,7 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
     analysisId: string,
     stream: AnalysisArtifactStream
   ): Promise<string | Record<string, string> | null> {
+    await assertAnalysisRun(analysisId);
     const res = await request(
       cfg,
       `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=${stream}`

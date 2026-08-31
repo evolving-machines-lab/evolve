@@ -3234,7 +3234,11 @@ export interface AnalysesClient {
    * One stored artifact by selector: the analyzer's raw stdout/stderr answer
    * the text, "agent-home" the sandbox-path → text map of its session home.
    * Null = never stored (a normal answer, not an error): a QUEUED analysis,
-   * or one whose box died before the settle stored anything.
+   * or one whose box died before the settle stored anything. Like
+   * transcript(), an id the feed resolves to a trial or a regrade refuses
+   * with an error — the feed's stored selectors would answer for either
+   * species, so the analysis-only ?what=analysis door is resolved first and
+   * the wrong run's bytes are never served.
    */
   artifact(
     analysisId: string,

@@ -4937,6 +4937,36 @@ async function testAnalysisDownloadStream() {
   }
 }
 
+async function testAnalysisDownloadStreamRefusesOtherSpecies() {
+  console.log("\n--- runCli: analysis download --stream refuses an id of another species ---");
+  installMockFetch();
+  try {
+    // A trial id typed at a stream selector: the artifacts door itself would
+    // serve THAT trial's bytes (its resolution order puts trials first), so
+    // the SDK resolves the ?what=analysis door first — the server refuses a
+    // trial there — and the verb inherits the refusal: exit 1, and the
+    // trial's bytes never reach stdout.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" },
+    });
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", {
+      status: 200,
+      body: { log: "the TRIAL's stdout" },
+    });
+    const wrong = captureIO();
+    assertEqual(
+      await runCli(["analysis", "download", "run-1", "--stream", "trace-stdout", ...AUTH], wrong.io),
+      1,
+      "wrong species exits 1"
+    );
+    assert(wrong.err[0].includes("not an analysis run"), "the refusal names the reason");
+    assertEqual(wrong.out, [], "the trial's bytes never reach stdout");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testAnalysisDownloadSave() {
   console.log("\n--- runCli: analysis download saves the analysis tree + evolve.json; --overwrite gates ---");
   installMockFetch();
@@ -6634,6 +6664,7 @@ async function main() {
   await testAnalysisShow();
   await testAnalysisTrace();
   await testAnalysisDownloadStream();
+  await testAnalysisDownloadStreamRefusesOtherSpecies();
   await testAnalysisDownloadSave();
   await testAnalysisDownloadUsageErrors();
   await testDatasetListAndShow();

@@ -4922,6 +4922,16 @@ async function testAnalysisArtifact() {
   console.log("\n--- analyses().artifact() reads the feed's stored selectors; null = never stored ---");
   installMockFetch();
   try {
+    // The species gate: every stream read resolves the ?what=analysis door
+    // first, so each id's expected traffic starts with the gate's 200.
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: { id: "an-1" } },
+    });
+    setMockResponse("/api/traces/trials/an-2/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: { id: "an-2" } },
+    });
     setMockResponse("/api/traces/trials/an-1/artifacts?what=trace-stdout", {
       status: 200,
       body: { log: "analyzer stdout" },
@@ -4945,6 +4955,57 @@ async function testAnalysisArtifact() {
       await a.artifact("an-2", "trace-stderr"),
       null,
       "null = never stored — a normal answer, not an error"
+    );
+    assertEqual(
+      fetchCalls.map((c) => c.url.replace(`${BASE}/api/traces/trials/`, "")),
+      [
+        "an-1/artifacts?what=analysis",
+        "an-1/artifacts?what=trace-stdout",
+        "an-1/artifacts?what=agent-home",
+        "an-2/artifacts?what=analysis",
+        "an-2/artifacts?what=trace-stderr",
+      ],
+      "the species gate resolves once per id, before that id's first stream byte"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisArtifactRefusesOtherSpecies() {
+  console.log("\n--- analyses().artifact() refuses an id the feed resolves to another species ---");
+  installMockFetch();
+  try {
+    // The artifacts door resolves trial and regrade ids BEFORE analyses, and
+    // its stored selectors answer for EITHER species — a trial id typed at
+    // ?what=trace-stdout would be served THAT trial's bytes, silently. The
+    // one selector the server refuses typed for the wrong species is
+    // ?what=analysis ("analysis.json belongs to an analysis run"), so
+    // artifact() must resolve that door first and die there.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" },
+    });
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", {
+      status: 200,
+      body: { log: "the TRIAL's stdout" },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    let threw = false;
+    try {
+      await a.artifact("run-1", "trace-stdout");
+    } catch (e) {
+      threw = true;
+      assert(
+        e instanceof Error && e.message.includes("run-1") && e.message.includes("not an analysis"),
+        "the refusal names the id and the reason"
+      );
+    }
+    assert(threw, "wrong species refuses instead of answering with the trial's bytes");
+    assertEqual(
+      fetchCalls.map((c) => c.url),
+      [`${BASE}/api/traces/trials/run-1/artifacts?what=analysis`],
+      "the refusal lands before any stream byte is fetched"
     );
   } finally {
     restoreFetch();
@@ -5848,6 +5909,7 @@ async function main() {
   await testAnalysisTranscriptRefusesOtherSpecies();
   await testAnalysisTranscriptSinceValidation();
   await testAnalysisArtifact();
+  await testAnalysisArtifactRefusesOtherSpecies();
   await testStopTrials();
   await testCompare();
   await testCompareBadIdsError();
