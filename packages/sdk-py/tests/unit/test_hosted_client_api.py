@@ -1495,6 +1495,103 @@ class TestDatasets:
         assert exc.value.code == 'version_not_ready'
         assert exc.value.details == {'state': 'BUILDING'}
 
+    @pytest.mark.asyncio
+    async def test_dataset_route_segments_encode_every_character(self):
+        """Every dataset-route name/version/task segment rides the wire with
+        quote(safe='') — the TS SDK's encodeURIComponent grammar, so both
+        SDKs put the same bytes on the wire (the agent-route rule).
+
+        A value carrying '/' is the one character that PROVES the encoding:
+        quote()'s default safe='/' leaves a bare slash the server's router
+        reads as a path separator — an HTML 404 page instead of the typed
+        dataset_not_found envelope that %2F reaches (measured live against
+        production, 2026-08-30). Manifest names genuinely wear the org/name
+        form ("evolve-qa/rewardkit-control"), so a caller pasting one must
+        get the same typed refusal from both SDKs. Catalog names themselves
+        can never carry '/' (the server's DATASET_NAME_PATTERN), so for
+        every legal value this encoding is byte-identical to before.
+        """
+        name = 'evolve-qa/rewardkit-control'
+        encoded = 'evolve-qa%2Frewardkit-control'
+        detail = _settle_detail_body(name=name, version='rc/1', state='READY', active=True)
+
+        # get(): the name segment.
+        fake = FakeUrlopen([(f'/api/datasets/{encoded}', detail)])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).get(name)
+        assert fake.requests[0].full_url.endswith(f'/api/datasets/{encoded}')
+
+        # get_task_build(): name, version AND task segments — three doors,
+        # one encoding.
+        fake = FakeUrlopen([
+            (f'/api/datasets/{encoded}/versions/rc%2F1/tasks/tasks%2Falpha/build',
+             {'task_name': 'tasks/alpha', 'state': 'READY',
+              'failure': None, 'build_log_ref': None}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).get_task_build(f'{name}@rc/1', 'tasks/alpha')
+        assert fake.requests[0].full_url.endswith(
+            f'/api/datasets/{encoded}/versions/rc%2F1/tasks/tasks%2Falpha/build'
+        )
+
+        # download(): the name segment plus the hand-built ?version= value
+        # (the TS SDK hand-builds the same pair with encodeURIComponent).
+        fake = FakeUrlopen([(f'/api/datasets/{encoded}/download?version=rc%2F1', b'corpus')])
+        with patch('evolve._http.urlopen', fake):
+            payload = await datasets_factory(CONFIG).download(f'{name}@rc/1')
+        assert payload == b'corpus'
+        assert fake.requests[0].full_url.endswith(
+            f'/api/datasets/{encoded}/download?version=rc%2F1'
+        )
+
+        # activate(): name and version segments.
+        fake = FakeUrlopen([(f'/api/datasets/{encoded}/versions/rc%2F1/activate', detail)])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).activate(name, 'rc/1')
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith(
+            f'/api/datasets/{encoded}/versions/rc%2F1/activate'
+        )
+
+        # update(): the name segment on PATCH.
+        summary = {
+            'name': name, 'title': None, 'description': None,
+            'active_version': None,
+            'created_at': '2026-08-30T00:00:00Z',
+            'updated_at': '2026-08-30T00:00:00Z',
+        }
+        fake = FakeUrlopen([(f'/api/datasets/{encoded}', summary)])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).update(name, upstream_auto_import=False)
+        assert fake.requests[0].get_method() == 'PATCH'
+        assert fake.requests[0].full_url.endswith(f'/api/datasets/{encoded}')
+
+        # delete(): the name segment on DELETE.
+        fake = FakeUrlopen([(f'/api/datasets/{encoded}', {})])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).delete(name)
+        assert fake.requests[0].get_method() == 'DELETE'
+        assert fake.requests[0].full_url.endswith(f'/api/datasets/{encoded}')
+
+    @pytest.mark.asyncio
+    async def test_list_imports_filters_ride_the_shared_form_encoding(self):
+        """The status/dataset filters ride ``_page_query``'s form encoding —
+        the serialization the TS SDK's URLSearchParams produces — so a
+        slash-bearing dataset filter reaches the server as %2F from both
+        SDKs, never as a bare slash from one of them."""
+        fake = FakeUrlopen([
+            ('/api/datasets/imports',
+             {'items': [], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).list_imports(
+                status='FAILED', dataset='evolve-qa/rewardkit-control', limit=5
+            )
+        url = fake.requests[0].full_url
+        assert 'limit=5' in url
+        assert 'status=FAILED' in url
+        assert 'dataset=evolve-qa%2Frewardkit-control' in url
+
 
 REGISTERED_AGENT = {
     'name': 'acme-cli',

@@ -3986,8 +3986,15 @@ class DatasetsClient:
         """
         name, ref_version = _parse_dataset_ref(ref)
         query = _page_query(limit, cursor, version=ref_version)
+        # safe='' so a name's every character is encoded — the TS SDK's
+        # encodeURIComponent grammar; quote()'s default leaves '/' bare,
+        # which the server's router reads as a path separator (an HTML 404
+        # page, not the typed dataset_not_found envelope %2F reaches).
+        # Every dataset name/version/task segment in this client follows
+        # this rule; legal catalog values contain no encodable character,
+        # so their wire bytes are unchanged.
         raw = await self._http.request_json(
-            f'/api/datasets/{urllib.parse.quote(name)}{query}'
+            f'/api/datasets/{urllib.parse.quote(name, safe="")}{query}'
         )
         return _map_dataset_detail(raw)
 
@@ -4040,9 +4047,9 @@ class DatasetsClient:
                 f'outcome belongs to one immutable version (got "{ref}")'
             )
         raw = await self._http.request_json(
-            f'/api/datasets/{urllib.parse.quote(name)}/versions/'
-            f'{urllib.parse.quote(version)}/tasks/'
-            f'{urllib.parse.quote(task_name)}/build'
+            f'/api/datasets/{urllib.parse.quote(name, safe="")}/versions/'
+            f'{urllib.parse.quote(version, safe="")}/tasks/'
+            f'{urllib.parse.quote(task_name, safe="")}/build'
         )
         failure = raw.get('failure')
         return TaskBuild(
@@ -4403,8 +4410,8 @@ class DatasetsClient:
         promoted.
         """
         name, version = _parse_dataset_ref(ref)
-        query = f'?version={urllib.parse.quote(version)}' if version else ''
-        path = f'/api/datasets/{urllib.parse.quote(name)}/download{query}'
+        query = f'?version={urllib.parse.quote(version, safe="")}' if version else ''
+        path = f'/api/datasets/{urllib.parse.quote(name, safe="")}/download{query}'
         if to is not None:
             return await self._http.download(path, to, f'{name}-corpus.tar.gz')
         payload, headers = await self._http.request_bytes(path)
@@ -4437,14 +4444,13 @@ class DatasetsClient:
         "FAILED"); ``dataset`` narrows to one dataset name.
         """
         async def fetch_page(page_limit, page_cursor) -> DatasetImportPage:
-            query = _page_query(page_limit, page_cursor)
-            extra = []
-            if status is not None:
-                extra.append(f'status={urllib.parse.quote(status)}')
-            if dataset is not None:
-                extra.append(f'dataset={urllib.parse.quote(dataset)}')
-            if extra:
-                query = f'{query}&{"&".join(extra)}' if query else f'?{"&".join(extra)}'
+            # status/dataset ride _page_query's form encoding, like every
+            # other collection filter (the TS SDK serializes the same
+            # filters with URLSearchParams) — a slash-bearing dataset
+            # filter reaches the server as %2F from both SDKs.
+            query = _page_query(
+                page_limit, page_cursor, status=status, dataset=dataset
+            )
             raw = await self._http.request_json(f'/api/datasets/imports{query}')
             items, next_cursor, has_more = _page_parts(raw)
             return DatasetImportPage(
@@ -4468,8 +4474,8 @@ class DatasetsClient:
         (:class:`EvolveAPIError`).
         """
         raw = await self._http.request_json(
-            f'/api/datasets/{urllib.parse.quote(name)}'
-            f'/versions/{urllib.parse.quote(version)}/activate',
+            f'/api/datasets/{urllib.parse.quote(name, safe="")}'
+            f'/versions/{urllib.parse.quote(version, safe="")}/activate',
             method='POST',
         )
         return _map_dataset_detail(raw)
@@ -4484,7 +4490,7 @@ class DatasetsClient:
         platform-curated dataset — both typed errors, not silent no-ops.
         """
         raw = await self._http.request_json(
-            f'/api/datasets/{urllib.parse.quote(name)}',
+            f'/api/datasets/{urllib.parse.quote(name, safe="")}',
             method='PATCH',
             body={'upstream_auto_import': upstream_auto_import},
         )
@@ -4500,7 +4506,7 @@ class DatasetsClient:
         cannot see is a plain not-found.
         """
         await self._http.request_json(
-            f'/api/datasets/{urllib.parse.quote(name)}', method='DELETE'
+            f'/api/datasets/{urllib.parse.quote(name, safe="")}', method='DELETE'
         )
 
 
