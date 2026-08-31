@@ -48,6 +48,13 @@ await evolve.run(prompt="Hello")
 
 Only use explicit provider creation (below) if you need custom settings like timeout or app name.
 
+Setting `EVOLVE_API_KEY` together with your own sandbox key is how you control sandbox billing
+separately: the sandbox is created and billed on your provider account, while model traffic still
+routes through the Evolve gateway on a session-scoped token. One bound to remember — on your own
+sandbox account the routing token expires 24 hours after the sandbox comes up, so a single
+session is bounded at a day; reconnecting to the sandbox starts a fresh one. Platform-managed
+sandboxes carry no such clock; their tokens live and die with the sandbox.
+
 ---
 
 ### Managed Sandboxes

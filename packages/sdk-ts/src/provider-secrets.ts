@@ -1,4 +1,7 @@
-import { DEFAULT_DASHBOARD_URL } from "./constants";
+import {
+  DEFAULT_DASHBOARD_URL,
+  type ManagedSandboxProviderName,
+} from "./constants";
 
 export type ProviderRuntimeToken = {
   provider:
@@ -130,7 +133,18 @@ export async function createProviderRuntimeToken(
 
 export async function bindProviderRuntimeToken(
   config: ProviderRuntimeTokenClientConfig,
-  input: { token: string; sandboxId: string },
+  input: {
+    token: string;
+    sandboxId: string;
+    /**
+     * Declared ONLY for a sandbox this process created on the user's own
+     * provider account (gateway mode + their own sandbox key). A platform-
+     * managed sandbox is matched against its managed record instead, so the
+     * field is omitted there. The dashboard binds a declared sandbox with a
+     * real wall-clock token expiry in place of managed-liveness revocation.
+     */
+    directSandboxProvider?: ManagedSandboxProviderName;
+  },
 ): Promise<boolean> {
   const result = await requestJson<{ ok: boolean }>(
     config,
