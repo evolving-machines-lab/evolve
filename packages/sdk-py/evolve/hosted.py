@@ -206,6 +206,13 @@ HostedErrorCode = Literal[
     # silently replacing trials would destroy them; Harbor's hub rows have no
     # such children.
     'job_already_uploaded',
+    # The server is already spooling its bound of concurrent job-archive
+    # uploads on POST /api/jobs/upload (429; details carry max_concurrent).
+    # Refused before the first uploaded byte lands; retry when an in-flight
+    # upload finishes. The jobs-door twin of too_many_concurrent_imports
+    # below, and distinct from rate_limited for the same reason: nothing was
+    # rate-counted and there is no Retry-After — the server's disk is busy.
+    'too_many_concurrent_job_uploads',
     'import_not_found',
     'import_too_large',
     # The server is already spooling its bound of concurrent corpus uploads

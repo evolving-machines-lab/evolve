@@ -75,6 +75,7 @@
     "upload_too_large",
     "job_uploaded",
     "job_already_uploaded",
+    "too_many_concurrent_job_uploads",
     "import_not_found",
     "import_too_large",
     "too_many_concurrent_imports",
