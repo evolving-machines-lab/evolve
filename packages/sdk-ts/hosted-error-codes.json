@@ -85,6 +85,7 @@
     "package_not_retained",
     "package_corrupt",
     "package_missing",
+    "too_many_concurrent_package_downloads",
     "internal_error"
   ]
 }

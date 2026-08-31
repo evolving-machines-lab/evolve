@@ -236,6 +236,16 @@ HostedErrorCode = Literal[
     'package_not_retained',
     'package_corrupt',
     'package_missing',
+    # The server is already serving its bound of concurrent package
+    # downloads on GET /api/datasets/{name}/download (429; details carry
+    # max_concurrent) — each in-flight download holds up to a full operator
+    # archive cap of server disk from the store fetch through the digest
+    # pre-read and the entire client download. Refused before the first
+    # fetched byte; retry when an in-flight download finishes. The download
+    # twin of the three too_many_concurrent_* upload codes above, and
+    # distinct from rate_limited for the same reason: nothing was
+    # rate-counted and there is no Retry-After — the server's disk is busy.
+    'too_many_concurrent_package_downloads',
     'internal_error',
 ]
 
