@@ -19,6 +19,8 @@
  *   - THE RESUME SEAM: a socket killed mid-transfer costs one HEAD re-probe
  *     and the transfer continues from the acknowledged offset — earlier
  *     chunks are never re-sent;
+ *   - a re-probe that itself dies (the link still down) spends only that
+ *     round's attempt — the transfer survives and completes (fb41406);
  *   - a 409 offset conflict re-probes and continues (the racer law);
  *   - typed refusals return as their Response (create 413, chunk digest
  *     mismatch 400) — the caller keeps the shared throwApiError mapping;
@@ -268,6 +270,58 @@ async function main(): Promise<void> {
     assert(
       state.patchOffsets.filter((offset) => offset === 0).length === 1,
       "chunk 1 was never re-sent — resume, not restart"
+    );
+    server.close();
+  }
+
+  console.log("\na failed re-probe spends an attempt, never the transfer");
+  {
+    // The link that killed a chunk mid-flight is usually still down when
+    // the recovery HEAD goes out. That probe failure must cost nothing but
+    // the round's attempt (the next round re-probes — Harbor's outer retry
+    // wraps its probes the same way, resumable.py:34-40); before fb41406 it
+    // propagated out of the recovery seam and killed the whole transfer.
+    let dropped = false;
+    let probesKilled = 0;
+    const { server, sessions, url } = sessionServer({
+      onPatch: (state, _req, res) => {
+        if (state.patchOffsets.length === 2 && !dropped) {
+          dropped = true;
+          res.destroy(); // mid-chunk link kill — the chunk never lands
+          return true;
+        }
+        return false;
+      },
+    });
+    server.prependListener("request", (req: IncomingMessage, res: ServerResponse) => {
+      if (req.method === "HEAD" && probesKilled === 0) {
+        probesKilled += 1;
+        res.end = ((..._args: unknown[]) => {
+          res.destroy(); // the FIRST re-probe dies on the wire too
+          return res;
+        }) as typeof res.end;
+      }
+    });
+    await listen(server);
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: { Authorization: "Bearer k" },
+      file: { path: archivePath },
+      fields: { name: "deep-swe" },
+      chunkBytes: CHUNK,
+      timeoutMs: 5_000,
+    });
+    assert(res.status === 202, "the transfer survived the dead probe and completed");
+    assert(probesKilled === 1, "the first re-probe genuinely failed on the wire");
+    const state = [...sessions.values()][0];
+    assert(sha256(Buffer.concat(state.received)) === sha256(archive), "bytes still exact");
+    assert(
+      state.patchOffsets.filter((offset) => offset === CHUNK).length === 2,
+      "exactly one attempt spent: the killed chunk went out twice (killed, then landed)"
+    );
+    assert(
+      state.patchOffsets.filter((offset) => offset === 0).length === 1,
+      "chunk 1 was never re-sent after the dead probe — resume, not restart"
     );
     server.close();
   }

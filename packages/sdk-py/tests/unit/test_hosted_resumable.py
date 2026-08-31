@@ -14,6 +14,8 @@ against a REAL local HTTP server holding a REAL in-memory session:
 - THE RESUME SEAM: a connection that dies mid-chunk costs one HEAD re-probe
   and the transfer continues from the acknowledged offset — chunks the
   server landed are never re-sent;
+- a re-probe that itself dies while the link is still down spends only
+  that round's attempt — the transfer survives and completes (fb41406);
 - typed refusals raise EvolveAPIError through the shared mapper;
 - a server that keeps dropping exhausts RESUMABLE_UPLOAD_MAX_ATTEMPTS;
 - a lost finalize response is retried (complete is idempotent by state).
@@ -105,6 +107,11 @@ def make_server(faults: dict):
                 self.send_response(404)
                 self.end_headers()
                 return
+            if faults.get('drop_first_head') and not faults.get('_head_dropped'):
+                # The link is still down when the recovery probe goes out.
+                faults['_head_dropped'] = True
+                self.connection.close()
+                return
             self.send_response(200)
             self.send_header('Upload-Offset', str(state.offset))
             self.send_header('Upload-Length', str(state.size))
@@ -121,6 +128,12 @@ def make_server(faults: dict):
             length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(length)
             if faults.get('drop_every_patch'):
+                self.connection.close()
+                return
+            kill_nth = faults.get('kill_patch_n')
+            if kill_nth is not None and len(state.patch_offsets) == kill_nth and not faults.get('_patch_killed'):
+                # The mid-chunk link kill: the chunk NEVER lands, no answer.
+                faults['_patch_killed'] = True
                 self.connection.close()
                 return
             drop_nth = faults.get('drop_patch_ack_n')
@@ -210,6 +223,27 @@ def test_lost_ack_resumes_from_probe_never_resends(archive):
         assert hashlib.sha256(b''.join(state.received)).hexdigest() == hashlib.sha256(data).hexdigest()
         # The landed-but-unheard chunk was not re-sent: its offset appears once.
         assert state.patch_offsets.count(CHUNK) == 1
+        assert state.patch_offsets.count(0) == 1
+    finally:
+        server.shutdown()
+
+
+def test_probe_failure_during_recovery_spends_attempt_never_transfer(archive):
+    """evolve fb41406: the link that killed a chunk mid-flight is usually
+    still down when the recovery HEAD goes out. That probe failure spends
+    nothing but the round's attempt (the next round re-probes — Harbor's
+    outer retry wraps its probes the same way, resumable.py:34-40); before
+    the fix it propagated and killed the whole transfer."""
+    path, data = archive
+    server, sessions = make_server({'kill_patch_n': 2, 'drop_first_head': True})
+    try:
+        raw = run_upload(server, path)
+        assert raw['status'] == 'QUEUED'
+        state = list(sessions.values())[0]
+        assert hashlib.sha256(b''.join(state.received)).hexdigest() == hashlib.sha256(data).hexdigest()
+        # Exactly one attempt spent: the killed chunk went out twice (killed,
+        # then landed at its own offset); chunk 1 was never re-sent.
+        assert state.patch_offsets.count(CHUNK) == 2
         assert state.patch_offsets.count(0) == 1
     finally:
         server.shutdown()
