@@ -226,6 +226,16 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   publishDataset: "datasets.publish",
   listDatasetImports: "datasets.listImports",
   getDatasetImport: "datasets.getImport",
+  // The resumable chunked publish door. Not separate client methods on
+  // purpose: datasets.publish() IS the SDK answer — it switches to these
+  // operations automatically above the size threshold (hosted/resumable.ts),
+  // exactly as Harbor's uploader switches transports without a flag.
+  createDatasetUpload: "datasets.publish",
+  getDatasetUpload: "datasets.publish",
+  probeDatasetUpload: "datasets.publish",
+  appendDatasetUploadChunk: "datasets.publish",
+  deleteDatasetUpload: "datasets.publish",
+  completeDatasetUpload: "datasets.publish",
   // Session-only admin verb (the platform administrator's browser session is
   // the one accepted credential; API keys are refused with 403), so it is
   // deliberately NOT an SDK method — an SDK call could only ever be refused.

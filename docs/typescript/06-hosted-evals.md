@@ -1371,6 +1371,14 @@ const localPublish = await catalog.publish({
 // tarball's sha256 — the version's source identity on the server — is
 // reproducible.
 
+// Size changes the transport, never the result: an archive over 256 MiB
+// rides a resumable chunked upload automatically (6 MiB verified chunks —
+// Harbor's own chunk size — with the whole-archive sha256 checked
+// server-side at the end), so a dropped connection resumes from the last
+// acknowledged chunk instead of restarting a multi-GB transfer from zero.
+// Nothing to configure and no new flag: the same publish() call, the same
+// 202 back.
+
 // Block until the publish SETTLES: the version READY (at least one task
 // built — and, on a dataset you own, already the ACTIVE one) or FAILED.
 // COMPLETED means READY: the import IS the whole platform build, so the
