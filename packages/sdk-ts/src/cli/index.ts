@@ -4972,7 +4972,6 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
       }
     }
   }
-  const created = await client.publish(input);
   // Upload progress renders CLIENT-SIDE from the stream (the SDK's flushed-
   // byte count; no server call) — a line per 10% step, so a multi-GB corpus
   // shows life without per-chunk spam. Harbor renders its uploads with the

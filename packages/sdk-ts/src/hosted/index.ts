@@ -2105,10 +2105,6 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       };
     },
 
-    async publish(
-      input: PublishDatasetInput,
-      options?: PublishDatasetOptions
-    ): Promise<DatasetImport> {
     async preflight(input: PreflightDatasetInput): Promise<DatasetPreflight> {
       // Directory sources only: a git source has nothing local to read — the
       // server validates it at publish, after the clone it alone can do.
@@ -2129,7 +2125,10 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       return (await res.json()) as DatasetPreflight;
     },
 
-    async publish(input: PublishDatasetInput): Promise<DatasetImport> {
+    async publish(
+      input: PublishDatasetInput,
+      options?: PublishDatasetOptions
+    ): Promise<DatasetImport> {
       const src = input.source;
       // ONE body grammar: multipart/form-data, metadata in named parts. The
       // corpus is the `archive` part; a git source is the git_url + git_ref
