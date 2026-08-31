@@ -1380,6 +1380,29 @@ evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 
 Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url. A git publish may name one repository subfolder (`git_path` / `--path`) and the platform fetches just that folder via git sparse checkout — the subfolder becomes the corpus root, the recorded provenance keeps the path beside the resolved commit, and a path that is not a directory at the pinned ref fails the import loudly rather than landing an empty version.
 
+### Pre-flight: check a corpus before uploading it
+
+A directory publish runs a **pre-flight** first, automatically: the client collects just the corpus's metadata files — every task's `task.toml`, plus `dataset.toml` when the corpus ships one, a few kilobytes — and the platform runs the same parse guards and per-provider capability stamps the import runs, before any corpus byte moves. Refusals come back as the importer's own sentences, so what you fix is exactly what a real publish would have refused after the upload:
+
+```bash
+evolve dataset check ./my-swe    # standalone dry run: verdict per task, exit 1 on any refusal
+
+evolve dataset publish --dir ./my-swe --name my-swe --version 1.0
+# Pre-flight (importer harbor-import/14): 200 tasks — 198 ok, 2 refused
+#   broken-task REFUSED: environment.docker_image "python:latest" is a mutable :latest tag — ...
+#
+# Nothing was uploaded. Fix the refused tasks, or pass --skip-preflight to publish anyway
+# (a refused task then lands FAILED at import).
+```
+
+```python
+answer = await d.preflight(directory='./my-swe')
+answer.tasks_refused        # 0 when the corpus is clean
+answer.tasks[0].providers   # where each task can run — GPU, sizing and network verdicts per provider
+```
+
+The answer is honestly partial: a `task.toml` alone cannot prove everything — the Dockerfile, the compose file and the tests tree are only read at import — so the reply names what it checked and what it deferred, and an all-ok pre-flight means "nothing decidable from the task configs refuses", not a guarantee the build succeeds. Nothing is written by a pre-flight, ever. `--skip-preflight` uploads without the check; a git publish has nothing local to check and skips it naturally.
+
 ### The dataset manifest (dataset.toml)
 
 A corpus that carries Harbor's dataset manifest — a `dataset.toml` beside the task directories or at the corpus root — imports what the **manifest** says, not what happens to be on disk:
