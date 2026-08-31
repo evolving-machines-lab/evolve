@@ -3419,17 +3419,27 @@ def _collect_preflight_payload(directory: str) -> Dict[str, Any]:
     present, else the root, and EVERY non-hidden child directory must be a
     task directory — one without ``task.toml`` fails the import (never a
     skip), so it fails the check here, before any upload. ``dataset.toml``
-    is read from the corpus root or beside the task directories."""
+    is read from beside the task directories or at the corpus root — the two
+    places the import looks, in the import's own priority (the tasks-dir copy
+    wins when both exist).
+
+    Directory-ness of a CHILD entry is judged without following symlinks —
+    the import's walk reads dirent types and a symlink is not a directory to
+    a dirent — while the root itself and ``tasks/`` are stat-checked exactly
+    as the server stat-checks them (a symlinked root or tasks/ IS honored)."""
     root = Path(directory).resolve()
     if not root.is_dir():
         raise ValueError(f'preflight(): not a directory: {root}')
     task_dirs: List[Path] = []
     tasks_dir = root
     if (root / 'task.toml').is_file():
-        corpus_shaped = (root / 'tasks').is_dir() or any(
-            child.is_dir() and not child.name.startswith('.') and (child / 'task.toml').is_file()
-            for child in root.iterdir()
-        )
+        with os.scandir(root) as entries:
+            corpus_shaped = (root / 'tasks').is_dir() or any(
+                entry.is_dir(follow_symlinks=False)
+                and not entry.name.startswith('.')
+                and (root / entry.name / 'task.toml').is_file()
+                for entry in entries
+            )
         if corpus_shaped:
             raise ValueError(
                 f'{root} is ambiguous: it carries task.toml at its root (a single-task '
@@ -3439,9 +3449,12 @@ def _collect_preflight_payload(directory: str) -> Dict[str, Any]:
         task_dirs.append(root)
     else:
         tasks_dir = root / 'tasks' if (root / 'tasks').is_dir() else root
-        for child in sorted(tasks_dir.iterdir(), key=lambda p: p.name):
-            if not child.is_dir() or child.name.startswith('.'):
+        with os.scandir(tasks_dir) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+        for entry in children:
+            if not entry.is_dir(follow_symlinks=False) or entry.name.startswith('.'):
                 continue
+            child = tasks_dir / entry.name
             if not (child / 'task.toml').is_file():
                 raise ValueError(
                     f'{child} has no task.toml — every directory of a corpus must be a '
@@ -3456,7 +3469,10 @@ def _collect_preflight_payload(directory: str) -> Dict[str, Any]:
             for task_dir in task_dirs
         ]
     }
-    for manifest in (root / 'dataset.toml', tasks_dir / 'dataset.toml'):
+    # The tasks-dir copy first — the import prefers the manifest sitting
+    # beside the task dirs it pins (server dataset-manifest.ts).
+    for manifest_dir in ((root,) if tasks_dir == root else (tasks_dir, root)):
+        manifest = manifest_dir / 'dataset.toml'
         if manifest.is_file():
             payload['dataset_toml'] = manifest.read_text('utf-8')
             break

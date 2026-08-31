@@ -1409,8 +1409,10 @@ function uploadForm(fields: Record<string, string | undefined>): FormData {
  * tasks dir is tasks/ when present, else the root, and EVERY non-hidden
  * child directory must be a task directory — one without task.toml fails
  * the import (never a skip), so it fails the check here, before any upload.
- * dataset.toml is read from the corpus root or beside the task directories,
- * the two places the import looks.
+ * dataset.toml is read from beside the task directories or at the corpus
+ * root — the two places the import looks, in the import's own priority: the
+ * tasks-dir copy wins when both exist (server dataset-manifest.ts
+ * findDatasetManifestPath).
  */
 async function collectPreflightPayload(directory: string): Promise<{
   tasks: { name: string; task_toml: string }[];
@@ -1457,7 +1459,11 @@ async function collectPreflightPayload(directory: string): Promise<{
     }
     taskDirs.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   }
-  const manifestPath = [join(root, "dataset.toml"), join(tasksDir, "dataset.toml")].find(isFile);
+  // The tasks-dir copy first — the import prefers the manifest sitting
+  // beside the task dirs it pins (dataset-manifest.ts findDatasetManifestPath).
+  const manifestPath = (tasksDir === root ? [root] : [tasksDir, root])
+    .map((dir) => join(dir, "dataset.toml"))
+    .find(isFile);
   return {
     tasks: taskDirs.map(({ name, dir }) => ({
       name,

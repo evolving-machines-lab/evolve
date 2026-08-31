@@ -1128,6 +1128,31 @@ async function testDatasetsPreflight() {
     await rm(single, { recursive: true, force: true });
   }
 
+  console.log("\n--- datasets().preflight() sends the tasks-dir dataset.toml when BOTH exist ---");
+  const server3 = await startCaptureServer({ status: 200, body: reply });
+  const both = await mkdtemp(join(tmpdir(), "evolve-preflight-both-"));
+  try {
+    // The server reads the manifest beside the task dirs when both places
+    // hold one (dashboard dataset-manifest.ts findDatasetManifestPath: "the
+    // tasks-dir copy wins"), so the dry run must post THAT copy — a verdict
+    // for the root copy would judge a file the import never reads.
+    await mkdir(join(both, "tasks", "a"), { recursive: true });
+    await writeFile(join(both, "tasks", "a", "task.toml"), "[environment]\n");
+    await writeFile(join(both, "dataset.toml"), '[dataset]\nname = "evolve/root-copy"\n');
+    await writeFile(join(both, "tasks", "dataset.toml"), '[dataset]\nname = "evolve/tasks-copy"\n');
+    const d = datasets({ apiKey: "test-key", baseUrl: server3.base });
+    await d.preflight({ source: { directory: both } });
+    const sent = JSON.parse(server3.calls[0].body.toString("utf8")) as { dataset_toml?: string };
+    assertEqual(
+      sent.dataset_toml,
+      '[dataset]\nname = "evolve/tasks-copy"\n',
+      "the tasks-dir copy wins when both exist — the import's own priority"
+    );
+  } finally {
+    await server3.close();
+    await rm(both, { recursive: true, force: true });
+  }
+
   console.log("\n--- datasets().preflight() refuses what the import would refuse, client-side ---");
   const bad = await mkdtemp(join(tmpdir(), "evolve-preflight-bad-"));
   try {
