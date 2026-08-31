@@ -39,6 +39,7 @@ import type {
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
+  DatasetPreflight,
   DatasetPatch,
   DatasetRef,
   DatasetVersion,
@@ -80,6 +81,7 @@ import type {
   ListTrialsOptions,
   Page,
   PageOptions,
+  PreflightDatasetInput,
   PublishDatasetInput,
   RegradeRequest,
   ResumeRequest,
@@ -184,6 +186,7 @@ export type {
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
+  DatasetPreflight,
   DatasetPatch,
   DatasetRef,
   DatasetSelector,
@@ -237,6 +240,7 @@ export type {
   PassAtKGroup,
   PassAtKPoint,
   ProviderCapability,
+  PreflightDatasetInput,
   PublishDatasetInput,
   RegradeRequest,
   ResumeRequest,
@@ -1396,6 +1400,76 @@ function uploadForm(fields: Record<string, string | undefined>): FormData {
 }
 
 /**
+ * Collect the pre-flight payload from a local corpus directory — METADATA
+ * ONLY (each task's task.toml, plus dataset.toml when the corpus ships one).
+ * Mirrors the import's own corpus-shape reading (server: import-corpus.ts
+ * resolveCorpusShape + listTaskDirs): a task.toml at the root is a SINGLE
+ * task directory — a root that also carries corpus-shaped content is
+ * ambiguous and refused, the import's own sentence structure; otherwise the
+ * tasks dir is tasks/ when present, else the root, and EVERY non-hidden
+ * child directory must be a task directory — one without task.toml fails
+ * the import (never a skip), so it fails the check here, before any upload.
+ * dataset.toml is read from the corpus root or beside the task directories,
+ * the two places the import looks.
+ */
+async function collectPreflightPayload(directory: string): Promise<{
+  tasks: { name: string; task_toml: string }[];
+  dataset_toml?: string;
+}> {
+  const { readFileSync, readdirSync, statSync } = await import("node:fs");
+  const { basename, join, resolve } = await import("node:path");
+  const root = resolve(directory);
+  const isFile = (p: string) => statSync(p, { throwIfNoEntry: false })?.isFile() === true;
+  const isDir = (p: string) => statSync(p, { throwIfNoEntry: false })?.isDirectory() === true;
+  if (!isDir(root)) {
+    throw new Error(`datasets().preflight(): not a directory: ${root}`);
+  }
+  const taskDirs: { name: string; dir: string }[] = [];
+  let tasksDir = root;
+  if (isFile(join(root, "task.toml"))) {
+    const children = readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .filter((e) => isFile(join(root, e.name, "task.toml")))
+      .map((e) => e.name);
+    if (isDir(join(root, "tasks")) || children.length > 0) {
+      throw new Error(
+        `${root} is ambiguous: it carries task.toml at its root (a single-task shape) AND ` +
+          `corpus-shaped content — the import refuses this too; point at the one task ` +
+          `directory or at a corpus of task directories, not a mix`
+      );
+    }
+    taskDirs.push({ name: basename(root), dir: root });
+  } else {
+    tasksDir = isDir(join(root, "tasks")) ? join(root, "tasks") : root;
+    for (const entry of readdirSync(tasksDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      const dir = join(tasksDir, entry.name);
+      if (!isFile(join(dir, "task.toml"))) {
+        throw new Error(
+          `${dir} has no task.toml — every directory of a corpus must be a task directory ` +
+            `(the import fails on it rather than skipping it)`
+        );
+      }
+      taskDirs.push({ name: entry.name, dir });
+    }
+    if (taskDirs.length === 0) {
+      throw new Error(`${tasksDir} holds no task directories — nothing to check`);
+    }
+    taskDirs.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  }
+  const manifestPath = [join(root, "dataset.toml"), join(tasksDir, "dataset.toml")].find(isFile);
+  return {
+    tasks: taskDirs.map(({ name, dir }) => ({
+      name,
+      task_toml: readFileSync(join(dir, "task.toml"), "utf8"),
+    })),
+    ...(manifestPath !== undefined
+      ? { dataset_toml: readFileSync(manifestPath, "utf8") }
+      : {}),
+  };
+}
+
+/**
  * One archive upload: metadata parts first, then `file` streamed from disk
  * as the `archive` part (hosted/upload.ts), the shared error mapping applied
  * to the reply. The streaming transport exists because both FormData-with-a-
@@ -1980,6 +2054,26 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             : null,
         build_log_ref: (raw.build_log_ref as string | null) ?? null,
       };
+    },
+
+    async preflight(input: PreflightDatasetInput): Promise<DatasetPreflight> {
+      // Directory sources only: a git source has nothing local to read — the
+      // server validates it at publish, after the clone it alone can do.
+      const directory = input?.source?.directory;
+      if (typeof directory !== "string" || directory === "") {
+        throw new Error(
+          "datasets().preflight() requires { source: { directory } } — a local corpus " +
+            "directory whose task.toml files are checked server-side before any upload"
+        );
+      }
+      const payload = await collectPreflightPayload(directory);
+      const res = await request(cfg, "/api/datasets/preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      // The wire shape IS the SDK shape (snake_case verdicts, verbatim).
+      return (await res.json()) as DatasetPreflight;
     },
 
     async publish(input: PublishDatasetInput): Promise<DatasetImport> {
