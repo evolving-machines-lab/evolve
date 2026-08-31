@@ -2266,6 +2266,59 @@ class DatasetImport:
 
 
 @dataclass
+class PreflightTaskVerdict:
+    """One task's dry-run verdict from the pre-flight door.
+
+    ``ok`` True means no task.toml-decidable import guard would refuse the
+    task — never "this task will import"; the checks a toml alone cannot
+    decide are named in :class:`DatasetPreflight` ``deferred`` and the real
+    publish stays the authority. ``ok`` False carries the importer's own
+    refusal sentence in ``reason`` — exactly what a real import would say.
+    ``providers`` (present with ok True) maps each sandbox provider to a
+    :class:`TaskProviderVerdict` over the toml-declared requirements (GPU,
+    sizing, network), with the compose/image-command halves deferred."""
+    name: str
+    ok: bool
+    task_key: str
+    schema_version: Optional[str] = None
+    providers: Optional[Dict[str, TaskProviderVerdict]] = None
+    reason: Optional[str] = None
+
+
+@dataclass
+class PreflightDeferredCheck:
+    """An import guard the pre-flight cannot run, and what it reads instead."""
+    name: str
+    reads: str
+
+
+@dataclass
+class PreflightManifestVerdict:
+    """The dataset.toml manifest's dry-run verdict."""
+    ok: bool
+    name: Optional[str] = None
+    short_name: Optional[str] = None
+    version: Optional[str] = None
+    task_count: Optional[int] = None
+    reason: Optional[str] = None
+
+
+@dataclass
+class DatasetPreflight:
+    """The dry-run answer of ``datasets().preflight()`` — nothing was written
+    to produce it. ``checks`` names the guards that ran; ``deferred`` the
+    import guards a task.toml alone cannot decide."""
+    importer_version: str
+    checks: List[str]
+    deferred: List[PreflightDeferredCheck]
+    manifest: Optional[PreflightManifestVerdict]
+    tasks: List[PreflightTaskVerdict]
+    tasks_total: int
+    tasks_ok: int
+    tasks_refused: int
+
+
+@dataclass
 class Agent:
     """A private agent registered by the caller.
 
@@ -3419,6 +3472,129 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     return dataset_import
 
 
+def _map_dataset_preflight(data: Dict[str, Any]) -> DatasetPreflight:
+    manifest_raw = data.get('manifest')
+    return DatasetPreflight(
+        importer_version=data.get('importer_version', ''),
+        checks=[str(entry) for entry in data.get('checks', [])],
+        deferred=[
+            PreflightDeferredCheck(name=item.get('name', ''), reads=item.get('reads', ''))
+            for item in data.get('deferred', [])
+            if isinstance(item, dict)
+        ],
+        manifest=(
+            PreflightManifestVerdict(
+                ok=bool(manifest_raw.get('ok')),
+                name=manifest_raw.get('name'),
+                short_name=manifest_raw.get('short_name'),
+                version=manifest_raw.get('version'),
+                task_count=manifest_raw.get('task_count'),
+                reason=manifest_raw.get('reason'),
+            )
+            if isinstance(manifest_raw, dict)
+            else None
+        ),
+        tasks=[
+            PreflightTaskVerdict(
+                name=item.get('name', ''),
+                ok=bool(item.get('ok')),
+                task_key=item.get('task_key', ''),
+                schema_version=item.get('schema_version'),
+                providers=(
+                    {
+                        provider: TaskProviderVerdict(
+                            ok=bool(verdict.get('ok')),
+                            reason=verdict.get('reason'),
+                            degrades_to=verdict.get('degrades_to'),
+                        )
+                        for provider, verdict in item['providers'].items()
+                        if isinstance(verdict, dict)
+                    }
+                    if isinstance(item.get('providers'), dict)
+                    else None
+                ),
+                reason=item.get('reason'),
+            )
+            for item in data.get('tasks', [])
+            if isinstance(item, dict)
+        ],
+        tasks_total=data.get('tasks_total', 0),
+        tasks_ok=data.get('tasks_ok', 0),
+        tasks_refused=data.get('tasks_refused', 0),
+    )
+
+
+def _collect_preflight_payload(directory: str) -> Dict[str, Any]:
+    """The pre-flight payload from a local corpus — METADATA ONLY.
+
+    Mirrors the import's own corpus-shape reading (server import-corpus.ts
+    ``resolveCorpusShape`` + ``listTaskDirs``, and the TS SDK's
+    ``collectPreflightPayload``): a ``task.toml`` at the root is a SINGLE
+    task directory (a root that also carries corpus-shaped content is
+    ambiguous and refused); otherwise the tasks dir is ``tasks/`` when
+    present, else the root, and EVERY non-hidden child directory must be a
+    task directory — one without ``task.toml`` fails the import (never a
+    skip), so it fails the check here, before any upload. ``dataset.toml``
+    is read from beside the task directories or at the corpus root — the two
+    places the import looks, in the import's own priority (the tasks-dir copy
+    wins when both exist).
+
+    Directory-ness of a CHILD entry is judged without following symlinks —
+    the import's walk reads dirent types and a symlink is not a directory to
+    a dirent — while the root itself and ``tasks/`` are stat-checked exactly
+    as the server stat-checks them (a symlinked root or tasks/ IS honored)."""
+    root = Path(directory).resolve()
+    if not root.is_dir():
+        raise ValueError(f'preflight(): not a directory: {root}')
+    task_dirs: List[Path] = []
+    tasks_dir = root
+    if (root / 'task.toml').is_file():
+        with os.scandir(root) as entries:
+            corpus_shaped = (root / 'tasks').is_dir() or any(
+                entry.is_dir(follow_symlinks=False)
+                and not entry.name.startswith('.')
+                and (root / entry.name / 'task.toml').is_file()
+                for entry in entries
+            )
+        if corpus_shaped:
+            raise ValueError(
+                f'{root} is ambiguous: it carries task.toml at its root (a single-task '
+                'shape) AND corpus-shaped content — the import refuses this too; point at '
+                'the one task directory or at a corpus of task directories, not a mix'
+            )
+        task_dirs.append(root)
+    else:
+        tasks_dir = root / 'tasks' if (root / 'tasks').is_dir() else root
+        with os.scandir(tasks_dir) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+        for entry in children:
+            if not entry.is_dir(follow_symlinks=False) or entry.name.startswith('.'):
+                continue
+            child = tasks_dir / entry.name
+            if not (child / 'task.toml').is_file():
+                raise ValueError(
+                    f'{child} has no task.toml — every directory of a corpus must be a '
+                    'task directory (the import fails on it rather than skipping it)'
+                )
+            task_dirs.append(child)
+        if not task_dirs:
+            raise ValueError(f'{tasks_dir} holds no task directories — nothing to check')
+    payload: Dict[str, Any] = {
+        'tasks': [
+            {'name': task_dir.name, 'task_toml': (task_dir / 'task.toml').read_text('utf-8')}
+            for task_dir in task_dirs
+        ]
+    }
+    # The tasks-dir copy first — the import prefers the manifest sitting
+    # beside the task dirs it pins (server dataset-manifest.ts).
+    for manifest_dir in ((root,) if tasks_dir == root else (tasks_dir, root)):
+        manifest = manifest_dir / 'dataset.toml'
+        if manifest.is_file():
+            payload['dataset_toml'] = manifest.read_text('utf-8')
+            break
+    return payload
+
+
 # =============================================================================
 # HTTP CORE
 # =============================================================================
@@ -4237,6 +4413,24 @@ class DatasetsClient:
                 else None
             ),
         )
+
+    async def preflight(self, *, directory: str) -> DatasetPreflight:
+        """Pre-flight a local corpus BEFORE publishing (dry run).
+
+        Collects only the metadata files — each task's ``task.toml`` plus the
+        optional ``dataset.toml``, kilobytes of JSON — and runs the import's
+        own toml-decidable guards and per-provider capability stamps
+        server-side. Answers per-task verdicts carrying the importer's
+        would-refuse sentences; nothing is written and no corpus byte moves.
+        The answer is honestly partial: ``deferred`` names the import guards
+        a task.toml alone cannot decide, and :meth:`publish` stays the
+        authority. Directory sources only — a git source has nothing local
+        to read (the server clones it after the publish is accepted)."""
+        payload = _collect_preflight_payload(directory)
+        raw = await self._http.request_json(
+            '/api/datasets/preflight', method='POST', body=payload
+        )
+        return _map_dataset_preflight(raw)
 
     async def publish(
         self,

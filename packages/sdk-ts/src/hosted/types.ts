@@ -2256,6 +2256,82 @@ export type DatasetSource =
       git_path?: never;
     };
 
+/** Input for datasets().preflight() — the dry-run half of publish. */
+export interface PreflightDatasetInput {
+  /**
+   * A local standard-layout corpus directory. Only its METADATA moves: the
+   * client walks the corpus shape (a single task directory, a tasks/ subdir,
+   * or a root of task directories — the import's own reading), collects each
+   * task's task.toml plus the optional dataset.toml manifest, and posts
+   * kilobytes of JSON. The corpus bytes themselves never leave the machine.
+   */
+  source: { directory: string };
+}
+
+/**
+ * One task's dry-run verdict. `ok: true` means no task.toml-decidable import
+ * guard would refuse the task — never "this task will import"; the checks a
+ * toml alone cannot decide are named in DatasetPreflight.deferred and the
+ * real publish stays the authority. `ok: false` carries the importer's own
+ * refusal sentence, exactly what a real import of this task would say.
+ */
+export interface PreflightTaskVerdict {
+  /** The task directory's basename. */
+  name: string;
+  ok: boolean;
+  /** metadata.task_id, or its directory-name fallback. */
+  task_key: string;
+  /** Present with ok true: the recorded Harbor schema_version. */
+  schema_version?: string;
+  /**
+   * Present with ok true: verdict per sandbox provider over the
+   * toml-declared requirements (GPU, sizing, network) — the same
+   * adjudication the published dataset's task stamps use, with the
+   * compose/image-command halves deferred to the import.
+   */
+  providers?: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  /** Present with ok false: the importer's refusal sentence. */
+  reason?: string;
+}
+
+/** An import guard the pre-flight cannot run, and what it reads instead. */
+export interface PreflightDeferredCheck {
+  name: string;
+  reads: string;
+}
+
+/** The dataset.toml manifest's dry-run verdict (null when none was sent). */
+export interface PreflightManifestVerdict {
+  ok: boolean;
+  /** Present with ok true: [dataset].name (Harbor org/name). */
+  name?: string;
+  /** Present with ok true: the catalog-facing half of the name. */
+  short_name?: string;
+  /** Present with ok true: [dataset].version, null when it declares none. */
+  version?: string | null;
+  /** Present with ok true: unique (name, digest) task entries. */
+  task_count?: number;
+  /** Present with ok false: the import's manifest refusal sentence. */
+  reason?: string;
+}
+
+/**
+ * The dry-run answer of POST /api/datasets/preflight. Nothing was written to
+ * produce it: `checks` names the guards that ran, `deferred` the import
+ * guards a task.toml alone cannot decide.
+ */
+export interface DatasetPreflight {
+  /** The pinned parser revision that judged (e.g. "harbor-import/14"). */
+  importer_version: string;
+  checks: string[];
+  deferred: PreflightDeferredCheck[];
+  manifest: PreflightManifestVerdict | null;
+  tasks: PreflightTaskVerdict[];
+  tasks_total: number;
+  tasks_ok: number;
+  tasks_refused: number;
+}
+
 /** Input for datasets().publish() */
 export interface PublishDatasetInput {
   source: DatasetSource;
@@ -2780,6 +2856,16 @@ export interface DatasetsClient {
    * — answers 404 `task_not_found`.
    */
   getTaskBuild(ref: string, taskName: string): Promise<TaskBuild>;
+  /**
+   * Pre-flight a local corpus BEFORE publishing (dry run): collect only the
+   * metadata files (each task's task.toml + the optional dataset.toml —
+   * kilobytes), run the import's own toml-decidable guards and per-provider
+   * capability stamps server-side, and answer per-task verdicts with the
+   * importer's would-refuse sentences. Nothing is written and no corpus
+   * byte moves. `evolve dataset publish --dir` runs this automatically;
+   * `evolve dataset check <dir>` is the standalone verb.
+   */
+  preflight(input: PreflightDatasetInput): Promise<DatasetPreflight>;
   /**
    * Publish a dataset version (asynchronous server-side import) from a git
    * source pinned to a ref, or a local corpus directory. Returns immediately;

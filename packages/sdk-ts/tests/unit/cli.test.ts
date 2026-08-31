@@ -5527,6 +5527,123 @@ async function testDatasetPublishWatch() {
 }
 
 
+/** A pre-flight answer body, with the verdicts the test wants. */
+function preflightBody(tasks: Record<string, unknown>[]): Record<string, unknown> {
+  const refused = tasks.filter((t) => t.ok !== true).length;
+  return {
+    importer_version: "harbor-import/14",
+    checks: ["toml_syntax", "task_shape"],
+    deferred: [{ name: "environment_layout", reads: "environment/Dockerfile" }],
+    manifest: null,
+    tasks,
+    tasks_total: tasks.length,
+    tasks_ok: tasks.length - refused,
+    tasks_refused: refused,
+  };
+}
+
+async function testDatasetCheck() {
+  console.log("\n--- runCli: dataset check — the standalone pre-flight verb ---");
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-check-"));
+  await mkdir(join(dir, "tasks", "bad-task"), { recursive: true });
+  await writeFile(join(dir, "tasks", "bad-task", "task.toml"), '[environment]\ndocker_image = "python:latest"\n');
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/preflight", {
+      status: 200,
+      body: preflightBody([
+        { name: "bad-task", ok: false, task_key: "bad-task", reason: 'docker_image "python:latest" is a mutable :latest tag' },
+      ]),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["dataset", "check", dir, ...AUTH], io);
+    assertEqual(code, 1, "a check that finds refusals exits 1 (the linter convention)");
+    const call = fetchCalls.find((c) => c.url.includes("/api/datasets/preflight"));
+    assert(call !== undefined, "POSTs /api/datasets/preflight");
+    const sent = JSON.parse(String(call?.init?.body)) as { tasks: { name: string }[] };
+    assertEqual(sent.tasks.map((t) => t.name), ["bad-task"], "sends one entry per task directory");
+    assert(out.some((l) => l.includes("bad-task REFUSED") && l.includes("mutable :latest tag")), "prints the importer's refusal sentence");
+    assert(out.some((l) => l.includes("the import also checks")), "prints the honesty line naming the deferred checks");
+
+    // All-ok corpus exits 0; --json prints the raw answer.
+    setMockResponse("/api/datasets/preflight", {
+      status: 200,
+      body: preflightBody([{ name: "bad-task", ok: true, task_key: "bad-task", schema_version: "1.4", providers: { e2b: { ok: true } } }]),
+    });
+    const okIO = captureIO();
+    assertEqual(await runCli(["dataset", "check", dir, ...AUTH], okIO.io), 0, "an all-ok check exits 0");
+    const jsonIO = captureIO();
+    await runCli(["dataset", "check", dir, "--json", ...AUTH], jsonIO.io);
+    const parsed = JSON.parse(jsonIO.out.join("")) as { tasks_ok: number };
+    assertEqual(parsed.tasks_ok, 1, "--json prints the raw dry-run answer");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testDatasetPublishRunsPreflightFirst() {
+  console.log("\n--- runCli: dataset publish --dir pre-flights BEFORE uploading; --skip-preflight skips ---");
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-pfp-"));
+  await mkdir(join(dir, "tasks", "bad-task"), { recursive: true });
+  await writeFile(join(dir, "tasks", "bad-task", "task.toml"), '[environment]\ndocker_image = "python:latest"\n');
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/preflight", {
+      status: 200,
+      body: preflightBody([
+        { name: "bad-task", ok: false, task_key: "bad-task", reason: 'docker_image "python:latest" is a mutable :latest tag' },
+      ]),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["dataset", "publish", "--dir", dir, "--name", "b", "--version", "1", ...AUTH],
+      io
+    );
+    assertEqual(code, 1, "a refused pre-flight stops the publish with exit 1");
+    assert(out.some((l) => l.includes("Nothing was uploaded")), "says nothing was uploaded");
+    assert(out.some((l) => l.includes("--skip-preflight")), "names the escape hatch");
+    assert(
+      !fetchCalls.some((c) => c.url.includes("/api/datasets/publish")),
+      "the publish door was never called — refusals precede any upload"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  // --skip-preflight: the pre-flight door is never called; the publish itself
+  // proceeds (served here by a real local server, since the archive upload
+  // rides node:http and bypasses fetch).
+  const { createServer } = await import("node:http");
+  const seen: string[] = [];
+  const server = createServer((req, res) => {
+    seen.push(req.url ?? "");
+    req.resume();
+    req.on("end", () => {
+      res.statusCode = 202;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ id: "imp-9", status: "QUEUED", name: "b", version: "1", failure: null, warnings: [] }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  try {
+    const { io } = captureIO();
+    const code = await runCli(
+      [
+        "dataset", "publish", "--dir", dir, "--name", "b", "--version", "1",
+        "--skip-preflight", "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`,
+      ],
+      io
+    );
+    assertEqual(code, 0, "--skip-preflight publishes without the check");
+    assertEqual(seen, ["/api/datasets/publish"], "ONLY the publish door was called — no pre-flight request");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Solutions archiving disabled is a warning about the missing
  * reference-solution record, never a settling dead end — the same publish
@@ -6838,6 +6955,8 @@ async function main() {
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowVersionSource();
   await testDatasetPublishWatch();
+  await testDatasetCheck();
+  await testDatasetPublishRunsPreflightFirst();
   await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
   await testPartialPublishCliSurfaces();

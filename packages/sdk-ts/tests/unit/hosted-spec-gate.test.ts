@@ -223,6 +223,7 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   deleteDataset: "datasets.delete",
   downloadDataset: "datasets.download",
   activateDatasetVersion: "datasets.activate",
+  preflightDataset: "datasets.preflight",
   publishDataset: "datasets.publish",
   listDatasetImports: "datasets.listImports",
   getDatasetImport: "datasets.getImport",

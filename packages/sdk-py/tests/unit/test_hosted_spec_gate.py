@@ -179,6 +179,7 @@ OPERATION_TO_METHOD = {
     'deleteDataset': (DatasetsClient, 'delete'),
     'downloadDataset': (DatasetsClient, 'download'),
     'activateDatasetVersion': (DatasetsClient, 'activate'),
+    'preflightDataset': (DatasetsClient, 'preflight'),
     'publishDataset': (DatasetsClient, 'publish'),
     'listDatasetImports': (DatasetsClient, 'list_imports'),
     'getDatasetImport': (DatasetsClient, 'get_import'),

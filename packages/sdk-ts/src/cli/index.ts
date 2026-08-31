@@ -62,6 +62,7 @@ import type {
   DatasetFailedTask,
   DatasetImport,
   DatasetImportProgress,
+  DatasetPreflight,
   DatasetSelector,
   DatasetVersion,
   ImportPhaseProgress,
@@ -700,16 +701,25 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<name[@version]>",
         example: "evolve dataset show deep-swe@1.1",
       },
+      check: {
+        summary: "Pre-flight a local corpus (dry run — nothing uploaded, nothing written)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<dir>",
+        example: "evolve dataset check ./corpus",
+      },
       publish: {
         summary: "Publish a dataset version from a git source or a local directory",
         flags: {
           git: { kind: "string", value: "<url>", help: "Git repository URL (with --ref)" },
           ref: { kind: "string", value: "<ref>", help: "Pinned git ref: a full 40-hex commit sha, or a tag (resolved to its commit at publish and verified at import). Branch names are refused — unpinned_git_ref (with --git)" },
           path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus (with --git; sparse checkout — only that folder is imported)" },
-          dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
+          dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded; pre-flighted first — see --skip-preflight)" },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
           version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
           watch: { kind: "boolean", help: "Poll until the publish settles: the version READY (built and active) or FAILED" },
+          "skip-preflight": { kind: "boolean", help: "Upload without the pre-flight check (a refused task then lands FAILED at import instead of being caught here)" },
         },
         minPositionals: 0,
         maxPositionals: 0,
@@ -4821,10 +4831,101 @@ async function cmdDatasetShow(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+/**
+ * Render one pre-flight answer for humans: the refusals with the importer's
+ * own sentences, provider notes for tasks that cannot run (or only degrade)
+ * somewhere, and the honesty line naming what only the real import checks.
+ */
+function preflightLines(answer: DatasetPreflight): string[] {
+  const lines: string[] = [
+    `Pre-flight (importer ${answer.importer_version}): ${answer.tasks_total} task${answer.tasks_total === 1 ? "" : "s"} — ` +
+      `${answer.tasks_ok} ok, ${answer.tasks_refused} refused`,
+  ];
+  if (answer.manifest !== null && answer.manifest.ok === false) {
+    lines.push(`  dataset.toml REFUSED: ${answer.manifest.reason}`);
+  }
+  for (const task of answer.tasks) {
+    if (!task.ok) {
+      lines.push(`  ${task.name} REFUSED: ${task.reason}`);
+      continue;
+    }
+    // Provider notes only where a provider is not plainly ok — quiet tasks
+    // stay quiet.
+    const notes = Object.entries(task.providers ?? {})
+      .filter(([, verdict]) => verdict.ok !== true || "degrades_to" in verdict)
+      .map(([provider, verdict]) =>
+        verdict.ok
+          ? `${provider}: runs via ${(verdict as { degrades_to?: string }).degrades_to}`
+          : `${provider}: ${(verdict as { reason?: string }).reason}`
+      );
+    if (notes.length > 0) lines.push(`  ${task.name}: ${notes.join(" · ")}`);
+  }
+  lines.push(
+    `Checked from task.toml alone; the import also checks: ${answer.deferred.map((d) => d.name).join(", ")}.`
+  );
+  return lines;
+}
+
+async function cmdDatasetCheck(inv: Invocation, io: CliIO): Promise<number> {
+  const client = datasets(clientConfig(inv));
+  const answer = await client.preflight({ source: { directory: inv.positionals[0] } });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(answer));
+  } else {
+    for (const line of preflightLines(answer)) io.out(line);
+  }
+  // A check that FOUND refusals succeeded as a check but the corpus is not
+  // publishable as-is — exit 1, the linter convention, so scripts can gate on
+  // it. A refused manifest is the same outcome.
+  const manifestRefused = answer.manifest !== null && answer.manifest.ok === false;
+  return answer.tasks_refused > 0 || manifestRefused ? 1 : 0;
+}
+
 async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const client = datasets(clientConfig(inv));
   const input = buildPublishInput(inv);
+  // THE PRE-FLIGHT, automatic for a directory source: the metadata files
+  // (kilobytes) go first, and refusals are printed BEFORE the corpus is
+  // tarred and uploaded — the importer's own sentences, from the same
+  // guards. --skip-preflight is the escape hatch; a git source has nothing
+  // local to check (the server clones it after the 202) and skips naturally.
+  if (input.source.directory !== undefined && inv.flags["skip-preflight"] !== true) {
+    let answer: DatasetPreflight | null = null;
+    try {
+      answer = await client.preflight({ source: { directory: input.source.directory } });
+    } catch (error) {
+      // An older server without the door keeps publishing exactly as before
+      // — loudly, never silently.
+      if (error instanceof EvolveApiError && error.status === 404) {
+        io.err("Pre-flight unavailable on this server — publishing without it.");
+      } else {
+        throw error;
+      }
+    }
+    if (answer !== null) {
+      const manifestRefused = answer.manifest !== null && answer.manifest.ok === false;
+      if (answer.tasks_refused > 0 || manifestRefused) {
+        if (json) {
+          io.out(JSON.stringify({ kind: "preflight.refused", preflight: answer }));
+        } else {
+          for (const line of preflightLines(answer)) io.out(line);
+          io.out("");
+          io.out(
+            "Nothing was uploaded. Fix the refused tasks, or pass --skip-preflight to publish anyway " +
+              "(a refused task then lands FAILED at import)."
+          );
+        }
+        return 1;
+      }
+      if (json) {
+        io.out(JSON.stringify({ kind: "preflight.ok", preflight: answer }));
+      } else {
+        for (const line of preflightLines(answer)) io.out(line);
+      }
+    }
+  }
+  const created = await client.publish(input);
   // Upload progress renders CLIENT-SIDE from the stream (the SDK's flushed-
   // byte count; no server call) — a line per 10% step, so a multi-GB corpus
   // shows life without per-chunk spam. Harbor renders its uploads with the
@@ -5349,6 +5450,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "analysis download": cmdAnalysisDownload,
   "dataset list": cmdDatasetList,
   "dataset show": cmdDatasetShow,
+  "dataset check": cmdDatasetCheck,
   "dataset publish": cmdDatasetPublish,
   "dataset download": cmdDatasetDownload,
   "dataset activate": cmdDatasetActivate,
