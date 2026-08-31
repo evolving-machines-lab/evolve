@@ -1634,11 +1634,15 @@ class TestAgents:
         (bin_dir / 'acme-cli').write_text('#!/bin/sh\nexec acme "$@"\n')
 
         fake = FakeUrlopen([
-            ('/api/agents/acme%20cli', {**REGISTERED_AGENT, 'source': 'tarball'}),
+            ('/api/agents/acme%2Fcli', {**REGISTERED_AGENT, 'source': 'tarball'}),
         ])
         with patch('evolve._http.urlopen', fake):
+            # A name carrying '/' — the one character that PROVES the
+            # encoding: quote()'s default safe='/' leaves a bare slash that
+            # would change the route, so only %2F on the wire means the name
+            # was encoded (the TS SDK's encodeURIComponent grammar).
             agent = await agents_factory(CONFIG).upsert(
-                'acme cli',
+                'acme/cli',
                 directory=str(tmp_path),
                 run_command='acme-cli --headless',
                 env={'ACME_PROFILE': 'bench'},
@@ -1648,7 +1652,7 @@ class TestAgents:
         # One call, PUT, at the agent's OWN encoded route — replace, never
         # delete()+create(), so the name never briefly stops resolving.
         assert request.get_method() == 'PUT'
-        assert request.full_url.endswith('/api/agents/acme%20cli')
+        assert request.full_url.endswith('/api/agents/acme%2Fcli')
         assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
         # The streamed directory upsert: an iterator body with its exact
         # Content-Length declared, like every archive route.
@@ -1658,7 +1662,7 @@ class TestAgents:
         # Same body grammar as create(), name part included (the URL names
         # the agent too; the server treats the path as authoritative).
         assert list(parts) == ['name', 'run_command', 'env', 'archive']
-        assert parts['name'] == b'acme cli'
+        assert parts['name'] == b'acme/cli'
         assert parts['run_command'] == b'acme-cli --headless'
         assert json.loads(parts['env']) == {'ACME_PROFILE': 'bench'}
 

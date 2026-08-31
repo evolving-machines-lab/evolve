@@ -69,6 +69,8 @@ DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 # every 15s, so 60s of silence only ever means a genuinely dead connection.
 REQUEST_TIMEOUT_SEC = 60
 DOWNLOAD_TIMEOUT_SEC = 600
+# Mirrored by the TS SDK's UPLOAD_TIMEOUT_MS (packages/sdk-ts/src/hosted/
+# upload.ts) — the two SDKs hold ONE bound; change them together or not at all.
 UPLOAD_TIMEOUT_SEC = DOWNLOAD_TIMEOUT_SEC
 META_TIMEOUT_SEC = 30
 SSE_SOCKET_TIMEOUT_SEC = 60
@@ -4617,7 +4619,7 @@ class AgentsClient:
     async def get(self, name: str) -> Agent:
         """Get one registered agent by name."""
         raw = await self._http.request_json(
-            f'/api/agents/{urllib.parse.quote(name)}'
+            f'/api/agents/{urllib.parse.quote(name, safe="")}'
         )
         return _map_agent(raw)
 
@@ -4651,7 +4653,10 @@ class AgentsClient:
         if source_directory is not None:
             raw = await _upload_directory_archive(
                 self._http,
-                f'/api/agents/{urllib.parse.quote(name)}',
+                # safe='' so a name's every character is encoded — the TS
+                # SDK's encodeURIComponent grammar; quote()'s default leaves
+                # '/' bare and would change the route.
+                f'/api/agents/{urllib.parse.quote(name, safe="")}',
                 fields,
                 source_directory,
                 'source.tar.gz',
@@ -4660,7 +4665,7 @@ class AgentsClient:
         else:
             body, content_type = _multipart_body(fields)
             raw = await self._http.request_upload(
-                f'/api/agents/{urllib.parse.quote(name)}',
+                f'/api/agents/{urllib.parse.quote(name, safe="")}',
                 body,
                 {'Content-Type': content_type},
                 method='PUT',
@@ -4671,7 +4676,7 @@ class AgentsClient:
         """Delete a registered agent. Past jobs keep their recorded agent."""
         # 204 No Content — nothing to map.
         await self._http.request_json(
-            f'/api/agents/{urllib.parse.quote(name)}', method='DELETE'
+            f'/api/agents/{urllib.parse.quote(name, safe="")}', method='DELETE'
         )
 
 

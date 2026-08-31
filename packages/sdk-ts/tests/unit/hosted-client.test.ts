@@ -1764,7 +1764,11 @@ async function testAgentUpsertTarball() {
     await writeFile(join(dir, "bin", "acme-cli"), "#!/bin/sh\nexec acme \"$@\"\n");
 
     const a = agents({ apiKey: "test-key", baseUrl: server.base });
-    const replaced = await a.upsert("acme cli", {
+    // A name carrying "/" — the one character that PROVES the encoding:
+    // new URL() re-encodes a bare space on its own, so a space fixture
+    // passes even without encodeURIComponent; a bare slash would change
+    // the route, so only %2F on the wire means the name was encoded.
+    const replaced = await a.upsert("acme/cli", {
       directory: dir,
       run_command: "acme-cli --headless",
       env: { ACME_PROFILE: "bench" },
@@ -1774,7 +1778,7 @@ async function testAgentUpsertTarball() {
     // One call, PUT, at the agent's OWN route — the name is encoded into the
     // path, so there is never a window where the name stops resolving.
     assertEqual(call.method, "PUT", "uses PUT — replace, never delete+create");
-    assertEqual(call.url, "/api/agents/acme%20cli", "PUTs the agent's own encoded route");
+    assertEqual(call.url, "/api/agents/acme%2Fcli", "PUTs the agent's own encoded route — the slash rides as %2F, never a path segment");
     assertEqual(
       call.headers["content-length"],
       String(call.body.length),
