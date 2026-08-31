@@ -2977,13 +2977,14 @@ function feedEventType(data: unknown): string {
  *
  * DELIBERATELY OFF-CONTRACT — the reads ride the dashboard's traces feed
  * (`/api/traces/trials/{id}/events`, `…/artifacts`), which spec/openapi.yaml
- * deliberately omits: `traces` is not a contract prefix in the platform's
- * drift gate (swarm_dashboard __tests__/api/spec-drift-gate.test.ts
- * CONTRACT_PREFIXES), the same viewer-plane precedent that keeps the
- * dashboard's own session routes out of the spec. The feed authenticates
- * Bearer API keys through the same dual-auth door as every contract route
- * (swarm_dashboard lib/auth-dual.ts authenticateRequest), so no server
- * change is involved — see AnalysesClient in ./types for the full note.
+ * does not carry: `traces` is outside the platform drift gate's
+ * CONTRACT_PREFIXES (swarm_dashboard __tests__/api/spec-drift-gate.test.ts),
+ * the way that gate's RUNTIME_INTERNAL_ROUTES keeps the UI's own session
+ * transcript door (`api/sessions/[id]/events`) off the spec. The feed
+ * authenticates Bearer API keys through the same dual-auth door as every
+ * contract route (swarm_dashboard lib/auth-dual.ts authenticateRequest; both
+ * feed routes call it first), so no server change is involved — see
+ * AnalysesClient in ./types for the full note and the recorded tension.
  *
  * Requires EVOLVE_API_KEY (or { apiKey } in config).
  */

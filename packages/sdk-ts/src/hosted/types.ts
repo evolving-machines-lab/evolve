@@ -3203,13 +3203,17 @@ export interface AnalysisTranscript {
  *
  * DELIBERATELY OFF-CONTRACT: these three reads ride the dashboard's traces
  * feed (`/api/traces/trials/{id}/events` and `…/artifacts`), which is NOT in
- * spec/openapi.yaml on purpose — the feed is the trace viewer's private
- * plane, outside the contract prefixes the platform's drift gate walks
- * (swarm_dashboard `__tests__/api/spec-drift-gate.test.ts` CONTRACT_PREFIXES;
- * `traces` is deliberately absent from that list, the same viewer-plane
- * precedent as the dashboard's own session routes). The contract-side verdict
+ * spec/openapi.yaml — `traces` is outside the prefixes the platform's drift
+ * gate walks (swarm_dashboard `__tests__/api/spec-drift-gate.test.ts`
+ * CONTRACT_PREFIXES), and the one precedent for a transcript door living
+ * off-contract is that gate's RUNTIME_INTERNAL_ROUTES: `api/sessions/[id]/
+ * events`, the dashboard UI's own session transcript view, is enumerated
+ * there as a route no SDK client calls. RECORDED TENSION: that gate names the
+ * excluded planes "planes no SDK client calls" — this client is the first to
+ * call one, so whether the feed joins the contract (spec + both SDK shadows)
+ * is an open ruling, not something settled here. The contract-side verdict
  * stays where it always was — `Trial.analysis` on the trial body; this client
- * adds the reads the contract deliberately does not carry.
+ * adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
   /**
