@@ -2274,6 +2274,19 @@ export interface PublishDatasetInput {
   version?: string;
 }
 
+/** Options for datasets().publish() */
+export interface PublishDatasetOptions {
+  /**
+   * Called as the archive's bytes go onto the wire (a `directory` source
+   * only — a git source uploads nothing). `sentBytes` counts archive bytes
+   * whose write the transport confirmed flushed; `totalBytes` is the
+   * archive's size. Client-side by construction: the stream itself is the
+   * measurement, no server call is made. Fires per flushed chunk — throttle
+   * in the renderer, not here.
+   */
+  onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
+}
+
 /**
  * Dataset import status.
  *
@@ -2321,6 +2334,71 @@ export interface ImportWarning {
  * listImports() all return this same shape, so a caller can render the row it
  * just created without a follow-up read.
  */
+/**
+ * The five phases of a publish, in the order they run (spec ImportPhaseName):
+ * extracting (archive fetched and unpacked, or the git source cloned),
+ * parsing (every task directory parsed, manifest gate included), building
+ * (the image pool — Dockerfile build contexts and compose-service
+ * resolutions), copying (upstream images mirrored into the platform
+ * registry), verifying (storability census, solutions archive, the task
+ * transaction, and the registry read-back before READY).
+ */
+export type ImportPhase =
+  | "extracting"
+  | "parsing"
+  | "building"
+  | "copying"
+  | "verifying";
+
+/** One phase of the import timeline (spec ImportPhaseProgress). */
+export interface ImportPhaseProgress {
+  name: ImportPhase;
+  started_at: string;
+  /**
+   * Absent while the phase runs — and stays absent forever on the phase a
+   * FAILED import died in, which is how a reader finds where it died.
+   */
+  completed_at?: string;
+  /**
+   * Units settled so far — task dirs (parsing), image-pool units (building),
+   * unique images (copying), surviving tasks (verifying). Failures count as
+   * settled; extracting has no unit and stays 0/0.
+   */
+  done: number;
+  total: number;
+  /**
+   * Of `done`, the units whose bytes already lived in the platform registry
+   * (content-addressed hit — nothing copied). Image phases only.
+   */
+  banked?: number;
+}
+
+/**
+ * Live progress of a publish (spec DatasetImportProgress) — written by the
+ * build worker at phase boundaries and coarse intervals, never per-second.
+ * On a terminal import it is the settled record: all five phases with
+ * wall-clock timestamps, the final image counts, and the publish's CodeBuild
+ * copy-build minutes.
+ */
+export interface DatasetImportProgress {
+  /** What the import is doing now (the last entry of `phases`). */
+  phase: ImportPhase;
+  /** When the claimed run began on the worker — explicit, never derived. */
+  started_at: string;
+  phases: ImportPhaseProgress[];
+  /**
+   * The publish's cumulative image economics: `built` and `mirrored` are
+   * fresh pushes this publish paid for; `banked` counts images that already
+   * existed in the registry.
+   */
+  images: { built: number; mirrored: number; banked: number };
+  /**
+   * The publish's promotion fan-out meter: CodeBuild copy builds started and
+   * their billed minutes. 0/0 on a fully banked re-publish.
+   */
+  codebuild: { copy_builds: number; billed_minutes: number };
+}
+
 export interface DatasetImport {
   /** Import job id */
   id: string;
@@ -2336,6 +2414,12 @@ export interface DatasetImport {
   failure: DatasetImportFailure | null;
   /** Non-fatal but consequential outcomes — see ImportWarning. */
   warnings: ImportWarning[];
+  /**
+   * Live progress of the build — null until the worker's first report (a
+   * QUEUED import, an older server, and every import that predates
+   * progress). On a terminal import it is the settled five-phase record.
+   */
+  progress: DatasetImportProgress | null;
   /** Number of tasks parsed, once counted */
   task_count?: number;
   created_at?: string;
@@ -2572,6 +2656,14 @@ export interface WatchImportOptions {
   /** Called on every observed import status change (including the first status seen) */
   onStatus?: (datasetImport: DatasetImport) => void;
   /**
+   * Called on every observed change of the import's live `progress` — a
+   * phase boundary, or new counts inside a phase. The server writes progress
+   * at phase boundaries and coarse intervals (never per-second), so this
+   * fires at that cadence, under the same poll (and the same 429-tolerant
+   * posture) as `onStatus`. Never called while `progress` is null.
+   */
+  onProgress?: (progress: DatasetImportProgress, datasetImport: DatasetImport) => void;
+  /**
    * Called on every observed change of the imported VERSION's state during
    * the watch's settle phase — normally the single confirming READY read
    * (COMPLETED means the version is READY under build-then-READY), or the
@@ -2693,7 +2785,7 @@ export interface DatasetsClient {
    * source pinned to a ref, or a local corpus directory. Returns immediately;
    * poll with getImport()/watchImport().
    */
-  publish(input: PublishDatasetInput): Promise<DatasetImport>;
+  publish(input: PublishDatasetInput, options?: PublishDatasetOptions): Promise<DatasetImport>;
   /** Get an import job's status (failure, warnings, and task_count when available) */
   getImport(id: string): Promise<DatasetImport>;
   /**

@@ -36,6 +36,7 @@ import type {
   DatasetImport,
   DatasetImportFailure,
   DatasetImportList,
+  DatasetImportProgress,
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
@@ -81,6 +82,7 @@ import type {
   Page,
   PageOptions,
   PublishDatasetInput,
+  PublishDatasetOptions,
   RegradeRequest,
   ResumeRequest,
   RetryConfig,
@@ -181,6 +183,7 @@ export type {
   DatasetImportFailure,
   DatasetImportList,
   DatasetImportPage,
+  DatasetImportProgress,
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
@@ -200,6 +203,8 @@ export type {
   GrepJobOptions,
   HostedClientConfig,
   HostedErrorCode,
+  ImportPhase,
+  ImportPhaseProgress,
   ImportWarning,
   Job,
   JobBuildExclusion,
@@ -238,6 +243,7 @@ export type {
   PassAtKPoint,
   ProviderCapability,
   PublishDatasetInput,
+  PublishDatasetOptions,
   RegradeRequest,
   ResumeRequest,
   RetryConfig,
@@ -1170,6 +1176,10 @@ function mapDatasetImport(raw: Record<string, unknown>): DatasetImport {
     // no_solutions_archived permanently lacks its reference-solution record,
     // and dropping the field would hide that gap.
     warnings: (raw.warnings as ImportWarning[]) ?? [],
+    // Live progress (spec DatasetImportProgress): null until the worker's
+    // first report — and always null from an older server that never sends
+    // the field, so a watcher needs no version check.
+    progress: (raw.progress as DatasetImportProgress | null) ?? null,
   };
   if (typeof raw.task_count === "number") {
     datasetImport.task_count = raw.task_count;
@@ -1408,6 +1418,8 @@ async function requestUpload(
     method?: "POST" | "PUT";
     fields: Record<string, string | undefined>;
     file: { path: string; filename: string };
+    /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
+    onBytes?: (sentBytes: number, totalBytes: number) => void;
   }
 ): Promise<Response> {
   const { postMultipartFile } = await import("./upload");
@@ -1417,6 +1429,7 @@ async function requestUpload(
     headers: { Authorization: `Bearer ${cfg.apiKey}` },
     fields: opts.fields,
     file: opts.file,
+    ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
   });
   if (!res.ok) {
     await throwApiError(res);
@@ -1438,6 +1451,8 @@ async function uploadDirectory(
     fields: Record<string, string | undefined>;
     directory: string;
     filename: string;
+    /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
+    onBytes?: (sentBytes: number, totalBytes: number) => void;
   }
 ): Promise<Response> {
   const { tarGzipDirectoryToFile } = await import("./tar");
@@ -1452,6 +1467,7 @@ async function uploadDirectory(
       method: opts.method,
       fields: opts.fields,
       file: { path: archive, filename: opts.filename },
+      ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
     });
   } finally {
     await rm(tmp, { recursive: true, force: true });
@@ -1982,7 +1998,10 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       };
     },
 
-    async publish(input: PublishDatasetInput): Promise<DatasetImport> {
+    async publish(
+      input: PublishDatasetInput,
+      options?: PublishDatasetOptions
+    ): Promise<DatasetImport> {
       const src = input.source;
       // ONE body grammar: multipart/form-data, metadata in named parts. The
       // corpus is the `archive` part; a git source is the git_url + git_ref
@@ -2019,6 +2038,11 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           fields: { name: input.name, version: input.version },
           directory: src.directory,
           filename: "corpus.tar.gz",
+          // Upload progress renders CLIENT-SIDE from the stream: the send
+          // loop's own flushed-byte count, no server call (upload.ts).
+          ...(options?.onUploadProgress !== undefined
+            ? { onBytes: options.onUploadProgress }
+            : {}),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
@@ -2064,6 +2088,10 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     async watchImport(id: string, options?: WatchImportOptions): Promise<DatasetImport> {
       const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
       let lastStatus: string | null = null;
+      // Change detection over the SERVER's own writes: the worker persists
+      // progress at phase boundaries and coarse intervals, so comparing the
+      // serialized blob fires onProgress exactly when the row moved.
+      let lastProgress: string | null = null;
       for (;;) {
         throwIfAborted(options?.signal);
         let current: DatasetImport;
@@ -2088,6 +2116,13 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         if (current.status !== lastStatus) {
           lastStatus = current.status;
           options?.onStatus?.(current);
+        }
+        if (current.progress !== null) {
+          const serialized = JSON.stringify(current.progress);
+          if (serialized !== lastProgress) {
+            lastProgress = serialized;
+            options?.onProgress?.(current.progress, current);
+          }
         }
         if (current.status === "FAILED") return current;
         // COMPLETED means the version is READY (built, and on an owner

@@ -61,8 +61,10 @@ import type {
   Dataset,
   DatasetFailedTask,
   DatasetImport,
+  DatasetImportProgress,
   DatasetSelector,
   DatasetVersion,
+  ImportPhaseProgress,
   EvalSandboxProvider,
   GrepJobOptions,
   HostedClientConfig,
@@ -3283,6 +3285,74 @@ function importLines(job: DatasetImport): string[] {
   return table(rows);
 }
 
+/** Compact duration for the progress lines: 55s, 12m34s, 1h02m. */
+function fmtDurationMs(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min < 60) return `${min}m${String(sec).padStart(2, "0")}s`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h${String(min % 60).padStart(2, "0")}m`;
+}
+
+/**
+ * Compact one-line rendering of one live-progress change for --watch — the
+ * poll-line adaptation of Harbor's publish progress display (their overall
+ * bar is spinner + "M of N" + description + elapsed/remaining, rich Live at
+ * 10 fps: REFERENCES/Harbor src/harbor/cli/publish.py:231-238; ours is a
+ * line per observed server write, so it keeps the M-of-N and elapsed columns
+ * and drops the animation). During the copy phase the line states "N of M
+ * images already banked" — Harbor's "skipped (exists)" idea (publish.py:388)
+ * in this platform's banked vocabulary.
+ */
+export function importProgressLine(progress: DatasetImportProgress, nowMs = Date.now()): string {
+  const at = progress.phases[progress.phases.length - 1];
+  const parts: string[] = [];
+  if (at !== undefined && at.total > 0) {
+    parts.push(`${at.done}/${at.total}`);
+    if (at.banked !== undefined && at.banked > 0) {
+      parts.push(
+        at.name === "copying"
+          ? `${at.banked} of ${at.total} images already banked`
+          : `${at.banked} banked`
+      );
+    }
+  }
+  const startedMs = at !== undefined ? Date.parse(at.started_at) : NaN;
+  if (Number.isFinite(startedMs)) parts.push(fmtDurationMs(nowMs - startedMs));
+  return `phase  ${progress.phase}${parts.length > 0 ? ` ${parts.join(" · ")}` : ""}`;
+}
+
+/**
+ * The settled progress record for the final --watch block: wall-clock per
+ * phase, the publish's image economics (built / mirrored / banked), and the
+ * CodeBuild copy-minutes meter — the shape of Harbor publish's settle
+ * summary (per-item Build/Upload timing table + "Published N, skipped M
+ * task(s) in X.XXs": REFERENCES/Harbor src/harbor/cli/publish.py:288-315).
+ */
+export function progressSettleLines(progress: DatasetImportProgress): string[] {
+  const phaseParts = progress.phases.map((p: ImportPhaseProgress) => {
+    const endMs = p.completed_at !== undefined ? Date.parse(p.completed_at) : NaN;
+    const startMs = Date.parse(p.started_at);
+    const wall =
+      Number.isFinite(endMs) && Number.isFinite(startMs)
+        ? fmtDurationMs(endMs - startMs)
+        : "unfinished";
+    return `${p.name} ${wall}`;
+  });
+  const images = progress.images;
+  const codebuild = progress.codebuild;
+  return table([
+    ["phases", phaseParts.join(" · ")],
+    ["images", `${images.built} built, ${images.mirrored} mirrored, ${images.banked} banked`],
+    [
+      "codebuild",
+      `${codebuild.copy_builds} copy build(s), ${codebuild.billed_minutes} billed minute(s)`,
+    ],
+  ]);
+}
+
 /** Compact one-line rendering of one publish status change for --watch. */
 export function importStatusLine(job: DatasetImport): string {
   const parts: string[] = [];
@@ -4755,7 +4825,28 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const client = datasets(clientConfig(inv));
   const input = buildPublishInput(inv);
-  const created = await client.publish(input);
+  // Upload progress renders CLIENT-SIDE from the stream (the SDK's flushed-
+  // byte count; no server call) — a line per 10% step, so a multi-GB corpus
+  // shows life without per-chunk spam. Harbor renders its uploads with the
+  // same M-of-N + elapsed columns in a rich Live display
+  // (REFERENCES/Harbor src/harbor/cli/upload.py:123-135); a line-based CLI
+  // keeps the counts and drops the animation. --json stays clean output.
+  let lastUploadStep = -1;
+  const created = await client.publish(
+    input,
+    json
+      ? undefined
+      : {
+          onUploadProgress: (sentBytes, totalBytes) => {
+            const step = totalBytes > 0 ? Math.floor((sentBytes / totalBytes) * 10) : 10;
+            if (step <= lastUploadStep) return;
+            lastUploadStep = step;
+            io.out(
+              `upload ${fmtBytes(sentBytes)}/${fmtBytes(totalBytes)} (${Math.min(step * 10, 100)}%)`
+            );
+          },
+        }
+  );
   if (inv.flags.watch !== true) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -4808,6 +4899,15 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
       onStatus: (job) => {
         io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
       },
+      // Live phase progress, at the server's own write cadence (phase
+      // boundaries + coarse intervals), under the same 429-tolerant poll.
+      onProgress: (progress) => {
+        io.out(
+          json
+            ? JSON.stringify({ kind: "import.progress", progress })
+            : importProgressLine(progress)
+        );
+      },
       onVersion: (version, dataset) => {
         lastVersion = version;
         lastDetail = dataset;
@@ -4854,6 +4954,11 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   } else {
     io.out("");
     for (const line of importLines(final)) io.out(line);
+    // The settled progress record: wall-clock per phase, images
+    // built/mirrored/banked, CodeBuild copy minutes (progressSettleLines).
+    if (final.progress !== null) {
+      for (const line of progressSettleLines(final.progress)) io.out(line);
+    }
     if (lastVersion !== null) {
       for (const line of versionSettleLines(lastVersion, lastDetail)) io.out(line);
       for (const line of buildSettleSummaryLines(lastVersion, final)) io.out(line);

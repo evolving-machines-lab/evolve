@@ -1326,6 +1326,10 @@ local_publish = await catalog.publish(
     directory='./my-swe',
     name='my-swe',
     version='1.0',
+    # (optional) client-side upload progress, measured on the stream itself
+    # as archive bytes flush onto the wire — no server call. Fires per chunk
+    # from the uploader thread; keep it cheap and throttle any rendering.
+    on_upload_progress=lambda sent_bytes, total_bytes: print(f'upload {sent_bytes}/{total_bytes}'),
 )
 
 # Everything in the directory is packed, dotfiles included ('.gitignore',
@@ -1342,10 +1346,22 @@ local_publish = await catalog.publish(
 done = await catalog.watch_import(
     publish_job.id,
     on_status=lambda imp: print(imp.status, imp.task_count),
+    # Live build progress, at the server's own write cadence (phase
+    # boundaries + coarse intervals): the current phase of five —
+    # extracting | parsing | building | copying | verifying — per-phase
+    # done/total, banked-vs-new image counts, and the publish's CodeBuild
+    # copy-build minutes.
+    on_progress=lambda p, imp: print(p.phase, f'{p.phases[-1].done}/{p.phases[-1].total}'),
     on_version=lambda v, d: print(v.state),
     poll_interval_s=2.0,          # (optional) default 2s
     settle_timeout_s=1800.0,      # (optional) settle-phase backstop, default 30min
 )
+
+# The settled record stays on the import: wall-clock per phase
+# (started_at/completed_at on each entry), images built / mirrored / banked
+# (banked = already in the registry, nothing copied), CodeBuild copy minutes.
+print(done.progress.images if done.progress else None,
+      done.progress.codebuild if done.progress else None)
 
 if done.status == 'FAILED':
     # `failure`, not `error` — `error` is the key the failure envelope uses, so

@@ -1020,6 +1020,72 @@ class TestDatasets:
         assert statuses == ['QUEUED', 'RUNNING', 'COMPLETED']
 
     @pytest.mark.asyncio
+    async def test_watch_import_fires_on_progress_on_change_only(self):
+        """Live progress rides the same poll: on_progress fires exactly when
+        the server's own progress write moved the row — a phase boundary or
+        new counts — and never while ``progress`` is None (a QUEUED import,
+        an older server)."""
+        job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2'}
+
+        def phase(name, done, total, banked=None):
+            entry = {
+                'name': name,
+                'started_at': '2026-08-31T10:00:00.000Z',
+                'done': done,
+                'total': total,
+            }
+            if banked is not None:
+                entry['banked'] = banked
+            return entry
+
+        def progress_at(phases, current):
+            return {
+                'phase': current,
+                'started_at': '2026-08-31T10:00:00.000Z',
+                'phases': phases,
+                'images': {'built': 0, 'mirrored': 0, 'banked': 0},
+                'codebuild': {'copy_builds': 0, 'billed_minutes': 0},
+            }
+
+        building3 = progress_at([phase('building', 3, 9, banked=1)], 'building')
+        responses = iter([
+            # No progress yet: on_progress must NOT fire.
+            {**job, 'status': 'QUEUED'},
+            {**job, 'status': 'RUNNING', 'task_count': 0,
+             'progress': progress_at([phase('parsing', 113, 113)], 'parsing')},
+            # Same phase, new counts: fires again.
+            {**job, 'status': 'RUNNING', 'task_count': 0, 'progress': building3},
+            # Unchanged blob: must NOT fire again.
+            {**job, 'status': 'RUNNING', 'task_count': 0, 'progress': building3},
+            {**job, 'status': 'COMPLETED', 'task_count': 113,
+             'progress': progress_at([phase('verifying', 113, 113)], 'verifying')},
+        ])
+        detail = _settle_detail_body(state='READY', active=True)
+
+        def sequence_then_detail(request, timeout=None):
+            if '/api/datasets/imports/' in request.full_url:
+                return FakeResponse(next(responses))
+            return FakeResponse(detail)
+
+        seen = []
+        with patch('evolve._http.urlopen', sequence_then_detail):
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-1',
+                on_progress=lambda p, j: seen.append(
+                    f'{p.phase}:{p.phases[-1].done}/{p.phases[-1].total}'
+                ),
+                poll_interval_s=0.001,
+            )
+
+        assert seen == ['parsing:113/113', 'building:3/9', 'verifying:113/113']
+        # The terminal import carries the settled progress, typed.
+        assert done.progress is not None
+        assert done.progress.phase == 'verifying'
+        assert done.progress.phases[-1].completed_at is None
+        assert done.progress.images.built == 0
+        assert done.progress.codebuild.copy_builds == 0
+
+    @pytest.mark.asyncio
     async def test_watch_import_survives_a_rate_limit(self):
         """A 429/503 mid-watch is a DELAY, not an outcome.
 
