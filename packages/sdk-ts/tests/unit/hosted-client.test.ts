@@ -5164,6 +5164,30 @@ async function testApiErrorHandling() {
       assertEqual(e.code, "unknown_error", "unparseable body maps to unknown_error");
     }
     assert(threwRaw, "throws on unparseable error body");
+
+    // The traces feed's own refusal grammar — {error: "<sentence>"} with no
+    // code (the viewer plane never minted codes) — must serve the sentence as
+    // the message, never the JSON blob, under the honest unknown_error code.
+    installMockFetch();
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" },
+    });
+    let threwFeed = false;
+    try {
+      await analyses({ apiKey: "test-key", baseUrl: BASE }).get("run-1");
+    } catch (e: any) {
+      threwFeed = true;
+      assert(e instanceof EvolveApiError, "a feed refusal is still an EvolveApiError");
+      assertEqual(e.status, 400, "carries the HTTP status");
+      assertEqual(e.code, "unknown_error", "the feed names no code — unknown_error, never an invented one");
+      assertEqual(
+        e.message,
+        "analysis.json belongs to an analysis run — open the analysis row and download it there",
+        "the server's sentence is the message — not the raw {error: ...} body"
+      );
+    }
+    assert(threwFeed, "throws on a feed 400");
   } finally {
     restoreFetch();
   }

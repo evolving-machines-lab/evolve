@@ -4818,6 +4818,24 @@ async function testAnalysisShow() {
     );
     assert(completedText.includes("Legitimate solve."), "the summary renders");
     assert(!completedText.includes("failure"), "no failure row on a completed analysis");
+
+    // A TRIAL id at the verdict door refuses server-side in the feed's own
+    // grammar ({error: "<sentence>"}, no code). The CLI passes the sentence
+    // through clean — human and --json alike — never the JSON blob.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis row" },
+    });
+    const wrong = captureIO();
+    assertEqual(await runCli(["analysis", "show", "run-1", ...AUTH], wrong.io), 1, "a feed refusal exits 1");
+    assertEqual(wrong.err, ["Error: analysis.json belongs to an analysis row"], "the server's sentence, clean");
+    const wrongJson = captureIO();
+    assertEqual(await runCli(["analysis", "show", "run-1", "--json", ...AUTH], wrongJson.io), 1, "--json exits 1");
+    assertEqual(
+      JSON.parse(wrongJson.out[0]),
+      { error: { code: "unknown_error", message: "analysis.json belongs to an analysis row" } },
+      "--json carries the sentence under the honest unknown_error code"
+    );
   } finally {
     restoreFetch();
   }

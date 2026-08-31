@@ -433,14 +433,16 @@ async function throwApiError(res: Response): Promise<never> {
 
   try {
     const body = JSON.parse(text) as {
-      error?: {
-        code?: unknown;
-        message?: unknown;
-        param?: unknown;
-        details?: unknown;
-        retryAfterSec?: unknown;
-        requestId?: unknown;
-      };
+      error?:
+        | string
+        | {
+            code?: unknown;
+            message?: unknown;
+            param?: unknown;
+            details?: unknown;
+            retryAfterSec?: unknown;
+            requestId?: unknown;
+          };
     };
     if (body?.error && typeof body.error === "object") {
       const code = typeof body.error.code === "string" ? body.error.code : "unknown_error";
@@ -455,6 +457,16 @@ async function throwApiError(res: Response): Promise<never> {
         retryAfterSec,
         requestId:
           typeof body.error.requestId === "string" ? body.error.requestId : headerRequestId,
+      });
+    }
+    if (typeof body?.error === "string") {
+      // The viewer plane's refusal grammar — {error: "<sentence>"}, no code
+      // (the traces feed analyses() rides; swarm_dashboard app/api/traces/…
+      // routes). The sentence is the message; the code stays the honest
+      // unknown_error, never one minted client-side.
+      throw new EvolveApiError(res.status, "unknown_error", body.error, {
+        retryAfterSec,
+        requestId: headerRequestId,
       });
     }
   } catch (error) {
