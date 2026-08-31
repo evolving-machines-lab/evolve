@@ -3131,6 +3131,122 @@ export interface TrialsClient {
   file(trialId: string, path: string, range?: TrialFileRange): Promise<Buffer>;
 }
 
+// =============================================================================
+// ANALYSES (the analyzer's own runs, read off the dashboard's traces feed)
+// =============================================================================
+
+/**
+ * The stored artifacts an analysis run OWNS under its own id — the analyzer's
+ * raw process streams and its session home (the executor stores exactly these
+ * three at settle). A runtime value like TRIAL_ARTIFACT_STREAMS, for the same
+ * reason: the CLI builds its `--stream` validation from this list instead of
+ * a second copy. `verifier` and `trace-atif` are deliberately NOT members: an
+ * analysis never has them, and the server refuses them typed rather than
+ * answering a null that would read as "not stored".
+ */
+export const ANALYSIS_ARTIFACT_STREAMS = [
+  "trace-stdout",
+  "trace-stderr",
+  "agent-home",
+] as const;
+
+/** One stored-artifact selector of an analysis run. */
+export type AnalysisArtifactStream = (typeof ANALYSIS_ARTIFACT_STREAMS)[number];
+
+/** Options for analyses().transcript(). */
+export interface AnalysisTranscriptOptions {
+  /**
+   * Skip the first N events — the feed's own resume grammar ("everything
+   * after the N events I already hold"). An analysis's seqs are allocated
+   * densely from 0, so N is also the seq the returned events start at.
+   * A non-negative integer; anything else is refused client-side.
+   */
+  since?: number;
+}
+
+/**
+ * One analysis run's transcript: the ANALYZER's own parsed events — never the
+ * analyzed trial's agent trace — plus the identity facts the feed serves
+ * around them. Unlike a trial's trace there is no server-side paging: one
+ * read answers everything after `since`, and `total` counts ALL stored rows,
+ * so `events.length < total` with `since: 0` can only mean rows arrived
+ * between count and read (a live analysis).
+ */
+export interface AnalysisTranscript {
+  id: string;
+  /** The trial this analysis read — the walk back to the analyzed work. */
+  analyzed_trial_id: string | null;
+  /** The analyzed trial's job. */
+  job_id: string | null;
+  /** The analyzed task's key. */
+  task_name: string | null;
+  /** The model the analyzer ran. */
+  model_name: string | null;
+  /** Where the ANALYZER's own box ran — never the analyzed arm's. */
+  sandbox_provider: string | null;
+  sandbox_id: string | null;
+  /** True once the analysis has settled (completed or failed). */
+  is_ended: boolean;
+  /** ALL stored rows for this analysis, independent of `since`. */
+  total: number;
+  /**
+   * The events after `since`, in TraceEvent shape. The feed serves the bare
+   * parsed payloads; `seq` is synthesized as since+index (sound because seqs
+   * are dense from 0) and `type` by the viewer's own one extraction.
+   */
+  events: TraceEvent[];
+}
+
+/**
+ * Client for analysis runs — the analyzer's own transcript, verdict document,
+ * and stored artifacts, all globally addressable by analysis id.
+ *
+ * DELIBERATELY OFF-CONTRACT: these three reads ride the dashboard's traces
+ * feed (`/api/traces/trials/{id}/events` and `…/artifacts`), which is NOT in
+ * spec/openapi.yaml — `traces` is outside the prefixes the platform's drift
+ * gate walks (swarm_dashboard `__tests__/api/spec-drift-gate.test.ts`
+ * CONTRACT_PREFIXES), and the one precedent for a transcript door living
+ * off-contract is that gate's RUNTIME_INTERNAL_ROUTES: `api/sessions/[id]/
+ * events`, the dashboard UI's own session transcript view, is enumerated
+ * there as a route no SDK client calls. RECORDED TENSION: that gate names the
+ * excluded planes "planes no SDK client calls" — this client is the first to
+ * call one, so whether the feed joins the contract (spec + both SDK shadows)
+ * is an open ruling, not something settled here. The contract-side verdict
+ * stays where it always was — `Trial.analysis` on the trial body; this client
+ * adds the reads the contract does not carry today.
+ */
+export interface AnalysesClient {
+  /**
+   * The verdict document — the wire's TrialAnalysis, statuses and typed
+   * failure included, for EVERY analysis (not only completed ones). The same
+   * object the analyzed trial serves as `Trial.analysis` when this analysis
+   * is its latest; this door answers for earlier analyses too.
+   */
+  get(analysisId: string): Promise<TrialAnalysis>;
+  /**
+   * The analyzer's own transcript (see AnalysisTranscript). An id the feed
+   * resolves to a trial or a regrade — the route answers those first —
+   * refuses with an error naming the species rather than handing back the
+   * wrong run's events.
+   */
+  transcript(analysisId: string, options?: AnalysisTranscriptOptions): Promise<AnalysisTranscript>;
+  /**
+   * One stored artifact by selector: the analyzer's raw stdout/stderr answer
+   * the text, "agent-home" the sandbox-path → text map of its session home.
+   * Null = never stored (a normal answer, not an error): a QUEUED analysis,
+   * or one whose box died before the settle stored anything. Like
+   * transcript(), an id the feed resolves to a trial or a regrade refuses
+   * with an error — the feed's stored selectors would answer for either
+   * species, so the analysis-only ?what=analysis door is resolved first and
+   * the wrong run's bytes are never served.
+   */
+  artifact(
+    analysisId: string,
+    stream: Exclude<AnalysisArtifactStream, "agent-home">
+  ): Promise<string | null>;
+  artifact(analysisId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
+}
+
 /** A key descriptor. The secret is never returned. */
 export interface ApiKey {
   id: string;

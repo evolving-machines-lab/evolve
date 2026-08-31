@@ -19,10 +19,12 @@
  */
 
 import {
+  assembleAnalysisTree,
   assembleTrialTree,
   jobEvolveRecord,
   trialEvolveRecord,
   visibleHomeTree,
+  type AnalysisTreeParts,
   type TrialTreeParts,
 } from "../../src/hosted/trial-tree";
 import type { Job, Trial } from "../../src/hosted/types";
@@ -430,6 +432,95 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     (record.gateway as Record<string, unknown>).max_trial_spend_usd,
     200,
     "carries the minted cap"
+  );
+}
+
+// -----------------------------------------------------------------------------
+// The analysis tree (evolve analysis download)
+// -----------------------------------------------------------------------------
+function fixtureAnalysisParts(): AnalysisTreeParts {
+  return {
+    analysis: {
+      id: "an-1",
+      status: "completed",
+      model_name: "glm-5.3-flash",
+      rubric: { criteria: [{ name: "reward_hacking", description: "d", guidance: "g" }] },
+      summary: "The agent solved the task legitimately.",
+      checks: { reward_hacking: { outcome: "pass", explanation: "no tampering" } },
+      estimated_cost_usd: 0.0412,
+      usage: {
+        provisional: false,
+        spent_usd: 0.0412,
+        input_tokens: 1000,
+        cached_input_tokens: 400,
+        output_tokens: 200,
+        as_of: "2026-08-30T22:24:22.619Z",
+      },
+      failure: null,
+      created_at: "2026-08-30T21:50:09.010Z",
+      finished_at: "2026-08-30T22:24:22.619Z",
+    },
+    transcript: {
+      id: "an-1",
+      analyzed_trial_id: "run-1",
+      job_id: "job-1",
+      task_name: "fix-bug",
+      sandbox_provider: "daytona",
+      sandbox_id: "box-9",
+      model_name: "glm-5.3-flash",
+      is_ended: true,
+      total: 2,
+      events: [
+        { seq: 0, type: "unknown", data: { _prompt: { text: "analyze" } } },
+        { seq: 1, type: "tool_call", data: { update: { sessionUpdate: "tool_call" } } },
+      ],
+    },
+    stdout: "analyzer out",
+    stderr: null,
+    home: { "/root/.claude/session.jsonl": "{}" },
+    userId: "user-1",
+  };
+}
+
+{
+  const files = assembleAnalysisTree(fixtureAnalysisParts());
+  assertEqual(
+    Object.keys(files).sort(),
+    [
+      "agent/sessions/claude/session.jsonl",
+      "agent/stdout.log",
+      "agent/trace-parsed.jsonl",
+      "analysis.json",
+      "evolve.json",
+    ],
+    "the analysis tree: verdict at the run's root, analyzer streams in agent/, no trial-only files"
+  );
+  const verdict = JSON.parse(files["analysis.json"]) as Record<string, unknown>;
+  assertEqual(verdict.id, "an-1", "analysis.json is the wire verdict document");
+  assertEqual(
+    (verdict.checks as Record<string, unknown>).reward_hacking,
+    { outcome: "pass", explanation: "no tampering" },
+    "checks ride verbatim");
+  assert(!("agent/stderr.log" in files), "an absent artifact is an absent file");
+  assertEqual(
+    files["agent/trace-parsed.jsonl"],
+    `${JSON.stringify({ seq: 0, type: "unknown", data: { _prompt: { text: "analyze" } } })}\n` +
+      `${JSON.stringify({ seq: 1, type: "tool_call", data: { update: { sessionUpdate: "tool_call" } } })}\n`,
+    "the parsed trace is one JSONL line per event, TraceEvent shape"
+  );
+  const record = JSON.parse(files["evolve.json"]) as Record<string, unknown>;
+  assertEqual(record.analysis_id, "an-1", "evolve.json names the analysis");
+  assertEqual(record.analyzed_trial_id, "run-1", "…and the analyzed trial");
+  assertEqual(record.provider, "daytona", "…and the ANALYZER's own provider");
+  assertEqual(
+    record.gateway,
+    { cost_usd: 0.0412, n_input_tokens: 1000, n_cache_tokens: 400, n_output_tokens: 200 },
+    "the meter restates the verdict's one-home usage reading"
+  );
+  assertEqual(
+    JSON.stringify(assembleAnalysisTree(fixtureAnalysisParts())),
+    JSON.stringify(files),
+    "deterministic — same parts, same bytes"
   );
 }
 

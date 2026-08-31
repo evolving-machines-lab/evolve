@@ -48,7 +48,7 @@
  * clients, writing to the caller, so the assembly is testable byte for byte.
  */
 import { trialAgentCost } from "./money";
-import type { Job, TraceEvent, Trial } from "./types";
+import type { AnalysisTranscript, Job, TraceEvent, Trial, TrialAnalysis } from "./types";
 
 /** Everything the assembly consumes — fetched by the caller via the clients. */
 export interface TrialTreeParts {
@@ -266,5 +266,103 @@ export function assembleTrialTree(parts: TrialTreeParts): Record<string, string>
   }
 
   files["evolve.json"] = record(trialEvolveRecord(trial, parts.job, parts.userId));
+  return files;
+}
+
+// =============================================================================
+// ANALYSIS TREE — one analyzer run, materialized (evolve analysis download)
+// =============================================================================
+
+/** Everything the analysis assembly consumes — fetched via analyses(). */
+export interface AnalysisTreeParts {
+  /** analyses().get(id) — the verdict document. */
+  analysis: TrialAnalysis;
+  /** analyses().transcript(id) — identity facts + the drained events. */
+  transcript: AnalysisTranscript;
+  /** analyses().artifact(id, "trace-stdout") / ("trace-stderr") */
+  stdout: string | null;
+  stderr: string | null;
+  /** analyses().artifact(id, "agent-home") — true sandbox paths. */
+  home: Record<string, string> | null;
+  /** The caller's USER id (auth().status() user_id); null when unknown. */
+  userId: string | null;
+}
+
+/**
+ * The analysis's evolve.json — the platform record Harbor's AnalyzeResult has
+ * no slot for: which run this analysis read (the analyzed trial, its job, its
+ * task), where the ANALYZER's own box ran, which user downloaded it, and the
+ * analyzer's own meter. The money and token figures restate the verdict's own
+ * `usage` reading (the one-home rule) rather than inventing a second meter.
+ */
+export function analysisEvolveRecord(
+  analysis: TrialAnalysis,
+  transcript: AnalysisTranscript,
+  userId: string | null
+): Record<string, unknown> {
+  return {
+    analysis_id: analysis.id,
+    analyzed_trial_id: transcript.analyzed_trial_id,
+    job_id: transcript.job_id,
+    task_name: transcript.task_name,
+    user_id: userId,
+    provider: transcript.sandbox_provider,
+    sandbox_id: transcript.sandbox_id,
+    status: analysis.status,
+    model_name: analysis.model_name,
+    gateway: {
+      cost_usd: analysis.estimated_cost_usd,
+      n_input_tokens: analysis.usage?.input_tokens ?? null,
+      n_cache_tokens: analysis.usage?.cached_input_tokens ?? null,
+      n_output_tokens: analysis.usage?.output_tokens ?? null,
+    },
+  };
+}
+
+/**
+ * Assemble one analysis run as {relative-path: content} — the pure assembly
+ * behind `evolve analysis download`. Deterministic like assembleTrialTree.
+ *
+ * The layout reuses the trial tree's own slot names, because the analyzer is
+ * itself an agent run and the store keys its artifacts identically:
+ *
+ *   analysis.json             the verdict document — the wire's TrialAnalysis,
+ *                             the same object the feed's ?what=analysis door
+ *                             serves and its &format=log form downloads.
+ *                             Harbor's name for the per-trial artifact
+ *                             (their analyzer.py:414-424 writes analysis.json
+ *                             into the analyzed trial dir; cli/analyze.py:357
+ *                             names it) — here it sits at the run's own root,
+ *                             because this tree IS the analysis run
+ *   agent/stdout.log          the analyzer process's raw streams, when stored
+ *   agent/stderr.log
+ *   agent/trace-parsed.jsonl  the analyzer's parsed event trace
+ *   agent/sessions/…          the analyzer CLI's home folder, VISIBLE shape
+ *   evolve.json               the platform record (analysisEvolveRecord)
+ *
+ * Absent artifacts are absent files — never empty placeholders. No
+ * config.json/result.json/verifier/: those are trial-tree facts an analysis
+ * does not have, and inventing them would fake a species.
+ */
+export function assembleAnalysisTree(parts: AnalysisTreeParts): Record<string, string> {
+  const files: Record<string, string> = {};
+
+  files["analysis.json"] = record(parts.analysis);
+  if (parts.stdout !== null) files["agent/stdout.log"] = parts.stdout;
+  if (parts.stderr !== null) files["agent/stderr.log"] = parts.stderr;
+  if (parts.transcript.events.length > 0) {
+    files["agent/trace-parsed.jsonl"] =
+      parts.transcript.events.map((event) => JSON.stringify(event)).join("\n") + "\n";
+  }
+  if (parts.home !== null) {
+    const visible = visibleHomeTree(parts.home);
+    for (const path of Object.keys(visible)) {
+      files[`agent/sessions/${path}`] = visible[path];
+    }
+  }
+
+  files["evolve.json"] = record(
+    analysisEvolveRecord(parts.analysis, parts.transcript, parts.userId)
+  );
   return files;
 }

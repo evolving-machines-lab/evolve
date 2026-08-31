@@ -11,7 +11,8 @@
  * shared list output precedence (--json / -q / TSV / TTY table, --columns,
  * --no-trunc, --no-headers), and one mocked end-to-end pass over every verb:
  * job start/--watch/list/show/trials/tasks/compare/cancel/resume/regrade/
- * download, trial show/download/regrade/stop, dataset
+ * download, trial show/download/regrade/stop, analysis show/trace/download,
+ * dataset
  * list/show/publish/download/activate, agent list/show/add/remove, auth
  * status. Exit codes: 0/1/2 pinned throughout.
  *
@@ -3922,6 +3923,10 @@ function testTrialDetailAnalysisRows() {
     })
   ).join("\n");
   assert(analyzed.includes("completed · claude-haiku-4-5-20251001"), "status and model on the analysis row");
+  assert(
+    analyzed.includes("claude-haiku-4-5-20251001 · an-1"),
+    "the analysis id renders — the handle the analysis verbs take"
+  );
   assert(analyzed.includes("pass — No verifier writes observed."), "each criterion renders outcome and explanation");
   assert(analyzed.includes("Legitimate solve."), "the summary renders");
   assert(analyzed.includes("$0.0173"), "the analyzer's own spend renders, never folded into the trial's bill");
@@ -4700,6 +4705,379 @@ async function testTrialStop() {
     assert(out.some((l) => l.includes("not found run-3")), "reports the unknown id (existence never leaked)");
   } finally {
     restoreFetch();
+  }
+}
+
+// =============================================================================
+// ANALYSIS — show, trace, download (the traces-feed verbs)
+// =============================================================================
+
+/** The wire verdict the feed's ?what=analysis door serves. */
+function analysisVerdictFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "an-1",
+    status: "failed",
+    model_name: "glm-5.3-flash",
+    rubric: CLI_RUBRIC,
+    summary: null,
+    checks: null,
+    estimated_cost_usd: 0.0366,
+    usage: {
+      provisional: true,
+      spent_usd: 0.0366,
+      input_tokens: 960596,
+      cached_input_tokens: 912640,
+      output_tokens: 77018,
+      as_of: "2026-08-30T22:24:22.619Z",
+    },
+    failure: { phase: "artifact_read", message: "MISSING /app/analysis.json" },
+    created_at: "2026-08-30T21:50:09.010Z",
+    finished_at: "2026-08-30T22:24:22.619Z",
+    ...overrides,
+  };
+}
+
+/** The feed's transcript envelope for an analysis id. */
+function analysisEventsFixture(events: unknown[], total = events.length): Record<string, unknown> {
+  return {
+    session: {
+      id: "an-1",
+      tag: "roy-polymorph-cn",
+      provider: "daytona",
+      sandboxId: "box-1",
+      agent: "claude",
+      model: "glm-5.3-flash",
+      isEnded: true,
+      type: "trial",
+      kind: "analysis",
+      analyzedTrialId: "run-1",
+      status: "FAILED",
+      jobId: "job-1",
+    },
+    events,
+    total,
+    traceSource: "db",
+  };
+}
+
+async function testAnalysisShow() {
+  console.log("\n--- runCli: analysis show renders the verdict document; --json is the wire object ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: analysisVerdictFixture() },
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["analysis", "show", "an-1", ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.endsWith("/api/traces/trials/an-1/artifacts?what=analysis"),
+      "one GET on the feed's verdict door"
+    );
+    const text = out.join("\n");
+    assert(text.includes("an-1"), "renders the analysis id");
+    assert(text.includes("failed"), "renders the status");
+    assert(text.includes("glm-5.3-flash"), "renders the model");
+    assert(
+      text.includes("artifact_read: MISSING /app/analysis.json"),
+      "a failed analysis shows its typed failure"
+    );
+    assert(text.includes("$0.0366"), "the analyzer's own spend renders at four decimals");
+    assert(out.some((l) => l.includes("tokens") && l.includes("provisional")), "the usage row renders");
+
+    // The plural noun answers as the hidden alias, like every other group.
+    const alias = captureIO();
+    assertEqual(await runCli(["analyses", "show", "an-1", ...AUTH], alias.io), 0, "analyses aliases analysis");
+
+    const json = captureIO();
+    assertEqual(await runCli(["analysis", "show", "an-1", "--json", ...AUTH], json.io), 0, "--json exits 0");
+    const body = JSON.parse(json.out.join("")) as Record<string, unknown>;
+    assertEqual(body.id, "an-1", "--json is the wire verdict object");
+    assertEqual(body.status, "failed", "--json keeps the wire's lowercase status");
+
+    // A completed analysis renders its verdicts and summary, no failure row.
+    setMockResponse("/api/traces/trials/an-2/artifacts?what=analysis", {
+      status: 200,
+      body: {
+        analysis: analysisVerdictFixture({
+          id: "an-2",
+          status: "completed",
+          summary: "Legitimate solve.",
+          checks: { reward_hacking: { outcome: "pass", explanation: "No verifier writes observed." } },
+          failure: null,
+        }),
+      },
+    });
+    const completed = captureIO();
+    assertEqual(await runCli(["analysis", "show", "an-2", ...AUTH], completed.io), 0, "completed exits 0");
+    const completedText = completed.out.join("\n");
+    assert(
+      completedText.includes("pass — No verifier writes observed."),
+      "each criterion renders outcome and explanation"
+    );
+    assert(completedText.includes("Legitimate solve."), "the summary renders");
+    assert(!completedText.includes("failure"), "no failure row on a completed analysis");
+
+    // A TRIAL id at the verdict door refuses server-side in the feed's own
+    // grammar ({error: "<sentence>"}, no code). The CLI passes the sentence
+    // through clean — human and --json alike — never the JSON blob.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis row" },
+    });
+    const wrong = captureIO();
+    assertEqual(await runCli(["analysis", "show", "run-1", ...AUTH], wrong.io), 1, "a feed refusal exits 1");
+    assertEqual(wrong.err, ["Error: analysis.json belongs to an analysis row"], "the server's sentence, clean");
+    const wrongJson = captureIO();
+    assertEqual(await runCli(["analysis", "show", "run-1", "--json", ...AUTH], wrongJson.io), 1, "--json exits 1");
+    assertEqual(
+      JSON.parse(wrongJson.out[0]),
+      { error: { code: "unknown_error", message: "analysis.json belongs to an analysis row" } },
+      "--json carries the sentence under the honest unknown_error code"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisTrace() {
+  console.log("\n--- runCli: analysis trace prints the analyzer's transcript; --since resumes ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/traces/trials/an-1/events?since=2", {
+      status: 200,
+      body: analysisEventsFixture([{ update: { sessionUpdate: "tool_call" } }], 3),
+    });
+    setMockResponse("/api/traces/trials/an-1/events", {
+      status: 200,
+      body: analysisEventsFixture([
+        { _prompt: { text: "You are analyzing an agent trial run." } },
+        { update: { sessionUpdate: "agent_message_chunk", content: { text: "Reading" } } },
+      ]),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["analysis", "trace", "an-1", ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.endsWith("/api/traces/trials/an-1/events"),
+      "hits the feed's events door"
+    );
+    assert(out[0].includes("#   0") && out[0].includes("unknown"), "the raw prompt row renders as unknown");
+    assert(out[1].includes("agent_message_chunk"), "the viewer's own type extraction names ACP events");
+
+    const since = captureIO();
+    assertEqual(await runCli(["analysis", "trace", "an-1", "--since", "2", ...AUTH], since.io), 0, "--since exits 0");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.endsWith("/api/traces/trials/an-1/events?since=2"),
+      "--since rides the wire as the feed's own parameter"
+    );
+    assert(since.out[0].includes("#   2"), "resumed seqs continue from since");
+
+    const json = captureIO();
+    assertEqual(await runCli(["analysis", "trace", "an-1", "--json", ...AUTH], json.io), 0, "--json exits 0");
+    const first = JSON.parse(json.out[0]) as Record<string, unknown>;
+    assertEqual(first.seq, 0, "--json is one TraceEvent per line");
+
+    // A trial id resolves at the same door — the wrong species refuses (exit
+    // 1) instead of printing the trial's transcript as the analyzer's.
+    setMockResponse("/api/traces/trials/run-1/events", {
+      status: 200,
+      body: { session: { id: "run-1", type: "trial" }, events: [{}], total: 1, traceSource: "db" },
+    });
+    const wrong = captureIO();
+    assertEqual(await runCli(["analysis", "trace", "run-1", ...AUTH], wrong.io), 1, "wrong species exits 1");
+    assert(wrong.err[0].includes("not an analysis run"), "the refusal names the reason");
+    assertEqual(wrong.out, [], "a refusal prints nothing on stdout");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisDownloadStream() {
+  console.log("\n--- runCli: analysis download --stream — the five-name artifact vocabulary ---");
+  installMockFetch();
+  try {
+    setMockResponse("/artifacts?what=trace-stdout", { status: 200, body: { log: "analyzer stdout" } });
+    setMockResponse("/artifacts?what=trace-stderr", { status: 200, body: { log: null } });
+    setMockResponse("/artifacts?what=analysis", {
+      status: 200,
+      body: { analysis: analysisVerdictFixture() },
+    });
+
+    const stdout = captureIO();
+    const code = await runCli(["analysis", "download", "an-1", "--stream", "trace-stdout", ...AUTH], stdout.io);
+    assertEqual(code, 0, "exit 0");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.includes("/api/traces/trials/an-1/artifacts?what=trace-stdout"),
+      "hits the feed's artifacts door"
+    );
+    assertEqual(stdout.out, ["analyzer stdout"], "prints the raw log verbatim");
+
+    const absent = captureIO();
+    assertEqual(
+      await runCli(["analysis", "download", "an-1", "--stream", "trace-stderr", ...AUTH], absent.io),
+      0,
+      "an unstored log is a normal answer"
+    );
+    assert(absent.out[0].includes("No trace-stderr log"), "absence is stated, never an empty print");
+
+    // --stream analysis: the verdict document itself, the bytes the feed's
+    // &format=log form downloads as Harbor's analysis.json.
+    const verdict = captureIO();
+    assertEqual(
+      await runCli(["analysis", "download", "an-1", "--stream", "analysis", ...AUTH], verdict.io),
+      0,
+      "--stream analysis is a valid selector"
+    );
+    const doc = JSON.parse(verdict.out.join("\n")) as Record<string, unknown>;
+    assertEqual(doc.id, "an-1", "prints the verdict document");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisDownloadStreamRefusesOtherSpecies() {
+  console.log("\n--- runCli: analysis download --stream refuses an id of another species ---");
+  installMockFetch();
+  try {
+    // A trial id typed at a stream selector: the artifacts door itself would
+    // serve THAT trial's bytes (its resolution order puts trials first), so
+    // the SDK resolves the ?what=analysis door first — the server refuses a
+    // trial there — and the verb inherits the refusal: exit 1, and the
+    // trial's bytes never reach stdout.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
+      status: 400,
+      body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" },
+    });
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", {
+      status: 200,
+      body: { log: "the TRIAL's stdout" },
+    });
+    const wrong = captureIO();
+    assertEqual(
+      await runCli(["analysis", "download", "run-1", "--stream", "trace-stdout", ...AUTH], wrong.io),
+      1,
+      "wrong species exits 1"
+    );
+    assert(wrong.err[0].includes("not an analysis run"), "the refusal names the reason");
+    assertEqual(wrong.out, [], "the trial's bytes never reach stdout");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalysisDownloadSave() {
+  console.log("\n--- runCli: analysis download saves the analysis tree + evolve.json; --overwrite gates ---");
+  installMockFetch();
+  const tmpDir = await mkdtemp(join(tmpdir(), "evolve-analysis-dl-"));
+  try {
+    // Substring matching: selector patterns first, the bare events door last.
+    setMockResponse("/artifacts?what=analysis", {
+      status: 200,
+      body: {
+        analysis: analysisVerdictFixture({
+          id: "an-1",
+          status: "completed",
+          summary: "Legitimate solve.",
+          checks: { reward_hacking: { outcome: "pass", explanation: "ok" } },
+          failure: null,
+        }),
+      },
+    });
+    setMockResponse("/artifacts?what=trace-stdout", { status: 200, body: { log: "analyzer out" } });
+    setMockResponse("/artifacts?what=trace-stderr", { status: 200, body: { log: null } });
+    setMockResponse("/artifacts?what=agent-home", {
+      status: 200,
+      body: { files: { "/root/.claude/history.jsonl": "{}" } },
+    });
+    setMockResponse("/api/traces/trials/an-1/events", {
+      status: 200,
+      body: analysisEventsFixture([{ update: { sessionUpdate: "tool_call" } }]),
+    });
+    const { io, out, err } = captureIO();
+    const code = await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], io);
+    assertEqual(code, 0, "exit 0");
+    assertEqual(err, [], "nothing on stderr");
+    const target = join(tmpDir, "an-1");
+    const verdict = JSON.parse(await readFile(join(target, "analysis.json"), "utf-8"));
+    assertEqual(verdict.id, "an-1", "analysis.json is the verdict document at the run's root");
+    assertEqual(
+      await readFile(join(target, "agent", "stdout.log"), "utf-8"),
+      "analyzer out",
+      "the analyzer's raw stdout is agent/stdout.log"
+    );
+    const parsed = await readFile(join(target, "agent", "trace-parsed.jsonl"), "utf-8");
+    assert(parsed.includes('"type":"tool_call"'), "the parsed transcript lands in agent/trace-parsed.jsonl");
+    assertEqual(
+      await readFile(join(target, "agent", "sessions", "claude", "history.jsonl"), "utf-8"),
+      "{}",
+      "agent/sessions/ wears the home tree's visible names"
+    );
+    const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
+    assertEqual(evolve.analysis_id, "an-1", "evolve.json names the analysis");
+    assertEqual(evolve.analyzed_trial_id, "run-1", "evolve.json names the analyzed trial");
+    assertEqual(evolve.provider, "daytona", "evolve.json names the ANALYZER's provider");
+    let missingThrew = false;
+    try {
+      await readFile(join(target, "agent", "stderr.log"), "utf-8");
+    } catch {
+      missingThrew = true;
+    }
+    assert(missingThrew, "an unstored artifact writes no file");
+
+    const refused = captureIO();
+    assertEqual(
+      await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], refused.io),
+      1,
+      "an existing target refuses without --overwrite"
+    );
+    assert(refused.err[0].includes("--overwrite"), "the refusal names the flag that unlocks it");
+    const overwrite = captureIO();
+    assertEqual(
+      await runCli(["analysis", "download", "an-1", "-o", tmpDir, "--overwrite", ...AUTH], overwrite.io),
+      0,
+      "--overwrite replaces the existing download"
+    );
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testAnalysisDownloadUsageErrors() {
+  console.log("\n--- runCli: analysis download flag misuse is a usage error (exit 2, not 1) ---");
+  {
+    const { io, err } = captureIO();
+    const code = await runCli(["analysis", "download", "an-1", "--stream", "verifier", ...AUTH], io);
+    assertEqual(code, 2, "a selector the species does not own exits 2 at the keyboard");
+    assert(
+      err.some((l) => l.includes("analysis") && l.includes("trace-parsed") && l.includes("agent-home")),
+      "names all five selectors"
+    );
+  }
+  {
+    const { io, err } = captureIO();
+    const code = await runCli(
+      ["analysis", "download", "an-1", "--stream", "analysis", "-o", "/tmp/x", ...AUTH],
+      io
+    );
+    assertEqual(code, 2, "--stream + -o refused, exit 2");
+    assert(err.some((l) => l.includes("EITHER --stream OR -o")), "explains the exclusive modes");
+  }
+  {
+    const { io, err } = captureIO();
+    const code = await runCli(
+      ["analysis", "download", "an-1", "--stream", "trace-stdout", "--since", "5", ...AUTH],
+      io
+    );
+    assertEqual(code, 2, "--since outside trace-parsed refused, exit 2");
+    assert(err.some((l) => l.includes("trace-parsed")), "explains the since scope");
+  }
+  {
+    const { io } = captureIO();
+    const code = await runCli(["analysis", "download", "an-1", "--since", "5", ...AUTH], io);
+    assertEqual(code, 2, "--since in save mode refused, exit 2");
   }
 }
 
@@ -6353,6 +6731,12 @@ async function main() {
   await testTrialDownloadSave();
   await testTrialDownloadUsageErrors();
   await testTrialStop();
+  await testAnalysisShow();
+  await testAnalysisTrace();
+  await testAnalysisDownloadStream();
+  await testAnalysisDownloadStreamRefusesOtherSpecies();
+  await testAnalysisDownloadSave();
+  await testAnalysisDownloadUsageErrors();
   await testDatasetListAndShow();
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowVersionSource();
