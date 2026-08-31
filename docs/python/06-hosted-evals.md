@@ -824,11 +824,12 @@ evolve job delete cme12ab34 -y --json  # {"job_id":"…","trials_deleted":12,"an
 
 ## CLI
 
-The SDK's TypeScript package ships the `evolve` binary — a thin shell over the same five clients this chapter documents, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. Three commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint — it prints the created record and the analyze hint, since an uploaded job is already terminal). Singular nouns are canonical; `job`, `trial` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
+The SDK's TypeScript package ships the `evolve` binary — a thin shell over the SDK clients, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. Three commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint — it prints the created record and the analyze hint, since an uploaded job is already terminal). Singular nouns are canonical; `job`, `trial`, `analysis` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
 job      start | list | show | trials | tasks | compare | cancel | delete | stop | resume | retry | regrade | download | grep
 trial    show | trace | download | retry | regrade | stop
+analysis show | trace | download
 dataset  list | show | publish | download | activate
 skill    list | upload | show | delete
 agent    list | show | add | remove
@@ -917,6 +918,10 @@ evolve trial download <trial-id> -o trials/
 evolve trial retry <trial-id>
 evolve trial regrade <trial-id>
 evolve trial stop <trial-id> [trial-id...]
+
+evolve analysis show <analysis-id>         # the analyzer's verdict document (id: trial show's analysis row)
+evolve analysis trace <analysis-id>        # the analyzer's own transcript; --since resumes
+evolve analysis download <analysis-id> --stream trace-stdout   # or save whole with -o
 
 evolve dataset list -q
 evolve dataset show deep-swe@1.1
