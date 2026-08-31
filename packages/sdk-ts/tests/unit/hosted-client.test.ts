@@ -1752,6 +1752,59 @@ async function testAgentCreateTarball() {
   }
 }
 
+async function testAgentUpsertTarball() {
+  console.log("\n--- agents().upsert() streams a directory as PUT to the agent's own route ---");
+  const server = await startCaptureServer({
+    status: 200,
+    body: { ...REGISTERED_AGENT, source: "tarball" },
+  });
+  const dir = await mkdtemp(join(tmpdir(), "evolve-agent-upsert-dir-"));
+  try {
+    await mkdir(join(dir, "bin"), { recursive: true });
+    await writeFile(join(dir, "bin", "acme-cli"), "#!/bin/sh\nexec acme \"$@\"\n");
+
+    const a = agents({ apiKey: "test-key", baseUrl: server.base });
+    const replaced = await a.upsert("acme cli", {
+      directory: dir,
+      run_command: "acme-cli --headless",
+      env: { ACME_PROFILE: "bench" },
+    });
+
+    const call = server.calls[server.calls.length - 1];
+    // One call, PUT, at the agent's OWN route — the name is encoded into the
+    // path, so there is never a window where the name stops resolving.
+    assertEqual(call.method, "PUT", "uses PUT — replace, never delete+create");
+    assertEqual(call.url, "/api/agents/acme%20cli", "PUTs the agent's own encoded route");
+    assertEqual(
+      call.headers["content-length"],
+      String(call.body.length),
+      "Content-Length is exact — the streamed upsert is identity-framed"
+    );
+    const parts = multipartParts(call);
+    // Same body grammar as create(), name part included (the URL names the
+    // agent too; the server treats the path as authoritative).
+    assertEqual(
+      parts.map((p) => p.name),
+      ["name", "run_command", "env", "archive"],
+      "metadata parts precede the archive part, create()'s exact grammar"
+    );
+    assertEqual(partData(parts, "run_command")?.toString(), "acme-cli --headless", "run_command is a named part");
+    assertEqual(
+      partData(parts, "env")?.toString(),
+      JSON.stringify({ ACME_PROFILE: "bench" }),
+      "env is one JSON part"
+    );
+    const body = partData(parts, "archive")!;
+    assert(body[0] === 0x1f && body[1] === 0x8b, "archive part is a gzip stream (magic 1f 8b)");
+    const tarText = gunzipSync(body).toString("latin1");
+    assert(tarText.includes("bin/acme-cli"), "the tar carries the agent executable path");
+    assertEqual(replaced.source, "tarball", "the mapped agent carries the server's echo");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function testSkillsUploadCarriesFolderName() {
   console.log("\n--- skills().upload() sends the folder's name beside the content archive ---");
   const server = await startCaptureServer({
@@ -5568,6 +5621,7 @@ async function main() {
   await testWatchImportFailureReReadIsBounded();
   await testAgentCreateInstallScript();
   await testAgentCreateTarball();
+  await testAgentUpsertTarball();
   await testSkillsUploadCarriesFolderName();
   await testAgentCreateRequiresOneSource();
   await testAgentListGetDelete();

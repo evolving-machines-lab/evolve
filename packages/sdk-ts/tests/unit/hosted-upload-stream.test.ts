@@ -39,7 +39,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
-import { postMultipartFile } from "../../src/hosted/upload.ts";
+import { EvolveUploadTimeoutError, postMultipartFile } from "../../src/hosted/upload.ts";
 
 // =============================================================================
 // TEST HELPERS
@@ -281,6 +281,45 @@ async function testDeadSocketRejects(fixture: string): Promise<void> {
   }
 }
 
+async function testSilentServerTimesOutTyped(fixture: string): Promise<void> {
+  console.log("\n[5b] A server that drains but never answers hits the bounded wait");
+  const archivePath = join(fixture, "quiet.tar.gz");
+  writeFileSync(archivePath, gzipSync(Buffer.from("x")));
+
+  // Drains the body, never responds — the shape that left the OLD transport
+  // pending forever (measured still pending at 342 s; undici's fetch had
+  // bounded this at its 300 s headers default, so unbounded was a
+  // regression). The injectable bound keeps the test fast; production takes
+  // UPLOAD_TIMEOUT_MS, the Python lane's constant.
+  const server = createServer((req) => {
+    req.resume();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  try {
+    let caught: unknown;
+    try {
+      await postMultipartFile({
+        url: `http://127.0.0.1:${port}/api/skills`,
+        method: "POST",
+        headers: {},
+        fields: {},
+        file: { path: archivePath, filename: "skill.tar.gz" },
+        timeoutMs: 300,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    assert(caught instanceof EvolveUploadTimeoutError, "rejects with the TYPED timeout error");
+    assert(
+      caught instanceof Error && caught.message.includes("timed out"),
+      "the error names the timeout, never a generic socket sentence"
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 async function testMissingFileRejects(fixture: string): Promise<void> {
   console.log("\n[5] A missing archive file rejects before/instead of uploading garbage");
   let threw = false;
@@ -311,6 +350,7 @@ async function main(): Promise<void> {
     await testPutMethod(fixture);
     await testEarlyRefusal(fixture);
     await testDeadSocketRejects(fixture);
+    await testSilentServerTimesOutTyped(fixture);
     await testMissingFileRejects(fixture);
   } finally {
     rmSync(fixture, { recursive: true, force: true });

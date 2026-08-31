@@ -1476,6 +1476,10 @@ function makeWatch(
   };
 }
 
+// The streaming upload transport's typed timeout, re-exported so callers can
+// tell a dead-socket upload from a refused one without importing internals.
+export { EvolveUploadTimeoutError, UPLOAD_TIMEOUT_MS } from "./upload";
+
 /**
  * The server states the verified digest of a package here. When it is present
  * the client re-checks it: the server hashes the stored object before sending,
@@ -2220,8 +2224,9 @@ export function agents(config?: HostedClientConfig): AgentsClient {
 
     async upsert(name: string, input: AgentUpsertInput): Promise<Agent> {
       // One request, so the name never briefly stops resolving the way
-      // delete()+create() makes it. Same body grammar as create(), minus the
-      // name part — the URL carries it.
+      // delete()+create() makes it. Same body grammar as create(), name part
+      // included — the URL names the agent too, and the server treats the
+      // path as authoritative.
       const parts = agentUploadParts("agents().upsert()", { ...input, name });
       const res = parts.directory
         ? await uploadDirectory(cfg, `/api/agents/${encodeURIComponent(name)}`, {

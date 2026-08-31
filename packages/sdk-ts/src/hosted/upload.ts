@@ -26,8 +26,15 @@
  * to refuse. Redirects are not followed: a redirected upload would replay
  * the Authorization header at whatever host the server names, which is why
  * the Python SDK refuses redirects everywhere (evolve/_http.py); an upload
- * route never legitimately redirects. Like the fetch-based request() beside
- * it, this sets no timeout of its own.
+ * route never legitimately redirects.
+ *
+ * The wait is BOUNDED: 600 s of socket inactivity destroys the request with
+ * the typed EvolveUploadTimeoutError. Same semantics and constant as the
+ * Python lane (UPLOAD_TIMEOUT_SEC = 600 via urllib's per-operation socket
+ * timeout, evolve/hosted.py) — inactivity, not wall clock, so a slow but
+ * moving multi-GB upload survives while a dead server does not. The old
+ * fetch path was bounded too (undici's 300 s response-headers default), so
+ * an unbounded wait here would have been a regression, not parity.
  */
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -35,6 +42,27 @@ import { stat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
+
+/**
+ * Socket-inactivity budget for an archive upload — the Python lane's
+ * UPLOAD_TIMEOUT_SEC (600, evolve/hosted.py) in milliseconds. The two SDKs
+ * hold ONE bound; change them together or not at all.
+ */
+export const UPLOAD_TIMEOUT_MS = 600_000;
+
+/**
+ * The upload's socket went silent past the budget — a dead or wedged server,
+ * never a verdict on the archive. Typed so callers can tell a timeout from a
+ * refused upload (EvolveApiError) or a local read failure.
+ */
+export class EvolveUploadTimeoutError extends Error {
+  readonly name = "EvolveUploadTimeoutError";
+  constructor(url: string, timeoutMs: number) {
+    super(
+      `upload to ${url} timed out: no socket activity for ${Math.round(timeoutMs / 1000)}s`
+    );
+  }
+}
 
 export interface MultipartFilePost {
   /** Absolute URL — the transport knows nothing of baseUrl or auth policy. */
@@ -46,6 +74,11 @@ export interface MultipartFilePost {
   fields: Record<string, string | undefined>;
   /** The archive to stream from disk as the `archive` part. */
   file: { path: string; filename: string };
+  /**
+   * Socket-inactivity bound override, for tests that prove the timeout
+   * without waiting ten minutes. Production callers take the default.
+   */
+  timeoutMs?: number;
 }
 
 /** One chunk onto the wire, resolved when flushed — real backpressure. */
@@ -87,6 +120,18 @@ export async function postMultipartFile(post: MultipartFilePost): Promise<Respon
       "Content-Type": `multipart/form-data; boundary=${boundary}`,
       "Content-Length": String(preamble.length + size + closing.length),
     },
+  });
+
+  // The bounded await: socket inactivity past the budget destroys the
+  // request with the typed error — send, response wait, and body read are
+  // all covered by the one socket this rides. destroy(err) surfaces the
+  // error on every pending operation; the flag keeps it the story even
+  // where a stream layer rewraps the destruction.
+  const timeoutMs = post.timeoutMs ?? UPLOAD_TIMEOUT_MS;
+  let timedOut: EvolveUploadTimeoutError | undefined;
+  req.setTimeout(timeoutMs, () => {
+    timedOut = new EvolveUploadTimeoutError(post.url, timeoutMs);
+    req.destroy(timedOut);
   });
 
   // The response can arrive BEFORE the body finishes sending: the
@@ -131,13 +176,19 @@ export async function postMultipartFile(post: MultipartFilePost): Promise<Respon
     // also keeps stray late write completions from crashing the process.
     if (response === undefined) {
       req.destroy();
-      throw sendError;
+      throw timedOut ?? sendError;
     }
   }
 
-  const res = await responseArrived;
+  const res = await responseArrived.catch((err) => {
+    throw timedOut ?? err;
+  });
   const chunks: Buffer[] = [];
-  for await (const chunk of res) chunks.push(chunk as Buffer);
+  try {
+    for await (const chunk of res) chunks.push(chunk as Buffer);
+  } catch (readError) {
+    throw timedOut ?? readError;
+  }
   const body = Buffer.concat(chunks);
 
   const status = res.statusCode ?? 0;

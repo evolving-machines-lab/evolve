@@ -1625,6 +1625,52 @@ class TestAgents:
         assert agent.source == 'tarball'
 
     @pytest.mark.asyncio
+    async def test_upsert_streams_a_directory_as_put_to_the_agents_own_route(self, tmp_path):
+        import io
+        import tarfile
+
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir(parents=True)
+        (bin_dir / 'acme-cli').write_text('#!/bin/sh\nexec acme "$@"\n')
+
+        fake = FakeUrlopen([
+            ('/api/agents/acme%20cli', {**REGISTERED_AGENT, 'source': 'tarball'}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            agent = await agents_factory(CONFIG).upsert(
+                'acme cli',
+                directory=str(tmp_path),
+                run_command='acme-cli --headless',
+                env={'ACME_PROFILE': 'bench'},
+            )
+
+        request = fake.requests[0]
+        # One call, PUT, at the agent's OWN encoded route — replace, never
+        # delete()+create(), so the name never briefly stops resolving.
+        assert request.get_method() == 'PUT'
+        assert request.full_url.endswith('/api/agents/acme%20cli')
+        assert request.get_header('Content-type').startswith('multipart/form-data; boundary=')
+        # The streamed directory upsert: an iterator body with its exact
+        # Content-Length declared, like every archive route.
+        assert not isinstance(request.data, (bytes, bytearray))
+        assert request.get_header('Content-length') == str(len(_request_body(request)))
+        parts = _multipart_parts(request)
+        # Same body grammar as create(), name part included (the URL names
+        # the agent too; the server treats the path as authoritative).
+        assert list(parts) == ['name', 'run_command', 'env', 'archive']
+        assert parts['name'] == b'acme cli'
+        assert parts['run_command'] == b'acme-cli --headless'
+        assert json.loads(parts['env']) == {'ACME_PROFILE': 'bench'}
+
+        data = parts['archive']
+        assert data[:2] == b'\x1f\x8b'  # gzip magic
+        with tarfile.open(fileobj=io.BytesIO(gzip.decompress(data)), mode='r') as tar:
+            names = tar.getnames()
+        assert 'bin/acme-cli' in names
+
+        assert agent.source == 'tarball'
+
+    @pytest.mark.asyncio
     async def test_create_requires_exactly_one_source(self):
         client = agents_factory(CONFIG)
         with pytest.raises(ValueError, match='not both'):
