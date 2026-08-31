@@ -77,6 +77,7 @@
     "job_already_uploaded",
     "import_not_found",
     "import_too_large",
+    "too_many_concurrent_imports",
     "invalid_archive",
     "unpinned_git_ref",
     "package_not_retained",

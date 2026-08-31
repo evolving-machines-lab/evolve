@@ -3272,6 +3272,12 @@ export const HOSTED_ERROR_CODES = [
   "job_already_uploaded",
   "import_not_found",
   "import_too_large",
+  // The server is already spooling its bound of concurrent corpus uploads
+  // (429; details carry max_concurrent). Refused before the first uploaded
+  // byte lands; retry when an in-flight upload finishes. Distinct from
+  // rate_limited: nothing was rate-counted and there is no Retry-After —
+  // the server's disk is busy.
+  "too_many_concurrent_imports",
   "invalid_archive",
   "unpinned_git_ref",
   "package_not_retained",
