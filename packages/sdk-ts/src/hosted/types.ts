@@ -1256,6 +1256,17 @@ export interface TrialAnalysis {
    * Absent on servers predating the field.
    */
   usage?: UsageReading | null;
+  /**
+   * How many analyzer attempts this analysis has made: 1, or 2 when the
+   * bounded automatic re-run fired. An analyzer run that completes without
+   * producing a valid analysis.json (the missing file included) is re-run
+   * at most once — same model, same frozen rubric, fresh sandbox — and a
+   * second failure of that class settles `failed` with phase
+   * `invalid_result`, both attempts recorded. Infrastructure failures never
+   * auto re-run. When the re-run fired, `estimated_cost_usd` and the token
+   * totals cover BOTH attempts. Absent on servers predating the field.
+   */
+  attempts?: number;
   /** Non-null exactly when status is `failed`. */
   failure: AnalysisFailure | null;
   /** When this analysis was enqueued. */
