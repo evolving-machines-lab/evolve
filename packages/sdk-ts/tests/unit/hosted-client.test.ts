@@ -952,8 +952,8 @@ async function testPublishGitSource() {
 
     assertEqual(
       imported,
-      { id: "imp-1", status: "QUEUED", name: "deep-swe", version: "1.2", failure: null, warnings: [] },
-      "202 response mapped (id, status, name, version, failure, warnings)"
+      { id: "imp-1", status: "QUEUED", name: "deep-swe", version: "1.2", failure: null, warnings: [], progress: null },
+      "202 response mapped (id, status, name, version, failure, warnings, progress)"
     );
 
     // Subfolder import: git_path rides as one more named part, verbatim.
@@ -1050,8 +1050,8 @@ async function testPublishDirectorySource() {
 
     assertEqual(
       imported,
-      { id: "imp-2", status: "QUEUED", name: "my-set", version: "0.1", failure: null, warnings: [] },
-      "202 response mapped (id, status, name, version, failure, warnings)"
+      { id: "imp-2", status: "QUEUED", name: "my-set", version: "0.1", failure: null, warnings: [], progress: null },
+      "202 response mapped (id, status, name, version, failure, warnings, progress)"
     );
   } finally {
     await server.close();
@@ -1220,9 +1220,12 @@ async function testGetImport() {
         version: "1.2",
         failure: null,
         warnings: [{ code: "no_solutions_archived", message: "no reference solutions were archived" }],
+        // An older server sends no `progress`; the map answers null, so a
+        // watcher needs no version check.
+        progress: null,
         task_count: 113,
       },
-      "self-describing job: id/status/name/version/failure/warnings/task_count"
+      "self-describing job: id/status/name/version/failure/warnings/progress/task_count"
     );
     // WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions still
     // activates, but permanently lacks its reference-solution record — this
@@ -1274,6 +1277,67 @@ async function testWatchImportPollsToTerminal() {
       { code: "import_failed", message: "task.yaml missing for task abc" },
       "failure detail surfaced on `failure`, never `error` — `error` means the REQUEST failed"
     );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * Live progress rides the same poll: onProgress fires exactly when the
+ * server's own progress write moved the row — a phase boundary or new counts
+ * — and never while `progress` is null (a QUEUED import, an older server).
+ */
+async function testWatchImportFiresOnProgress() {
+  console.log("\n--- datasets().watchImport() fires onProgress on every observed progress change ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-1", name: "deep-swe", version: "1.2", warnings: [], failure: null };
+    const phase = (name: string, done: number, total: number, banked?: number) => ({
+      name,
+      started_at: "2026-08-31T10:00:00.000Z",
+      done,
+      total,
+      ...(banked !== undefined ? { banked } : {}),
+    });
+    const progressAt = (phases: unknown[], current: string) => ({
+      phase: current,
+      started_at: "2026-08-31T10:00:00.000Z",
+      phases,
+      images: { built: 0, mirrored: 0, banked: 0 },
+      codebuild: { copy_builds: 0, billed_minutes: 0 },
+    });
+    const building3 = progressAt([phase("building", 3, 9, 1)], "building");
+    const statuses = [
+      // No progress yet: onProgress must NOT fire.
+      { ...job, status: "QUEUED", task_count: 0 },
+      { ...job, status: "RUNNING", task_count: 0, progress: progressAt([phase("parsing", 113, 113)], "parsing") },
+      // Same phase, new counts: fires again.
+      { ...job, status: "RUNNING", task_count: 0, progress: building3 },
+      // Unchanged blob: must NOT fire again.
+      { ...job, status: "RUNNING", task_count: 0, progress: building3 },
+      { ...job, status: "COMPLETED", task_count: 113, progress: progressAt([phase("verifying", 113, 113)], "verifying") },
+    ];
+    const counters = installSettleFetch(statuses, [
+      settleDetailBody({ state: "READY", active: true }),
+    ]);
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const seen: string[] = [];
+    const final = await d.watchImport("imp-1", {
+      onProgress: (p) => {
+        const at = p.phases[p.phases.length - 1];
+        seen.push(`${p.phase}:${at.done}/${at.total}`);
+      },
+      pollIntervalMs: 1,
+    });
+
+    assertEqual(counters.importCalls(), 5, "polled through every scripted body");
+    assertEqual(
+      seen,
+      ["parsing:113/113", "building:3/9", "verifying:113/113"],
+      "onProgress fires on change only — never on null, never on an unchanged blob"
+    );
+    assertEqual(final.progress?.phase, "verifying", "the terminal import carries the settled progress");
   } finally {
     restoreFetch();
   }
@@ -6059,6 +6123,7 @@ async function main() {
   await testVersionManifestMapping();
   await testGetImport();
   await testWatchImportPollsToTerminal();
+  await testWatchImportFiresOnProgress();
   await testWatchImportSurvivesRateLimit();
   await testWatchImportSettlesToReady();
   await testWatchImportSurfacesBuildFailure();

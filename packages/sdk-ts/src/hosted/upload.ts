@@ -90,6 +90,13 @@ export interface MultipartFilePost {
    * without waiting ten minutes. Production callers take the default.
    */
   timeoutMs?: number;
+  /**
+   * Called after each archive chunk's write is confirmed flushed —
+   * `(sentBytes, totalBytes)` over the FILE's bytes (the multipart framing
+   * is not counted). This is the client-side upload progress: the stream
+   * itself is the measurement. Fires per flushed chunk; renderers throttle.
+   */
+  onBytes?: (sentBytes: number, totalBytes: number) => void;
 }
 
 /** One chunk onto the wire, resolved when flushed — real backpressure. */
@@ -201,9 +208,12 @@ export async function postMultipartFile(post: MultipartFilePost): Promise<Respon
     const sendBody = (async (): Promise<void> => {
       await writeChunk(req, preamble);
       armWatchdog();
+      let sentBytes = 0;
       for await (const chunk of archive) {
         await writeChunk(req, chunk as Buffer);
         armWatchdog();
+        sentBytes += (chunk as Buffer).length;
+        post.onBytes?.(sentBytes, size);
       }
       await new Promise<void>((resolve) => {
         req.end(closing, resolve);

@@ -2173,6 +2173,62 @@ class ImportWarning:
 
 
 @dataclass
+class ImportPhaseProgress:
+    """One phase of the import timeline (spec ``ImportPhaseProgress``).
+
+    ``done``/``total`` count the phase's settled units — task dirs (parsing),
+    image-pool units (building), unique images (copying), surviving tasks
+    (verifying); failures count as settled, and ``extracting`` has no unit so
+    it stays 0/0. ``completed_at`` is None while the phase runs — and stays
+    None forever on the phase a FAILED import died in. ``banked`` (image
+    phases only) counts units whose bytes already lived in the platform
+    registry, so nothing was copied.
+    """
+    # "extracting" | "parsing" | "building" | "copying" | "verifying"
+    name: str
+    started_at: str
+    done: int
+    total: int
+    completed_at: Optional[str] = None
+    banked: Optional[int] = None
+
+
+@dataclass
+class ImportImageCounts:
+    """A publish's cumulative image economics: fresh builds and mirror copies
+    the publish paid for, and the images that were already banked."""
+    built: int = 0
+    mirrored: int = 0
+    banked: int = 0
+
+
+@dataclass
+class ImportCodeBuildMeter:
+    """The publish's promotion fan-out meter: CodeBuild copy builds started
+    and their billed minutes. 0/0 on a fully banked re-publish."""
+    copy_builds: int = 0
+    billed_minutes: float = 0.0
+
+
+@dataclass
+class DatasetImportProgress:
+    """Live progress of a publish (spec ``DatasetImportProgress``).
+
+    Written by the build worker at phase boundaries and coarse intervals,
+    never per-second. ``phase`` is what the import is doing now (the last
+    entry of ``phases``); ``started_at`` is when the claimed run began on the
+    worker — explicit, never derived. On a terminal import this is the
+    settled record: all five phases with wall-clock timestamps, the final
+    image counts, and the CodeBuild copy-build minutes.
+    """
+    phase: str
+    started_at: str
+    phases: List[ImportPhaseProgress] = field(default_factory=list)
+    images: ImportImageCounts = field(default_factory=ImportImageCounts)
+    codebuild: ImportCodeBuildMeter = field(default_factory=ImportCodeBuildMeter)
+
+
+@dataclass
 class DatasetImport:
     """An asynchronous publish (a dataset import job).
 
@@ -2199,6 +2255,10 @@ class DatasetImport:
     failure: Optional[DatasetImportFailure] = None
     #: Non-fatal but consequential outcomes — see :class:`ImportWarning`.
     warnings: List[ImportWarning] = field(default_factory=list)
+    #: Live progress of the build — None until the worker's first report (a
+    #: QUEUED import, an older server, and every import that predates
+    #: progress). On a terminal import it is the settled five-phase record.
+    progress: Optional[DatasetImportProgress] = None
     # Number of tasks parsed, once counted
     task_count: Optional[int] = None
     created_at: Optional[str] = None
@@ -3278,6 +3338,58 @@ def _map_skill_upload(data: Dict[str, Any]) -> SkillUpload:
     )
 
 
+_IMPORT_PHASES = ('extracting', 'parsing', 'building', 'copying', 'verifying')
+
+
+def _map_import_progress(raw: Any) -> Optional[DatasetImportProgress]:
+    """Map the wire ``progress`` blob; None for absent/None and for anything
+    short of the shape (an older server, a field this SDK predates)."""
+    if not isinstance(raw, dict):
+        return None
+    phase = raw.get('phase')
+    started_at = raw.get('started_at')
+    entries = raw.get('phases')
+    if phase not in _IMPORT_PHASES or not isinstance(started_at, str) or not isinstance(entries, list):
+        return None
+    phases: List[ImportPhaseProgress] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        name = entry.get('name')
+        entry_started = entry.get('started_at')
+        if name not in _IMPORT_PHASES or not isinstance(entry_started, str):
+            return None
+        phases.append(ImportPhaseProgress(
+            name=name,
+            started_at=entry_started,
+            done=entry.get('done', 0) if isinstance(entry.get('done'), int) else 0,
+            total=entry.get('total', 0) if isinstance(entry.get('total'), int) else 0,
+            completed_at=entry.get('completed_at') if isinstance(entry.get('completed_at'), str) else None,
+            banked=entry.get('banked') if isinstance(entry.get('banked'), int) else None,
+        ))
+    images = raw.get('images') if isinstance(raw.get('images'), dict) else {}
+    codebuild = raw.get('codebuild') if isinstance(raw.get('codebuild'), dict) else {}
+
+    def _num(source: Dict[str, Any], key: str) -> float:
+        value = source.get(key)
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+    return DatasetImportProgress(
+        phase=phase,
+        started_at=started_at,
+        phases=phases,
+        images=ImportImageCounts(
+            built=int(_num(images, 'built')),
+            mirrored=int(_num(images, 'mirrored')),
+            banked=int(_num(images, 'banked')),
+        ),
+        codebuild=ImportCodeBuildMeter(
+            copy_builds=int(_num(codebuild, 'copy_builds')),
+            billed_minutes=float(_num(codebuild, 'billed_minutes')),
+        ),
+    )
+
+
 def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     dataset_import = DatasetImport(
         id=data.get('id', ''),
@@ -3294,6 +3406,10 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
         for item in data.get('warnings', [])
         if isinstance(item, dict)
     ]
+    # Live progress (spec DatasetImportProgress): None until the worker's
+    # first report — and always None from an older server that never sends
+    # the field, so a watcher needs no version check.
+    dataset_import.progress = _map_import_progress(data.get('progress'))
     if isinstance(data.get('task_count'), int):
         dataset_import.task_count = data.get('task_count')
     if isinstance(data.get('created_at'), str):
@@ -3652,6 +3768,7 @@ def _multipart_file_body(
     fields: Dict[str, Optional[str]],
     archive_path: str,
     filename: str,
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> 'tuple[Iterator[bytes], str, int]':
     """The multipart body every archive upload route sends, streamed.
 
@@ -3696,6 +3813,12 @@ def _multipart_file_body(
     handle = open(archive_path, 'rb')
 
     def body() -> Iterator[bytes]:
+        # ``on_bytes`` is the client-side upload progress: the stream itself
+        # is the measurement. It counts the FILE's bytes handed to the
+        # transport (urllib pulls the next chunk only after writing the
+        # previous one); the multipart framing is not counted. Fires per
+        # chunk — throttle in the renderer, not here.
+        sent = 0
         with handle:
             yield head
             while True:
@@ -3703,6 +3826,9 @@ def _multipart_file_body(
                 if not chunk:
                     break
                 yield chunk
+                sent += len(chunk)
+                if on_bytes is not None:
+                    on_bytes(sent, size)
             yield tail
 
     content_type = f'multipart/form-data; boundary={boundary}'
@@ -3716,9 +3842,12 @@ async def _upload_archive_file(
     archive_path: str,
     filename: str,
     method: str = 'POST',
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """Stream one on-disk archive to ``path`` as the multipart grammar above."""
-    body, content_type, content_length = _multipart_file_body(fields, archive_path, filename)
+    body, content_type, content_length = _multipart_file_body(
+        fields, archive_path, filename, on_bytes
+    )
     return await http.request_upload(
         path,
         body,
@@ -3734,6 +3863,7 @@ async def _upload_directory_archive(
     directory: str,
     filename: str,
     method: str = 'POST',
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """Tar + gzip ``directory`` into a temp file and stream it to ``path`` —
     the one flow every publish-a-directory surface (datasets, agents, skills,
@@ -3744,7 +3874,9 @@ async def _upload_directory_archive(
     try:
         archive_path = os.path.join(tmp, filename)
         await asyncio.to_thread(_tar_gzip_directory_to_file, directory, archive_path)
-        return await _upload_archive_file(http, path, fields, archive_path, filename, method)
+        return await _upload_archive_file(
+            http, path, fields, archive_path, filename, method, on_bytes
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -4115,8 +4247,16 @@ class DatasetsClient:
         directory: Optional[str] = None,
         name: Optional[str] = None,
         version: Optional[str] = None,
+        on_upload_progress: Optional[Callable[[int, int], None]] = None,
     ) -> DatasetImport:
         """Publish a dataset version (asynchronous server-side import).
+
+        ``on_upload_progress`` (a ``directory`` source only — a git source
+        uploads nothing) is called ``(sent_bytes, total_bytes)`` as the
+        archive's bytes go onto the wire — client-side, from the stream
+        itself, no server call. It fires per chunk FROM THE UPLOADER THREAD
+        (the upload runs in ``asyncio.to_thread``), so keep it cheap and
+        thread-safe, and throttle any rendering in the callback.
 
         Provide EITHER a git source (``git_url`` + pinned ``git_ref``) OR a
         local corpus ``directory`` (tarred + gzipped deterministically on the
@@ -4175,6 +4315,7 @@ class DatasetsClient:
                 {'name': name, 'version': version},
                 directory,
                 'corpus.tar.gz',
+                on_bytes=on_upload_progress,
             )
             return _map_dataset_import(raw)
         elif git_url and git_ref:
@@ -4220,6 +4361,7 @@ class DatasetsClient:
         id: str,
         *,
         on_status: Optional[Callable[[DatasetImport], None]] = None,
+        on_progress: Optional[Callable[[DatasetImportProgress, DatasetImport], None]] = None,
         on_version: Optional[Callable[[DatasetVersion, Dataset], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
@@ -4238,7 +4380,12 @@ class DatasetsClient:
         import's ``failure``).
 
         ``on_status`` fires on every observed import status change (including
-        the first status seen). ``on_version`` fires on every observed change
+        the first status seen). ``on_progress`` fires on every observed change
+        of the import's live ``progress`` — a phase boundary, or new counts
+        inside a phase; the server writes progress at phase boundaries and
+        coarse intervals (never per-second), so it fires at that cadence and
+        never while ``progress`` is None. ``on_version`` fires on every
+        observed change
         of the version's state during the settle phase, with the detail read
         it came from — its ``active_version`` says whether the settled
         version is now the one a bare dataset name resolves to.
@@ -4258,6 +4405,10 @@ class DatasetsClient:
             raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
         last_status: Optional[str] = None
+        # Change detection over the SERVER's own writes: dataclass equality
+        # over the mapped progress fires on_progress exactly when the row
+        # moved (a phase boundary, or a coarse within-phase write).
+        last_progress: Optional[DatasetImportProgress] = None
         while True:
             try:
                 dataset_import = await self.get_import(id)
@@ -4276,6 +4427,10 @@ class DatasetsClient:
                 last_status = dataset_import.status
                 if on_status is not None:
                     on_status(dataset_import)
+            if dataset_import.progress is not None and dataset_import.progress != last_progress:
+                last_progress = dataset_import.progress
+                if on_progress is not None:
+                    on_progress(dataset_import.progress, dataset_import)
             if dataset_import.status == 'FAILED':
                 return dataset_import
             if dataset_import.status == 'COMPLETED':

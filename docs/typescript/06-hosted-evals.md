@@ -1358,11 +1358,20 @@ const subfolderPublish = await catalog.publish({
 });
 
 // From a local directory — tarred + gzipped deterministically on the client and uploaded
-const localPublish = await catalog.publish({
-    source: { directory: "./my-swe" },
-    name: "my-swe",
-    version: "1.0",
-});
+const localPublish = await catalog.publish(
+    {
+        source: { directory: "./my-swe" },
+        name: "my-swe",
+        version: "1.0",
+    },
+    {
+        // (optional) client-side upload progress, measured on the stream
+        // itself as archive bytes flush onto the wire — no server call.
+        // Fires per chunk; throttle any rendering yourself.
+        onUploadProgress: (sentBytes, totalBytes) =>
+            console.log(`upload ${sentBytes}/${totalBytes}`),
+    }
+);
 
 // Everything in the directory is packed, dotfiles included (`.gitignore`,
 // `.dockerignore`, `.env.example`, `.config/`), and an executable script stays
@@ -1377,10 +1386,21 @@ const localPublish = await catalog.publish({
 // settle phase is one confirming read.
 const done = await catalog.watchImport(publishJob.id, {
     onStatus: (imp) => console.log(imp.status, imp.task_count),
+    // Live build progress, at the server's own write cadence (phase
+    // boundaries + coarse intervals): the current phase of five —
+    // extracting | parsing | building | copying | verifying — per-phase
+    // done/total, banked-vs-new image counts, and the publish's CodeBuild
+    // copy-build minutes.
+    onProgress: (p) => console.log(p.phase, `${p.phases.at(-1)?.done}/${p.phases.at(-1)?.total}`),
     onVersion: (v, d) => console.log(v.state),
     pollIntervalMs: 2_000,        // (optional) default 2s
     settleTimeoutMs: 30 * 60_000, // (optional) settle-phase backstop, default 30min
 });
+
+// The settled record stays on the import: wall-clock per phase
+// (started_at/completed_at on each entry), images built / mirrored / banked
+// (banked = already in the registry, nothing copied), CodeBuild copy minutes.
+console.log(done.progress?.images, done.progress?.codebuild);
 
 if (done.status === "FAILED") {
     // `failure`, not `error` — `error` is the key the failure envelope uses, so
