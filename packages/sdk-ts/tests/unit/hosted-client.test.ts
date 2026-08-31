@@ -734,6 +734,80 @@ async function testDatasetUpdate() {
   }
 }
 
+async function testDatasetRouteSegmentsEncodeEveryCharacter() {
+  console.log("\n--- dataset route name/version/task segments ride encodeURIComponent ---");
+  installMockFetch();
+  try {
+    // A value carrying "/" is the one character that PROVES the encoding:
+    // a bare slash would change the route (the server's router answers its
+    // HTML 404 page, not the typed dataset_not_found envelope %2F reaches),
+    // and manifest names genuinely wear the org/name form a caller can
+    // paste as a ref. This pins the byte parity with the Python SDK's
+    // quote(safe='') — same input, same bytes on the wire, both SDKs.
+    const name = "evolve-qa/rewardkit-control";
+    const encoded = "evolve-qa%2Frewardkit-control";
+    const detail = {
+      name,
+      title: null,
+      description: null,
+      active_version: null,
+      versions: [],
+      selected_version: null,
+      tasks: { items: [], nextCursor: null, hasMore: false },
+      created_at: "2026-08-30T00:00:00.000Z",
+      updated_at: "2026-08-30T00:00:00.000Z",
+    };
+    // Longest patterns first: the mock matches by substring in insertion
+    // order, and the bare-name route is a prefix of every other one.
+    setMockResponse(`/api/datasets/${encoded}/versions/rc%2F1/tasks/tasks%2Falpha/build`, {
+      status: 200,
+      body: { task_name: "tasks/alpha", state: "READY", failure: null, build_log_ref: null },
+    });
+    setMockResponse(`/api/datasets/${encoded}/versions/rc%2F1/activate`, {
+      status: 200,
+      body: detail,
+    });
+    setMockResponse(`/api/datasets/${encoded}/download`, {
+      status: 200,
+      bodyBytes: Buffer.from("corpus"),
+      body: null,
+    });
+    setMockResponse(`/api/datasets/${encoded}`, { status: 200, body: detail });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const last = () => fetchCalls[fetchCalls.length - 1];
+
+    await d.get(name);
+    assert(last().url.endsWith(`/api/datasets/${encoded}`), "get() sends the name as ONE encoded segment");
+
+    await d.getTaskBuild(`${name}@rc/1`, "tasks/alpha");
+    assert(
+      last().url.endsWith(`/api/datasets/${encoded}/versions/rc%2F1/tasks/tasks%2Falpha/build`),
+      "getTaskBuild() encodes name, version AND task segments"
+    );
+
+    await d.download(`${name}@rc/1`);
+    assert(
+      last().url.endsWith(`/api/datasets/${encoded}/download?version=rc%2F1`),
+      "download() encodes the name segment and the ?version= value"
+    );
+
+    await d.activate(name, "rc/1");
+    assert(
+      last().url.endsWith(`/api/datasets/${encoded}/versions/rc%2F1/activate`),
+      "activate() encodes name and version segments"
+    );
+
+    await d.update(name, { upstream_auto_import: false });
+    assert(last().url.endsWith(`/api/datasets/${encoded}`), "update() PATCHes the encoded name route");
+
+    await d.delete(name);
+    assert(last().url.endsWith(`/api/datasets/${encoded}`), "delete() targets the encoded name route");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testPublishGitSource() {
   console.log("\n--- datasets().publish() POSTs the git-source contract ---");
   installMockFetch();
@@ -5469,6 +5543,7 @@ async function main() {
   await testGetActive();
   await testGetActiveNoActiveVersion();
   await testDatasetUpdate();
+  await testDatasetRouteSegmentsEncodeEveryCharacter();
   await testPublishGitSource();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();
