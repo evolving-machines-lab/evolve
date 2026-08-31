@@ -89,6 +89,8 @@
     "too_many_concurrent_imports",
     "invalid_archive",
     "unpinned_git_ref",
+    "hub_package_not_found",
+    "hub_unreachable",
     "package_not_retained",
     "package_corrupt",
     "package_missing",

@@ -257,6 +257,16 @@ HostedErrorCode = Literal[
     'too_many_concurrent_imports',
     'invalid_archive',
     'unpinned_git_ref',
+    # A hub_package publish naming a package the Harbor hub does not show the
+    # server: it does not exist, or it is private (anonymous reads cannot see
+    # private packages, and authenticated hub sources are not supported yet —
+    # the refusal says both). 400; details carry ``hub_package``.
+    'hub_package_not_found',
+    # The Harbor hub could not be asked while accepting a hub_package publish
+    # (network/timeout/5xx). Refused rather than accepted unpinned — a hub
+    # ref is pinned by resolving it at accept time — so retry the publish.
+    # 502.
+    'hub_unreachable',
     'package_not_retained',
     'package_corrupt',
     'package_missing',
@@ -4606,6 +4616,8 @@ class DatasetsClient:
         git_ref: Optional[str] = None,
         git_path: Optional[str] = None,
         directory: Optional[str] = None,
+        archive_url: Optional[str] = None,
+        hub_package: Optional[str] = None,
         name: Optional[str] = None,
         version: Optional[str] = None,
         on_upload_progress: Optional[Callable[[int, int], None]] = None,
@@ -4622,8 +4634,22 @@ class DatasetsClient:
         Provide EITHER a git source (``git_url`` + pinned ``git_ref``) OR a
         local corpus ``directory`` (tarred + gzipped deterministically on the
         client and uploaded). Returns immediately; poll with
+
+        Provide EXACTLY ONE source: a git source (``git_url`` + pinned
+        ``git_ref``), a local corpus ``directory`` (tarred + gzipped
+        deterministically on the client and uploaded), a PUBLIC https tarball
+        ``archive_url`` the server fetches itself, or a PUBLIC Harbor hub
+        package ``hub_package`` (``org/name[@ref]`` in Harbor's own grammar)
+        the server resolves, digest-pins at accept time, and fetches — the
+        last two move zero client bytes. Returns immediately; poll with
         :meth:`get_import` / :meth:`watch_import`. ``version`` labels the new
         immutable version.
+
+        ``archive_url`` requires ``name`` and ``version`` (the server fetches
+        only after the publish is accepted); ``hub_package`` defaults them to
+        the package's short name and resolved revision. A missing or private
+        hub package is refused ``hub_package_not_found``; an unreachable hub
+        is ``hub_unreachable`` (502) — retry the publish.
 
         ``git_path`` (git sources only) narrows the import to ONE repository
         subfolder — a POSIX path relative to the repository root, e.g.
@@ -4646,13 +4672,48 @@ class DatasetsClient:
         """
         # ONE body grammar: multipart/form-data, metadata in named parts. The
         # corpus is the ``archive`` part; a git source is git_url + git_ref
-        # (+ optional git_path).
+        # (+ optional git_path); the fetched sources are one part each.
         if directory is not None and git_path is not None:
             raise ValueError(
                 'publish() takes git_path only with a git source — a subfolder '
                 'narrows a git clone, not a local directory (point directory=... '
                 'at the subfolder itself instead)'
             )
+        offered = [
+            s for s in (directory, git_url, archive_url, hub_package) if s is not None
+        ]
+        if len(offered) > 1:
+            raise ValueError(
+                'publish() takes EXACTLY ONE source: git_url=... + git_ref=..., '
+                'directory=..., archive_url=..., or hub_package=...'
+            )
+        if archive_url is not None:
+            if name is None or version is None:
+                raise ValueError(
+                    'publish() requires name=... and version=... for an archive_url '
+                    'source — the server fetches the tarball only after the publish '
+                    'is accepted, so a manifest cannot supply them'
+                )
+            body, content_type = _multipart_body(
+                {'name': name, 'version': version, 'archive_url': archive_url}
+            )
+            raw = await self._http.request_upload(
+                '/api/datasets/publish', body, {'Content-Type': content_type}
+            )
+            return _map_dataset_import(raw)
+        if hub_package is not None:
+            # name/version optional by design: absent parts default
+            # server-side to the package's short name and resolved revision.
+            fields: Dict[str, Optional[str]] = {'hub_package': hub_package}
+            if name is not None:
+                fields['name'] = name
+            if version is not None:
+                fields['version'] = version
+            body, content_type = _multipart_body(fields)
+            raw = await self._http.request_upload(
+                '/api/datasets/publish', body, {'Content-Type': content_type}
+            )
+            return _map_dataset_import(raw)
         if directory is not None:
             if name is None or version is None:
                 # The only client-side check is the cheap one that saves a
@@ -4701,10 +4762,12 @@ class DatasetsClient:
             body, content_type = _multipart_body(fields)
         else:
             raise ValueError(
-                'publish() requires either a git source (git_url=..., git_ref=...) '
-                'or a local corpus directory (directory=...), plus name=... '
-                'and version=... (both optional for a directory whose corpus '
-                'carries a dataset.toml manifest)'
+                'publish() requires a source: a git source (git_url=..., '
+                'git_ref=...), a local corpus directory (directory=...), a public '
+                'tarball url (archive_url=...), or a Harbor hub package '
+                '(hub_package=...); plus name=... and version=... (optional for a '
+                'directory whose corpus carries a dataset.toml manifest, and for '
+                'a hub package, which supplies its own defaults)'
             )
         raw = await self._http.request_upload(
             '/api/datasets/publish', body, {'Content-Type': content_type}

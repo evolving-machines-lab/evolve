@@ -2209,13 +2209,15 @@ export interface DatasetList extends Awaitable<DatasetPage>, AsyncIterable<Datas
 // =============================================================================
 
 /**
- * Source for datasets().publish(): EITHER a git repository pinned to a ref, OR
- * a local corpus directory (tarred deterministically on the client and
- * uploaded).
+ * Source for datasets().publish(): a git repository pinned to a ref, a local
+ * corpus directory (tarred deterministically on the client and uploaded), a
+ * PUBLIC https tarball URL the server fetches itself, or a PUBLIC Harbor hub
+ * package the server resolves and fetches — the last two move zero client
+ * bytes.
  *
- * A UNION, not three optional fields: `{}` and both-branches-at-once are
+ * A UNION, not five optional fields: `{}` and two-branches-at-once are
  * compile errors rather than a 400 the caller discovers at run time, and
- * `?: never` on the absent branch's keys is what rejects the excess property
+ * `?: never` on the absent branches' keys is what rejects the excess property
  * through a variable. `git_ref` is REQUIRED on the git branch — an unpinned
  * import is not reproducible.
  */
@@ -2247,6 +2249,8 @@ export type DatasetSource =
        */
       git_path?: string;
       directory?: never;
+      archive_url?: never;
+      hub_package?: never;
     }
   | {
       /** A local standard-layout corpus directory — tarred + gzipped and uploaded. */
@@ -2254,6 +2258,45 @@ export type DatasetSource =
       git_url?: never;
       git_ref?: never;
       git_path?: never;
+      archive_url?: never;
+      hub_package?: never;
+    }
+  | {
+      /**
+       * A PUBLIC https URL to a gzipped corpus tarball — the SERVER fetches
+       * it, so no bytes leave this machine. Public sources only: credentials
+       * in the URL are refused (authenticated sources are a planned
+       * follow-up) and the host must be publicly resolvable. The fetched
+       * bytes pass the same validation and size caps as an uploaded archive.
+       * `name` and `version` are required with this source.
+       */
+      archive_url: string;
+      git_url?: never;
+      git_ref?: never;
+      git_path?: never;
+      directory?: never;
+      hub_package?: never;
+    }
+  | {
+      /**
+       * A PUBLIC Harbor hub package reference, `org/name[@ref]` in Harbor's
+       * own grammar — no ref (or `latest`) is the latest tag, a number is a
+       * revision, `sha256:<64 hex>` is a digest, anything else is a tag. The
+       * server resolves it when the publish is accepted and the worker
+       * fetches BY the resolved digest, so a tag moved after the 202 can
+       * never deliver different bytes. A task package imports as a one-task
+       * dataset; a dataset package fetches every digest-pinned member; both
+       * are digest-verified against the hub's own pins. `name` defaults to
+       * the package's short name and `version` to its resolved revision. A
+       * missing or private package is refused `hub_package_not_found`; an
+       * unreachable hub is `hub_unreachable` (502) — retry the publish.
+       */
+      hub_package: string;
+      git_url?: never;
+      git_ref?: never;
+      git_path?: never;
+      directory?: never;
+      archive_url?: never;
     };
 
 /** Input for datasets().preflight() — the dry-run half of publish. */
@@ -2339,13 +2382,16 @@ export interface PublishDatasetInput {
    * Catalog dataset name the version lands under (created or extended).
    * Optional when a `directory` source carries a dataset.toml manifest — the
    * server derives the name from the manifest (the short segment of its
-   * `org/name`). Always required for a git source, whose manifest is only
-   * readable after the server clones it.
+   * `org/name`) — and for a `hub_package` source, which defaults to the
+   * package's short name. Always required for a git or `archive_url` source,
+   * whose corpus the server only fetches after the publish is accepted.
    */
   name?: string;
   /**
    * Version label for the new immutable version. Optional when a `directory`
-   * source's dataset.toml declares `[dataset].version`; required otherwise.
+   * source's dataset.toml declares `[dataset].version` and for a
+   * `hub_package` source (defaults to the resolved hub revision number);
+   * required otherwise.
    */
   version?: string;
 }
@@ -3611,6 +3657,15 @@ export const HOSTED_ERROR_CODES = [
   "too_many_concurrent_imports",
   "invalid_archive",
   "unpinned_git_ref",
+  // A hub_package publish naming a package the Harbor hub does not show the
+  // server: it does not exist, or it is private (anonymous reads cannot see
+  // private packages, and authenticated hub sources are not supported yet —
+  // the refusal says both). 400; details carry `hub_package`.
+  "hub_package_not_found",
+  // The Harbor hub could not be asked while accepting a hub_package publish
+  // (network/timeout/5xx). Refused rather than accepted unpinned — a hub ref
+  // is pinned by resolving it at accept time — so retry the publish. 502.
+  "hub_unreachable",
   "package_not_retained",
   "package_corrupt",
   "package_missing",
