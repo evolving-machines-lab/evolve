@@ -82,6 +82,12 @@ function sessionServer(faults: {
   onCreate?: (res: ServerResponse) => boolean;
   onPatch?: (state: SessionState, req: IncomingMessage, res: ServerResponse) => boolean;
   onComplete?: (state: SessionState, res: ServerResponse) => boolean;
+  /**
+   * Register-first: when set, the create 201 carries this `import_id` — the
+   * pre-created import a watcher may attach to mid-upload. Unset = the
+   * pre-register-first server, whose 201 has no such field.
+   */
+  importId?: string;
 }): { server: Server; sessions: Map<string, SessionState>; url: () => string } {
   const sessions = new Map<string, SessionState>();
   let nextId = 1;
@@ -109,7 +115,15 @@ function sessionServer(faults: {
         sessions.set(state.id, state);
         res.statusCode = 201;
         res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ id: state.id, state: "RECEIVING", offset: 0, size: state.size }));
+        res.end(
+          JSON.stringify({
+            id: state.id,
+            state: "RECEIVING",
+            offset: 0,
+            size: state.size,
+            ...(faults.importId !== undefined ? { import_id: faults.importId } : {}),
+          }),
+        );
         return;
       }
       const match = /^\/api\/datasets\/publish\/uploads\/([\w-]+)(\/complete)?$/.exec(url);
@@ -244,6 +258,50 @@ async function main(): Promise<void> {
       "the last call reports sent == total");
     assert(progress.every(([sent], i) => i === 0 || progress[i - 1][0] < sent),
       "sent advances monotonically");
+    server.close();
+  }
+
+  console.log("\nregister-first — the create's import_id reaches onRegistered before any byte");
+  {
+    const { server, url } = sessionServer({ importId: "imp-42" });
+    await listen(server);
+    const registered: string[] = [];
+    let bytesAtRegister = -1;
+    let sentSoFar = 0;
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: { Authorization: "Bearer k" },
+      file: { path: archivePath },
+      fields: { name: "deep-swe", version: "1.1" },
+      chunkBytes: CHUNK,
+      onBytes: (sent) => (sentSoFar = sent),
+      onRegistered: (importId) => {
+        registered.push(importId);
+        bytesAtRegister = sentSoFar;
+      },
+    });
+    assert(res.status === 202, "the transfer still completes normally");
+    assert(registered.length === 1, "onRegistered fired exactly once");
+    assert(registered[0] === "imp-42", "with the import id the create answered");
+    assert(bytesAtRegister === 0, "BEFORE the first acknowledged chunk — attachable from byte zero");
+    server.close();
+  }
+
+  console.log("\nregister-first — a server that registered nothing calls nothing");
+  {
+    const { server, url } = sessionServer({}); // no import_id in the 201
+    await listen(server);
+    const registered: string[] = [];
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: { Authorization: "Bearer k" },
+      file: { path: archivePath },
+      fields: { name: "deep-swe", version: "1.1" },
+      chunkBytes: CHUNK,
+      onRegistered: (importId) => registered.push(importId),
+    });
+    assert(res.status === 202, "the transfer completes as before");
+    assert(registered.length === 0, "an absent import_id (older server / nothing registered) stays silence");
     server.close();
   }
 

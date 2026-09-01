@@ -68,6 +68,14 @@ export interface ResumableUploadPost {
    * signature as the single-request transport's onBytes (upload.ts).
    */
   onBytes?: (sentBytes: number, totalBytes: number) => void;
+  /**
+   * Register-first: called once with the pre-created import id the session
+   * open answered (`import_id`), before the first chunk goes out — the SAME
+   * id the finalize's 202 carries, so a watcher may attach mid-upload. Not
+   * called when the server registered nothing (an older server, or a
+   * name@version that already had a version row).
+   */
+  onRegistered?: (importId: string) => void;
   /** Chunk-size override for tests that prove the loop without 6 MiB buffers. */
   chunkBytes?: number;
   /** Per-request timeout override, for tests. Production takes the default. */
@@ -199,8 +207,14 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
     timeoutMs,
   );
   if (!created.ok) return created;
-  const session = (await created.json()) as { id: string };
+  const session = (await created.json()) as { id: string; import_id?: string | null };
   const sessionUrl = `${sessionsUrl}/${session.id}`;
+  // Register-first: the open pre-created the import — hand its id over
+  // before the first byte moves, so the caller can print/attach a watcher
+  // while the transfer runs.
+  if (typeof session.import_id === "string" && session.import_id !== "") {
+    post.onRegistered?.(session.import_id);
+  }
 
   // The server's current offset — what HEAD re-reads after any stumble
   // (Harbor's recovery, resumable.py:130-135).

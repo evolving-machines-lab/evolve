@@ -1086,6 +1086,36 @@ class TestDatasets:
         assert statuses == ['QUEUED', 'RUNNING', 'COMPLETED']
 
     @pytest.mark.asyncio
+    async def test_watch_import_fires_on_the_receiving_flip(self):
+        """Register-first: ``receiving`` maps off the wire, and its flip —
+        the corpus finishing its upload while status stays QUEUED — fires
+        ``on_status`` instead of passing silently."""
+        job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2'}
+        responses = iter([
+            {**job, 'status': 'QUEUED', 'receiving': True},
+            {**job, 'status': 'QUEUED', 'receiving': False},
+            {**job, 'status': 'COMPLETED', 'task_count': 3},
+        ])
+        detail = _settle_detail_body(state='READY', active=True)
+
+        def sequence_then_detail(request, timeout=None):
+            if '/api/datasets/imports/' in request.full_url:
+                return FakeResponse(next(responses))
+            return FakeResponse(detail)
+
+        seen = []
+        with patch('evolve._http.urlopen', sequence_then_detail):
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-1',
+                on_status=lambda j: seen.append((j.status, j.receiving)),
+                poll_interval_s=0.001,
+            )
+
+        assert done.status == 'COMPLETED'
+        # Three fires for three observed states — the flip is the middle one.
+        assert seen == [('QUEUED', True), ('QUEUED', False), ('COMPLETED', False)]
+
+    @pytest.mark.asyncio
     async def test_watch_import_fires_on_progress_on_change_only(self):
         """Live progress rides the same poll: on_progress fires exactly when
         the server's own progress write moved the row — a phase boundary or

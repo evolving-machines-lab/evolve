@@ -84,7 +84,12 @@ def make_server(faults: dict):
                     {k: v for k, v in parsed.items() if k not in ('size', 'sha256')},
                 )
                 sessions[f'up-{len(sessions) + 1}'] = state
-                self._json(201, {'id': f'up-{len(sessions)}', 'state': 'RECEIVING', 'offset': 0})
+                created = {'id': f'up-{len(sessions)}', 'state': 'RECEIVING', 'offset': 0}
+                # Register-first: a server that pre-created the import names
+                # it in the 201; the pre-register-first server sends nothing.
+                if faults.get('import_id') is not None:
+                    created['import_id'] = faults['import_id']
+                self._json(201, created)
                 return
             if self.path.endswith('/complete'):
                 state = sessions[self.path.split('/')[-2]]
@@ -171,7 +176,7 @@ def archive(tmp_path):
     return str(path), data
 
 
-def run_upload(server, archive_path, fields=None, chunk=CHUNK):
+def run_upload(server, archive_path, fields=None, chunk=CHUNK, on_bytes=None, on_registered=None):
     import asyncio
 
     http = _HostedHttp(
@@ -188,7 +193,9 @@ def run_upload(server, archive_path, fields=None, chunk=CHUNK):
     original = hosted.RESUMABLE_UPLOAD_CHUNK_BYTES
     hosted.RESUMABLE_UPLOAD_CHUNK_BYTES = chunk
     try:
-        return asyncio.run(_upload_archive_resumable(http, archive_path, fields or {}))
+        return asyncio.run(
+            _upload_archive_resumable(http, archive_path, fields or {}, on_bytes, on_registered)
+        )
     finally:
         hosted.RESUMABLE_UPLOAD_CHUNK_BYTES = original
 
@@ -209,6 +216,47 @@ def test_happy_path_bytes_arrive_exactly(archive):
         assert state.fields == {'name': 'deep-swe', 'version': '1.1'}  # None omitted
         assert hashlib.sha256(b''.join(state.received)).hexdigest() == hashlib.sha256(data).hexdigest()
         assert len(state.received) == 4  # 3 full chunks + the tail
+    finally:
+        server.shutdown()
+
+
+def test_register_first_import_id_reaches_on_registered_before_any_byte(archive):
+    """Register-first: the create 201's ``import_id`` fires ``on_registered``
+    exactly once, BEFORE the first acknowledged chunk — the import is
+    attachable (``watch_import`` / ``evolve dataset watch``) from byte zero."""
+    path, _ = archive
+    server, _ = make_server({'import_id': 'imp-42'})
+    events = []
+    try:
+        raw = run_upload(
+            server,
+            path,
+            {'name': 'deep-swe', 'version': '1.1'},
+            on_bytes=lambda sent, total: events.append(('chunk', sent)),
+            on_registered=lambda import_id: events.append(('registered', import_id)),
+        )
+        assert raw['id'] == 'version-1'  # the transfer still completes normally
+        registered = [e for e in events if e[0] == 'registered']
+        assert registered == [('registered', 'imp-42')]
+        assert events[0] == ('registered', 'imp-42')  # before the first chunk ack
+    finally:
+        server.shutdown()
+
+
+def test_register_first_absent_import_id_calls_nothing(archive):
+    """An older server (or a name@version that registered nothing) sends no
+    ``import_id`` — silence stays silence, never an invented call."""
+    path, _ = archive
+    server, _ = make_server({})
+    registered = []
+    try:
+        run_upload(
+            server,
+            path,
+            {'name': 'deep-swe', 'version': '1.1'},
+            on_registered=registered.append,
+        )
+        assert registered == []
     finally:
         server.shutdown()
 

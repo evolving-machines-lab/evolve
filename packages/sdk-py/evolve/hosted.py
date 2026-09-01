@@ -2288,6 +2288,11 @@ class DatasetImport:
     # FAILURE envelope uses, so a client checking for it has to stay correct on
     # a perfectly healthy read of a failed import.
     failure: Optional[DatasetImportFailure] = None
+    #: The register-first marker: True exactly while the corpus is still
+    #: uploading through its resumable session — the import is QUEUED and
+    #: cannot proceed without the client — False from the moment the publish
+    #: is accepted (and on servers predating register-first).
+    receiving: bool = False
     #: Non-fatal but consequential outcomes — see :class:`ImportWarning`.
     warnings: List[ImportWarning] = field(default_factory=list)
     #: Live progress of the build — None until the worker's first report (a
@@ -3498,6 +3503,10 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     # first report — and always None from an older server that never sends
     # the field, so a watcher needs no version check.
     dataset_import.progress = _map_import_progress(data.get('progress'))
+    # Register-first: True while the corpus is still uploading through its
+    # resumable session. An older server's silence stays the default False.
+    if isinstance(data.get('receiving'), bool):
+        dataset_import.receiving = data['receiving']
     if isinstance(data.get('task_count'), int):
         dataset_import.task_count = data.get('task_count')
     if isinstance(data.get('created_at'), str):
@@ -4086,6 +4095,7 @@ def _upload_resumable_sync(
     archive_path: str,
     fields: Dict[str, Optional[str]],
     on_bytes: Optional[Callable[[int, int], None]] = None,
+    on_registered: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """The chunked transfer loop, on a worker thread — Harbor's resumable
     client re-expressed against the platform's upload sessions
@@ -4117,6 +4127,13 @@ def _upload_resumable_sync(
     except urllib.error.HTTPError as exc:
         _raise_api_error(exc)
     session_url = f'{base}/{session["id"]}'
+    # Register-first: the open pre-created the import — hand its id over
+    # before the first byte moves, so the caller can attach a watcher while
+    # the transfer runs. Absent/None (an older server, or nothing was
+    # registered) calls nothing.
+    registered_id = session.get('import_id')
+    if on_registered is not None and isinstance(registered_id, str) and registered_id:
+        on_registered(registered_id)
 
     def probe_offset() -> int:
         with request(session_url, 'HEAD', {}) as response:
@@ -4204,13 +4221,14 @@ async def _upload_archive_resumable(
     archive_path: str,
     fields: Dict[str, Optional[str]],
     on_bytes: Optional[Callable[[int, int], None]] = None,
+    on_registered: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Chunked-resumable counterpart of :func:`_upload_archive_file` for the
     dataset publish surface. The loop is consumed on a worker thread, never
     the event loop — the ``_upload_sync`` convention.
     """
     return await asyncio.to_thread(
-        _upload_resumable_sync, http, archive_path, fields, on_bytes
+        _upload_resumable_sync, http, archive_path, fields, on_bytes, on_registered
     )
 
 
@@ -4223,6 +4241,7 @@ async def _upload_directory_archive(
     method: str = 'POST',
     resumable_over: Optional[int] = None,
     on_bytes: Optional[Callable[[int, int], None]] = None,
+    on_registered: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Tar + gzip ``directory`` into a temp file and stream it to ``path`` —
     the one flow every publish-a-directory surface (datasets, agents, skills,
@@ -4241,7 +4260,9 @@ async def _upload_directory_archive(
             # dropped link resumes from the last acknowledged chunk. Same 202
             # either way; the switch is invisible to callers, exactly as
             # Harbor's uploader switches transports (upload/storage.py:55-67).
-            return await _upload_archive_resumable(http, archive_path, fields, on_bytes)
+            return await _upload_archive_resumable(
+                http, archive_path, fields, on_bytes, on_registered
+            )
         return await _upload_archive_file(
             http, path, fields, archive_path, filename, method, on_bytes
         )
@@ -4636,6 +4657,7 @@ class DatasetsClient:
         name: Optional[str] = None,
         version: Optional[str] = None,
         on_upload_progress: Optional[Callable[[int, int], None]] = None,
+        on_registered: Optional[Callable[[str], None]] = None,
     ) -> DatasetImport:
         """Publish a dataset version (asynchronous server-side import).
 
@@ -4645,6 +4667,16 @@ class DatasetsClient:
         itself, no server call. It fires per chunk FROM THE UPLOADER THREAD
         (the upload runs in ``asyncio.to_thread``), so keep it cheap and
         thread-safe, and throttle any rendering in the callback.
+
+        ``on_registered`` (register-first; the resumable chunked door only —
+        a directory over the size threshold, with explicit ``name`` and
+        ``version``) is called once, from the uploader thread, with the
+        import id the session open pre-created — the SAME id the eventual
+        202 carries, so a watcher may attach mid-upload
+        (:meth:`watch_import`, or ``evolve dataset watch`` from any
+        machine). Not called when nothing was registered (a small corpus on
+        the single-request door, a fetched source, a manifest-derived
+        name/version, an existing name@version, or an older server).
 
         Provide EXACTLY ONE source: a git source (``git_url`` + pinned
         ``git_ref``), a local corpus ``directory`` (tarred + gzipped
@@ -4750,6 +4782,7 @@ class DatasetsClient:
                 'corpus.tar.gz',
                 resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
                 on_bytes=on_upload_progress,
+                on_registered=on_registered,
             )
             return _map_dataset_import(raw)
         elif git_url and git_ref:
@@ -4816,7 +4849,9 @@ class DatasetsClient:
         import's ``failure``).
 
         ``on_status`` fires on every observed import status change (including
-        the first status seen). ``on_progress`` fires on every observed change
+        the first status seen, and the register-first ``receiving`` flip —
+        the corpus finishing its upload keeps status QUEUED, and still
+        fires). ``on_progress`` fires on every observed change
         of the import's live ``progress`` — a phase boundary, or new counts
         inside a phase; the server writes progress at phase boundaries and
         coarse intervals (never per-second), so it fires at that cadence and
@@ -4859,8 +4894,15 @@ class DatasetsClient:
                     max(error.retry_after_sec or 0.0, poll_interval_s)
                 )
                 continue
-            if dataset_import.status != last_status:
-                last_status = dataset_import.status
+            # The receiving flip (register-first: the corpus finished
+            # uploading) keeps status QUEUED, so the change key carries both
+            # — a watcher sees "QUEUED (receiving)" become "QUEUED" instead
+            # of silent minutes.
+            status_key = dataset_import.status + (
+                ':receiving' if dataset_import.receiving else ''
+            )
+            if status_key != last_status:
+                last_status = status_key
                 if on_status is not None:
                     on_status(dataset_import)
             if dataset_import.progress is not None and dataset_import.progress != last_progress:
