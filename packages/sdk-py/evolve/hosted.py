@@ -4355,7 +4355,10 @@ def _should_store(abs_path: str, size: int) -> bool:
     and one-sided per direction: a stored-but-compressible tail costs archive
     size, a deflated-but-incompressible file costs only the CPU this feature
     exists to save. The decision reads content, so it is deterministic. Same
-    heuristic, thresholds and arithmetic as the TypeScript packer.
+    heuristic and thresholds as the TypeScript packer; the one difference is
+    that its sample deflates raw while this one carries zlib's 6-byte wrapper
+    — ~0.005% of a 128 KiB sample, far inside the empty band between the
+    classes.
     """
     if size < _STORED_MIN_SIZE:
         return False

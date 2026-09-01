@@ -32,7 +32,11 @@
  *     blocks for entries that sample incompressible, deflate for the rest);
  *   - an incompressible corpus packs several-fold faster than deflating it
  *     at level 9 — the law the segmentation exists for (a 7.7 GB corpus of
- *     already-compressed blobs once spent ~14 minutes recompressing for ~2%).
+ *     already-compressed blobs once spent ~14 minutes recompressing for ~2%);
+ *   - the crc32 fallback used where native zlib.crc32 is absent (Node
+ *     < 20.15 / 22.2, inside the documented "Node.js 18+" floor) produces
+ *     the exact zlib values, so the gzip trailer is right on every
+ *     supported runtime.
  *
  * Usage:
  *   npm run test:unit:hosted-tar
@@ -55,10 +59,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
+import zlib, { gunzipSync, gzipSync } from "node:zlib";
 import { extract } from "tar-stream";
 
-import { tarGzipDirectory, tarGzipDirectoryToFile } from "../../src/hosted/tar.ts";
+import { crc32Fallback, shouldStore, tarGzipDirectory, tarGzipDirectoryToFile } from "../../src/hosted/tar.ts";
 
 /** Pack via the streaming engine and read the archive back for inspection. */
 async function pack(root: string): Promise<Buffer> {
@@ -486,6 +490,12 @@ async function testMixedCorpusRoundTrips(): Promise<void> {
   writeFileSync(join(root, "notes.md"), text);
   writeFileSync(join(root, "zzz-last.bin"), blob);
   try {
+    // The premise every switch below stands on, asserted so a fixture change
+    // can never hollow this test into an all-deflate archive without failing
+    // loudly (the Python twin's fixture once rotted exactly that way).
+    assert(await shouldStore(join(root, "aaa-first.bin"), blob.length), "premise: the blob samples incompressible (rides STORED)");
+    assert(await shouldStore(join(root, "zzz-last.bin"), blob.length), "premise: the blob samples incompressible (rides STORED)");
+    assert(!(await shouldStore(join(root, "notes.md"), text.length)), "premise: the text samples compressible (rides DEFLATE)");
     const a = await pack(root);
     const b = await pack(root);
     assertEqual(sha256(a), sha256(b), "a mixed corpus is still deterministic");
@@ -545,6 +555,32 @@ async function testIncompressibleCorpusPacksFast(): Promise<void> {
   }
 }
 
+/**
+ * The trailer checksum on runtimes without native `zlib.crc32` (absent on
+ * Node < 20.15 / 22.2 — inside the README's "Node.js 18+" floor): the
+ * fallback must produce the exact zlib values, running-value argument
+ * included, or an archive packed on an older runtime carries a trailer no
+ * gunzip accepts. Pinned two ways: known-answer vectors that hold on every
+ * runtime, and bit-equality against the native function where it exists.
+ */
+function testCrc32FallbackMatchesNative(): void {
+  console.log("\n[13] The crc32 fallback matches native zlib.crc32");
+  assertEqual(crc32Fallback(Buffer.from("123456789")), 0xcbf43926, 'crc32("123456789") is the standard check value');
+  assertEqual(crc32Fallback(Buffer.alloc(0)), 0, "crc32 of nothing is 0");
+  // A split checksum equals the one-shot checksum — the writer feeds the
+  // trailer crc block by block through the running-value argument.
+  const data = randomBytes(256 * 1024);
+  const split = crc32Fallback(data.subarray(7777), crc32Fallback(data.subarray(0, 7777)));
+  assertEqual(split, crc32Fallback(data), "a chained crc equals the one-shot crc");
+  const native: ((data: Uint8Array, value?: number) => number) | undefined = zlib.crc32;
+  if (native !== undefined) {
+    assertEqual(crc32Fallback(data), native(data), "fallback equals native on random bytes");
+    assertEqual(split, native(data.subarray(7777), native(data.subarray(0, 7777))), "fallback equals native with a running value");
+  } else {
+    console.log("  (no native zlib.crc32 on this runtime — known-answer vectors above are the pin)");
+  }
+}
+
 /** A directory that is not there rejects; it never resolves to empty bytes. */
 async function testMissingDirectoryRejects(): Promise<void> {
   console.log("\n[10] A missing directory rejects");
@@ -580,6 +616,7 @@ async function main(): Promise<void> {
   await testMissingDirectoryRejects();
   await testMixedCorpusRoundTrips();
   await testIncompressibleCorpusPacksFast();
+  testCrc32FallbackMatchesNative();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

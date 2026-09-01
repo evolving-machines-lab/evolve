@@ -35,6 +35,7 @@ import gzip
 import hashlib
 import io
 import os
+import struct
 import tarfile
 import tempfile
 import time
@@ -43,7 +44,7 @@ import zlib
 
 import pytest
 
-from evolve.hosted import _tar_gzip_directory_to_file
+from evolve.hosted import _should_store, _tar_gzip_directory_to_file
 
 
 def _tar_gzip_directory(directory: str) -> bytes:
@@ -289,11 +290,17 @@ class TestStreamingAndEdges:
 
 
 def _incompressible(length: int) -> bytes:
-    """Deterministic bytes that deflate cannot shrink (mixed multiplies)."""
-    out = bytearray(length)
-    for i in range(length):
-        out[i] = (i * 131 + (i >> 7) * 31 + (i >> 13) * 17 + (i * i >> 9)) & 0xFF
-    return bytes(out)
+    """Deterministic bytes that SAMPLE incompressible: the TypeScript suite's
+    multiplicative mix, one 32-bit word per 4 bytes — its level-1 deflate of a
+    128 KiB head keeps 99.6% of the size, safely over the 95% stored
+    threshold. (A previous fixture kept only 85% and silently rode DEFLATE —
+    the premise assertions in the test below exist so that can never happen
+    unnoticed again.)"""
+    words = (length + 3) // 4
+    out = bytearray(words * 4)
+    for i in range(0, words * 4, 4):
+        struct.pack_into('<I', out, i, ((i ^ 0x9E3779B9) * 2654435761) & 0xFFFFFFFF)
+    return bytes(out[:length])
 
 
 class TestSegmentedMember:
@@ -312,6 +319,16 @@ class TestSegmentedMember:
         write(tmp_path, 'aaa-first.bin', blob)
         write(tmp_path, 'notes.md', text)
         write(tmp_path, 'zzz-last.bin', blob)
+
+        # The premise every switch below stands on, asserted so a fixture
+        # change can never hollow this test into an all-deflate archive
+        # without failing loudly.
+        assert _should_store(str(tmp_path / 'aaa-first.bin'), len(blob)), \
+            'premise: the blob must sample incompressible (ride STORED)'
+        assert _should_store(str(tmp_path / 'zzz-last.bin'), len(blob)), \
+            'premise: the blob must sample incompressible (ride STORED)'
+        assert not _should_store(str(tmp_path / 'notes.md'), len(text)), \
+            'premise: the text must sample compressible (ride DEFLATE)'
 
         first = _tar_gzip_directory(str(tmp_path))
         second = _tar_gzip_directory(str(tmp_path))

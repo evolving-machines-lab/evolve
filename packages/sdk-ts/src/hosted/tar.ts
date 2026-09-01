@@ -46,7 +46,7 @@
  * switch points (always between entries) — is a function of corpus content
  * alone, never of timing or machine state.
  */
-import { constants as zlibConstants, crc32, createGunzip, deflateRawSync } from "node:zlib";
+import zlib, { constants as zlibConstants, createGunzip, deflateRawSync } from "node:zlib";
 import { createReadStream, createWriteStream, type WriteStream } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -132,8 +132,10 @@ const DEFLATE_WINDOW_BYTES = 32 * 1024;
  * one-sided per direction: a stored-but-compressible tail costs archive
  * size, a deflated-but-incompressible file costs only the CPU this feature
  * exists to save. The decision reads content, so it is deterministic.
+ * Exported only for the unit suite's premise pin — the switch tests assert
+ * their fixtures actually land on both sides of this decision.
  */
-async function shouldStore(absPath: string, size: number): Promise<boolean> {
+export async function shouldStore(absPath: string, size: number): Promise<boolean> {
   if (size < STORED_MIN_SIZE) return false;
   const handle = await open(absPath, "r");
   let sample: Buffer;
@@ -148,6 +150,39 @@ async function shouldStore(absPath: string, size: number): Promise<boolean> {
   const deflated = deflateRawSync(sample, { level: 1 }).length;
   return deflated * 20 >= sample.length * 19; // kept ≥ 95% — cannot compress
 }
+
+/**
+ * CRC-32 for the gzip trailer — the standard reflected polynomial 0xEDB88320,
+ * value-compatible with `zlib.crc32` including the running-checksum second
+ * argument (the unit suite pins the two equal). Exists because native
+ * `zlib.crc32` only arrived in Node 20.15 / 22.2 while the SDK's documented
+ * floor is Node 18 (README "Node.js 18+"): a NAMED import of `crc32` from
+ * node:zlib is a load-time SyntaxError on every older runtime, which took
+ * dataset publish, job upload and the sandbox skill mount down with it. So
+ * this module default-imports zlib and resolves the native function below —
+ * never turn that back into a named import. Exported only for the equality
+ * pin in the unit suite.
+ */
+export function crc32Fallback(data: Uint8Array, value = 0): number {
+  let crc = ~value;
+  for (let i = 0; i < data.length; i++) {
+    crc = CRC32_TABLE[(crc ^ data[i]!) & 0xff]! ^ (crc >>> 8);
+  }
+  return ~crc >>> 0;
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c;
+  }
+  return table;
+})();
+
+/** Native where the runtime has it (Node >= 20.15 / 22.2), fallback above. */
+const crc32: (data: Uint8Array, value?: number) => number = zlib.crc32 ?? crc32Fallback;
 
 /**
  * Writes ONE standard gzip member as a sequence of segments: DEFLATE
