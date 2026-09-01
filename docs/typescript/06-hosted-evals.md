@@ -857,7 +857,7 @@ The SDK ships an `evolve` binary — a thin shell over the SDK clients. The gram
 job      start | list | show | trials | tasks | compare | cancel | delete | stop | resume | retry | regrade | download | grep
 trial    show | trace | download | retry | regrade | stop
 analysis show | trace | download
-dataset  list | show | publish | download | activate
+dataset  list | show | publish | watch | download | activate
 skill    list | upload | show | delete
 agent    list | show | add | remove
 auth     status
@@ -1388,6 +1388,25 @@ const localPublish = await catalog.publish(
 // Nothing to configure and no new flag: the same publish() call, the same
 // 202 back.
 
+// A chunked publish that names its version explicitly also REGISTERS FIRST:
+// the import exists — pollable, listed, visible on the dashboard — from the
+// moment the upload session opens, not only when the last byte lands. While
+// the corpus is still streaming it reads status QUEUED with
+// `receiving: true` (the marker drops to false the instant the upload
+// completes and the publish is accepted), and the id is handed to you right
+// away through the optional onRegistered callback — the SAME id the 202
+// carries at the end, so a watcher can attach mid-upload, from this process
+// or any other machine (`evolve dataset watch <id>`):
+//
+//   { onRegistered: (importId) => console.log(`watch it: ${importId}`) }
+//
+// Nothing is registered when the corpus manifest supplies name/version (the
+// server cannot know them before the bytes arrive) or when that version
+// label already has a row — the publish then appears at the 202, exactly as
+// before. A registered upload that is abandoned (deleted, or expired) takes
+// its pre-arrival import with it: watchers get not-found, never a
+// forever-QUEUED ghost.
+
 // Block until the publish SETTLES: the version READY (at least one task
 // built — and, on a dataset you own, already the ACTIVE one) or FAILED.
 // COMPLETED means READY: the import IS the whole platform build, so the
@@ -1443,6 +1462,15 @@ evolve dataset publish \
     --name my-swe --version 2.1 --watch     # one subfolder of a bigger repository
 evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 ```
+
+A publish never has to be babysat by the terminal that started it. `evolve dataset watch` re-attaches to a publish and renders exactly the stream `--watch` renders — after the CLI exited, from another machine, or from a teammate's shell:
+
+```bash
+evolve dataset watch my-swe        # the dataset's newest queued/running publish
+evolve dataset watch cmt9x…        # or the import id itself
+```
+
+Large uploads make the id available from the very start: an archive over the chunked-upload threshold registers its import the moment the upload session opens, the CLI prints `Registered import <id> — re-attach anytime with: evolve dataset watch <id>`, and until the corpus finishes arriving the import reads `QUEUED (receiving)` — visible in `dataset list`, `dataset show`, and the dashboard alike. A name with no live publish refuses and names the newest settled import instead; `--json` streams the same NDJSON events as `publish --watch`, opened with `import.attached`. If the upload behind a receiving import is abandoned, the import is removed with it and the watch ends saying so — never a forever-QUEUED ghost.
 
 Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url. A git publish may name one repository subfolder (`git_path` / `--path`) and the platform fetches just that folder via git sparse checkout — the subfolder becomes the corpus root, the recorded provenance keeps the path beside the resolved commit, and a path that is not a directory at the pinned ref fails the import loudly rather than landing an empty version.
 
@@ -1865,18 +1893,20 @@ Everything else is identical: the patch is collected, the verifier scores it, an
 
 | Status | Meaning |
 |--------|---------|
-| `QUEUED` | Accepted; the corpus row exists and nothing has started |
+| `QUEUED` | Accepted; the row exists and nothing has started. Covers two moments, told apart by `receiving`: `true` = a register-first upload whose corpus is still streaming (the platform waits on the client), `false` = waiting for a worker |
 | `RUNNING` | The whole build: clone/extract, parse, image builds into the platform registry |
 | `COMPLETED` | Terminal — the version is `READY` (built, runnable, and on your own dataset already active) |
 | `FAILED` | Terminal — read `failure` |
 
-A terminal import stays readable. A successful import used to start answering `404` the moment its version was superseded, telling a watcher holding a week-old id that the import never happened — it `COMPLETED`, and the catalog moving on afterwards does not unmake that.
+A terminal import stays readable. A successful import used to start answering `404` the moment its version was superseded, telling a watcher holding a week-old id that the import never happened — it `COMPLETED`, and the catalog moving on afterwards does not unmake that. The one import that CAN vanish is a `receiving` one whose upload was abandoned: nothing was ever published, so the row is removed and a watcher reads not-found.
 
 **Dataset version** (`DatasetVersion.state`) — the catalog's lifecycle, distinct from the import's statuses above:
 
 ```
-DRAFT → IMPORTING → BUILDING → READY
+DRAFT → RECEIVING → IMPORTING → BUILDING → READY
 ```
+
+`RECEIVING` is the register-first pre-arrival state — the row a chunked upload creates at its session open, so a multi-GiB publish is visible while it streams; it moves to `IMPORTING` the moment the upload completes and the publish is accepted, and an abandoned upload removes it.
 
 with `FAILED` and `ARCHIVED` as off-ramps: a failed parse or image build lands `FAILED` (the structured reason on the import's `failure`), and `ARCHIVED` shelves a version that has been moved past. `BUILDING` is the whole build — parse, task images into the platform registry — and every task builds independently (the partial-publish model, which supersedes the earlier all-or-nothing law where `READY` meant every task image was in the registry): `READY` now means the build settled with at least one task ready, `task_count` counting the runnable tasks and `n_failed_tasks` the rest. It is the only state that accepts jobs — a job on a partially built version runs the READY tasks and says so in `build_exclusions`; and on a dataset you own the same step that lands it also makes it the one bare names resolve to, with nothing left to call. Each sandbox provider builds its own boot artifact from that image at the first trial on it (cached provider-side for every trial after), so nothing per-provider is built at publish. [`activate()`](#activating) is how you later point that name at a different `READY` version. The one exception is a platform-curated dataset, which has no owner: its versions land `READY` but wait for an operator to promote them, since its default is not any account's to move.
 
@@ -2299,6 +2329,7 @@ type DatasetSource =                     // publish() — EITHER git OR director
 interface DatasetImport {
     id: string;
     status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";   // the job vocabulary
+    receiving?: boolean;                 // true = QUEUED with the corpus still uploading (register-first)
     name: string;                        // dataset the import creates or extends
     version: string;
     failure: DatasetImportFailure | null;    // never `error` on a 200 body

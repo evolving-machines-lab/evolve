@@ -1189,6 +1189,10 @@ function mapDatasetImport(raw: Record<string, unknown>): DatasetImport {
     // the field, so a watcher needs no version check.
     progress: (raw.progress as DatasetImportProgress | null) ?? null,
   };
+  // Register-first: true while the corpus is still uploading through its
+  // resumable session. Carried only when the server states it — an older
+  // server's silence stays absence, never an invented false.
+  if (typeof raw.receiving === "boolean") datasetImport.receiving = raw.receiving;
   if (typeof raw.task_count === "number") {
     datasetImport.task_count = raw.task_count;
   }
@@ -1538,6 +1542,12 @@ async function uploadDirectory(
     /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
     onBytes?: (sentBytes: number, totalBytes: number) => void;
     /**
+     * Register-first (resumable door only): the pre-created import id from
+     * the session open, forwarded to resumable.ts — see
+     * PublishDatasetOptions.onRegistered.
+     */
+    onRegistered?: (importId: string) => void;
+    /**
      * When set, an archive OVER this many bytes rides the resumable chunked
      * door instead of one single-request POST (hosted/resumable.ts — a
      * dropped link then resumes from the last acknowledged chunk instead of
@@ -1569,6 +1579,7 @@ async function uploadDirectory(
           file: { path: archive },
           fields: opts.fields,
           ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
+          ...(opts.onRegistered !== undefined ? { onRegistered: opts.onRegistered } : {}),
         });
         if (!res.ok) await throwApiError(res);
         return res;
@@ -2174,6 +2185,12 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           ...(options?.onUploadProgress !== undefined
             ? { onBytes: options.onUploadProgress }
             : {}),
+          // Register-first: the resumable door's open answers the import id
+          // before any byte moves; the callback hands it to the caller so a
+          // watcher can attach mid-upload.
+          ...(options?.onRegistered !== undefined
+            ? { onRegistered: options.onRegistered }
+            : {}),
           // Big corpora ride the resumable chunked door automatically — a
           // dropped link resumes from the last acknowledged chunk. Same 202
           // either way; the switch is invisible to callers.
@@ -2285,8 +2302,13 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           }
           throw error;
         }
-        if (current.status !== lastStatus) {
-          lastStatus = current.status;
+        // The receiving flip (register-first: the corpus finished uploading)
+        // keeps status QUEUED, so the change key carries both — a watcher
+        // sees "QUEUED (receiving)" become "QUEUED" instead of sixteen
+        // silent minutes.
+        const statusKey = `${current.status}${current.receiving === true ? ":receiving" : ""}`;
+        if (statusKey !== lastStatus) {
+          lastStatus = statusKey;
           options?.onStatus?.(current);
         }
         if (current.progress !== null) {

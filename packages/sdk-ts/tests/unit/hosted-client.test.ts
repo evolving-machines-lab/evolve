@@ -1485,6 +1485,51 @@ async function testWatchImportPollsToTerminal() {
 }
 
 /**
+ * Register-first: `receiving` maps off the wire, and its flip — the corpus
+ * finishing its upload while status stays QUEUED — fires onStatus instead of
+ * passing silently. The TS twin of the Python pin
+ * (test_watch_import_fires_on_the_receiving_flip), on the code path the
+ * CLI's watch actually rides: the change key must carry receiving alongside
+ * status, or "QUEUED (receiving)" → "QUEUED" is swallowed and the watcher
+ * sits through the whole build lead-in without a line.
+ */
+async function testWatchImportFiresOnReceivingFlip() {
+  console.log("\n--- datasets().watchImport() fires onStatus on the receiving flip ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-1", name: "deep-swe", version: "1.2", failure: null, warnings: [] };
+    const statuses = [
+      { ...job, status: "QUEUED", receiving: true, task_count: 0 },
+      { ...job, status: "QUEUED", receiving: false, task_count: 0 },
+      { ...job, status: "COMPLETED", task_count: 113 },
+    ];
+    const counters = installSettleFetch(statuses, [
+      settleDetailBody({ state: "READY", active: true }),
+    ]);
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const seen: string[] = [];
+    const final = await d.watchImport("imp-1", {
+      onStatus: (i) => seen.push(`${i.status}:${i.receiving === true}`),
+      pollIntervalMs: 1,
+    });
+
+    assertEqual(counters.importCalls(), 3, "polled through every scripted body");
+    // Three fires for three observed states — the flip is the middle one.
+    // Status alone is unchanged there (QUEUED → QUEUED), so a change key of
+    // plain status would swallow it.
+    assertEqual(
+      seen,
+      ["QUEUED:true", "QUEUED:false", "COMPLETED:false"],
+      "onStatus fires on the receiving flip, not only on status changes"
+    );
+    assertEqual(final.status, "COMPLETED", "resolves with the terminal import");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
  * Live progress rides the same poll: onProgress fires exactly when the
  * server's own progress write moved the row — a phase boundary or new counts
  * — and never while `progress` is null (a QUEUED import, an older server).
@@ -6327,6 +6372,7 @@ async function main() {
   await testVersionManifestMapping();
   await testGetImport();
   await testWatchImportPollsToTerminal();
+  await testWatchImportFiresOnReceivingFlip();
   await testWatchImportFiresOnProgress();
   await testWatchImportSurvivesRateLimit();
   await testWatchImportSettlesToReady();

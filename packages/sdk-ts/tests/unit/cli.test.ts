@@ -5527,6 +5527,227 @@ async function testDatasetPublishWatch() {
 }
 
 
+/**
+ * `dataset watch` — the re-attach verb (lane/watch-register-first). One
+ * rendering home: everything after the opening line must be the SAME stream
+ * `dataset publish --watch` renders (followImport), so these tests assert
+ * the exact renderer lines the publish tests assert.
+ */
+async function testDatasetWatchVerb() {
+  console.log("\n--- runCli: dataset watch <import-id> — re-attach renders the publish stream ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/imports/imp-7", {
+      status: 200,
+      body: {
+        id: "imp-7", status: "COMPLETED", receiving: false, name: "my-bench",
+        version: "1.0", task_count: 12, failure: null, warnings: [], progress: null,
+      },
+    });
+    setMockResponse("/api/datasets/my-bench?", {
+      status: 200,
+      body: publishDetailBody({ name: "my-bench", version: "1.0", state: "READY", active: true }),
+    });
+    const { io, out, err } = captureIO();
+    const code = await runCli(["dataset", "watch", "imp-7", ...AUTH], io);
+    assertEqual(code, 0, "a COMPLETED import settles and exits 0");
+    assertEqual(err, [], "nothing on stderr");
+    assert(
+      out.some((l) => l.includes("Import imp-7 (my-bench@1.0) COMPLETED — watching…")),
+      "the attach opening names import, dataset@version and status"
+    );
+    assert(
+      out.some((l) => l.includes("status COMPLETED") && l.includes("tasks=12")),
+      "the SAME status line the publish renderer prints"
+    );
+    assert(
+      out.some((l) => l.includes("state") && l.includes("READY")),
+      "the settle stream shows the version landing — the publish renderer's line"
+    );
+    assert(
+      out.some((l) => l.includes("active") && l.includes("1.0 (this publish)")),
+      "the final block names the active version — the publish renderer's line"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("\n--- runCli: dataset watch <name> — resolves the newest LIVE import; renders receiving ---");
+  installMockFetch();
+  try {
+    // The argument is tried as an import id FIRST; a 404 falls through to
+    // the name resolution.
+    setMockResponse("/api/datasets/imports/deep-swe", {
+      status: 404,
+      body: { error: { code: "import_not_found", message: "Import not found: deep-swe" } },
+    });
+    setMockResponse("/api/datasets/imports/imp-9", {
+      status: 200,
+      body: {
+        id: "imp-9", status: "COMPLETED", receiving: false, name: "deep-swe",
+        version: "2.0", task_count: 3, failure: null, warnings: [], progress: null,
+      },
+    });
+    setMockResponse("/api/datasets/imports?", {
+      status: 200,
+      body: {
+        items: [
+          // Newest first: a register-first upload still receiving its corpus.
+          { id: "imp-9", status: "QUEUED", receiving: true, name: "deep-swe", version: "2.0", failure: null, warnings: [], progress: null },
+          { id: "imp-1", status: "COMPLETED", receiving: false, name: "deep-swe", version: "1.0", failure: null, warnings: [], progress: null },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    setMockResponse("/api/datasets/deep-swe?", {
+      status: 200,
+      body: publishDetailBody({ name: "deep-swe", version: "2.0", state: "READY", active: true }),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["dataset", "watch", "deep-swe", ...AUTH], io);
+    assertEqual(code, 0, "the resolved live import is followed to its settled end");
+    assert(
+      fetchCalls.some((c) => c.url.includes("/api/datasets/imports?") && c.url.includes("dataset=deep-swe")),
+      "resolves the name through the imports list, filtered to the dataset"
+    );
+    assert(
+      out.some((l) => l.includes("Import imp-9 (deep-swe@2.0) QUEUED (receiving) — watching…")),
+      "the attach line carries the register-first receiving marker"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("\n--- runCli: dataset watch — a name with no live import refuses, naming the newest ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/imports/deep-swe", {
+      status: 404,
+      body: { error: { code: "import_not_found", message: "Import not found: deep-swe" } },
+    });
+    setMockResponse("/api/datasets/imports?", {
+      status: 200,
+      body: {
+        items: [
+          { id: "imp-1", status: "COMPLETED", receiving: false, name: "deep-swe", version: "1.0", failure: null, warnings: [], progress: null },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    const { io, err } = captureIO();
+    const code = await runCli(["dataset", "watch", "deep-swe", ...AUTH], io);
+    assertEqual(code, 1, "nothing live to watch exits 1");
+    assert(
+      err.some((l) => l.includes("Nothing to watch") && l.includes("imp-1") && l.includes("COMPLETED")),
+      "the refusal names the newest settled import and its status"
+    );
+
+    // And a name that resolves to no imports at all says so.
+    setMockResponse("/api/datasets/imports?", {
+      status: 200,
+      body: { items: [], nextCursor: null, hasMore: false },
+    });
+    const empty = captureIO();
+    assertEqual(
+      await runCli(["dataset", "watch", "deep-swe", ...AUTH], empty.io),
+      1,
+      "an unknown ref exits 1"
+    );
+    assert(
+      empty.err.some((l) => l.includes("no import id and no dataset of yours carries that name")),
+      "the refusal says neither address resolved"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("\n--- runCli: dataset watch --json is the publish --watch NDJSON, opened with import.attached ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/imports/imp-7", {
+      status: 200,
+      body: {
+        id: "imp-7", status: "COMPLETED", receiving: false, name: "my-bench",
+        version: "1.0", task_count: 12, failure: null, warnings: [], progress: null,
+      },
+    });
+    setMockResponse("/api/datasets/my-bench?", {
+      status: 200,
+      body: publishDetailBody({ name: "my-bench", version: "1.0", state: "READY", active: true }),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["dataset", "watch", "imp-7", "--json", ...AUTH], io);
+    assertEqual(code, 0, "NDJSON watch exits by the settled outcome");
+    const kinds = out.map((l) => (JSON.parse(l) as { kind: string }).kind);
+    assertEqual(kinds[0], "import.attached", "the stream opens with import.attached (not created — nothing was)");
+    assertEqual(kinds[kinds.length - 1], "import.final", "the stream closes with import.final");
+    assert(kinds.includes("import.status"), "status events ride the same NDJSON kinds as publish --watch");
+    assert(kinds.includes("import.version"), "version events ride the same NDJSON kinds as publish --watch");
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("\n--- runCli: dataset watch — a pre-arrival import deleted mid-watch ends typed, exit 1 ---");
+  installMockFetch();
+  try {
+    // First read (the attach) answers a receiving QUEUED import; every read
+    // after it 404s — the reaper deleted the abandoned upload's row.
+    let importReads = 0;
+    const mocked = globalThis.fetch;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      if (urlStr.includes("/api/datasets/imports/imp-gone")) {
+        importReads += 1;
+        if (importReads > 1) {
+          return buildMockResponse({
+            status: 404,
+            body: { error: { code: "import_not_found", message: "Import not found: imp-gone" } },
+          });
+        }
+        return buildMockResponse({
+          status: 200,
+          body: {
+            id: "imp-gone", status: "QUEUED", receiving: true, name: "my-bench",
+            version: "3.0", failure: null, warnings: [], progress: null,
+          },
+        });
+      }
+      return mocked(url as never, init);
+    };
+    const { io, err } = captureIO();
+    const code = await runCli(["dataset", "watch", "imp-gone", ...AUTH], io);
+    assertEqual(code, 1, "a vanished import is an outcome, exit 1 — never a crash");
+    assert(
+      err.some((l) => l.includes("no longer exists") && l.includes("abandoned or")),
+      "the message says what a deleted pre-arrival import means"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  console.log("\n--- renderers: the register-first receiving marker on the shared lines ---");
+  {
+    const receiving = {
+      id: "i", status: "QUEUED", receiving: true, name: "d", version: "1",
+      failure: null, warnings: [], progress: null,
+    } as never;
+    const accepted = {
+      id: "i", status: "QUEUED", receiving: false, name: "d", version: "1",
+      failure: null, warnings: [], progress: null,
+    } as never;
+    assert(
+      importStatusLine(receiving).includes("QUEUED (receiving)"),
+      "a receiving import's status line says so beside the status word"
+    );
+    assert(
+      !importStatusLine(accepted).includes("receiving"),
+      "an accepted import carries no marker"
+    );
+  }
+}
+
 /** A pre-flight answer body, with the verdicts the test wants. */
 function preflightBody(tasks: Record<string, unknown>[]): Record<string, unknown> {
   const refused = tasks.filter((t) => t.ok !== true).length;
@@ -7060,6 +7281,7 @@ async function main() {
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowVersionSource();
   await testDatasetPublishWatch();
+  await testDatasetWatchVerb();
   await testDatasetCheck();
   await testDatasetPublishRunsPreflightFirst();
   await testDatasetPublishJsonIsOneDocument();
