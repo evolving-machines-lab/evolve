@@ -85,6 +85,14 @@ UPLOAD_TIMEOUT_SEC = DOWNLOAD_TIMEOUT_SEC
 RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024
 RESUMABLE_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024
 RESUMABLE_UPLOAD_MAX_ATTEMPTS = 4
+# The rate-limit bound, per request of the protocol: a 429/503 is waited out
+# and the same request sent again at most this many times, each wait capped,
+# then the refusal raises typed. Harbor's publisher retries transport errors
+# only and has no 429 handling (publisher.py:44-48, 165-170) — the recorded
+# extension for a hosted door with a per-user rate limiter in front of every
+# chunk PATCH. The same two numbers as hosted/resumable.ts.
+RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS = 3
+RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC = 60
 META_TIMEOUT_SEC = 30
 SSE_SOCKET_TIMEOUT_SEC = 60
 
@@ -3698,7 +3706,10 @@ def _header_retry_after_sec(headers: Any) -> Optional[float]:
         return None
 
 
-def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
+def _api_error(exc: urllib.error.HTTPError) -> EvolveAPIError:
+    """The ONE mapping of a refused response to the typed error — consumes
+    the HTTPError's body. Raised by :func:`_raise_api_error`; read bare by
+    the resumable upload's rate-limit waits, which need only the delay."""
     detail = exc.read().decode('utf-8', errors='replace')
     parsed = _parse_error_body(detail, str(exc.reason))
     # Header fallbacks, so an unparseable body still yields a usable request id
@@ -3711,7 +3722,7 @@ def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
     # delay and the two SDKs stopped describing one law (TypeScript's
     # readRetryAfterSec keeps the 0). Absent is the only fallback trigger.
     body_retry_sec = parsed.get('retry_after_sec')
-    raise EvolveAPIError(
+    return EvolveAPIError(
         exc.code,
         parsed['code'],
         parsed['message'],
@@ -3719,7 +3730,11 @@ def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
         details=parsed.get('details'),
         retry_after_sec=body_retry_sec if body_retry_sec is not None else header_retry_sec,
         request_id=parsed.get('request_id') or header_request_id,
-    ) from exc
+    )
+
+
+def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
+    raise _api_error(exc) from exc
 
 
 class _HostedHttp:
@@ -4092,6 +4107,17 @@ def _resumable_backoff_sec(attempt: int) -> float:
     return min(0.5 * (2 ** (attempt - 1)), 4.0)
 
 
+def _retry_after_wait_sec(retry_after_sec: Optional[float], wait: int) -> float:
+    """How long one 429/503 is waited: the server's Retry-After (the one
+    reading law — body first, header second), never below Harbor's backoff
+    for this wait (an absent or zero delay is not an instant re-send — the
+    one thing a rate limit forbids), never above
+    RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC. The twin of resumable.ts
+    retryAfterWaitMs."""
+    asked = retry_after_sec if retry_after_sec is not None else 0.0
+    return min(max(asked, _resumable_backoff_sec(wait)), float(RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC))
+
+
 def _upload_resumable_sync(
     http: '_HostedHttp',
     archive_path: str,
@@ -4109,6 +4135,21 @@ def _upload_resumable_sync(
     reset whenever a chunk lands. One chunk buffer lives at a time. Typed
     refusals raise EvolveAPIError through the shared mapper; only transport
     failure past the budget raises the transport error.
+
+    Rate limits are delays, not outcomes: a 429/503 on any request of the
+    protocol (open, probe, chunk, finalize) is waited out — the server's
+    Retry-After by the one reading law, floored at Harbor's backoff and
+    capped at RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC — and the SAME request
+    goes again at the SAME offset, at most
+    RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS times per request, then the
+    refusal raises typed. Re-sending the chunk is safe: the platform refuses
+    a rate-limited PATCH before its first body byte (the limiter inside the
+    auth step, swarm_dashboard lib/evaluations/api-errors.ts; the PATCH
+    route's heap gate likewise), and a chunk applied under a lost 429 comes
+    back as the 409 the offset re-probe below already handles. Harbor's
+    publisher retries transport errors only and has no 429 handling
+    (publisher.py:44-48, 165-170) — the recorded extension, twin of
+    hosted/resumable.ts.
     """
     size = os.path.getsize(archive_path)
     sha256 = _file_sha256(archive_path)
@@ -4116,8 +4157,22 @@ def _upload_resumable_sync(
     auth = {'Authorization': f'Bearer {http.api_key()}', 'Accept': 'application/json'}
 
     def request(url: str, method: str, headers: Dict[str, str], data: Optional[bytes] = None):
-        req = urllib.request.Request(url, data=data, headers={**auth, **headers}, method=method)
-        return _http.urlopen(req, timeout=UPLOAD_TIMEOUT_SEC)
+        # One request of the protocol under the rate-limit law above. Every
+        # other HTTPError (and every transport error) passes straight
+        # through to the caller's own seam.
+        waits = 0
+        while True:
+            req = urllib.request.Request(url, data=data, headers={**auth, **headers}, method=method)
+            try:
+                return _http.urlopen(req, timeout=UPLOAD_TIMEOUT_SEC)
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (429, 503) or waits >= RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS:
+                    raise
+                waits += 1
+                # This refusal is spent — its body is read for the delay;
+                # the one that ends the waits is raised above unread, so
+                # _raise_api_error still maps it with its envelope intact.
+                time.sleep(_retry_after_wait_sec(_api_error(exc).retry_after_sec, waits))
 
     # 1. Open the session (a refusal here raises typed; nothing transferred yet).
     body = {'size': size, 'sha256': sha256}

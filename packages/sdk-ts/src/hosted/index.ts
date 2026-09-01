@@ -5,6 +5,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
 import { RESUMABLE_UPLOAD_THRESHOLD_BYTES } from "./resumable";
+import { readRetryAfterSec } from "./retry-after";
 import type {
   ActiveDataset,
   Agent,
@@ -407,34 +408,6 @@ export class EvolveApiError extends Error {
   isKnownCode(): boolean {
     return isHostedErrorCode(this.code);
   }
-}
-
-/**
- * The ONE Retry-After reading: the envelope's `retryAfterSec` first and the
- * `Retry-After` header second, because a cross-origin browser fetch cannot
- * always see the header. Every retry path reads the delay through here — the
- * typed error AND the SSE follow's own backoff — so the same 429 delays the
- * same amount whichever half of the wire carries the number.
- */
-function readRetryAfterSec(text: string, res: Response): number | undefined {
-  try {
-    const body = JSON.parse(text) as { error?: { retryAfterSec?: unknown } };
-    const fromBody = body?.error?.retryAfterSec;
-    // Finite or absent, in the BODY too: `JSON.parse('1e400')` is Infinity, and
-    // a caller sleeping Infinity is parked forever with no bound and no output.
-    // A delay that cannot be waited is no reading at all.
-    if (typeof fromBody === "number" && Number.isFinite(fromBody)) return fromBody;
-  } catch {
-    // Unparseable body: the header is the only reading left.
-  }
-  // An ABSENT header is no reading at all, never zero: `Number(null)` is 0 and
-  // 0 is finite, so a bare Number() told the caller to retry instantly — the
-  // one thing a rate limit forbids. Empty is absent, and the HTTP-date form
-  // (which we do not parse) is unreadable — both leave "retry shortly".
-  const rawHeader = res.headers?.get?.("retry-after");
-  if (typeof rawHeader !== "string" || rawHeader.trim() === "") return undefined;
-  const fromHeader = Number(rawHeader);
-  return Number.isFinite(fromHeader) ? fromHeader : undefined;
 }
 
 /** Map a non-ok Response to the typed EvolveApiError and throw it. */

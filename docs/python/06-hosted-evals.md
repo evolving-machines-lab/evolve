@@ -1346,6 +1346,12 @@ local_publish = await catalog.publish(
 # acknowledged chunk instead of restarting a multi-GB transfer from zero.
 # Nothing to configure and no new flag: the same publish() call, the same
 # 202 back.
+#
+# A rate limit mid-transfer is a delay, not a failure: a 429 or 503 on any
+# request of the chunked door is waited out — the server's Retry-After,
+# never more than 60 s per wait — and the same chunk goes again from the
+# same offset, at most three waits per request. Only a limit still standing
+# after those waits ends the publish, as the typed EvolveAPIError it is.
 
 # A chunked publish that names its version explicitly also REGISTERS FIRST:
 # the import exists — pollable, listed, visible on the dashboard — from the
