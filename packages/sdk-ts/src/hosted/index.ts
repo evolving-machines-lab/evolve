@@ -250,6 +250,7 @@ export type {
   PreflightDeferredCheck,
   PreflightManifestVerdict,
   PreflightTaskVerdict,
+  TaskNote,
   PublishDatasetInput,
   PublishDatasetOptions,
   RegradeRequest,
@@ -792,6 +793,9 @@ function mapTask(raw: Record<string, unknown>): Task {
     // Per-provider capability verdicts — the law: where a task can run is
     // visible before any money is spent.
     providers: raw.providers as Task["providers"],
+    // Typed task notes (recorded degrades). Absent (older server) reads as
+    // "nothing to say" — never a crash.
+    notes: Array.isArray(raw.notes) ? (raw.notes as Task["notes"]) : [],
   };
 }
 

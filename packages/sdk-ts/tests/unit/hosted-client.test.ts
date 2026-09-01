@@ -1192,7 +1192,15 @@ async function testDatasetsPreflight() {
     deferred: [{ name: "environment_layout", reads: "environment/Dockerfile" }],
     manifest: { ok: true, name: "evolve/demo", short_name: "demo", version: "0.1", task_count: 2 },
     tasks: [
-      { name: "a", ok: true, task_key: "a", schema_version: "1.4", providers: { e2b: { ok: true } } },
+      {
+        name: "a",
+        ok: true,
+        task_key: "a",
+        schema_version: "1.4",
+        providers: { e2b: { ok: true } },
+        // The typed task note the toml decides (harbor-import/16) rides verbatim.
+        notes: [{ code: "tests_dockerfile_not_built", message: "tests/Dockerfile, if the task ships one, is not built: verifier image pinned — upstream semantics" }],
+      },
       { name: "b", ok: false, task_key: "b", reason: "metadata.task_id mismatch" },
     ],
     tasks_total: 2,
