@@ -1328,7 +1328,7 @@ What you publish is **private to your account**. It never appears in anyone else
 
 ### Publishing
 
-Publish from a git repository pinned to a ref, or upload a local corpus directory — the same corpus, the same pipeline, the same rules either way.
+Publish from a git repository pinned to a ref, upload a local corpus directory, or hand the platform a fetchable source — a public tarball URL or a Harbor hub package ([below](#publishing-from-a-fetchable-source)) — the same corpus, the same pipeline, the same rules every way.
 
 A git ref must be **pinned**: a full 40-hex commit sha, or a tag. A tag is resolved to the commit it points at when the publish is accepted, the sha is stored, and the import verifies the tag still points there — a tag re-pointed in between fails loudly instead of importing different bytes. A branch name is refused with `unpinned_git_ref`, and the refusal's `details` carry the commit the branch points at right now, so pinning it is one copy-paste:
 
@@ -1358,11 +1358,20 @@ const subfolderPublish = await catalog.publish({
 });
 
 // From a local directory — tarred + gzipped deterministically on the client and uploaded
-const localPublish = await catalog.publish({
-    source: { directory: "./my-swe" },
-    name: "my-swe",
-    version: "1.0",
-});
+const localPublish = await catalog.publish(
+    {
+        source: { directory: "./my-swe" },
+        name: "my-swe",
+        version: "1.0",
+    },
+    {
+        // (optional) client-side upload progress, measured on the stream
+        // itself as archive bytes flush onto the wire — no server call.
+        // Fires per chunk; throttle any rendering yourself.
+        onUploadProgress: (sentBytes, totalBytes) =>
+            console.log(`upload ${sentBytes}/${totalBytes}`),
+    }
+);
 
 // Everything in the directory is packed, dotfiles included (`.gitignore`,
 // `.dockerignore`, `.env.example`, `.config/`), and an executable script stays
@@ -1371,16 +1380,35 @@ const localPublish = await catalog.publish({
 // tarball's sha256 — the version's source identity on the server — is
 // reproducible.
 
+// Size changes the transport, never the result: an archive over 256 MiB
+// rides a resumable chunked upload automatically (6 MiB verified chunks —
+// Harbor's own chunk size — with the whole-archive sha256 checked
+// server-side at the end), so a dropped connection resumes from the last
+// acknowledged chunk instead of restarting a multi-GB transfer from zero.
+// Nothing to configure and no new flag: the same publish() call, the same
+// 202 back.
+
 // Block until the publish SETTLES: the version READY (at least one task
 // built — and, on a dataset you own, already the ACTIVE one) or FAILED.
 // COMPLETED means READY: the import IS the whole platform build, so the
 // settle phase is one confirming read.
 const done = await catalog.watchImport(publishJob.id, {
     onStatus: (imp) => console.log(imp.status, imp.task_count),
+    // Live build progress, at the server's own write cadence (phase
+    // boundaries + coarse intervals): the current phase of five —
+    // extracting | parsing | building | copying | verifying — per-phase
+    // done/total, banked-vs-new image counts, and the publish's CodeBuild
+    // copy-build minutes.
+    onProgress: (p) => console.log(p.phase, `${p.phases.at(-1)?.done}/${p.phases.at(-1)?.total}`),
     onVersion: (v, d) => console.log(v.state),
     pollIntervalMs: 2_000,        // (optional) default 2s
     settleTimeoutMs: 30 * 60_000, // (optional) settle-phase backstop, default 30min
 });
+
+// The settled record stays on the import: wall-clock per phase
+// (started_at/completed_at on each entry), images built / mirrored / banked
+// (banked = already in the registry, nothing copied), CodeBuild copy minutes.
+console.log(done.progress?.images, done.progress?.codebuild);
 
 if (done.status === "FAILED") {
     // `failure`, not `error` — `error` is the key the failure envelope uses, so
@@ -1417,6 +1445,59 @@ evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 ```
 
 Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url. A git publish may name one repository subfolder (`git_path` / `--path`) and the platform fetches just that folder via git sparse checkout — the subfolder becomes the corpus root, the recorded provenance keeps the path beside the resolved commit, and a path that is not a directory at the pinned ref fails the import loudly rather than landing an empty version.
+
+### Pre-flight: check a corpus before uploading it
+
+A directory publish runs a **pre-flight** first, automatically: the client collects just the corpus's metadata files — every task's `task.toml`, plus `dataset.toml` when the corpus ships one, a few kilobytes — and the platform runs the same parse guards and per-provider capability stamps the import runs, before any corpus byte moves. Refusals come back as the importer's own sentences, so what you fix is exactly what a real publish would have refused after the upload:
+
+```bash
+evolve dataset check ./my-swe    # standalone dry run: verdict per task, exit 1 on any refusal
+
+evolve dataset publish --dir ./my-swe --name my-swe --version 1.0
+# Pre-flight (importer harbor-import/14): 200 tasks — 198 ok, 2 refused
+#   broken-task REFUSED: environment.docker_image "python:latest" is a mutable :latest tag — ...
+#
+# Nothing was uploaded. Fix the refused tasks, or pass --skip-preflight to publish anyway
+# (a refused task then lands FAILED at import).
+```
+
+```ts
+const answer = await catalog.preflight({ source: { directory: "./my-swe" } });
+answer.tasks_refused;        // 0 when the corpus is clean
+answer.tasks[0].providers;   // where each task can run — GPU, sizing and network verdicts per provider
+```
+
+The answer is honestly partial: a `task.toml` alone cannot prove everything — the Dockerfile, the compose file and the tests tree are only read at import — so the reply names what it checked and what it deferred, and an all-ok pre-flight means "nothing decidable from the task configs refuses", not a guarantee the build succeeds. Nothing is written by a pre-flight, ever. `--skip-preflight` uploads without the check; a git publish has nothing local to check and skips it naturally.
+
+### Publishing from a fetchable source
+
+Two more sources move **zero bytes from your machine** — the platform fetches the corpus itself. `archive_url` points at a public https tarball of a corpus directory; `hub_package` names a public package on the Harbor hub, in Harbor's own reference grammar:
+
+```ts
+// A public tarball the platform downloads itself
+const fromUrl = await catalog.publish({
+    source: { archive_url: "https://github.com/acme/my-swe/releases/download/v1/corpus.tar.gz" },
+    name: "my-swe",
+    version: "1.0",               // both required: the fetch happens server-side, after the 202
+});
+
+// A Harbor hub package: org/name[@ref] — no ref means the latest tag, a number
+// is a revision, sha256:<digest> pins exact content. name/version may be
+// omitted: they default to the package's short name and its resolved revision.
+const fromHub = await catalog.publish({ source: { hub_package: "cookbook/hello-world" } });
+fromHub.name;     // "hello-world"
+fromHub.version;  // "3" — the revision the reference resolved to
+```
+
+```bash
+evolve dataset publish --from https://static.example/corpus.tar.gz --name my-swe --version 1.0 --watch
+evolve dataset publish --from hub:cookbook/hello-world --watch
+evolve dataset publish --from hub:cookbook/test@sha256:51b00e00… --watch   # digest-pinned
+```
+
+A hub reference is resolved when the publish is **accepted**, and the resolved content digest is what the platform later fetches by — the same pinning rule as a git tag, so a hub tag moved after your 202 can never deliver different bytes. A task package imports as a one-task dataset; a dataset package fetches every member task the hub pins by digest — and every fetched archive is verified against the hub's own digest with Harbor's exact content-hash recipe before anything lands. A reference the hub does not show — nonexistent, or private — is refused with `hub_package_not_found` (the platform reads the hub anonymously; private packages need credentials, which are not supported yet), and a hub that cannot be reached at accept time is `hub_unreachable` (502): nothing was created, retry the publish.
+
+Both fetched sources are **public only**: `archive_url` must be https, resolve to a public host, and carry no credentials in the URL — authenticated sources are a planned follow-up. The fetched bytes pass exactly the validation and size caps an uploaded archive does, plus one earlier gate: where the source declares its size up front (the hub publishes per-file sizes; a server's `Content-Length` counts too), a corpus over the cap is refused before the download spends anything.
 
 ### The dataset manifest (dataset.toml)
 

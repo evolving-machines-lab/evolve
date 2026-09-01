@@ -179,9 +179,20 @@ OPERATION_TO_METHOD = {
     'deleteDataset': (DatasetsClient, 'delete'),
     'downloadDataset': (DatasetsClient, 'download'),
     'activateDatasetVersion': (DatasetsClient, 'activate'),
+    'preflightDataset': (DatasetsClient, 'preflight'),
     'publishDataset': (DatasetsClient, 'publish'),
     'listDatasetImports': (DatasetsClient, 'list_imports'),
     'getDatasetImport': (DatasetsClient, 'get_import'),
+    # The resumable chunked publish door. Not separate client methods on
+    # purpose: publish() IS the SDK answer — it switches to these operations
+    # automatically above the size threshold (_upload_archive_resumable),
+    # exactly as Harbor's uploader switches transports without a flag.
+    'createDatasetUpload': (DatasetsClient, 'publish'),
+    'getDatasetUpload': (DatasetsClient, 'publish'),
+    'probeDatasetUpload': (DatasetsClient, 'publish'),
+    'appendDatasetUploadChunk': (DatasetsClient, 'publish'),
+    'deleteDatasetUpload': (DatasetsClient, 'publish'),
+    'completeDatasetUpload': (DatasetsClient, 'publish'),
     # Session-only admin verb (the platform administrator's browser session
     # is the one accepted credential; API keys are refused with 403), so it
     # is deliberately NOT an SDK method — an SDK call could only ever be

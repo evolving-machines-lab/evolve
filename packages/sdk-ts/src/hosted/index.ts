@@ -4,6 +4,7 @@ import { basename, join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
+import { RESUMABLE_UPLOAD_THRESHOLD_BYTES } from "./resumable";
 import type {
   ActiveDataset,
   Agent,
@@ -36,9 +37,11 @@ import type {
   DatasetImport,
   DatasetImportFailure,
   DatasetImportList,
+  DatasetImportProgress,
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
+  DatasetPreflight,
   DatasetPatch,
   DatasetRef,
   DatasetVersion,
@@ -80,7 +83,9 @@ import type {
   ListTrialsOptions,
   Page,
   PageOptions,
+  PreflightDatasetInput,
   PublishDatasetInput,
+  PublishDatasetOptions,
   RegradeRequest,
   ResumeRequest,
   RetryConfig,
@@ -181,9 +186,11 @@ export type {
   DatasetImportFailure,
   DatasetImportList,
   DatasetImportPage,
+  DatasetImportProgress,
   DatasetImportStatus,
   DatasetList,
   DatasetPage,
+  DatasetPreflight,
   DatasetPatch,
   DatasetRef,
   DatasetSelector,
@@ -200,6 +207,8 @@ export type {
   GrepJobOptions,
   HostedClientConfig,
   HostedErrorCode,
+  ImportPhase,
+  ImportPhaseProgress,
   ImportWarning,
   Job,
   JobBuildExclusion,
@@ -237,7 +246,12 @@ export type {
   PassAtKGroup,
   PassAtKPoint,
   ProviderCapability,
+  PreflightDatasetInput,
+  PreflightDeferredCheck,
+  PreflightManifestVerdict,
+  PreflightTaskVerdict,
   PublishDatasetInput,
+  PublishDatasetOptions,
   RegradeRequest,
   ResumeRequest,
   RetryConfig,
@@ -1170,6 +1184,10 @@ function mapDatasetImport(raw: Record<string, unknown>): DatasetImport {
     // no_solutions_archived permanently lacks its reference-solution record,
     // and dropping the field would hide that gap.
     warnings: (raw.warnings as ImportWarning[]) ?? [],
+    // Live progress (spec DatasetImportProgress): null until the worker's
+    // first report — and always null from an older server that never sends
+    // the field, so a watcher needs no version check.
+    progress: (raw.progress as DatasetImportProgress | null) ?? null,
   };
   if (typeof raw.task_count === "number") {
     datasetImport.task_count = raw.task_count;
@@ -1396,6 +1414,82 @@ function uploadForm(fields: Record<string, string | undefined>): FormData {
 }
 
 /**
+ * Collect the pre-flight payload from a local corpus directory — METADATA
+ * ONLY (each task's task.toml, plus dataset.toml when the corpus ships one).
+ * Mirrors the import's own corpus-shape reading (server: import-corpus.ts
+ * resolveCorpusShape + listTaskDirs): a task.toml at the root is a SINGLE
+ * task directory — a root that also carries corpus-shaped content is
+ * ambiguous and refused, the import's own sentence structure; otherwise the
+ * tasks dir is tasks/ when present, else the root, and EVERY non-hidden
+ * child directory must be a task directory — one without task.toml fails
+ * the import (never a skip), so it fails the check here, before any upload.
+ * dataset.toml is read from beside the task directories or at the corpus
+ * root — the two places the import looks, in the import's own priority: the
+ * tasks-dir copy wins when both exist (server dataset-manifest.ts
+ * findDatasetManifestPath).
+ */
+async function collectPreflightPayload(directory: string): Promise<{
+  tasks: { name: string; task_toml: string }[];
+  dataset_toml?: string;
+}> {
+  const { readFileSync, readdirSync, statSync } = await import("node:fs");
+  const { basename, join, resolve } = await import("node:path");
+  const root = resolve(directory);
+  const isFile = (p: string) => statSync(p, { throwIfNoEntry: false })?.isFile() === true;
+  const isDir = (p: string) => statSync(p, { throwIfNoEntry: false })?.isDirectory() === true;
+  if (!isDir(root)) {
+    throw new Error(`datasets().preflight(): not a directory: ${root}`);
+  }
+  const taskDirs: { name: string; dir: string }[] = [];
+  let tasksDir = root;
+  if (isFile(join(root, "task.toml"))) {
+    const children = readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .filter((e) => isFile(join(root, e.name, "task.toml")))
+      .map((e) => e.name);
+    if (isDir(join(root, "tasks")) || children.length > 0) {
+      throw new Error(
+        `${root} is ambiguous: it carries task.toml at its root (a single-task shape) AND ` +
+          `corpus-shaped content — the import refuses this too; point at the one task ` +
+          `directory or at a corpus of task directories, not a mix`
+      );
+    }
+    taskDirs.push({ name: basename(root), dir: root });
+  } else {
+    tasksDir = isDir(join(root, "tasks")) ? join(root, "tasks") : root;
+    for (const entry of readdirSync(tasksDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      const dir = join(tasksDir, entry.name);
+      if (!isFile(join(dir, "task.toml"))) {
+        throw new Error(
+          `${dir} has no task.toml — every directory of a corpus must be a task directory ` +
+            `(the import fails on it rather than skipping it)`
+        );
+      }
+      taskDirs.push({ name: entry.name, dir });
+    }
+    if (taskDirs.length === 0) {
+      throw new Error(`${tasksDir} holds no task directories — nothing to check`);
+    }
+    taskDirs.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  }
+  // The tasks-dir copy first — the import prefers the manifest sitting
+  // beside the task dirs it pins (dataset-manifest.ts findDatasetManifestPath).
+  const manifestPath = (tasksDir === root ? [root] : [tasksDir, root])
+    .map((dir) => join(dir, "dataset.toml"))
+    .find(isFile);
+  return {
+    tasks: taskDirs.map(({ name, dir }) => ({
+      name,
+      task_toml: readFileSync(join(dir, "task.toml"), "utf8"),
+    })),
+    ...(manifestPath !== undefined
+      ? { dataset_toml: readFileSync(manifestPath, "utf8") }
+      : {}),
+  };
+}
+
+/**
  * One archive upload: metadata parts first, then `file` streamed from disk
  * as the `archive` part (hosted/upload.ts), the shared error mapping applied
  * to the reply. The streaming transport exists because both FormData-with-a-
@@ -1408,6 +1502,8 @@ async function requestUpload(
     method?: "POST" | "PUT";
     fields: Record<string, string | undefined>;
     file: { path: string; filename: string };
+    /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
+    onBytes?: (sentBytes: number, totalBytes: number) => void;
   }
 ): Promise<Response> {
   const { postMultipartFile } = await import("./upload");
@@ -1417,6 +1513,7 @@ async function requestUpload(
     headers: { Authorization: `Bearer ${cfg.apiKey}` },
     fields: opts.fields,
     file: opts.file,
+    ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
   });
   if (!res.ok) {
     await throwApiError(res);
@@ -1438,20 +1535,50 @@ async function uploadDirectory(
     fields: Record<string, string | undefined>;
     directory: string;
     filename: string;
+    /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
+    onBytes?: (sentBytes: number, totalBytes: number) => void;
+    /**
+     * When set, an archive OVER this many bytes rides the resumable chunked
+     * door instead of one single-request POST (hosted/resumable.ts — a
+     * dropped link then resumes from the last acknowledged chunk instead of
+     * restarting a multi-GB transfer from zero). Only the dataset publish
+     * surface has that door; the callers without one leave this unset. The
+     * switch is automatic, exactly as Harbor's uploader switches
+     * (REFERENCES/Harbor src/harbor/upload/storage.py:55-67) — never a
+     * caller-facing flag.
+     */
+    resumableThreshold?: number;
   }
 ): Promise<Response> {
   const { tarGzipDirectoryToFile } = await import("./tar");
   const { mkdtemp, rm } = await import("node:fs/promises");
+  const { stat } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const tmp = await mkdtemp(join(tmpdir(), "evolve-upload-"));
   try {
     const archive = join(tmp, opts.filename);
     await tarGzipDirectoryToFile(opts.directory, archive);
+    if (opts.resumableThreshold !== undefined) {
+      const { size } = await stat(archive);
+      if (size > opts.resumableThreshold) {
+        const { uploadArchiveResumable } = await import("./resumable");
+        const res = await uploadArchiveResumable({
+          baseUrl: cfg.baseUrl,
+          headers: { Authorization: `Bearer ${cfg.apiKey}` },
+          file: { path: archive },
+          fields: opts.fields,
+          ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
+        });
+        if (!res.ok) await throwApiError(res);
+        return res;
+      }
+    }
     return await requestUpload(cfg, path, {
       method: opts.method,
       fields: opts.fields,
       file: { path: archive, filename: opts.filename },
+      ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
     });
   } finally {
     await rm(tmp, { recursive: true, force: true });
@@ -1982,7 +2109,30 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       };
     },
 
-    async publish(input: PublishDatasetInput): Promise<DatasetImport> {
+    async preflight(input: PreflightDatasetInput): Promise<DatasetPreflight> {
+      // Directory sources only: a git source has nothing local to read — the
+      // server validates it at publish, after the clone it alone can do.
+      const directory = input?.source?.directory;
+      if (typeof directory !== "string" || directory === "") {
+        throw new Error(
+          "datasets().preflight() requires { source: { directory } } — a local corpus " +
+            "directory whose task.toml files are checked server-side before any upload"
+        );
+      }
+      const payload = await collectPreflightPayload(directory);
+      const res = await request(cfg, "/api/datasets/preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      // The wire shape IS the SDK shape (snake_case verdicts, verbatim).
+      return (await res.json()) as DatasetPreflight;
+    },
+
+    async publish(
+      input: PublishDatasetInput,
+      options?: PublishDatasetOptions
+    ): Promise<DatasetImport> {
       const src = input.source;
       // ONE body grammar: multipart/form-data, metadata in named parts. The
       // corpus is the `archive` part; a git source is the git_url + git_ref
@@ -2019,6 +2169,15 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           fields: { name: input.name, version: input.version },
           directory: src.directory,
           filename: "corpus.tar.gz",
+          // Upload progress renders CLIENT-SIDE from the stream: the send
+          // loop's own flushed-byte count, no server call (upload.ts).
+          ...(options?.onUploadProgress !== undefined
+            ? { onBytes: options.onUploadProgress }
+            : {}),
+          // Big corpora ride the resumable chunked door automatically — a
+          // dropped link resumes from the last acknowledged chunk. Same 202
+          // either way; the switch is invisible to callers.
+          resumableThreshold: RESUMABLE_UPLOAD_THRESHOLD_BYTES,
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
@@ -2027,6 +2186,41 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       // without git_ref is already a compile error for a typed caller — and
       // for an untyped one, the server refuses it with a named param, which is
       // a better error than this function's generic sentence.
+      // The two FETCHED sources move zero client bytes: the server pulls the
+      // corpus itself. archive_url needs explicit name+version (the server
+      // only fetches after the 202 has promised a name); hub_package may omit
+      // both — the server defaults them from the resolved package.
+      if (src && "archive_url" in src && src.archive_url) {
+        if (input.name === undefined || input.version === undefined) {
+          throw new Error(
+            "datasets().publish() requires name and version for an archive_url source — the " +
+              "server fetches the tarball only after the publish is accepted, so a manifest " +
+              "cannot supply them"
+          );
+        }
+        const res = await request(cfg, "/api/datasets/publish", {
+          method: "POST",
+          body: uploadForm({
+            name: input.name,
+            version: input.version,
+            archive_url: src.archive_url,
+          }),
+        });
+        return mapDatasetImport((await res.json()) as Record<string, unknown>);
+      }
+      if (src && "hub_package" in src && src.hub_package) {
+        const res = await request(cfg, "/api/datasets/publish", {
+          method: "POST",
+          body: uploadForm({
+            // Optional by design: absent parts default server-side to the
+            // package's short name and resolved revision.
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.version !== undefined ? { version: input.version } : {}),
+            hub_package: src.hub_package,
+          }),
+        });
+        return mapDatasetImport((await res.json()) as Record<string, unknown>);
+      }
       if (src && "git_url" in src && src.git_url) {
         // A git source cannot lean on its manifest: the server only reads it
         // after the clone, long after the 202 has promised a name. Refuse
@@ -2053,9 +2247,11 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
       }
       throw new Error(
-        "datasets().publish() requires either a git source ({ source: { git_url, git_ref } }) " +
-          "or a local corpus directory ({ source: { directory } }), plus name and version " +
-          "(both optional for a directory whose corpus carries a dataset.toml manifest)"
+        "datasets().publish() requires a source: a git source ({ source: { git_url, git_ref } }), " +
+          "a local corpus directory ({ source: { directory } }), a public tarball url " +
+          "({ source: { archive_url } }), or a Harbor hub package ({ source: { hub_package } }); " +
+          "plus name and version (optional for a directory whose corpus carries a dataset.toml " +
+          "manifest, and for a hub package, which supplies its own defaults)"
       );
     },
 
@@ -2064,6 +2260,10 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
     async watchImport(id: string, options?: WatchImportOptions): Promise<DatasetImport> {
       const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
       let lastStatus: string | null = null;
+      // Change detection over the SERVER's own writes: the worker persists
+      // progress at phase boundaries and coarse intervals, so comparing the
+      // serialized blob fires onProgress exactly when the row moved.
+      let lastProgress: string | null = null;
       for (;;) {
         throwIfAborted(options?.signal);
         let current: DatasetImport;
@@ -2088,6 +2288,13 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
         if (current.status !== lastStatus) {
           lastStatus = current.status;
           options?.onStatus?.(current);
+        }
+        if (current.progress !== null) {
+          const serialized = JSON.stringify(current.progress);
+          if (serialized !== lastProgress) {
+            lastProgress = serialized;
+            options?.onProgress?.(current.progress, current);
+          }
         }
         if (current.status === "FAILED") return current;
         // COMPLETED means the version is READY (built, and on an owner

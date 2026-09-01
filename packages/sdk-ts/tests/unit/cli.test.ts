@@ -147,7 +147,9 @@ import {
   buildPublishInput,
   CliUsageError,
   eventLine,
+  importProgressLine,
   importStatusLine,
+  progressSettleLines,
   TRIAL_COLUMNS,
   loadRubricFile,
   parseAgentKwargs,
@@ -1755,12 +1757,106 @@ async function testHelpAndVersion() {
 
 function testImportStatusLine() {
   console.log("\n--- importStatusLine: compact status lines ---");
-  const job = { id: "imp-1", name: "my-bench", version: "1.0", warnings: [] };
+  const job = { id: "imp-1", name: "my-bench", version: "1.0", warnings: [], progress: null };
   const imported = importStatusLine({ ...job, status: "COMPLETED", failure: null, task_count: 12 });
   assert(imported.includes("COMPLETED"), "includes the status");
   assert(imported.includes("tasks=12"), "includes the task count");
   const failedLine = importStatusLine({ ...job, status: "FAILED", failure: { code: "import_failed", message: "bad tasks.json", failures: [{ task_name: "t1", error: "boom" }] } });
   assert(failedLine.includes("FAILED") && failedLine.includes("bad tasks.json") && failedLine.includes("1 task failure"), "FAILED line carries message + failure count");
+}
+
+function testImportProgressLines() {
+  console.log("\n--- importProgressLine / progressSettleLines: live phase progress ---");
+  const phase = (
+    name: "extracting" | "parsing" | "building" | "copying" | "verifying",
+    startedAt: string,
+    completedAt: string | undefined,
+    done: number,
+    total: number,
+    banked?: number
+  ) => ({
+    name,
+    started_at: startedAt,
+    ...(completedAt !== undefined ? { completed_at: completedAt } : {}),
+    done,
+    total,
+    ...(banked !== undefined ? { banked } : {}),
+  });
+
+  // Live line: M-of-N + elapsed (the poll-line adaptation of Harbor's
+  // publish progress columns, REFERENCES/Harbor src/harbor/cli/publish.py:231-238).
+  const building = importProgressLine(
+    {
+      phase: "building",
+      started_at: "2026-08-31T10:00:00.000Z",
+      phases: [phase("building", "2026-08-31T10:00:00.000Z", undefined, 3, 9, 1)],
+      images: { built: 2, mirrored: 0, banked: 1 },
+      codebuild: { copy_builds: 2, billed_minutes: 4 },
+    },
+    Date.parse("2026-08-31T10:12:34.000Z")
+  );
+  assert(building.includes("building"), "names the phase");
+  assert(building.includes("3/9"), "carries M of N");
+  assert(building.includes("1 banked"), "carries the phase's banked count");
+  assert(building.includes("12m34s"), "carries the phase's elapsed wall-clock");
+
+  // The copy phase states "N of M images already banked".
+  const copying = importProgressLine(
+    {
+      phase: "copying",
+      started_at: "2026-08-31T10:00:00.000Z",
+      phases: [phase("copying", "2026-08-31T10:20:00.000Z", undefined, 40, 120, 38)],
+      images: { built: 0, mirrored: 2, banked: 38 },
+      codebuild: { copy_builds: 0, billed_minutes: 0 },
+    },
+    Date.parse("2026-08-31T10:21:10.000Z")
+  );
+  assert(copying.includes("38 of 120 images already banked"), "copy phase states N of M already banked");
+
+  // A unit-less phase (extracting) renders without a 0/0.
+  const extracting = importProgressLine(
+    {
+      phase: "extracting",
+      started_at: "2026-08-31T10:00:00.000Z",
+      phases: [phase("extracting", "2026-08-31T10:00:00.000Z", undefined, 0, 0)],
+      images: { built: 0, mirrored: 0, banked: 0 },
+      codebuild: { copy_builds: 0, billed_minutes: 0 },
+    },
+    Date.parse("2026-08-31T10:00:12.000Z")
+  );
+  assert(extracting.includes("extracting") && !extracting.includes("0/0"), "no counts on a unit-less phase");
+
+  // Settled record: wall-clock per phase + images built/mirrored/banked +
+  // CodeBuild minutes (the shape of Harbor publish's settle summary,
+  // REFERENCES/Harbor src/harbor/cli/publish.py:288-315).
+  const settled = progressSettleLines({
+    phase: "verifying",
+    started_at: "2026-08-31T10:00:00.000Z",
+    phases: [
+      phase("extracting", "2026-08-31T10:00:00.000Z", "2026-08-31T10:00:12.000Z", 0, 0),
+      phase("parsing", "2026-08-31T10:00:12.000Z", "2026-08-31T10:00:16.000Z", 113, 113),
+      phase("building", "2026-08-31T10:00:16.000Z", "2026-08-31T10:42:26.000Z", 9, 9, 2),
+      phase("copying", "2026-08-31T10:42:26.000Z", "2026-08-31T10:45:27.000Z", 120, 120, 115),
+      phase("verifying", "2026-08-31T10:45:27.000Z", "2026-08-31T10:46:22.000Z", 113, 113),
+    ],
+    images: { built: 7, mirrored: 5, banked: 117 },
+    codebuild: { copy_builds: 12, billed_minutes: 19 },
+  }).join("\n");
+  assert(settled.includes("extracting 12s"), "per-phase wall-clock: extracting");
+  assert(settled.includes("building 42m10s"), "per-phase wall-clock: building");
+  assert(settled.includes("verifying 55s"), "per-phase wall-clock: verifying");
+  assert(settled.includes("7 built, 5 mirrored, 117 banked"), "image economics line");
+  assert(settled.includes("12 copy build(s), 19 billed minute(s)"), "CodeBuild meter line");
+
+  // A FAILED import's dying phase has no completed_at: stated, never faked.
+  const died = progressSettleLines({
+    phase: "building",
+    started_at: "2026-08-31T10:00:00.000Z",
+    phases: [phase("building", "2026-08-31T10:00:00.000Z", undefined, 4, 9)],
+    images: { built: 0, mirrored: 0, banked: 0 },
+    codebuild: { copy_builds: 0, billed_minutes: 0 },
+  }).join("\n");
+  assert(died.includes("building unfinished"), "an open phase reads unfinished, never a fabricated duration");
 }
 
 function testEventLine() {
@@ -5431,6 +5527,173 @@ async function testDatasetPublishWatch() {
 }
 
 
+/** A pre-flight answer body, with the verdicts the test wants. */
+function preflightBody(tasks: Record<string, unknown>[]): Record<string, unknown> {
+  const refused = tasks.filter((t) => t.ok !== true).length;
+  return {
+    importer_version: "harbor-import/14",
+    checks: ["toml_syntax", "task_shape"],
+    deferred: [{ name: "environment_layout", reads: "environment/Dockerfile" }],
+    manifest: null,
+    tasks,
+    tasks_total: tasks.length,
+    tasks_ok: tasks.length - refused,
+    tasks_refused: refused,
+  };
+}
+
+async function testDatasetCheck() {
+  console.log("\n--- runCli: dataset check — the standalone pre-flight verb ---");
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-check-"));
+  await mkdir(join(dir, "tasks", "bad-task"), { recursive: true });
+  await writeFile(join(dir, "tasks", "bad-task", "task.toml"), '[environment]\ndocker_image = "python:latest"\n');
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/preflight", {
+      status: 200,
+      body: preflightBody([
+        { name: "bad-task", ok: false, task_key: "bad-task", reason: 'docker_image "python:latest" is a mutable :latest tag' },
+      ]),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["dataset", "check", dir, ...AUTH], io);
+    assertEqual(code, 1, "a check that finds refusals exits 1 (the linter convention)");
+    const call = fetchCalls.find((c) => c.url.includes("/api/datasets/preflight"));
+    assert(call !== undefined, "POSTs /api/datasets/preflight");
+    const sent = JSON.parse(String(call?.init?.body)) as { tasks: { name: string }[] };
+    assertEqual(sent.tasks.map((t) => t.name), ["bad-task"], "sends one entry per task directory");
+    assert(out.some((l) => l.includes("bad-task REFUSED") && l.includes("mutable :latest tag")), "prints the importer's refusal sentence");
+    assert(out.some((l) => l.includes("the import also checks")), "prints the honesty line naming the deferred checks");
+
+    // All-ok corpus exits 0; --json prints the raw answer.
+    setMockResponse("/api/datasets/preflight", {
+      status: 200,
+      body: preflightBody([{ name: "bad-task", ok: true, task_key: "bad-task", schema_version: "1.4", providers: { e2b: { ok: true } } }]),
+    });
+    const okIO = captureIO();
+    assertEqual(await runCli(["dataset", "check", dir, ...AUTH], okIO.io), 0, "an all-ok check exits 0");
+    const jsonIO = captureIO();
+    await runCli(["dataset", "check", dir, "--json", ...AUTH], jsonIO.io);
+    const parsed = JSON.parse(jsonIO.out.join("")) as { tasks_ok: number };
+    assertEqual(parsed.tasks_ok, 1, "--json prints the raw dry-run answer");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testDatasetPublishRunsPreflightFirst() {
+  console.log("\n--- runCli: dataset publish --dir pre-flights BEFORE uploading; --skip-preflight skips ---");
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-pfp-"));
+  await mkdir(join(dir, "tasks", "bad-task"), { recursive: true });
+  await writeFile(join(dir, "tasks", "bad-task", "task.toml"), '[environment]\ndocker_image = "python:latest"\n');
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/preflight", {
+      status: 200,
+      body: preflightBody([
+        { name: "bad-task", ok: false, task_key: "bad-task", reason: 'docker_image "python:latest" is a mutable :latest tag' },
+      ]),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(
+      ["dataset", "publish", "--dir", dir, "--name", "b", "--version", "1", ...AUTH],
+      io
+    );
+    assertEqual(code, 1, "a refused pre-flight stops the publish with exit 1");
+    assert(out.some((l) => l.includes("Nothing was uploaded")), "says nothing was uploaded");
+    assert(out.some((l) => l.includes("--skip-preflight")), "names the escape hatch");
+    assert(
+      !fetchCalls.some((c) => c.url.includes("/api/datasets/publish")),
+      "the publish door was never called — refusals precede any upload"
+    );
+  } finally {
+    restoreFetch();
+  }
+
+  // --skip-preflight: the pre-flight door is never called; the publish itself
+  // proceeds (served here by a real local server, since the archive upload
+  // rides node:http and bypasses fetch).
+  const { createServer } = await import("node:http");
+  const seen: string[] = [];
+  const server = createServer((req, res) => {
+    seen.push(req.url ?? "");
+    req.resume();
+    req.on("end", () => {
+      res.statusCode = 202;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ id: "imp-9", status: "QUEUED", name: "b", version: "1", failure: null, warnings: [] }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  try {
+    const { io } = captureIO();
+    const code = await runCli(
+      [
+        "dataset", "publish", "--dir", dir, "--name", "b", "--version", "1",
+        "--skip-preflight", "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`,
+      ],
+      io
+    );
+    assertEqual(code, 0, "--skip-preflight publishes without the check");
+    assertEqual(seen, ["/api/datasets/publish"], "ONLY the publish door was called — no pre-flight request");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Non-watch --json is ONE parseable JSON document — the CLI's own header
+ * law (NDJSON is reserved for --watch event streams). A passing pre-flight
+ * must not prepend a second document: scripts do JSON.parse(stdout).
+ */
+async function testDatasetPublishJsonIsOneDocument() {
+  console.log("\n--- runCli: dataset publish --json (non-watch) prints exactly ONE JSON document ---");
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-json1-"));
+  await mkdir(join(dir, "tasks", "ok-task"), { recursive: true });
+  await writeFile(join(dir, "tasks", "ok-task", "task.toml"), 'schema_version = "1.4"\n');
+  // A REAL server for BOTH doors: the pre-flight rides fetch, the archive
+  // upload rides node:http — one origin serves them both.
+  const { createServer } = await import("node:http");
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/api/datasets/preflight") {
+        res.statusCode = 200;
+        res.end(JSON.stringify(preflightBody([
+          { name: "ok-task", ok: true, task_key: "ok-task", schema_version: "1.4", providers: { e2b: { ok: true } } },
+        ])));
+        return;
+      }
+      res.statusCode = 202;
+      res.end(JSON.stringify({ id: "imp-9", status: "QUEUED", name: "b", version: "1", failure: null, warnings: [] }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  try {
+    const { io, out } = captureIO();
+    const code = await runCli(
+      [
+        "dataset", "publish", "--dir", dir, "--name", "b", "--version", "1",
+        "--json", "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`,
+      ],
+      io
+    );
+    assertEqual(code, 0, "the publish succeeds");
+    assertEqual(out.length, 1, "stdout is exactly one line — no preflight.ok document before it");
+    const parsed = JSON.parse(out.join("\n")) as Record<string, unknown>;
+    assertEqual(parsed.id, "imp-9", "the one document is the bare import — parseable by JSON.parse(stdout)");
+    assert(!("kind" in parsed), "no NDJSON kind wrapper outside --watch");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Solutions archiving disabled is a warning about the missing
  * reference-solution record, never a settling dead end — the same publish
@@ -6530,6 +6793,61 @@ function testBuildInputsDirect() {
     "git publish without --version still refuses"
   );
 
+  // --from, hub spelling: hub:org/name[@ref] — the reference part is Harbor's
+  // own grammar; name/version pass through only when given (the server
+  // defaults them from the resolved package).
+  const hub = buildPublishInput(
+    parseArgs(["dataset", "publish", "--from", "hub:cookbook/hello-world@3"])
+  );
+  assertEqual(
+    hub,
+    { source: { hub_package: "cookbook/hello-world@3" } },
+    "hub publish input carries the bare reference and neither default"
+  );
+  const hubNamed = buildPublishInput(
+    parseArgs(["dataset", "publish", "--from", "hub:cookbook/test", "--name", "n", "--version", "9"])
+  );
+  assertEqual(
+    hubNamed,
+    { source: { hub_package: "cookbook/test" }, name: "n", version: "9" },
+    "explicit --name/--version ride beside the hub reference"
+  );
+  // --from, url spelling: a public https tarball; name/version are REQUIRED
+  // (the server fetches only after the 202 has promised a name).
+  const fromUrl = buildPublishInput(
+    parseArgs(["dataset", "publish", "--from", "https://x.test/c.tar.gz", "--name", "n", "--version", "1"])
+  );
+  assertEqual(
+    fromUrl,
+    { source: { archive_url: "https://x.test/c.tar.gz" }, name: "n", version: "1" },
+    "url publish input maps to archive_url"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "https://x.test/c.tar.gz", "--version", "1"])),
+    "--name",
+    "--from <url> without --name refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "http://x.test/c.tar.gz", "--name", "n", "--version", "1"])),
+    "https",
+    "--from with a non-https, non-hub value refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "hub:"])),
+    "hub:org/name",
+    "--from hub: with no reference refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "hub:a/b", "--dir", "/tmp/c"])),
+    "EXACTLY ONE source",
+    "--from beside --dir refuses"
+  );
+  assertThrowsUsage(
+    () => buildPublishInput(parseArgs(["dataset", "publish", "--from", "hub:a/b", "--git", "g", "--ref", "r"])),
+    "EXACTLY ONE source",
+    "--from beside --git refuses"
+  );
+
   const agent = buildAgentInput(
     parseArgs(["agent", "add", "acme", "--install-script", "/x.sh", "--run", "acme", "--ae", "A=1"]),
     () => "SCRIPT"
@@ -6683,6 +7001,7 @@ async function main() {
   await testPrintConfig();
   await testHelpAndVersion();
   testImportStatusLine();
+  testImportProgressLines();
   testEventLine();
   testTrialDetailLiveSpend();
   testTrialDetailSpendLane();
@@ -6741,6 +7060,9 @@ async function main() {
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowVersionSource();
   await testDatasetPublishWatch();
+  await testDatasetCheck();
+  await testDatasetPublishRunsPreflightFirst();
+  await testDatasetPublishJsonIsOneDocument();
   await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
   await testPartialPublishCliSurfaces();

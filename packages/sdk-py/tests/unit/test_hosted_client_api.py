@@ -867,6 +867,72 @@ class TestDatasets:
         }
 
     @pytest.mark.asyncio
+    async def test_publish_posts_archive_url_source(self):
+        # archive_url: the SERVER fetches the tarball — no archive part, no
+        # git parts; name/version REQUIRED (fetched only after the 202).
+        fake = FakeUrlopen([
+            ('/api/datasets/publish', {
+                'id': 'imp-7', 'status': 'QUEUED', 'name': 'fetched', 'version': '1.0',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).publish(
+                archive_url='https://static.example/corpus.tar.gz',
+                name='fetched',
+                version='1.0',
+            )
+        parts = _multipart_parts(fake.requests[0])
+        assert parts == {
+            'name': b'fetched',
+            'version': b'1.0',
+            'archive_url': b'https://static.example/corpus.tar.gz',
+        }
+
+    @pytest.mark.asyncio
+    async def test_publish_archive_url_requires_name_and_version(self):
+        with pytest.raises(ValueError, match='archive_url'):
+            await datasets_factory(CONFIG).publish(
+                archive_url='https://static.example/corpus.tar.gz', name='x',
+            )
+
+    @pytest.mark.asyncio
+    async def test_publish_posts_hub_package_source(self):
+        # hub_package: the reference rides verbatim; absent name/version send
+        # NO parts — the server defaults them from the resolved package.
+        fake = FakeUrlopen([
+            ('/api/datasets/publish', {
+                'id': 'imp-8', 'status': 'QUEUED', 'name': 'hello-world', 'version': '3',
+            }),
+            ('/api/datasets/publish', {
+                'id': 'imp-9', 'status': 'QUEUED', 'name': 'renamed', 'version': '9',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(CONFIG).publish(hub_package='cookbook/hello-world@3')
+            await datasets_factory(CONFIG).publish(
+                hub_package='cookbook/test', name='renamed', version='9',
+            )
+        assert _multipart_parts(fake.requests[0]) == {
+            'hub_package': b'cookbook/hello-world@3',
+        }
+        assert _multipart_parts(fake.requests[1]) == {
+            'hub_package': b'cookbook/test', 'name': b'renamed', 'version': b'9',
+        }
+
+    @pytest.mark.asyncio
+    async def test_publish_refuses_two_sources(self, tmp_path):
+        with pytest.raises(ValueError, match='EXACTLY ONE source'):
+            await datasets_factory(CONFIG).publish(
+                hub_package='a/b', directory=str(tmp_path),
+            )
+        with pytest.raises(ValueError, match='EXACTLY ONE source'):
+            await datasets_factory(CONFIG).publish(
+                archive_url='https://x.test/c.tar.gz',
+                git_url='https://github.com/a/b.git', git_ref='v1',
+                name='n', version='1',
+            )
+
+    @pytest.mark.asyncio
     async def test_publish_git_path_refused_with_a_directory(self, tmp_path):
         # A subfolder narrows a git clone, not a local directory — for a local
         # corpus the caller points directory= at the subfolder itself.
@@ -1018,6 +1084,72 @@ class TestDatasets:
         assert done.task_count == 113
         assert len([u for u in seen_urls if '/api/datasets/imports/' in u]) == 3
         assert statuses == ['QUEUED', 'RUNNING', 'COMPLETED']
+
+    @pytest.mark.asyncio
+    async def test_watch_import_fires_on_progress_on_change_only(self):
+        """Live progress rides the same poll: on_progress fires exactly when
+        the server's own progress write moved the row — a phase boundary or
+        new counts — and never while ``progress`` is None (a QUEUED import,
+        an older server)."""
+        job = {'id': 'imp-1', 'name': 'my-set', 'version': '1.2'}
+
+        def phase(name, done, total, banked=None):
+            entry = {
+                'name': name,
+                'started_at': '2026-08-31T10:00:00.000Z',
+                'done': done,
+                'total': total,
+            }
+            if banked is not None:
+                entry['banked'] = banked
+            return entry
+
+        def progress_at(phases, current):
+            return {
+                'phase': current,
+                'started_at': '2026-08-31T10:00:00.000Z',
+                'phases': phases,
+                'images': {'built': 0, 'mirrored': 0, 'banked': 0},
+                'codebuild': {'copy_builds': 0, 'billed_minutes': 0},
+            }
+
+        building3 = progress_at([phase('building', 3, 9, banked=1)], 'building')
+        responses = iter([
+            # No progress yet: on_progress must NOT fire.
+            {**job, 'status': 'QUEUED'},
+            {**job, 'status': 'RUNNING', 'task_count': 0,
+             'progress': progress_at([phase('parsing', 113, 113)], 'parsing')},
+            # Same phase, new counts: fires again.
+            {**job, 'status': 'RUNNING', 'task_count': 0, 'progress': building3},
+            # Unchanged blob: must NOT fire again.
+            {**job, 'status': 'RUNNING', 'task_count': 0, 'progress': building3},
+            {**job, 'status': 'COMPLETED', 'task_count': 113,
+             'progress': progress_at([phase('verifying', 113, 113)], 'verifying')},
+        ])
+        detail = _settle_detail_body(state='READY', active=True)
+
+        def sequence_then_detail(request, timeout=None):
+            if '/api/datasets/imports/' in request.full_url:
+                return FakeResponse(next(responses))
+            return FakeResponse(detail)
+
+        seen = []
+        with patch('evolve._http.urlopen', sequence_then_detail):
+            done = await datasets_factory(CONFIG).watch_import(
+                'imp-1',
+                on_progress=lambda p, j: seen.append(
+                    f'{p.phase}:{p.phases[-1].done}/{p.phases[-1].total}'
+                ),
+                poll_interval_s=0.001,
+            )
+
+        assert seen == ['parsing:113/113', 'building:3/9', 'verifying:113/113']
+        # The terminal import carries the settled progress, typed.
+        assert done.progress is not None
+        assert done.progress.phase == 'verifying'
+        assert done.progress.phases[-1].completed_at is None
+        assert done.progress.images.built == 0
+        assert done.progress.codebuild.copy_builds == 0
 
     @pytest.mark.asyncio
     async def test_watch_import_survives_a_rate_limit(self):

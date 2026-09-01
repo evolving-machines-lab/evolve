@@ -61,8 +61,11 @@ import type {
   Dataset,
   DatasetFailedTask,
   DatasetImport,
+  DatasetImportProgress,
+  DatasetPreflight,
   DatasetSelector,
   DatasetVersion,
+  ImportPhaseProgress,
   EvalSandboxProvider,
   GrepJobOptions,
   HostedClientConfig,
@@ -698,20 +701,30 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<name[@version]>",
         example: "evolve dataset show deep-swe@1.1",
       },
+      check: {
+        summary: "Pre-flight a local corpus (dry run — nothing uploaded, nothing written)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<dir>",
+        example: "evolve dataset check ./corpus",
+      },
       publish: {
-        summary: "Publish a dataset version from a git source or a local directory",
+        summary: "Publish a dataset version from a git source, a local directory, or a fetchable source (public tarball url / Harbor hub package)",
         flags: {
           git: { kind: "string", value: "<url>", help: "Git repository URL (with --ref)" },
           ref: { kind: "string", value: "<ref>", help: "Pinned git ref: a full 40-hex commit sha, or a tag (resolved to its commit at publish and verified at import). Branch names are refused — unpinned_git_ref (with --git)" },
           path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus (with --git; sparse checkout — only that folder is imported)" },
-          dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded)" },
-          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest; required with --git)" },
-          version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one; required with --git)" },
+          dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded; pre-flighted first — see --skip-preflight)" },
+          from: { kind: "string", value: "<url|hub:org/name[@ref]>", help: "Fetchable source the SERVER pulls itself (no local bytes): a public https tarball url, or hub:org/name[@ref] — a public Harbor hub package (ref: latest tag by default, a revision number, or sha256:<digest>; resolved and digest-pinned when the publish is accepted)" },
+          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest, and with --from hub:… which defaults to the package's short name; required with --git and --from <url>)" },
+          version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one, and with --from hub:… which defaults to the resolved revision; required with --git and --from <url>)" },
           watch: { kind: "boolean", help: "Poll until the publish settles: the version READY (built and active) or FAILED" },
+          "skip-preflight": { kind: "boolean", help: "Upload without the pre-flight check (a refused task then lands FAILED at import instead of being caught here)" },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve dataset publish --name my-swe --version 1.0 --dir ./corpus --watch",
+        example: "evolve dataset publish --from hub:cookbook/hello-world --watch",
       },
       download: {
         summary: "Download the original corpus package (owner only)",
@@ -2347,19 +2360,65 @@ export function buildJobInput(
 
 /**
  * Build the datasets().publish() input from a parsed `dataset publish`
- * invocation. `--name`/`--version` are optional with `--dir`: a corpus
- * carrying a dataset.toml manifest supplies them server-side (Harbor's
- * dataset layout), and the SDK refuses before uploading when neither the
- * flags nor a manifest exist. A git source always requires both — its
- * manifest is only readable after the server clones it.
+ * invocation. `--name`/`--version` are optional with `--dir` (a corpus
+ * carrying a dataset.toml manifest supplies them server-side — Harbor's
+ * dataset layout — and the SDK refuses before uploading when neither the
+ * flags nor a manifest exist) and with `--from hub:…` (the server defaults
+ * them from the resolved package). A git or `--from <url>` source requires
+ * both — its corpus is only fetched after the server accepts the publish.
+ *
+ * `--from` takes the FETCHABLE sources, one flag for both spellings: a plain
+ * https URL is a public tarball (`archive_url` on the wire), and the `hub:`
+ * prefix marks a Harbor hub package whose reference part is exactly Harbor's
+ * own grammar (`org/name[@ref]` — their CLI takes the same reference as a
+ * bare positional; the prefix exists only because this one flag also accepts
+ * URLs).
  */
 export function buildPublishInput(inv: Invocation): PublishDatasetInput {
   const f = inv.flags;
   const hasDir = typeof f.dir === "string";
   const hasGit =
     typeof f.git === "string" || typeof f.ref === "string" || typeof f.path === "string";
-  if (hasDir && hasGit) {
-    throw new CliUsageError('"dataset publish" takes EITHER --dir OR --git/--ref/--path, not both');
+  const hasFrom = typeof f.from === "string";
+  const offered = [hasDir, hasGit, hasFrom].filter(Boolean).length;
+  if (offered > 1) {
+    throw new CliUsageError(
+      '"dataset publish" takes EXACTLY ONE source: --dir, --git/--ref/--path, or --from'
+    );
+  }
+  if (hasFrom) {
+    const from = (f.from as string).trim();
+    if (from.startsWith("hub:")) {
+      const hubRef = from.slice("hub:".length);
+      if (hubRef === "") {
+        throw new CliUsageError(
+          '"--from hub:" needs a package reference — hub:org/name[@ref], e.g. hub:cookbook/hello-world'
+        );
+      }
+      return {
+        source: { hub_package: hubRef },
+        ...(typeof f.name === "string" ? { name: f.name } : {}),
+        ...(typeof f.version === "string" ? { version: f.version } : {}),
+      };
+    }
+    if (!from.startsWith("https://")) {
+      throw new CliUsageError(
+        `"--from" takes a public https tarball url or hub:org/name[@ref] (got "${from}")`
+      );
+    }
+    for (const req of ["name", "version"] as const) {
+      if (typeof f[req] !== "string") {
+        throw new CliUsageError(
+          `"dataset publish" requires --${req} with --from <url> — the server fetches the tarball ` +
+            "only after the publish is accepted, so nothing can supply it later"
+        );
+      }
+    }
+    return {
+      source: { archive_url: from },
+      name: f.name as string,
+      version: f.version as string,
+    };
   }
   if (hasDir) {
     return {
@@ -3281,6 +3340,74 @@ function importLines(job: DatasetImport): string[] {
     }
   }
   return table(rows);
+}
+
+/** Compact duration for the progress lines: 55s, 12m34s, 1h02m. */
+function fmtDurationMs(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min < 60) return `${min}m${String(sec).padStart(2, "0")}s`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h${String(min % 60).padStart(2, "0")}m`;
+}
+
+/**
+ * Compact one-line rendering of one live-progress change for --watch — the
+ * poll-line adaptation of Harbor's publish progress display (their overall
+ * bar is spinner + "M of N" + description + elapsed/remaining, rich Live at
+ * 10 fps: REFERENCES/Harbor src/harbor/cli/publish.py:231-238; ours is a
+ * line per observed server write, so it keeps the M-of-N and elapsed columns
+ * and drops the animation). During the copy phase the line states "N of M
+ * images already banked" — Harbor's "skipped (exists)" idea (publish.py:388)
+ * in this platform's banked vocabulary.
+ */
+export function importProgressLine(progress: DatasetImportProgress, nowMs = Date.now()): string {
+  const at = progress.phases[progress.phases.length - 1];
+  const parts: string[] = [];
+  if (at !== undefined && at.total > 0) {
+    parts.push(`${at.done}/${at.total}`);
+    if (at.banked !== undefined && at.banked > 0) {
+      parts.push(
+        at.name === "copying"
+          ? `${at.banked} of ${at.total} images already banked`
+          : `${at.banked} banked`
+      );
+    }
+  }
+  const startedMs = at !== undefined ? Date.parse(at.started_at) : NaN;
+  if (Number.isFinite(startedMs)) parts.push(fmtDurationMs(nowMs - startedMs));
+  return `phase  ${progress.phase}${parts.length > 0 ? ` ${parts.join(" · ")}` : ""}`;
+}
+
+/**
+ * The settled progress record for the final --watch block: wall-clock per
+ * phase, the publish's image economics (built / mirrored / banked), and the
+ * CodeBuild copy-minutes meter — the shape of Harbor publish's settle
+ * summary (per-item Build/Upload timing table + "Published N, skipped M
+ * task(s) in X.XXs": REFERENCES/Harbor src/harbor/cli/publish.py:288-315).
+ */
+export function progressSettleLines(progress: DatasetImportProgress): string[] {
+  const phaseParts = progress.phases.map((p: ImportPhaseProgress) => {
+    const endMs = p.completed_at !== undefined ? Date.parse(p.completed_at) : NaN;
+    const startMs = Date.parse(p.started_at);
+    const wall =
+      Number.isFinite(endMs) && Number.isFinite(startMs)
+        ? fmtDurationMs(endMs - startMs)
+        : "unfinished";
+    return `${p.name} ${wall}`;
+  });
+  const images = progress.images;
+  const codebuild = progress.codebuild;
+  return table([
+    ["phases", phaseParts.join(" · ")],
+    ["images", `${images.built} built, ${images.mirrored} mirrored, ${images.banked} banked`],
+    [
+      "codebuild",
+      `${codebuild.copy_builds} copy build(s), ${codebuild.billed_minutes} billed minute(s)`,
+    ],
+  ]);
 }
 
 /** Compact one-line rendering of one publish status change for --watch. */
@@ -4751,11 +4878,128 @@ async function cmdDatasetShow(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+/**
+ * Render one pre-flight answer for humans: the refusals with the importer's
+ * own sentences, provider notes for tasks that cannot run (or only degrade)
+ * somewhere, and the honesty line naming what only the real import checks.
+ */
+function preflightLines(answer: DatasetPreflight): string[] {
+  const lines: string[] = [
+    `Pre-flight (importer ${answer.importer_version}): ${answer.tasks_total} task${answer.tasks_total === 1 ? "" : "s"} — ` +
+      `${answer.tasks_ok} ok, ${answer.tasks_refused} refused`,
+  ];
+  if (answer.manifest !== null && answer.manifest.ok === false) {
+    lines.push(`  dataset.toml REFUSED: ${answer.manifest.reason}`);
+  }
+  for (const task of answer.tasks) {
+    if (!task.ok) {
+      lines.push(`  ${task.name} REFUSED: ${task.reason}`);
+      continue;
+    }
+    // Provider notes only where a provider is not plainly ok — quiet tasks
+    // stay quiet.
+    const notes = Object.entries(task.providers ?? {})
+      .filter(([, verdict]) => verdict.ok !== true || "degrades_to" in verdict)
+      .map(([provider, verdict]) =>
+        verdict.ok
+          ? `${provider}: runs via ${(verdict as { degrades_to?: string }).degrades_to}`
+          : `${provider}: ${(verdict as { reason?: string }).reason}`
+      );
+    if (notes.length > 0) lines.push(`  ${task.name}: ${notes.join(" · ")}`);
+  }
+  lines.push(
+    `Checked from task.toml alone; the import also checks: ${answer.deferred.map((d) => d.name).join(", ")}.`
+  );
+  return lines;
+}
+
+async function cmdDatasetCheck(inv: Invocation, io: CliIO): Promise<number> {
+  const client = datasets(clientConfig(inv));
+  const answer = await client.preflight({ source: { directory: inv.positionals[0] } });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(answer));
+  } else {
+    for (const line of preflightLines(answer)) io.out(line);
+  }
+  // A check that FOUND refusals succeeded as a check but the corpus is not
+  // publishable as-is — exit 1, the linter convention, so scripts can gate on
+  // it. A refused manifest is the same outcome.
+  const manifestRefused = answer.manifest !== null && answer.manifest.ok === false;
+  return answer.tasks_refused > 0 || manifestRefused ? 1 : 0;
+}
+
 async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const client = datasets(clientConfig(inv));
   const input = buildPublishInput(inv);
-  const created = await client.publish(input);
+  // THE PRE-FLIGHT, automatic for a directory source: the metadata files
+  // (kilobytes) go first, and refusals are printed BEFORE the corpus is
+  // tarred and uploaded — the importer's own sentences, from the same
+  // guards. --skip-preflight is the escape hatch; a git source has nothing
+  // local to check (the server clones it after the 202) and skips naturally.
+  if (input.source.directory !== undefined && inv.flags["skip-preflight"] !== true) {
+    let answer: DatasetPreflight | null = null;
+    try {
+      answer = await client.preflight({ source: { directory: input.source.directory } });
+    } catch (error) {
+      // An older server without the door keeps publishing exactly as before
+      // — loudly, never silently.
+      if (error instanceof EvolveApiError && error.status === 404) {
+        io.err("Pre-flight unavailable on this server — publishing without it.");
+      } else {
+        throw error;
+      }
+    }
+    if (answer !== null) {
+      const manifestRefused = answer.manifest !== null && answer.manifest.ok === false;
+      if (answer.tasks_refused > 0 || manifestRefused) {
+        if (json) {
+          io.out(JSON.stringify({ kind: "preflight.refused", preflight: answer }));
+        } else {
+          for (const line of preflightLines(answer)) io.out(line);
+          io.out("");
+          io.out(
+            "Nothing was uploaded. Fix the refused tasks, or pass --skip-preflight to publish anyway " +
+              "(a refused task then lands FAILED at import)."
+          );
+        }
+        return 1;
+      }
+      if (json) {
+        // NDJSON is reserved for --watch streams (the header's law): there
+        // the passing pre-flight is one event among the others. Non-watch
+        // --json stays ONE parseable document — the import the publish
+        // answers below — so JSON.parse(stdout) always works.
+        if (inv.flags.watch === true) {
+          io.out(JSON.stringify({ kind: "preflight.ok", preflight: answer }));
+        }
+      } else {
+        for (const line of preflightLines(answer)) io.out(line);
+      }
+    }
+  }
+  // Upload progress renders CLIENT-SIDE from the stream (the SDK's flushed-
+  // byte count; no server call) — a line per 10% step, so a multi-GB corpus
+  // shows life without per-chunk spam. Harbor renders its uploads with the
+  // same M-of-N + elapsed columns in a rich Live display
+  // (REFERENCES/Harbor src/harbor/cli/upload.py:123-135); a line-based CLI
+  // keeps the counts and drops the animation. --json stays clean output.
+  let lastUploadStep = -1;
+  const created = await client.publish(
+    input,
+    json
+      ? undefined
+      : {
+          onUploadProgress: (sentBytes, totalBytes) => {
+            const step = totalBytes > 0 ? Math.floor((sentBytes / totalBytes) * 10) : 10;
+            if (step <= lastUploadStep) return;
+            lastUploadStep = step;
+            io.out(
+              `upload ${fmtBytes(sentBytes)}/${fmtBytes(totalBytes)} (${Math.min(step * 10, 100)}%)`
+            );
+          },
+        }
+  );
   if (inv.flags.watch !== true) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -4808,6 +5052,15 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
       onStatus: (job) => {
         io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
       },
+      // Live phase progress, at the server's own write cadence (phase
+      // boundaries + coarse intervals), under the same 429-tolerant poll.
+      onProgress: (progress) => {
+        io.out(
+          json
+            ? JSON.stringify({ kind: "import.progress", progress })
+            : importProgressLine(progress)
+        );
+      },
       onVersion: (version, dataset) => {
         lastVersion = version;
         lastDetail = dataset;
@@ -4854,6 +5107,11 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   } else {
     io.out("");
     for (const line of importLines(final)) io.out(line);
+    // The settled progress record: wall-clock per phase, images
+    // built/mirrored/banked, CodeBuild copy minutes (progressSettleLines).
+    if (final.progress !== null) {
+      for (const line of progressSettleLines(final.progress)) io.out(line);
+    }
     if (lastVersion !== null) {
       for (const line of versionSettleLines(lastVersion, lastDetail)) io.out(line);
       for (const line of buildSettleSummaryLines(lastVersion, final)) io.out(line);
@@ -5244,6 +5502,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "analysis download": cmdAnalysisDownload,
   "dataset list": cmdDatasetList,
   "dataset show": cmdDatasetShow,
+  "dataset check": cmdDatasetCheck,
   "dataset publish": cmdDatasetPublish,
   "dataset download": cmdDatasetDownload,
   "dataset activate": cmdDatasetActivate,

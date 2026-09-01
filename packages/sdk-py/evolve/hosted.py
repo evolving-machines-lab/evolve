@@ -19,6 +19,7 @@ the message plus the stable machine-readable ``code``.
 """
 
 import asyncio
+import base64
 import gzip
 import hashlib
 import json
@@ -72,6 +73,16 @@ DOWNLOAD_TIMEOUT_SEC = 600
 # Mirrored by the TS SDK's UPLOAD_TIMEOUT_MS (packages/sdk-ts/src/hosted/
 # upload.ts) — the two SDKs hold ONE bound; change them together or not at all.
 UPLOAD_TIMEOUT_SEC = DOWNLOAD_TIMEOUT_SEC
+# Resumable uploads: above the threshold a dataset corpus rides the chunked
+# publish door (sequential verified chunks, dropped links resume from the last
+# acknowledged one) instead of one fragile request. Chunk size and attempt
+# budget are Harbor's own resumable client verbatim (REFERENCES/Harbor
+# src/harbor/storage/resumable.py:20-21); the higher threshold is recorded in
+# the spec (createDatasetUpload description). Mirrored by the TS SDK's
+# hosted/resumable.ts — the two SDKs hold ONE set of numbers.
+RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024
+RESUMABLE_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024
+RESUMABLE_UPLOAD_MAX_ATTEMPTS = 4
 META_TIMEOUT_SEC = 30
 SSE_SOCKET_TIMEOUT_SEC = 60
 
@@ -134,6 +145,11 @@ HostedErrorCode = Literal[
     'dataset_name_taken',
     'dataset_in_use',
     'dataset_not_owned',
+    # The visibility flip while a version is still importing (409): the import
+    # decides which registry its images land in from the dataset's visibility
+    # at import start, so a mid-import flip is refused — details name the
+    # live version and its import status; flip again once the import settles.
+    'dataset_import_in_progress',
     'upstream_not_watchable',
     'no_active_version',
     'version_not_ready',
@@ -147,6 +163,15 @@ HostedErrorCode = Literal[
     # named task with its reason under the failed-tasks key).
     'task_not_found',
     'task_failed_to_build',
+    # Resumable corpus uploads (the chunked publish door publish() switches
+    # to automatically above the size threshold — _upload_archive_resumable).
+    'upload_session_not_found',
+    'upload_offset_mismatch',
+    'upload_chunk_digest_mismatch',
+    'upload_incomplete',
+    'upload_archive_digest_mismatch',
+    'upload_session_failed',
+    'too_many_concurrent_upload_chunks',
     'agent_not_found',
     'agent_name_taken',
     'agent_name_reserved',
@@ -237,6 +262,16 @@ HostedErrorCode = Literal[
     'too_many_concurrent_imports',
     'invalid_archive',
     'unpinned_git_ref',
+    # A hub_package publish naming a package the Harbor hub does not show the
+    # server: it does not exist, or it is private (anonymous reads cannot see
+    # private packages, and authenticated hub sources are not supported yet —
+    # the refusal says both). 400; details carry ``hub_package``.
+    'hub_package_not_found',
+    # The Harbor hub could not be asked while accepting a hub_package publish
+    # (network/timeout/5xx). Refused rather than accepted unpinned — a hub
+    # ref is pinned by resolving it at accept time — so retry the publish.
+    # 502.
+    'hub_unreachable',
     'package_not_retained',
     'package_corrupt',
     'package_missing',
@@ -2173,6 +2208,62 @@ class ImportWarning:
 
 
 @dataclass
+class ImportPhaseProgress:
+    """One phase of the import timeline (spec ``ImportPhaseProgress``).
+
+    ``done``/``total`` count the phase's settled units — task dirs (parsing),
+    image-pool units (building), unique images (copying), surviving tasks
+    (verifying); failures count as settled, and ``extracting`` has no unit so
+    it stays 0/0. ``completed_at`` is None while the phase runs — and stays
+    None forever on the phase a FAILED import died in. ``banked`` (image
+    phases only) counts units whose bytes already lived in the platform
+    registry, so nothing was copied.
+    """
+    # "extracting" | "parsing" | "building" | "copying" | "verifying"
+    name: str
+    started_at: str
+    done: int
+    total: int
+    completed_at: Optional[str] = None
+    banked: Optional[int] = None
+
+
+@dataclass
+class ImportImageCounts:
+    """A publish's cumulative image economics: fresh builds and mirror copies
+    the publish paid for, and the images that were already banked."""
+    built: int = 0
+    mirrored: int = 0
+    banked: int = 0
+
+
+@dataclass
+class ImportCodeBuildMeter:
+    """The publish's promotion fan-out meter: CodeBuild copy builds started
+    and their billed minutes. 0/0 on a fully banked re-publish."""
+    copy_builds: int = 0
+    billed_minutes: float = 0.0
+
+
+@dataclass
+class DatasetImportProgress:
+    """Live progress of a publish (spec ``DatasetImportProgress``).
+
+    Written by the build worker at phase boundaries and coarse intervals,
+    never per-second. ``phase`` is what the import is doing now (the last
+    entry of ``phases``); ``started_at`` is when the claimed run began on the
+    worker — explicit, never derived. On a terminal import this is the
+    settled record: all five phases with wall-clock timestamps, the final
+    image counts, and the CodeBuild copy-build minutes.
+    """
+    phase: str
+    started_at: str
+    phases: List[ImportPhaseProgress] = field(default_factory=list)
+    images: ImportImageCounts = field(default_factory=ImportImageCounts)
+    codebuild: ImportCodeBuildMeter = field(default_factory=ImportCodeBuildMeter)
+
+
+@dataclass
 class DatasetImport:
     """An asynchronous publish (a dataset import job).
 
@@ -2199,10 +2290,67 @@ class DatasetImport:
     failure: Optional[DatasetImportFailure] = None
     #: Non-fatal but consequential outcomes — see :class:`ImportWarning`.
     warnings: List[ImportWarning] = field(default_factory=list)
+    #: Live progress of the build — None until the worker's first report (a
+    #: QUEUED import, an older server, and every import that predates
+    #: progress). On a terminal import it is the settled five-phase record.
+    progress: Optional[DatasetImportProgress] = None
     # Number of tasks parsed, once counted
     task_count: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+@dataclass
+class PreflightTaskVerdict:
+    """One task's dry-run verdict from the pre-flight door.
+
+    ``ok`` True means no task.toml-decidable import guard would refuse the
+    task — never "this task will import"; the checks a toml alone cannot
+    decide are named in :class:`DatasetPreflight` ``deferred`` and the real
+    publish stays the authority. ``ok`` False carries the importer's own
+    refusal sentence in ``reason`` — exactly what a real import would say.
+    ``providers`` (present with ok True) maps each sandbox provider to a
+    :class:`TaskProviderVerdict` over the toml-declared requirements (GPU,
+    sizing, network), with the compose/image-command halves deferred."""
+    name: str
+    ok: bool
+    task_key: str
+    schema_version: Optional[str] = None
+    providers: Optional[Dict[str, TaskProviderVerdict]] = None
+    reason: Optional[str] = None
+
+
+@dataclass
+class PreflightDeferredCheck:
+    """An import guard the pre-flight cannot run, and what it reads instead."""
+    name: str
+    reads: str
+
+
+@dataclass
+class PreflightManifestVerdict:
+    """The dataset.toml manifest's dry-run verdict."""
+    ok: bool
+    name: Optional[str] = None
+    short_name: Optional[str] = None
+    version: Optional[str] = None
+    task_count: Optional[int] = None
+    reason: Optional[str] = None
+
+
+@dataclass
+class DatasetPreflight:
+    """The dry-run answer of ``datasets().preflight()`` — nothing was written
+    to produce it. ``checks`` names the guards that ran; ``deferred`` the
+    import guards a task.toml alone cannot decide."""
+    importer_version: str
+    checks: List[str]
+    deferred: List[PreflightDeferredCheck]
+    manifest: Optional[PreflightManifestVerdict]
+    tasks: List[PreflightTaskVerdict]
+    tasks_total: int
+    tasks_ok: int
+    tasks_refused: int
 
 
 @dataclass
@@ -3278,6 +3426,58 @@ def _map_skill_upload(data: Dict[str, Any]) -> SkillUpload:
     )
 
 
+_IMPORT_PHASES = ('extracting', 'parsing', 'building', 'copying', 'verifying')
+
+
+def _map_import_progress(raw: Any) -> Optional[DatasetImportProgress]:
+    """Map the wire ``progress`` blob; None for absent/None and for anything
+    short of the shape (an older server, a field this SDK predates)."""
+    if not isinstance(raw, dict):
+        return None
+    phase = raw.get('phase')
+    started_at = raw.get('started_at')
+    entries = raw.get('phases')
+    if phase not in _IMPORT_PHASES or not isinstance(started_at, str) or not isinstance(entries, list):
+        return None
+    phases: List[ImportPhaseProgress] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        name = entry.get('name')
+        entry_started = entry.get('started_at')
+        if name not in _IMPORT_PHASES or not isinstance(entry_started, str):
+            return None
+        phases.append(ImportPhaseProgress(
+            name=name,
+            started_at=entry_started,
+            done=entry.get('done', 0) if isinstance(entry.get('done'), int) else 0,
+            total=entry.get('total', 0) if isinstance(entry.get('total'), int) else 0,
+            completed_at=entry.get('completed_at') if isinstance(entry.get('completed_at'), str) else None,
+            banked=entry.get('banked') if isinstance(entry.get('banked'), int) else None,
+        ))
+    images = raw.get('images') if isinstance(raw.get('images'), dict) else {}
+    codebuild = raw.get('codebuild') if isinstance(raw.get('codebuild'), dict) else {}
+
+    def _num(source: Dict[str, Any], key: str) -> float:
+        value = source.get(key)
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+    return DatasetImportProgress(
+        phase=phase,
+        started_at=started_at,
+        phases=phases,
+        images=ImportImageCounts(
+            built=int(_num(images, 'built')),
+            mirrored=int(_num(images, 'mirrored')),
+            banked=int(_num(images, 'banked')),
+        ),
+        codebuild=ImportCodeBuildMeter(
+            copy_builds=int(_num(codebuild, 'copy_builds')),
+            billed_minutes=float(_num(codebuild, 'billed_minutes')),
+        ),
+    )
+
+
 def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     dataset_import = DatasetImport(
         id=data.get('id', ''),
@@ -3294,6 +3494,10 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
         for item in data.get('warnings', [])
         if isinstance(item, dict)
     ]
+    # Live progress (spec DatasetImportProgress): None until the worker's
+    # first report — and always None from an older server that never sends
+    # the field, so a watcher needs no version check.
+    dataset_import.progress = _map_import_progress(data.get('progress'))
     if isinstance(data.get('task_count'), int):
         dataset_import.task_count = data.get('task_count')
     if isinstance(data.get('created_at'), str):
@@ -3301,6 +3505,129 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     if isinstance(data.get('updated_at'), str):
         dataset_import.updated_at = data['updated_at']
     return dataset_import
+
+
+def _map_dataset_preflight(data: Dict[str, Any]) -> DatasetPreflight:
+    manifest_raw = data.get('manifest')
+    return DatasetPreflight(
+        importer_version=data.get('importer_version', ''),
+        checks=[str(entry) for entry in data.get('checks', [])],
+        deferred=[
+            PreflightDeferredCheck(name=item.get('name', ''), reads=item.get('reads', ''))
+            for item in data.get('deferred', [])
+            if isinstance(item, dict)
+        ],
+        manifest=(
+            PreflightManifestVerdict(
+                ok=bool(manifest_raw.get('ok')),
+                name=manifest_raw.get('name'),
+                short_name=manifest_raw.get('short_name'),
+                version=manifest_raw.get('version'),
+                task_count=manifest_raw.get('task_count'),
+                reason=manifest_raw.get('reason'),
+            )
+            if isinstance(manifest_raw, dict)
+            else None
+        ),
+        tasks=[
+            PreflightTaskVerdict(
+                name=item.get('name', ''),
+                ok=bool(item.get('ok')),
+                task_key=item.get('task_key', ''),
+                schema_version=item.get('schema_version'),
+                providers=(
+                    {
+                        provider: TaskProviderVerdict(
+                            ok=bool(verdict.get('ok')),
+                            reason=verdict.get('reason'),
+                            degrades_to=verdict.get('degrades_to'),
+                        )
+                        for provider, verdict in item['providers'].items()
+                        if isinstance(verdict, dict)
+                    }
+                    if isinstance(item.get('providers'), dict)
+                    else None
+                ),
+                reason=item.get('reason'),
+            )
+            for item in data.get('tasks', [])
+            if isinstance(item, dict)
+        ],
+        tasks_total=data.get('tasks_total', 0),
+        tasks_ok=data.get('tasks_ok', 0),
+        tasks_refused=data.get('tasks_refused', 0),
+    )
+
+
+def _collect_preflight_payload(directory: str) -> Dict[str, Any]:
+    """The pre-flight payload from a local corpus — METADATA ONLY.
+
+    Mirrors the import's own corpus-shape reading (server import-corpus.ts
+    ``resolveCorpusShape`` + ``listTaskDirs``, and the TS SDK's
+    ``collectPreflightPayload``): a ``task.toml`` at the root is a SINGLE
+    task directory (a root that also carries corpus-shaped content is
+    ambiguous and refused); otherwise the tasks dir is ``tasks/`` when
+    present, else the root, and EVERY non-hidden child directory must be a
+    task directory — one without ``task.toml`` fails the import (never a
+    skip), so it fails the check here, before any upload. ``dataset.toml``
+    is read from beside the task directories or at the corpus root — the two
+    places the import looks, in the import's own priority (the tasks-dir copy
+    wins when both exist).
+
+    Directory-ness of a CHILD entry is judged without following symlinks —
+    the import's walk reads dirent types and a symlink is not a directory to
+    a dirent — while the root itself and ``tasks/`` are stat-checked exactly
+    as the server stat-checks them (a symlinked root or tasks/ IS honored)."""
+    root = Path(directory).resolve()
+    if not root.is_dir():
+        raise ValueError(f'preflight(): not a directory: {root}')
+    task_dirs: List[Path] = []
+    tasks_dir = root
+    if (root / 'task.toml').is_file():
+        with os.scandir(root) as entries:
+            corpus_shaped = (root / 'tasks').is_dir() or any(
+                entry.is_dir(follow_symlinks=False)
+                and not entry.name.startswith('.')
+                and (root / entry.name / 'task.toml').is_file()
+                for entry in entries
+            )
+        if corpus_shaped:
+            raise ValueError(
+                f'{root} is ambiguous: it carries task.toml at its root (a single-task '
+                'shape) AND corpus-shaped content — the import refuses this too; point at '
+                'the one task directory or at a corpus of task directories, not a mix'
+            )
+        task_dirs.append(root)
+    else:
+        tasks_dir = root / 'tasks' if (root / 'tasks').is_dir() else root
+        with os.scandir(tasks_dir) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+        for entry in children:
+            if not entry.is_dir(follow_symlinks=False) or entry.name.startswith('.'):
+                continue
+            child = tasks_dir / entry.name
+            if not (child / 'task.toml').is_file():
+                raise ValueError(
+                    f'{child} has no task.toml — every directory of a corpus must be a '
+                    'task directory (the import fails on it rather than skipping it)'
+                )
+            task_dirs.append(child)
+        if not task_dirs:
+            raise ValueError(f'{tasks_dir} holds no task directories — nothing to check')
+    payload: Dict[str, Any] = {
+        'tasks': [
+            {'name': task_dir.name, 'task_toml': (task_dir / 'task.toml').read_text('utf-8')}
+            for task_dir in task_dirs
+        ]
+    }
+    # The tasks-dir copy first — the import prefers the manifest sitting
+    # beside the task dirs it pins (server dataset-manifest.ts).
+    for manifest_dir in ((root,) if tasks_dir == root else (tasks_dir, root)):
+        manifest = manifest_dir / 'dataset.toml'
+        if manifest.is_file():
+            payload['dataset_toml'] = manifest.read_text('utf-8')
+            break
+    return payload
 
 
 # =============================================================================
@@ -3652,6 +3979,7 @@ def _multipart_file_body(
     fields: Dict[str, Optional[str]],
     archive_path: str,
     filename: str,
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> 'tuple[Iterator[bytes], str, int]':
     """The multipart body every archive upload route sends, streamed.
 
@@ -3696,6 +4024,12 @@ def _multipart_file_body(
     handle = open(archive_path, 'rb')
 
     def body() -> Iterator[bytes]:
+        # ``on_bytes`` is the client-side upload progress: the stream itself
+        # is the measurement. It counts the FILE's bytes handed to the
+        # transport (urllib pulls the next chunk only after writing the
+        # previous one); the multipart framing is not counted. Fires per
+        # chunk — throttle in the renderer, not here.
+        sent = 0
         with handle:
             yield head
             while True:
@@ -3703,6 +4037,9 @@ def _multipart_file_body(
                 if not chunk:
                     break
                 yield chunk
+                sent += len(chunk)
+                if on_bytes is not None:
+                    on_bytes(sent, size)
             yield tail
 
     content_type = f'multipart/form-data; boundary={boundary}'
@@ -3716,14 +4053,164 @@ async def _upload_archive_file(
     archive_path: str,
     filename: str,
     method: str = 'POST',
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """Stream one on-disk archive to ``path`` as the multipart grammar above."""
-    body, content_type, content_length = _multipart_file_body(fields, archive_path, filename)
+    body, content_type, content_length = _multipart_file_body(
+        fields, archive_path, filename, on_bytes
+    )
     return await http.request_upload(
         path,
         body,
         {'Content-Type': content_type, 'Content-Length': str(content_length)},
         method=method,
+    )
+
+
+def _file_sha256(path: str) -> str:
+    """sha256 (hex) of a whole file, streamed off disk — never held whole."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _resumable_backoff_sec(attempt: int) -> float:
+    """Harbor's backoff: 0.5 * 2^(attempt-1), capped at 4 s (resumable.py:129)."""
+    return min(0.5 * (2 ** (attempt - 1)), 4.0)
+
+
+def _upload_resumable_sync(
+    http: '_HostedHttp',
+    archive_path: str,
+    fields: Dict[str, Optional[str]],
+    on_bytes: Optional[Callable[[int, int], None]] = None,
+) -> Dict[str, Any]:
+    """The chunked transfer loop, on a worker thread — Harbor's resumable
+    client re-expressed against the platform's upload sessions
+    (REFERENCES/Harbor src/harbor/storage/resumable.py:106-149): strictly
+    sequential chunks, at most RESUMABLE_UPLOAD_MAX_ATTEMPTS transport
+    stumbles with exponential backoff, the offset re-read from the server
+    (HEAD) after every stumble and the file re-seeked there, a served offset
+    that fails to advance treated as a hard error, and the attempt budget
+    reset whenever a chunk lands. One chunk buffer lives at a time. Typed
+    refusals raise EvolveAPIError through the shared mapper; only transport
+    failure past the budget raises the transport error.
+    """
+    size = os.path.getsize(archive_path)
+    sha256 = _file_sha256(archive_path)
+    base = f'{http.base_url()}/api/datasets/publish/uploads'
+    auth = {'Authorization': f'Bearer {http.api_key()}', 'Accept': 'application/json'}
+
+    def request(url: str, method: str, headers: Dict[str, str], data: Optional[bytes] = None):
+        req = urllib.request.Request(url, data=data, headers={**auth, **headers}, method=method)
+        return _http.urlopen(req, timeout=UPLOAD_TIMEOUT_SEC)
+
+    # 1. Open the session (a refusal here raises typed; nothing transferred yet).
+    body = {'size': size, 'sha256': sha256}
+    body.update({k: v for k, v in fields.items() if v is not None})
+    try:
+        with request(base, 'POST', {'Content-Type': 'application/json'},
+                     json.dumps(body).encode('utf-8')) as response:
+            session = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        _raise_api_error(exc)
+    session_url = f'{base}/{session["id"]}'
+
+    def probe_offset() -> int:
+        with request(session_url, 'HEAD', {}) as response:
+            offset_header = response.headers.get('Upload-Offset')
+        if offset_header is None:
+            raise RuntimeError('upload session probe did not return Upload-Offset')
+        return int(offset_header)
+
+    # 2. The sequential chunk loop.
+    with open(archive_path, 'rb') as handle:
+        offset = 0
+        attempts = 0
+        while offset < size:
+            handle.seek(offset)
+            chunk = handle.read(RESUMABLE_UPLOAD_CHUNK_BYTES)
+            chunk_digest = hashlib.sha256(chunk).digest()
+            headers = {
+                'Content-Type': 'application/offset+octet-stream',
+                'Upload-Offset': str(offset),
+                # TUS's checksum-extension spelling; required by our door.
+                'Upload-Checksum': f'sha256 {base64.b64encode(chunk_digest).decode()}',
+            }
+            try:
+                with request(session_url, 'PATCH', headers, chunk) as response:
+                    served = response.headers.get('Upload-Offset')
+            except urllib.error.HTTPError as exc:
+                if exc.code == 409:
+                    # A racer advanced the session, or our view is stale — the
+                    # answer is the server's offset, never a guess.
+                    exc.read()
+                    attempts += 1
+                    if attempts >= RESUMABLE_UPLOAD_MAX_ATTEMPTS:
+                        _raise_api_error(exc)
+                    offset = probe_offset()
+                    continue
+                _raise_api_error(exc)
+            except (urllib.error.URLError, TimeoutError, OSError):
+                # The dropped-link seam: bounded attempts, Harbor's backoff,
+                # then the offset re-read — acknowledged chunks stay sent.
+                attempts += 1
+                if attempts >= RESUMABLE_UPLOAD_MAX_ATTEMPTS:
+                    raise
+                time.sleep(_resumable_backoff_sec(attempts))
+                try:
+                    offset = probe_offset()
+                except (urllib.error.URLError, TimeoutError, OSError):
+                    # The link is still down — the probe spends nothing but
+                    # this attempt; the next round re-probes (Harbor's outer
+                    # retry wraps its probes the same way, resumable.py:34-40).
+                    pass
+                continue
+            next_offset = int(served) if served is not None else -1
+            if next_offset <= offset:
+                # Harbor's own hard error: an offset that does not advance
+                # would loop forever (resumable.py:143-146).
+                raise RuntimeError('resumable upload did not advance Upload-Offset')
+            offset = next_offset
+            attempts = 0
+            if on_bytes is not None:
+                # Client-side upload progress: the server-acknowledged offset
+                # IS the sent count. Fires from this uploader thread (the
+                # loop runs in ``asyncio.to_thread``) — the same
+                # thread-of-fire discipline as the single-request branch
+                # (``_multipart_file_body``); keep it cheap and thread-safe.
+                on_bytes(offset, size)
+
+    # 3. Finalize — idempotent server-side, so a lost response is retried.
+    last_error: Optional[BaseException] = None
+    for attempt in range(1, RESUMABLE_UPLOAD_MAX_ATTEMPTS + 1):
+        try:
+            with request(f'{session_url}/complete', 'POST', {}) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as exc:
+            _raise_api_error(exc)
+        except (urllib.error.URLError, TimeoutError, OSError) as transport_error:
+            last_error = transport_error
+            if attempt < RESUMABLE_UPLOAD_MAX_ATTEMPTS:
+                time.sleep(_resumable_backoff_sec(attempt))
+    assert last_error is not None
+    raise last_error
+
+
+async def _upload_archive_resumable(
+    http: '_HostedHttp',
+    archive_path: str,
+    fields: Dict[str, Optional[str]],
+    on_bytes: Optional[Callable[[int, int], None]] = None,
+) -> Dict[str, Any]:
+    """Chunked-resumable counterpart of :func:`_upload_archive_file` for the
+    dataset publish surface. The loop is consumed on a worker thread, never
+    the event loop — the ``_upload_sync`` convention.
+    """
+    return await asyncio.to_thread(
+        _upload_resumable_sync, http, archive_path, fields, on_bytes
     )
 
 
@@ -3734,6 +4221,8 @@ async def _upload_directory_archive(
     directory: str,
     filename: str,
     method: str = 'POST',
+    resumable_over: Optional[int] = None,
+    on_bytes: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """Tar + gzip ``directory`` into a temp file and stream it to ``path`` —
     the one flow every publish-a-directory surface (datasets, agents, skills,
@@ -3744,7 +4233,18 @@ async def _upload_directory_archive(
     try:
         archive_path = os.path.join(tmp, filename)
         await asyncio.to_thread(_tar_gzip_directory_to_file, directory, archive_path)
-        return await _upload_archive_file(http, path, fields, archive_path, filename, method)
+        if (
+            resumable_over is not None
+            and os.path.getsize(archive_path) > resumable_over
+        ):
+            # Big corpora ride the resumable chunked door automatically — a
+            # dropped link resumes from the last acknowledged chunk. Same 202
+            # either way; the switch is invisible to callers, exactly as
+            # Harbor's uploader switches transports (upload/storage.py:55-67).
+            return await _upload_archive_resumable(http, archive_path, fields, on_bytes)
+        return await _upload_archive_file(
+            http, path, fields, archive_path, filename, method, on_bytes
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -4106,6 +4606,24 @@ class DatasetsClient:
             ),
         )
 
+    async def preflight(self, *, directory: str) -> DatasetPreflight:
+        """Pre-flight a local corpus BEFORE publishing (dry run).
+
+        Collects only the metadata files — each task's ``task.toml`` plus the
+        optional ``dataset.toml``, kilobytes of JSON — and runs the import's
+        own toml-decidable guards and per-provider capability stamps
+        server-side. Answers per-task verdicts carrying the importer's
+        would-refuse sentences; nothing is written and no corpus byte moves.
+        The answer is honestly partial: ``deferred`` names the import guards
+        a task.toml alone cannot decide, and :meth:`publish` stays the
+        authority. Directory sources only — a git source has nothing local
+        to read (the server clones it after the publish is accepted)."""
+        payload = _collect_preflight_payload(directory)
+        raw = await self._http.request_json(
+            '/api/datasets/preflight', method='POST', body=payload
+        )
+        return _map_dataset_preflight(raw)
+
     async def publish(
         self,
         *,
@@ -4113,16 +4631,36 @@ class DatasetsClient:
         git_ref: Optional[str] = None,
         git_path: Optional[str] = None,
         directory: Optional[str] = None,
+        archive_url: Optional[str] = None,
+        hub_package: Optional[str] = None,
         name: Optional[str] = None,
         version: Optional[str] = None,
+        on_upload_progress: Optional[Callable[[int, int], None]] = None,
     ) -> DatasetImport:
         """Publish a dataset version (asynchronous server-side import).
 
-        Provide EITHER a git source (``git_url`` + pinned ``git_ref``) OR a
-        local corpus ``directory`` (tarred + gzipped deterministically on the
-        client and uploaded). Returns immediately; poll with
+        ``on_upload_progress`` (a ``directory`` source only — a git source
+        uploads nothing) is called ``(sent_bytes, total_bytes)`` as the
+        archive's bytes go onto the wire — client-side, from the stream
+        itself, no server call. It fires per chunk FROM THE UPLOADER THREAD
+        (the upload runs in ``asyncio.to_thread``), so keep it cheap and
+        thread-safe, and throttle any rendering in the callback.
+
+        Provide EXACTLY ONE source: a git source (``git_url`` + pinned
+        ``git_ref``), a local corpus ``directory`` (tarred + gzipped
+        deterministically on the client and uploaded), a PUBLIC https tarball
+        ``archive_url`` the server fetches itself, or a PUBLIC Harbor hub
+        package ``hub_package`` (``org/name[@ref]`` in Harbor's own grammar)
+        the server resolves, digest-pins at accept time, and fetches — the
+        last two move zero client bytes. Returns immediately; poll with
         :meth:`get_import` / :meth:`watch_import`. ``version`` labels the new
         immutable version.
+
+        ``archive_url`` requires ``name`` and ``version`` (the server fetches
+        only after the publish is accepted); ``hub_package`` defaults them to
+        the package's short name and resolved revision. A missing or private
+        hub package is refused ``hub_package_not_found``; an unreachable hub
+        is ``hub_unreachable`` (502) — retry the publish.
 
         ``git_path`` (git sources only) narrows the import to ONE repository
         subfolder — a POSIX path relative to the repository root, e.g.
@@ -4145,13 +4683,48 @@ class DatasetsClient:
         """
         # ONE body grammar: multipart/form-data, metadata in named parts. The
         # corpus is the ``archive`` part; a git source is git_url + git_ref
-        # (+ optional git_path).
+        # (+ optional git_path); the fetched sources are one part each.
         if directory is not None and git_path is not None:
             raise ValueError(
                 'publish() takes git_path only with a git source — a subfolder '
                 'narrows a git clone, not a local directory (point directory=... '
                 'at the subfolder itself instead)'
             )
+        offered = [
+            s for s in (directory, git_url, archive_url, hub_package) if s is not None
+        ]
+        if len(offered) > 1:
+            raise ValueError(
+                'publish() takes EXACTLY ONE source: git_url=... + git_ref=..., '
+                'directory=..., archive_url=..., or hub_package=...'
+            )
+        if archive_url is not None:
+            if name is None or version is None:
+                raise ValueError(
+                    'publish() requires name=... and version=... for an archive_url '
+                    'source — the server fetches the tarball only after the publish '
+                    'is accepted, so a manifest cannot supply them'
+                )
+            body, content_type = _multipart_body(
+                {'name': name, 'version': version, 'archive_url': archive_url}
+            )
+            raw = await self._http.request_upload(
+                '/api/datasets/publish', body, {'Content-Type': content_type}
+            )
+            return _map_dataset_import(raw)
+        if hub_package is not None:
+            # name/version optional by design: absent parts default
+            # server-side to the package's short name and resolved revision.
+            fields: Dict[str, Optional[str]] = {'hub_package': hub_package}
+            if name is not None:
+                fields['name'] = name
+            if version is not None:
+                fields['version'] = version
+            body, content_type = _multipart_body(fields)
+            raw = await self._http.request_upload(
+                '/api/datasets/publish', body, {'Content-Type': content_type}
+            )
+            return _map_dataset_import(raw)
         if directory is not None:
             if name is None or version is None:
                 # The only client-side check is the cheap one that saves a
@@ -4175,6 +4748,8 @@ class DatasetsClient:
                 {'name': name, 'version': version},
                 directory,
                 'corpus.tar.gz',
+                resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+                on_bytes=on_upload_progress,
             )
             return _map_dataset_import(raw)
         elif git_url and git_ref:
@@ -4198,10 +4773,12 @@ class DatasetsClient:
             body, content_type = _multipart_body(fields)
         else:
             raise ValueError(
-                'publish() requires either a git source (git_url=..., git_ref=...) '
-                'or a local corpus directory (directory=...), plus name=... '
-                'and version=... (both optional for a directory whose corpus '
-                'carries a dataset.toml manifest)'
+                'publish() requires a source: a git source (git_url=..., '
+                'git_ref=...), a local corpus directory (directory=...), a public '
+                'tarball url (archive_url=...), or a Harbor hub package '
+                '(hub_package=...); plus name=... and version=... (optional for a '
+                'directory whose corpus carries a dataset.toml manifest, and for '
+                'a hub package, which supplies its own defaults)'
             )
         raw = await self._http.request_upload(
             '/api/datasets/publish', body, {'Content-Type': content_type}
@@ -4220,6 +4797,7 @@ class DatasetsClient:
         id: str,
         *,
         on_status: Optional[Callable[[DatasetImport], None]] = None,
+        on_progress: Optional[Callable[[DatasetImportProgress, DatasetImport], None]] = None,
         on_version: Optional[Callable[[DatasetVersion, Dataset], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
@@ -4238,7 +4816,12 @@ class DatasetsClient:
         import's ``failure``).
 
         ``on_status`` fires on every observed import status change (including
-        the first status seen). ``on_version`` fires on every observed change
+        the first status seen). ``on_progress`` fires on every observed change
+        of the import's live ``progress`` — a phase boundary, or new counts
+        inside a phase; the server writes progress at phase boundaries and
+        coarse intervals (never per-second), so it fires at that cadence and
+        never while ``progress`` is None. ``on_version`` fires on every
+        observed change
         of the version's state during the settle phase, with the detail read
         it came from — its ``active_version`` says whether the settled
         version is now the one a bare dataset name resolves to.
@@ -4258,6 +4841,10 @@ class DatasetsClient:
             raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
         last_status: Optional[str] = None
+        # Change detection over the SERVER's own writes: dataclass equality
+        # over the mapped progress fires on_progress exactly when the row
+        # moved (a phase boundary, or a coarse within-phase write).
+        last_progress: Optional[DatasetImportProgress] = None
         while True:
             try:
                 dataset_import = await self.get_import(id)
@@ -4276,6 +4863,10 @@ class DatasetsClient:
                 last_status = dataset_import.status
                 if on_status is not None:
                     on_status(dataset_import)
+            if dataset_import.progress is not None and dataset_import.progress != last_progress:
+                last_progress = dataset_import.progress
+                if on_progress is not None:
+                    on_progress(dataset_import.progress, dataset_import)
             if dataset_import.status == 'FAILED':
                 return dataset_import
             if dataset_import.status == 'COMPLETED':

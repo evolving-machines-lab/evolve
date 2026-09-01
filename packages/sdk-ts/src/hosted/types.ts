@@ -2209,13 +2209,15 @@ export interface DatasetList extends Awaitable<DatasetPage>, AsyncIterable<Datas
 // =============================================================================
 
 /**
- * Source for datasets().publish(): EITHER a git repository pinned to a ref, OR
- * a local corpus directory (tarred deterministically on the client and
- * uploaded).
+ * Source for datasets().publish(): a git repository pinned to a ref, a local
+ * corpus directory (tarred deterministically on the client and uploaded), a
+ * PUBLIC https tarball URL the server fetches itself, or a PUBLIC Harbor hub
+ * package the server resolves and fetches — the last two move zero client
+ * bytes.
  *
- * A UNION, not three optional fields: `{}` and both-branches-at-once are
+ * A UNION, not five optional fields: `{}` and two-branches-at-once are
  * compile errors rather than a 400 the caller discovers at run time, and
- * `?: never` on the absent branch's keys is what rejects the excess property
+ * `?: never` on the absent branches' keys is what rejects the excess property
  * through a variable. `git_ref` is REQUIRED on the git branch — an unpinned
  * import is not reproducible.
  */
@@ -2247,6 +2249,8 @@ export type DatasetSource =
        */
       git_path?: string;
       directory?: never;
+      archive_url?: never;
+      hub_package?: never;
     }
   | {
       /** A local standard-layout corpus directory — tarred + gzipped and uploaded. */
@@ -2254,7 +2258,122 @@ export type DatasetSource =
       git_url?: never;
       git_ref?: never;
       git_path?: never;
+      archive_url?: never;
+      hub_package?: never;
+    }
+  | {
+      /**
+       * A PUBLIC https URL to a gzipped corpus tarball — the SERVER fetches
+       * it, so no bytes leave this machine. Public sources only: credentials
+       * in the URL are refused (authenticated sources are a planned
+       * follow-up) and the host must be publicly resolvable. The fetched
+       * bytes pass the same validation and size caps as an uploaded archive.
+       * `name` and `version` are required with this source.
+       */
+      archive_url: string;
+      git_url?: never;
+      git_ref?: never;
+      git_path?: never;
+      directory?: never;
+      hub_package?: never;
+    }
+  | {
+      /**
+       * A PUBLIC Harbor hub package reference, `org/name[@ref]` in Harbor's
+       * own grammar — no ref (or `latest`) is the latest tag, a number is a
+       * revision, `sha256:<64 hex>` is a digest, anything else is a tag. The
+       * server resolves it when the publish is accepted and the worker
+       * fetches BY the resolved digest, so a tag moved after the 202 can
+       * never deliver different bytes. A task package imports as a one-task
+       * dataset; a dataset package fetches every digest-pinned member; both
+       * are digest-verified against the hub's own pins. `name` defaults to
+       * the package's short name and `version` to its resolved revision. A
+       * missing or private package is refused `hub_package_not_found`; an
+       * unreachable hub is `hub_unreachable` (502) — retry the publish.
+       */
+      hub_package: string;
+      git_url?: never;
+      git_ref?: never;
+      git_path?: never;
+      directory?: never;
+      archive_url?: never;
     };
+
+/** Input for datasets().preflight() — the dry-run half of publish. */
+export interface PreflightDatasetInput {
+  /**
+   * A local standard-layout corpus directory. Only its METADATA moves: the
+   * client walks the corpus shape (a single task directory, a tasks/ subdir,
+   * or a root of task directories — the import's own reading), collects each
+   * task's task.toml plus the optional dataset.toml manifest, and posts
+   * kilobytes of JSON. The corpus bytes themselves never leave the machine.
+   */
+  source: { directory: string };
+}
+
+/**
+ * One task's dry-run verdict. `ok: true` means no task.toml-decidable import
+ * guard would refuse the task — never "this task will import"; the checks a
+ * toml alone cannot decide are named in DatasetPreflight.deferred and the
+ * real publish stays the authority. `ok: false` carries the importer's own
+ * refusal sentence, exactly what a real import of this task would say.
+ */
+export interface PreflightTaskVerdict {
+  /** The task directory's basename. */
+  name: string;
+  ok: boolean;
+  /** metadata.task_id, or its directory-name fallback. */
+  task_key: string;
+  /** Present with ok true: the recorded Harbor schema_version. */
+  schema_version?: string;
+  /**
+   * Present with ok true: verdict per sandbox provider over the
+   * toml-declared requirements (GPU, sizing, network) — the same
+   * adjudication the published dataset's task stamps use, with the
+   * compose/image-command halves deferred to the import.
+   */
+  providers?: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  /** Present with ok false: the importer's refusal sentence. */
+  reason?: string;
+}
+
+/** An import guard the pre-flight cannot run, and what it reads instead. */
+export interface PreflightDeferredCheck {
+  name: string;
+  reads: string;
+}
+
+/** The dataset.toml manifest's dry-run verdict (null when none was sent). */
+export interface PreflightManifestVerdict {
+  ok: boolean;
+  /** Present with ok true: [dataset].name (Harbor org/name). */
+  name?: string;
+  /** Present with ok true: the catalog-facing half of the name. */
+  short_name?: string;
+  /** Present with ok true: [dataset].version, null when it declares none. */
+  version?: string | null;
+  /** Present with ok true: unique (name, digest) task entries. */
+  task_count?: number;
+  /** Present with ok false: the import's manifest refusal sentence. */
+  reason?: string;
+}
+
+/**
+ * The dry-run answer of POST /api/datasets/preflight. Nothing was written to
+ * produce it: `checks` names the guards that ran, `deferred` the import
+ * guards a task.toml alone cannot decide.
+ */
+export interface DatasetPreflight {
+  /** The pinned parser revision that judged (e.g. "harbor-import/14"). */
+  importer_version: string;
+  checks: string[];
+  deferred: PreflightDeferredCheck[];
+  manifest: PreflightManifestVerdict | null;
+  tasks: PreflightTaskVerdict[];
+  tasks_total: number;
+  tasks_ok: number;
+  tasks_refused: number;
+}
 
 /** Input for datasets().publish() */
 export interface PublishDatasetInput {
@@ -2263,15 +2382,31 @@ export interface PublishDatasetInput {
    * Catalog dataset name the version lands under (created or extended).
    * Optional when a `directory` source carries a dataset.toml manifest — the
    * server derives the name from the manifest (the short segment of its
-   * `org/name`). Always required for a git source, whose manifest is only
-   * readable after the server clones it.
+   * `org/name`) — and for a `hub_package` source, which defaults to the
+   * package's short name. Always required for a git or `archive_url` source,
+   * whose corpus the server only fetches after the publish is accepted.
    */
   name?: string;
   /**
    * Version label for the new immutable version. Optional when a `directory`
-   * source's dataset.toml declares `[dataset].version`; required otherwise.
+   * source's dataset.toml declares `[dataset].version` and for a
+   * `hub_package` source (defaults to the resolved hub revision number);
+   * required otherwise.
    */
   version?: string;
+}
+
+/** Options for datasets().publish() */
+export interface PublishDatasetOptions {
+  /**
+   * Called as the archive's bytes go onto the wire (a `directory` source
+   * only — a git source uploads nothing). `sentBytes` counts archive bytes
+   * whose write the transport confirmed flushed; `totalBytes` is the
+   * archive's size. Client-side by construction: the stream itself is the
+   * measurement, no server call is made. Fires per flushed chunk — throttle
+   * in the renderer, not here.
+   */
+  onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
 }
 
 /**
@@ -2321,6 +2456,71 @@ export interface ImportWarning {
  * listImports() all return this same shape, so a caller can render the row it
  * just created without a follow-up read.
  */
+/**
+ * The five phases of a publish, in the order they run (spec ImportPhaseName):
+ * extracting (archive fetched and unpacked, or the git source cloned),
+ * parsing (every task directory parsed, manifest gate included), building
+ * (the image pool — Dockerfile build contexts and compose-service
+ * resolutions), copying (upstream images mirrored into the platform
+ * registry), verifying (storability census, solutions archive, the task
+ * transaction, and the registry read-back before READY).
+ */
+export type ImportPhase =
+  | "extracting"
+  | "parsing"
+  | "building"
+  | "copying"
+  | "verifying";
+
+/** One phase of the import timeline (spec ImportPhaseProgress). */
+export interface ImportPhaseProgress {
+  name: ImportPhase;
+  started_at: string;
+  /**
+   * Absent while the phase runs — and stays absent forever on the phase a
+   * FAILED import died in, which is how a reader finds where it died.
+   */
+  completed_at?: string;
+  /**
+   * Units settled so far — task dirs (parsing), image-pool units (building),
+   * unique images (copying), surviving tasks (verifying). Failures count as
+   * settled; extracting has no unit and stays 0/0.
+   */
+  done: number;
+  total: number;
+  /**
+   * Of `done`, the units whose bytes already lived in the platform registry
+   * (content-addressed hit — nothing copied). Image phases only.
+   */
+  banked?: number;
+}
+
+/**
+ * Live progress of a publish (spec DatasetImportProgress) — written by the
+ * build worker at phase boundaries and coarse intervals, never per-second.
+ * On a terminal import it is the settled record: all five phases with
+ * wall-clock timestamps, the final image counts, and the publish's CodeBuild
+ * copy-build minutes.
+ */
+export interface DatasetImportProgress {
+  /** What the import is doing now (the last entry of `phases`). */
+  phase: ImportPhase;
+  /** When the claimed run began on the worker — explicit, never derived. */
+  started_at: string;
+  phases: ImportPhaseProgress[];
+  /**
+   * The publish's cumulative image economics: `built` and `mirrored` are
+   * fresh pushes this publish paid for; `banked` counts images that already
+   * existed in the registry.
+   */
+  images: { built: number; mirrored: number; banked: number };
+  /**
+   * The publish's promotion fan-out meter: CodeBuild copy builds started and
+   * their billed minutes. 0/0 on a fully banked re-publish.
+   */
+  codebuild: { copy_builds: number; billed_minutes: number };
+}
+
 export interface DatasetImport {
   /** Import job id */
   id: string;
@@ -2336,6 +2536,12 @@ export interface DatasetImport {
   failure: DatasetImportFailure | null;
   /** Non-fatal but consequential outcomes — see ImportWarning. */
   warnings: ImportWarning[];
+  /**
+   * Live progress of the build — null until the worker's first report (a
+   * QUEUED import, an older server, and every import that predates
+   * progress). On a terminal import it is the settled five-phase record.
+   */
+  progress: DatasetImportProgress | null;
   /** Number of tasks parsed, once counted */
   task_count?: number;
   created_at?: string;
@@ -2572,6 +2778,14 @@ export interface WatchImportOptions {
   /** Called on every observed import status change (including the first status seen) */
   onStatus?: (datasetImport: DatasetImport) => void;
   /**
+   * Called on every observed change of the import's live `progress` — a
+   * phase boundary, or new counts inside a phase. The server writes progress
+   * at phase boundaries and coarse intervals (never per-second), so this
+   * fires at that cadence, under the same poll (and the same 429-tolerant
+   * posture) as `onStatus`. Never called while `progress` is null.
+   */
+  onProgress?: (progress: DatasetImportProgress, datasetImport: DatasetImport) => void;
+  /**
    * Called on every observed change of the imported VERSION's state during
    * the watch's settle phase — normally the single confirming READY read
    * (COMPLETED means the version is READY under build-then-READY), or the
@@ -2689,11 +2903,21 @@ export interface DatasetsClient {
    */
   getTaskBuild(ref: string, taskName: string): Promise<TaskBuild>;
   /**
+   * Pre-flight a local corpus BEFORE publishing (dry run): collect only the
+   * metadata files (each task's task.toml + the optional dataset.toml —
+   * kilobytes), run the import's own toml-decidable guards and per-provider
+   * capability stamps server-side, and answer per-task verdicts with the
+   * importer's would-refuse sentences. Nothing is written and no corpus
+   * byte moves. `evolve dataset publish --dir` runs this automatically;
+   * `evolve dataset check <dir>` is the standalone verb.
+   */
+  preflight(input: PreflightDatasetInput): Promise<DatasetPreflight>;
+  /**
    * Publish a dataset version (asynchronous server-side import) from a git
    * source pinned to a ref, or a local corpus directory. Returns immediately;
    * poll with getImport()/watchImport().
    */
-  publish(input: PublishDatasetInput): Promise<DatasetImport>;
+  publish(input: PublishDatasetInput, options?: PublishDatasetOptions): Promise<DatasetImport>;
   /** Get an import job's status (failure, warnings, and task_count when available) */
   getImport(id: string): Promise<DatasetImport>;
   /**
@@ -3322,6 +3546,11 @@ export const HOSTED_ERROR_CODES = [
   "dataset_name_taken",
   "dataset_in_use",
   "dataset_not_owned",
+  // The visibility flip while a version is still importing (409): the import
+  // decides which registry its images land in from the dataset's visibility
+  // at import start, so a mid-import flip is refused — `details` names the
+  // live version and its import status; flip again once the import settles.
+  "dataset_import_in_progress",
   "upstream_not_watchable",
   "no_active_version",
   "version_not_ready",
@@ -3335,6 +3564,15 @@ export const HOSTED_ERROR_CODES = [
   // every named one with its reason).
   "task_not_found",
   "task_failed_to_build",
+  // Resumable corpus uploads (the chunked publish door datasets().publish()
+  // switches to automatically above the threshold — hosted/resumable.ts).
+  "upload_session_not_found",
+  "upload_offset_mismatch",
+  "upload_chunk_digest_mismatch",
+  "upload_incomplete",
+  "upload_archive_digest_mismatch",
+  "upload_session_failed",
+  "too_many_concurrent_upload_chunks",
   "agent_not_found",
   "agent_name_taken",
   "agent_name_reserved",
@@ -3424,6 +3662,15 @@ export const HOSTED_ERROR_CODES = [
   "too_many_concurrent_imports",
   "invalid_archive",
   "unpinned_git_ref",
+  // A hub_package publish naming a package the Harbor hub does not show the
+  // server: it does not exist, or it is private (anonymous reads cannot see
+  // private packages, and authenticated hub sources are not supported yet —
+  // the refusal says both). 400; details carry `hub_package`.
+  "hub_package_not_found",
+  // The Harbor hub could not be asked while accepting a hub_package publish
+  // (network/timeout/5xx). Refused rather than accepted unpinned — a hub ref
+  // is pinned by resolving it at accept time — so retry the publish. 502.
+  "hub_unreachable",
   "package_not_retained",
   "package_corrupt",
   "package_missing",

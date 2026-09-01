@@ -215,7 +215,7 @@ function restoreFetch() {
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -952,8 +952,8 @@ async function testPublishGitSource() {
 
     assertEqual(
       imported,
-      { id: "imp-1", status: "QUEUED", name: "deep-swe", version: "1.2", failure: null, warnings: [] },
-      "202 response mapped (id, status, name, version, failure, warnings)"
+      { id: "imp-1", status: "QUEUED", name: "deep-swe", version: "1.2", failure: null, warnings: [], progress: null },
+      "202 response mapped (id, status, name, version, failure, warnings, progress)"
     );
 
     // Subfolder import: git_path rides as one more named part, verbatim.
@@ -974,6 +974,60 @@ async function testPublishGitSource() {
       "git_path is a named part when narrowing to a subfolder"
     );
     assertEqual(subfolderForm.get("git_ref"), "v2", "git_ref still rides beside git_path");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testPublishFetchedSources() {
+  console.log("\n--- datasets().publish() POSTs the fetched-source contracts (archive_url, hub_package) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/datasets/publish", {
+      status: 202,
+      body: { id: "imp-9", name: "hello-world", version: "3", status: "QUEUED", warnings: [] },
+    });
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+
+    // archive_url: the server fetches the tarball — no archive part, no git
+    // parts, name+version REQUIRED.
+    await d.publish({
+      source: { archive_url: "https://static.example/corpus.tar.gz" },
+      name: "fetched",
+      version: "1.0",
+    });
+    const urlForm = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(
+      urlForm.get("archive_url"),
+      "https://static.example/corpus.tar.gz",
+      "archive_url is a named part"
+    );
+    assertEqual(urlForm.get("archive"), null, "no archive part — the server fetches");
+    assertEqual(urlForm.get("git_url"), null, "no git parts for a fetched url");
+    let threw = false;
+    try {
+      await d.publish({ source: { archive_url: "https://static.example/c.tar.gz" }, name: "x" });
+    } catch (e: unknown) {
+      threw = true;
+      assert(
+        (e as Error).message.includes("archive_url"),
+        "missing version refusal names the archive_url rule"
+      );
+    }
+    assert(threw, "archive_url without version throws before any request");
+
+    // hub_package: the reference rides verbatim; name/version only when given
+    // (absent parts default server-side to the package's own identity).
+    await d.publish({ source: { hub_package: "cookbook/hello-world@3" } });
+    const hubForm = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(hubForm.get("hub_package"), "cookbook/hello-world@3", "hub_package is a named part");
+    assertEqual(hubForm.get("name"), null, "no name part when omitted — the server defaults it");
+    assertEqual(hubForm.get("version"), null, "no version part when omitted");
+
+    await d.publish({ source: { hub_package: "cookbook/test" }, name: "renamed", version: "9" });
+    const namedHubForm = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(namedHubForm.get("name"), "renamed", "explicit name rides beside the reference");
+    assertEqual(namedHubForm.get("version"), "9", "explicit version rides beside the reference");
   } finally {
     restoreFetch();
   }
@@ -1016,11 +1070,15 @@ async function testPublishDirectorySource() {
     await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
 
     const d = datasets({ apiKey: "test-key", baseUrl: server.base });
-    const imported = await d.publish({
-      source: { directory: dir },
-      name: "my-set",
-      version: "0.1",
-    });
+    const progress: Array<[number, number]> = [];
+    const imported = await d.publish(
+      {
+        source: { directory: dir },
+        name: "my-set",
+        version: "0.1",
+      },
+      { onUploadProgress: (sent, total) => progress.push([sent, total]) }
+    );
 
     const call = server.calls[server.calls.length - 1];
     // Metadata is named PARTS; the corpus is the `archive` part. The URL is bare.
@@ -1050,12 +1108,156 @@ async function testPublishDirectorySource() {
 
     assertEqual(
       imported,
-      { id: "imp-2", status: "QUEUED", name: "my-set", version: "0.1", failure: null, warnings: [] },
-      "202 response mapped (id, status, name, version, failure, warnings)"
+      { id: "imp-2", status: "QUEUED", name: "my-set", version: "0.1", failure: null, warnings: [], progress: null },
+      "202 response mapped (id, status, name, version, failure, warnings, progress)"
     );
+
+    // onUploadProgress ACTUALLY fires — the byte-progress pin. The train
+    // merge once left the Python twin of this wiring dead with no test to
+    // notice; sent counts the archive part's bytes and ends at its size.
+    assert(progress.length > 0, "onUploadProgress fired");
+    assert(progress.every(([, total]) => total === body.length),
+      "totalBytes is the archive's size on every call");
+    assert(progress[progress.length - 1]?.[0] === body.length,
+      "the last call reports sent == total");
+    assert(progress.every(([sent], i) => i === 0 || progress[i - 1][0] <= sent),
+      "sent never decreases");
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testDatasetsPreflight() {
+  console.log("\n--- datasets().preflight() posts METADATA ONLY and maps the dry-run answer ---");
+  const reply = {
+    importer_version: "harbor-import/14",
+    checks: ["toml_syntax", "task_shape"],
+    deferred: [{ name: "environment_layout", reads: "environment/Dockerfile" }],
+    manifest: { ok: true, name: "evolve/demo", short_name: "demo", version: "0.1", task_count: 2 },
+    tasks: [
+      { name: "a", ok: true, task_key: "a", schema_version: "1.4", providers: { e2b: { ok: true } } },
+      { name: "b", ok: false, task_key: "b", reason: "metadata.task_id mismatch" },
+    ],
+    tasks_total: 2,
+    tasks_ok: 1,
+    tasks_refused: 1,
+  };
+  const server = await startCaptureServer({ status: 200, body: reply });
+  const dir = await mkdtemp(join(tmpdir(), "evolve-preflight-dir-"));
+  try {
+    await mkdir(join(dir, "tasks", "b"), { recursive: true });
+    await mkdir(join(dir, "tasks", "a"), { recursive: true });
+    await writeFile(join(dir, "tasks", "a", "task.toml"), 'schema_version = "1.4"\n');
+    await writeFile(join(dir, "tasks", "b", "task.toml"), "[environment]\n");
+    await writeFile(join(dir, "dataset.toml"), '[dataset]\nname = "evolve/demo"\n');
+
+    const d = datasets({ apiKey: "test-key", baseUrl: server.base });
+    const answer = await d.preflight({ source: { directory: dir } });
+
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/datasets/preflight", "POSTs the preflight door");
+    assertEqual(call.method, "POST", "uses POST");
+    assertEqual(call.headers["content-type"], "application/json", "JSON body, never multipart");
+    const sent = JSON.parse(call.body.toString("utf8")) as {
+      tasks: { name: string; task_toml: string }[];
+      dataset_toml?: string;
+    };
+    assertEqual(
+      sent.tasks.map((t) => t.name),
+      ["a", "b"],
+      "one entry per task directory, sorted by name (the import's own order)"
+    );
+    assertEqual(sent.tasks[0].task_toml, 'schema_version = "1.4"\n', "task.toml content rides verbatim");
+    assertEqual(sent.dataset_toml, '[dataset]\nname = "evolve/demo"\n', "dataset.toml rides when the corpus ships one");
+    assert(call.body.length < 4096, "the body is kilobytes — metadata only, never the corpus");
+    assertEqual(answer, reply, "the dry-run answer maps verbatim (wire shape IS the SDK shape)");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  console.log("\n--- datasets().preflight() reads a SINGLE task directory as one task ---");
+  const server2 = await startCaptureServer({
+    status: 200,
+    body: { ...reply, tasks: [], tasks_total: 0, tasks_ok: 0, tasks_refused: 0 },
+  });
+  const single = await mkdtemp(join(tmpdir(), "evolve-preflight-single-"));
+  try {
+    await writeFile(join(single, "task.toml"), "[environment]\n");
+    const d = datasets({ apiKey: "test-key", baseUrl: server2.base });
+    await d.preflight({ source: { directory: single } });
+    const sent = JSON.parse(server2.calls[0].body.toString("utf8")) as {
+      tasks: { name: string }[];
+    };
+    assertEqual(sent.tasks.length, 1, "a single-task shape sends one entry");
+    assertEqual(sent.tasks[0].name, basename(single), "its name is the directory basename");
+  } finally {
+    await server2.close();
+    await rm(single, { recursive: true, force: true });
+  }
+
+  console.log("\n--- datasets().preflight() sends the tasks-dir dataset.toml when BOTH exist ---");
+  const server3 = await startCaptureServer({ status: 200, body: reply });
+  const both = await mkdtemp(join(tmpdir(), "evolve-preflight-both-"));
+  try {
+    // The server reads the manifest beside the task dirs when both places
+    // hold one (dashboard dataset-manifest.ts findDatasetManifestPath: "the
+    // tasks-dir copy wins"), so the dry run must post THAT copy — a verdict
+    // for the root copy would judge a file the import never reads.
+    await mkdir(join(both, "tasks", "a"), { recursive: true });
+    await writeFile(join(both, "tasks", "a", "task.toml"), "[environment]\n");
+    await writeFile(join(both, "dataset.toml"), '[dataset]\nname = "evolve/root-copy"\n');
+    await writeFile(join(both, "tasks", "dataset.toml"), '[dataset]\nname = "evolve/tasks-copy"\n');
+    const d = datasets({ apiKey: "test-key", baseUrl: server3.base });
+    await d.preflight({ source: { directory: both } });
+    const sent = JSON.parse(server3.calls[0].body.toString("utf8")) as { dataset_toml?: string };
+    assertEqual(
+      sent.dataset_toml,
+      '[dataset]\nname = "evolve/tasks-copy"\n',
+      "the tasks-dir copy wins when both exist — the import's own priority"
+    );
+  } finally {
+    await server3.close();
+    await rm(both, { recursive: true, force: true });
+  }
+
+  console.log("\n--- datasets().preflight() refuses what the import would refuse, client-side ---");
+  const bad = await mkdtemp(join(tmpdir(), "evolve-preflight-bad-"));
+  try {
+    // Ambiguous: root task.toml AND a tasks/ subdir.
+    await writeFile(join(bad, "task.toml"), "[environment]\n");
+    await mkdir(join(bad, "tasks"), { recursive: true });
+    const d = datasets({ apiKey: "test-key", baseUrl: "http://127.0.0.1:1" });
+    let threw = "";
+    try {
+      await d.preflight({ source: { directory: bad } });
+    } catch (error) {
+      threw = (error as Error).message;
+    }
+    assert(threw.includes("ambiguous"), "ambiguous single-task/corpus root refuses");
+
+    // A corpus child without task.toml fails the import — and the check.
+    await rm(join(bad, "task.toml"));
+    await mkdir(join(bad, "tasks", "empty-dir"), { recursive: true });
+    threw = "";
+    try {
+      await d.preflight({ source: { directory: bad } });
+    } catch (error) {
+      threw = (error as Error).message;
+    }
+    assert(threw.includes("has no task.toml"), "a task directory without task.toml refuses by name");
+
+    // No directory at all.
+    threw = "";
+    try {
+      await d.preflight({ source: {} as { directory: string } });
+    } catch (error) {
+      threw = (error as Error).message;
+    }
+    assert(threw.includes("source: { directory }"), "a missing directory source refuses with the shape named");
+  } finally {
+    await rm(bad, { recursive: true, force: true });
   }
 }
 
@@ -1220,9 +1422,12 @@ async function testGetImport() {
         version: "1.2",
         failure: null,
         warnings: [{ code: "no_solutions_archived", message: "no reference solutions were archived" }],
+        // An older server sends no `progress`; the map answers null, so a
+        // watcher needs no version check.
+        progress: null,
         task_count: 113,
       },
-      "self-describing job: id/status/name/version/failure/warnings/task_count"
+      "self-describing job: id/status/name/version/failure/warnings/progress/task_count"
     );
     // WARNINGS ARE CONSEQUENTIAL: a version with no archived solutions still
     // activates, but permanently lacks its reference-solution record — this
@@ -1274,6 +1479,67 @@ async function testWatchImportPollsToTerminal() {
       { code: "import_failed", message: "task.yaml missing for task abc" },
       "failure detail surfaced on `failure`, never `error` — `error` means the REQUEST failed"
     );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * Live progress rides the same poll: onProgress fires exactly when the
+ * server's own progress write moved the row — a phase boundary or new counts
+ * — and never while `progress` is null (a QUEUED import, an older server).
+ */
+async function testWatchImportFiresOnProgress() {
+  console.log("\n--- datasets().watchImport() fires onProgress on every observed progress change ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-1", name: "deep-swe", version: "1.2", warnings: [], failure: null };
+    const phase = (name: string, done: number, total: number, banked?: number) => ({
+      name,
+      started_at: "2026-08-31T10:00:00.000Z",
+      done,
+      total,
+      ...(banked !== undefined ? { banked } : {}),
+    });
+    const progressAt = (phases: unknown[], current: string) => ({
+      phase: current,
+      started_at: "2026-08-31T10:00:00.000Z",
+      phases,
+      images: { built: 0, mirrored: 0, banked: 0 },
+      codebuild: { copy_builds: 0, billed_minutes: 0 },
+    });
+    const building3 = progressAt([phase("building", 3, 9, 1)], "building");
+    const statuses = [
+      // No progress yet: onProgress must NOT fire.
+      { ...job, status: "QUEUED", task_count: 0 },
+      { ...job, status: "RUNNING", task_count: 0, progress: progressAt([phase("parsing", 113, 113)], "parsing") },
+      // Same phase, new counts: fires again.
+      { ...job, status: "RUNNING", task_count: 0, progress: building3 },
+      // Unchanged blob: must NOT fire again.
+      { ...job, status: "RUNNING", task_count: 0, progress: building3 },
+      { ...job, status: "COMPLETED", task_count: 113, progress: progressAt([phase("verifying", 113, 113)], "verifying") },
+    ];
+    const counters = installSettleFetch(statuses, [
+      settleDetailBody({ state: "READY", active: true }),
+    ]);
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const seen: string[] = [];
+    const final = await d.watchImport("imp-1", {
+      onProgress: (p) => {
+        const at = p.phases[p.phases.length - 1];
+        seen.push(`${p.phase}:${at.done}/${at.total}`);
+      },
+      pollIntervalMs: 1,
+    });
+
+    assertEqual(counters.importCalls(), 5, "polled through every scripted body");
+    assertEqual(
+      seen,
+      ["parsing:113/113", "building:3/9", "verifying:113/113"],
+      "onProgress fires on change only — never on null, never on an unchanged blob"
+    );
+    assertEqual(final.progress?.phase, "verifying", "the terminal import carries the settled progress");
   } finally {
     restoreFetch();
   }
@@ -6051,14 +6317,17 @@ async function main() {
   await testDatasetRouteSegmentsEncodeEveryCharacter();
   await testListImportsFiltersFormEncoded();
   await testPublishGitSource();
+  await testPublishFetchedSources();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();
+  await testDatasetsPreflight();
   await testPublishManifestDerivedIdentity();
   await testPublishDirectoryWithoutManifestNeedsIdentity();
   await testPublishGitSourceRequiresIdentity();
   await testVersionManifestMapping();
   await testGetImport();
   await testWatchImportPollsToTerminal();
+  await testWatchImportFiresOnProgress();
   await testWatchImportSurvivesRateLimit();
   await testWatchImportSettlesToReady();
   await testWatchImportSurfacesBuildFailure();
