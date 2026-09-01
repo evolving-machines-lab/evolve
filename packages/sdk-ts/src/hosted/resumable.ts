@@ -40,8 +40,25 @@ import { request as httpsRequest } from "node:https";
  * higher: the single-POST door already holds the contract well into the
  * hundreds of MiB, and below this the session bookkeeping is pure overhead.
  * The deviation is recorded in the spec (createDatasetUpload description).
+ *
+ * `let`, not `const`: publish() reads this binding at CALL time
+ * (hosted/index.ts), and the unit suites lower it through
+ * setResumableUploadThresholdBytes below so a KB fixture corpus rides the
+ * resumable door — the same seam the Python suite gets for free by
+ * monkeypatching hosted.RESUMABLE_UPLOAD_THRESHOLD_BYTES
+ * (test_hosted_upload_progress.py). Production never reassigns it.
  */
-export const RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024;
+export let RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Test seam mirroring the Python SDK's module-global monkeypatch: ESM
+ * forbids assigning to an imported binding from outside the module, so the
+ * TS suites lower (and afterwards restore) the live binding through this
+ * setter instead. Not re-exported from the package entry — it is not API.
+ */
+export function setResumableUploadThresholdBytes(bytes: number): void {
+  RESUMABLE_UPLOAD_THRESHOLD_BYTES = bytes;
+}
 
 /** Harbor's chunk size, verbatim (resumable.py:21) — and one S3 part each. */
 export const RESUMABLE_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024;

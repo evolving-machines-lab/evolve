@@ -126,3 +126,41 @@ def test_resumable_branch_fires_on_upload_progress(corpus):
         hosted.RESUMABLE_UPLOAD_THRESHOLD_BYTES = original_threshold
         hosted.RESUMABLE_UPLOAD_CHUNK_BYTES = original_chunk
         server.shutdown()
+
+
+def test_resumable_branch_fires_on_registered_before_first_progress(corpus):
+    """Register-first through the PUBLIC ``publish()``: the session open's
+    ``import_id`` must reach ``on_registered`` — once, with the id, and
+    BEFORE the first ``on_upload_progress`` event — or a watcher cannot
+    attach mid-upload. The transport test drives ``_upload_archive_resumable``
+    directly; this is the pin on the ``publish()`` →
+    ``_upload_directory_archive`` forwarding above it."""
+    hosted = sys.modules['evolve.hosted']
+    original_threshold = hosted.RESUMABLE_UPLOAD_THRESHOLD_BYTES
+    original_chunk = hosted.RESUMABLE_UPLOAD_CHUNK_BYTES
+    hosted.RESUMABLE_UPLOAD_THRESHOLD_BYTES = 1
+    hosted.RESUMABLE_UPLOAD_CHUNK_BYTES = 1024
+    server, sessions = make_server({'import_id': 'imp-42'})
+    try:
+        events: 'list[tuple]' = []
+        config = HostedClientConfig(
+            api_key='k', base_url=f'http://127.0.0.1:{server.server_address[1]}'
+        )
+        job = asyncio.run(
+            datasets_factory(config).publish(
+                directory=corpus,
+                name='prog-set',
+                version='0.1',
+                on_registered=lambda import_id: events.append(('registered', import_id)),
+                on_upload_progress=lambda sent, total: events.append(('progress', sent, total)),
+            )
+        )
+        assert job.id == 'version-1'  # the transfer still completes normally
+        registered = [event for event in events if event[0] == 'registered']
+        assert registered == [('registered', 'imp-42')], 'exactly once, with the id'
+        assert events[0] == ('registered', 'imp-42'), 'before the FIRST progress event'
+        assert any(event[0] == 'progress' for event in events), 'progress still fired after it'
+    finally:
+        hosted.RESUMABLE_UPLOAD_THRESHOLD_BYTES = original_threshold
+        hosted.RESUMABLE_UPLOAD_CHUNK_BYTES = original_chunk
+        server.shutdown()

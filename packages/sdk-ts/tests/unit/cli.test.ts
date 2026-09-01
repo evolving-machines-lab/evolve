@@ -163,6 +163,11 @@ import {
 } from "../../src/cli/index.ts";
 import type { CliIO } from "../../src/cli/index.ts";
 import type { Trial } from "../../src/hosted/types.ts";
+import {
+  RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+  setResumableUploadThresholdBytes,
+} from "../../src/hosted/resumable.ts";
+import { listen, sessionServer } from "./hosted-session-server.ts";
 
 const BASE = "http://localhost:3000";
 
@@ -5916,6 +5921,138 @@ async function testDatasetPublishJsonIsOneDocument() {
 }
 
 /**
+ * Register-first, publish side (the resumable chunked door): the session
+ * open pre-creates the import and the CLI surfaces its id BEFORE the bytes
+ * finish — the human "Registered import" line, the `--watch --json` NDJSON
+ * `import.registered` event, and the non-watch --json SUPPRESSION (one
+ * parseable document, the header's law). Driven end to end over the REAL
+ * fixture server: create and chunk PATCHes ride fetch but the finalize
+ * rides node:http, which no fetch mock can reach; the 256 MiB door is
+ * lowered through the same seam the Python suite monkeypatches
+ * (test_hosted_upload_progress.py).
+ */
+async function testDatasetPublishRegisterFirst() {
+  const originalThreshold = RESUMABLE_UPLOAD_THRESHOLD_BYTES;
+  setResumableUploadThresholdBytes(1);
+  const dir = await mkdtemp(join(tmpdir(), "evolve-cli-register-first-"));
+  await mkdir(join(dir, "tasks", "abc"), { recursive: true });
+  await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
+  const publishArgs = (base: string, ...extra: string[]) => [
+    "dataset", "publish", "--dir", dir, "--name", "my-bench", "--version", "1.0",
+    "--skip-preflight", ...extra, "--api-key", "test-key", "--base-url", base,
+  ];
+  try {
+    console.log("\n--- runCli: dataset publish (human) prints the Registered line before the upload ---");
+    {
+      const { server, sessions, url } = sessionServer({ importId: "imp-42" });
+      await listen(server);
+      try {
+        const { io, out, err } = captureIO();
+        const code = await runCli(publishArgs(url()), io);
+        assertEqual(code, 0, "the publish succeeds over the resumable door");
+        assertEqual(err, [], "nothing on stderr");
+        assert([...sessions.values()][0]?.completed === 1, "the corpus rode the session door");
+        const registeredAt = out.findIndex(
+          (l) => l === "Registered import imp-42 — re-attach anytime with: evolve dataset watch imp-42"
+        );
+        assert(registeredAt !== -1, "the human line names the id and the re-attach command verbatim");
+        const firstUploadAt = out.findIndex((l) => l.startsWith("upload "));
+        assert(firstUploadAt !== -1, "upload progress still renders");
+        assert(
+          registeredAt !== -1 && firstUploadAt !== -1 && registeredAt < firstUploadAt,
+          "and the Registered line comes BEFORE the first progress line"
+        );
+        assert(
+          out.some((l) => l.includes("Follow it with: evolve dataset show my-bench")),
+          "the non-watch human epilogue still renders"
+        );
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    }
+
+    console.log("\n--- runCli: dataset publish --watch --json opens with import.registered before import.created ---");
+    {
+      const { server, sessions, url } = sessionServer({
+        importId: "imp-42",
+        // The watch's polls land OUTSIDE the upload-session routes: the
+        // import read (COMPLETED at once) and the settle phase's dataset
+        // detail (READY, active) — the same bodies the mock-fetch watch
+        // tests serve.
+        onOther: (req, res) => {
+          const reqUrl = req.url ?? "";
+          if (reqUrl.startsWith("/api/datasets/imports/version-1")) {
+            res.statusCode = 200;
+            res.setHeader("content-type", "application/json");
+            res.end(
+              JSON.stringify({
+                id: "version-1", status: "COMPLETED", name: "my-bench", version: "1.0",
+                task_count: 1, failure: null, warnings: [], progress: null,
+              })
+            );
+            return true;
+          }
+          if (reqUrl.startsWith("/api/datasets/my-bench")) {
+            res.statusCode = 200;
+            res.setHeader("content-type", "application/json");
+            res.end(
+              JSON.stringify(
+                publishDetailBody({ name: "my-bench", version: "1.0", state: "READY", active: true })
+              )
+            );
+            return true;
+          }
+          return false;
+        },
+      });
+      await listen(server);
+      try {
+        const { io, out, err } = captureIO();
+        const code = await runCli(publishArgs(url(), "--watch", "--json"), io);
+        assertEqual(code, 0, "the watched publish settles READY and exits 0");
+        assertEqual(err, [], "nothing on stderr");
+        const events = out.map((l) => JSON.parse(l) as Record<string, unknown>);
+        const registeredAt = events.findIndex((e) => e.kind === "import.registered");
+        const createdAt = events.findIndex((e) => e.kind === "import.created");
+        assert(registeredAt !== -1, "the NDJSON stream carries kind import.registered");
+        assertEqual(events[registeredAt]?.import_id, "imp-42", "with the session open's import id");
+        assert(
+          createdAt !== -1 && registeredAt !== -1 && registeredAt < createdAt,
+          "and it opens the stream BEFORE import.created — attachable before the 202"
+        );
+        assertEqual(events[events.length - 1]?.kind, "import.final", "the stream still settles to import.final");
+        assert([...sessions.values()][0]?.completed === 1, "the corpus rode the session door");
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    }
+
+    console.log("\n--- runCli: dataset publish --json (non-watch) suppresses the registered event ---");
+    {
+      const { server, url } = sessionServer({ importId: "imp-42" });
+      await listen(server);
+      try {
+        const { io, out } = captureIO();
+        const code = await runCli(publishArgs(url(), "--json"), io);
+        assertEqual(code, 0, "the publish succeeds");
+        assertEqual(
+          out.length, 1,
+          "stdout is exactly ONE document — the registered event never rides non-watch --json"
+        );
+        const parsed = JSON.parse(out[0]) as Record<string, unknown>;
+        assertEqual(parsed.id, "version-1", "the one document is the bare import");
+        assert(!("kind" in parsed), "no NDJSON kind wrapper outside --watch");
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    }
+  } finally {
+    setResumableUploadThresholdBytes(originalThreshold);
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Solutions archiving disabled is a warning about the missing
  * reference-solution record, never a settling dead end — the same publish
  * settles READY like any other and exits 0.
@@ -7285,6 +7422,7 @@ async function main() {
   await testDatasetCheck();
   await testDatasetPublishRunsPreflightFirst();
   await testDatasetPublishJsonIsOneDocument();
+  await testDatasetPublishRegisterFirst();
   await testDatasetPublishWatchArchivingDisabled();
   await testDatasetPublishFailedAndErrors();
   await testPartialPublishCliSurfaces();
