@@ -40,8 +40,25 @@ import { request as httpsRequest } from "node:https";
  * higher: the single-POST door already holds the contract well into the
  * hundreds of MiB, and below this the session bookkeeping is pure overhead.
  * The deviation is recorded in the spec (createDatasetUpload description).
+ *
+ * `let`, not `const`: publish() reads this binding at CALL time
+ * (hosted/index.ts), and the unit suites lower it through
+ * setResumableUploadThresholdBytes below so a KB fixture corpus rides the
+ * resumable door — the same seam the Python suite gets for free by
+ * monkeypatching hosted.RESUMABLE_UPLOAD_THRESHOLD_BYTES
+ * (test_hosted_upload_progress.py). Production never reassigns it.
  */
-export const RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024;
+export let RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Test seam mirroring the Python SDK's module-global monkeypatch: ESM
+ * forbids assigning to an imported binding from outside the module, so the
+ * TS suites lower (and afterwards restore) the live binding through this
+ * setter instead. Not re-exported from the package entry — it is not API.
+ */
+export function setResumableUploadThresholdBytes(bytes: number): void {
+  RESUMABLE_UPLOAD_THRESHOLD_BYTES = bytes;
+}
 
 /** Harbor's chunk size, verbatim (resumable.py:21) — and one S3 part each. */
 export const RESUMABLE_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024;
@@ -68,6 +85,14 @@ export interface ResumableUploadPost {
    * signature as the single-request transport's onBytes (upload.ts).
    */
   onBytes?: (sentBytes: number, totalBytes: number) => void;
+  /**
+   * Register-first: called once with the pre-created import id the session
+   * open answered (`import_id`), before the first chunk goes out — the SAME
+   * id the finalize's 202 carries, so a watcher may attach mid-upload. Not
+   * called when the server registered nothing (an older server, or a
+   * name@version that already had a version row).
+   */
+  onRegistered?: (importId: string) => void;
   /** Chunk-size override for tests that prove the loop without 6 MiB buffers. */
   chunkBytes?: number;
   /** Per-request timeout override, for tests. Production takes the default. */
@@ -199,8 +224,14 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
     timeoutMs,
   );
   if (!created.ok) return created;
-  const session = (await created.json()) as { id: string };
+  const session = (await created.json()) as { id: string; import_id?: string | null };
   const sessionUrl = `${sessionsUrl}/${session.id}`;
+  // Register-first: the open pre-created the import — hand its id over
+  // before the first byte moves, so the caller can print/attach a watcher
+  // while the transfer runs.
+  if (typeof session.import_id === "string" && session.import_id !== "") {
+    post.onRegistered?.(session.import_id);
+  }
 
   // The server's current offset — what HEAD re-reads after any stumble
   // (Harbor's recovery, resumable.py:130-135).

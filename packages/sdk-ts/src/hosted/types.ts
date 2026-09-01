@@ -1865,9 +1865,16 @@ export interface TrialList extends Awaitable<TrialPage>, AsyncIterable<Trial> {}
 // DATASETS
 // =============================================================================
 
-/** Dataset version lifecycle state (wire values). Terminal: READY, FAILED, ARCHIVED. */
+/**
+ * Dataset version lifecycle state (wire values). Terminal: READY, FAILED,
+ * ARCHIVED. RECEIVING sits before the walk (register-first): the corpus is
+ * still uploading through its resumable session — the row exists so the
+ * publish is visible from the first byte, and moves to IMPORTING when the
+ * upload completes and the publish is accepted.
+ */
 export type DatasetVersionState =
   | "DRAFT"
+  | "RECEIVING"
   | "IMPORTING"
   | "BUILDING"
   | "READY"
@@ -2407,6 +2414,17 @@ export interface PublishDatasetOptions {
    * in the renderer, not here.
    */
   onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
+  /**
+   * Register-first: called ONCE, the moment the resumable door's session
+   * open pre-creates the import (before any corpus byte moves), with the
+   * import id the eventual 202 will carry. A watcher may attach to it right
+   * away — `datasets().watchImport(importId)`, or `evolve dataset watch`
+   * from any machine. Never called on the single-request door (nothing is
+   * registered: the upload IS the request), on a fetched source, or when
+   * the server registered nothing (an existing name@version, or an older
+   * server).
+   */
+  onRegistered?: (importId: string) => void;
 }
 
 /**
@@ -2525,6 +2543,13 @@ export interface DatasetImport {
   /** Import job id */
   id: string;
   status: DatasetImportStatus;
+  /**
+   * The register-first marker: true exactly while the corpus is still
+   * uploading through its resumable session — the import is QUEUED and
+   * cannot proceed without the client — and false from the moment the
+   * publish is accepted. Absent on servers predating register-first.
+   */
+  receiving?: boolean;
   /** Catalog dataset name the import creates or extends */
   name: string;
   /** Version label of the imported version */

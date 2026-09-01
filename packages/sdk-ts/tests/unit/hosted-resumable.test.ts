@@ -34,12 +34,13 @@
  *   npx tsx tests/unit/hosted-resumable.test.ts
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { listen, sessionServer, sha256 } from "./hosted-session-server.ts";
 import {
   RESUMABLE_UPLOAD_CHUNK_BYTES,
   RESUMABLE_UPLOAD_MAX_ATTEMPTS,
@@ -60,139 +61,8 @@ function assert(condition: boolean, message: string): void {
   }
 }
 
-const sha256 = (data: Buffer): string => createHash("sha256").update(data).digest("hex");
-
-interface SessionState {
-  id: string;
-  size: number;
-  sha256: string;
-  fields: Record<string, string>;
-  received: Buffer[];
-  offset: number;
-  patchOffsets: number[];
-  completed: number;
-}
-
-/**
- * A REAL minimal session server: verifies each chunk's Upload-Checksum,
- * advances the offset, answers HEAD probes, assembles at complete. `faults`
- * lets one test inject exactly one behavior at one moment.
- */
-function sessionServer(faults: {
-  onCreate?: (res: ServerResponse) => boolean;
-  onPatch?: (state: SessionState, req: IncomingMessage, res: ServerResponse) => boolean;
-  onComplete?: (state: SessionState, res: ServerResponse) => boolean;
-}): { server: Server; sessions: Map<string, SessionState>; url: () => string } {
-  const sessions = new Map<string, SessionState>();
-  let nextId = 1;
-  const server = createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk as Buffer));
-    req.on("end", () => {
-      const body = Buffer.concat(chunks);
-      const url = req.url ?? "";
-      if (req.method === "POST" && url === "/api/datasets/publish/uploads") {
-        if (faults.onCreate?.(res)) return;
-        const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
-        const state: SessionState = {
-          id: `up-${nextId++}`,
-          size: parsed.size as number,
-          sha256: parsed.sha256 as string,
-          fields: Object.fromEntries(
-            Object.entries(parsed).filter(([key]) => key !== "size" && key !== "sha256"),
-          ) as Record<string, string>,
-          received: [],
-          offset: 0,
-          patchOffsets: [],
-          completed: 0,
-        };
-        sessions.set(state.id, state);
-        res.statusCode = 201;
-        res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ id: state.id, state: "RECEIVING", offset: 0, size: state.size }));
-        return;
-      }
-      const match = /^\/api\/datasets\/publish\/uploads\/([\w-]+)(\/complete)?$/.exec(url);
-      const state = match ? sessions.get(match[1]) : undefined;
-      if (!match || !state) {
-        res.statusCode = 404;
-        res.end(JSON.stringify({ error: { code: "upload_session_not_found", message: "no" } }));
-        return;
-      }
-      if (req.method === "HEAD") {
-        res.statusCode = 200;
-        res.setHeader("Upload-Offset", String(state.offset));
-        res.setHeader("Upload-Length", String(state.size));
-        res.end();
-        return;
-      }
-      if (req.method === "PATCH") {
-        const offset = Number(req.headers["upload-offset"]);
-        state.patchOffsets.push(offset);
-        if (faults.onPatch?.(state, req, res)) return;
-        if (offset !== state.offset) {
-          res.statusCode = 409;
-          res.setHeader("content-type", "application/json");
-          res.end(
-            JSON.stringify({
-              error: {
-                code: "upload_offset_mismatch",
-                message: "not the next byte",
-                details: { expected_offset: state.offset },
-              },
-            }),
-          );
-          return;
-        }
-        const declared = /^sha256 (.+)$/.exec(String(req.headers["upload-checksum"] ?? ""));
-        const digest = declared ? Buffer.from(declared[1], "base64").toString("hex") : null;
-        if (digest !== sha256(body)) {
-          res.statusCode = 400;
-          res.setHeader("content-type", "application/json");
-          res.end(
-            JSON.stringify({ error: { code: "upload_chunk_digest_mismatch", message: "bad chunk" } }),
-          );
-          return;
-        }
-        state.received.push(body);
-        state.offset += body.length;
-        res.statusCode = 204;
-        res.setHeader("Upload-Offset", String(state.offset));
-        res.end();
-        return;
-      }
-      if (req.method === "POST" && match[2] === "/complete") {
-        if (faults.onComplete?.(state, res)) return;
-        if (state.offset !== state.size) {
-          res.statusCode = 409;
-          res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ error: { code: "upload_incomplete", message: "missing bytes" } }));
-          return;
-        }
-        state.completed += 1;
-        res.statusCode = 202;
-        res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ id: "version-1", status: "QUEUED", name: state.fields.name }));
-        return;
-      }
-      res.statusCode = 405;
-      res.end();
-    });
-  });
-  return {
-    server,
-    sessions,
-    url: () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") throw new Error("no address");
-      return `http://127.0.0.1:${address.port}`;
-    },
-  };
-}
-
-function listen(server: Server): Promise<void> {
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-}
+// The session-server fixture lives in hosted-session-server.ts (one home,
+// shared with the client and CLI suites).
 
 const CHUNK = 64 * 1024;
 
@@ -244,6 +114,50 @@ async function main(): Promise<void> {
       "the last call reports sent == total");
     assert(progress.every(([sent], i) => i === 0 || progress[i - 1][0] < sent),
       "sent advances monotonically");
+    server.close();
+  }
+
+  console.log("\nregister-first — the create's import_id reaches onRegistered before any byte");
+  {
+    const { server, url } = sessionServer({ importId: "imp-42" });
+    await listen(server);
+    const registered: string[] = [];
+    let bytesAtRegister = -1;
+    let sentSoFar = 0;
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: { Authorization: "Bearer k" },
+      file: { path: archivePath },
+      fields: { name: "deep-swe", version: "1.1" },
+      chunkBytes: CHUNK,
+      onBytes: (sent) => (sentSoFar = sent),
+      onRegistered: (importId) => {
+        registered.push(importId);
+        bytesAtRegister = sentSoFar;
+      },
+    });
+    assert(res.status === 202, "the transfer still completes normally");
+    assert(registered.length === 1, "onRegistered fired exactly once");
+    assert(registered[0] === "imp-42", "with the import id the create answered");
+    assert(bytesAtRegister === 0, "BEFORE the first acknowledged chunk — attachable from byte zero");
+    server.close();
+  }
+
+  console.log("\nregister-first — a server that registered nothing calls nothing");
+  {
+    const { server, url } = sessionServer({}); // no import_id in the 201
+    await listen(server);
+    const registered: string[] = [];
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: { Authorization: "Bearer k" },
+      file: { path: archivePath },
+      fields: { name: "deep-swe", version: "1.1" },
+      chunkBytes: CHUNK,
+      onRegistered: (importId) => registered.push(importId),
+    });
+    assert(res.status === 202, "the transfer completes as before");
+    assert(registered.length === 0, "an absent import_id (older server / nothing registered) stays silence");
     server.close();
   }
 

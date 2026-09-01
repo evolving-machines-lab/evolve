@@ -726,6 +726,15 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 0,
         example: "evolve dataset publish --from hub:cookbook/hello-world --watch",
       },
+      watch: {
+        summary:
+          "Re-attach to a publish and follow it to READY/FAILED — the same stream `dataset publish --watch` renders; works after the CLI exited, or from another machine",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<name | import-id>",
+        example: "evolve dataset watch deep-swe",
+      },
       download: {
         summary: "Download the original corpus package (owner only)",
         flags: {
@@ -3325,7 +3334,7 @@ function importFailureText(failure: NonNullable<DatasetImport["failure"]>): stri
 function importLines(job: DatasetImport): string[] {
   const rows: string[][] = [
     ["id", job.id],
-    ["status", job.status],
+    ["status", statusWithReceiving(job)],
   ];
   if (job.name !== undefined) rows.push(["dataset", job.name]);
   if (job.version !== undefined) rows.push(["version", job.version]);
@@ -3410,12 +3419,22 @@ export function progressSettleLines(progress: DatasetImportProgress): string[] {
   ]);
 }
 
+/**
+ * A status word with the register-first marker beside it: a QUEUED import
+ * whose corpus is still uploading reads "QUEUED (receiving)" — same status
+ * vocabulary, the flag the server states (`DatasetImport.receiving`) made
+ * visible instead of sixteen indistinguishable minutes.
+ */
+function statusWithReceiving(job: DatasetImport): string {
+  return job.receiving === true ? `${job.status} (receiving)` : job.status;
+}
+
 /** Compact one-line rendering of one publish status change for --watch. */
 export function importStatusLine(job: DatasetImport): string {
   const parts: string[] = [];
   if (job.task_count !== undefined) parts.push(`tasks=${job.task_count}`);
   if (job.failure) parts.push(truncate(importFailureText(job.failure), 140));
-  return `status ${job.status.padEnd(12)} ${parts.join(" ")}`.trimEnd();
+  return `status ${statusWithReceiving(job).padEnd(12)} ${parts.join(" ")}`.trimEnd();
 }
 
 /**
@@ -4985,11 +5004,27 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   // (REFERENCES/Harbor src/harbor/cli/upload.py:123-135); a line-based CLI
   // keeps the counts and drops the animation. --json stays clean output.
   let lastUploadStep = -1;
+  // Register-first (the resumable chunked door): the session open pre-creates
+  // the import before the first byte moves, and this prints its id so the
+  // transfer is re-attachable from the very start — this terminal dying, or
+  // another machine entirely: `evolve dataset watch <id>`. Non-watch --json
+  // stays ONE parseable document (the header's law), so the event rides
+  // NDJSON only under --watch; human mode prints the line either way.
+  const onRegistered = (importId: string) => {
+    if (json) {
+      if (inv.flags.watch === true) {
+        io.out(JSON.stringify({ kind: "import.registered", import_id: importId }));
+      }
+      return;
+    }
+    io.out(`Registered import ${importId} — re-attach anytime with: evolve dataset watch ${importId}`);
+  };
   const created = await client.publish(
     input,
     json
-      ? undefined
+      ? { onRegistered }
       : {
+          onRegistered,
           onUploadProgress: (sentBytes, totalBytes) => {
             const step = totalBytes > 0 ? Math.floor((sentBytes / totalBytes) * 10) : 10;
             if (step <= lastUploadStep) return;
@@ -5014,19 +5049,45 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     return 0;
   }
 
+  return followImport(client, created, io, json, "created");
+}
+
+/**
+ * THE ONE RENDERING HOME for following a publish to its settled end — the
+ * same stream whether the follower was there from the 202 (`dataset publish
+ * --watch`, opening kind `import.created`) or re-attached later (`dataset
+ * watch`, opening kind `import.attached` — after the CLI exited, or from
+ * another machine). Everything after the opening line is byte-identical
+ * between the two, which is the point: a re-attach is not a second renderer
+ * that can drift.
+ *
+ * The follow runs to the publish's SETTLED end: the version READY (at least
+ * one task built — the partial-publish model; providers build their boot
+ * artifacts lazily at the first trial — and, on an owner dataset, already
+ * ACTIVE) or FAILED. COMPLETED means READY under build-then-READY; the
+ * SDK's settle phase adds one confirming read (and covers a mid-deploy
+ * older server), and the exit code is the settled outcome. --json is NDJSON
+ * (the header's law): `import.created|attached`, then `import.status` /
+ * `import.progress` / `import.version` / `task.failed` events, then
+ * `import.final`.
+ */
+async function followImport(
+  client: ReturnType<typeof datasets>,
+  imported: DatasetImport,
+  io: CliIO,
+  json: boolean,
+  opening: "created" | "attached",
+): Promise<number> {
   if (json) {
-    io.out(JSON.stringify({ kind: "import.created", datasetImport: created }));
+    io.out(JSON.stringify({ kind: `import.${opening}`, datasetImport: imported }));
   } else {
-    io.out(`Publish ${created.id} (${created.name}) ${created.status} — watching…`);
+    io.out(
+      opening === "created"
+        ? `Publish ${imported.id} (${imported.name}) ${imported.status} — watching…`
+        : `Import ${imported.id} (${imported.name}@${imported.version}) ${statusWithReceiving(imported)} — watching…`
+    );
   }
 
-  // The watch follows the publish to its SETTLED end: the version READY
-  // (at least one task built — the partial-publish model; providers build
-  // their boot artifacts lazily at the first trial — and, on an owner
-  // dataset, already ACTIVE) or FAILED. COMPLETED means READY under
-  // build-then-READY;
-  // the SDK's settle phase adds one confirming read (and covers a mid-deploy
-  // older server), and the exit code is the settled outcome.
   let lastVersion: DatasetVersion | null = null;
   let lastDetail: Dataset | null = null;
   // Per-task outcomes (partial-publish model): the server records every
@@ -5048,7 +5109,7 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   };
   let final: DatasetImport;
   try {
-    final = await client.watchImport(created.id, {
+    final = await client.watchImport(imported.id, {
       onStatus: (job) => {
         io.out(json ? JSON.stringify({ kind: "import.status", datasetImport: job }) : importStatusLine(job));
       },
@@ -5118,6 +5179,70 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     }
   }
   return final.status === "FAILED" ? 1 : 0;
+}
+
+/**
+ * `evolve dataset watch <name|import-id>` — re-attach to a publish and render
+ * the SAME stream `dataset publish --watch` renders (followImport, the one
+ * rendering home). Works after the CLI exited, and from another machine: the
+ * argument is tried as an import id first (the more specific address), then
+ * as a dataset name — the newest QUEUED/RUNNING import of that dataset. A
+ * terminal import id still renders its settled block (exit 0/1 by outcome);
+ * a NAME with no live import refuses instead, naming the newest settled
+ * import — attaching a "watch" to something that finished long ago is more
+ * often a typo than an intent.
+ */
+async function cmdDatasetWatch(inv: Invocation, io: CliIO): Promise<number> {
+  const json = inv.flags.json === true;
+  const client = datasets(clientConfig(inv));
+  const ref = inv.positionals[0];
+
+  let imported: DatasetImport | null = null;
+  try {
+    imported = await client.getImport(ref);
+  } catch (error) {
+    // 404 = not an import id; fall through to the name resolution. Every
+    // other failure (auth, rate limit, outage) is real and propagates.
+    if (!(error instanceof EvolveApiError && error.status === 404)) throw error;
+  }
+  if (imported === null) {
+    // Newest first, exactly the list route's order; one page is plenty —
+    // a live import is always among a dataset's newest.
+    const page = await client.listImports({ dataset: ref, limit: 50 });
+    const items = page.items;
+    imported =
+      items.find((job) => job.status === "QUEUED" || job.status === "RUNNING") ?? null;
+    if (imported === null) {
+      const newest = items[0];
+      const detail =
+        newest !== undefined
+          ? `its newest import ${newest.id} is ${newest.status} — see it with: evolve dataset show ${ref}`
+          : "no import id and no dataset of yours carries that name";
+      const message = `Nothing to watch for "${ref}": ${detail}`;
+      if (json) io.out(JSON.stringify({ error: { code: "nothing_to_watch", message } }));
+      io.err(`Error: ${message}`);
+      return 1;
+    }
+  }
+
+  try {
+    return await followImport(client, imported, io, json, "attached");
+  } catch (error) {
+    // Register-first's one honest vanish: a pre-arrival import whose upload
+    // session was abandoned or refused is DELETED (reaper pass 8d /
+    // deleteUnarrivedImport), so a watcher's next poll 404s. That is an
+    // outcome, not a crash — say what it means and exit 1.
+    if (error instanceof EvolveApiError && error.code === "import_not_found") {
+      const message =
+        `Import ${imported.id} no longer exists — its upload was abandoned or ` +
+        "refused before the corpus arrived, so the publish never happened. " +
+        "Re-run the publish to start a new one.";
+      if (json) io.out(JSON.stringify({ error: { code: "import_not_found", message } }));
+      io.err(`Error: ${message}`);
+      return 1;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -5504,6 +5629,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "dataset show": cmdDatasetShow,
   "dataset check": cmdDatasetCheck,
   "dataset publish": cmdDatasetPublish,
+  "dataset watch": cmdDatasetWatch,
   "dataset download": cmdDatasetDownload,
   "dataset activate": cmdDatasetActivate,
   "skill list": cmdSkillList,

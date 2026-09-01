@@ -234,6 +234,11 @@ import {
   NoActiveVersionError,
 } from "../../src/hosted/index.ts";
 import type { JobEvent } from "../../src/hosted/index.ts";
+import {
+  RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+  setResumableUploadThresholdBytes,
+} from "../../src/hosted/resumable.ts";
+import { listen, sessionServer } from "./hosted-session-server.ts";
 // Root-surface check: these documented types must be importable from the
 // package root, not just from hosted/ (compile-time guard for the export block)
 import type { EvalSandboxProvider as RootEvalSandboxProvider } from "../../src/index.ts";
@@ -1128,6 +1133,57 @@ async function testPublishDirectorySource() {
   }
 }
 
+async function testPublishRegisterFirstResumable() {
+  console.log("\n--- datasets().publish() forwards onRegistered through the resumable door ---");
+  // The register-first pin ABOVE the transport: publish() → uploadDirectory
+  // → uploadArchiveResumable must hand the session open's import_id to the
+  // caller BEFORE the first progress event, or a watcher cannot attach
+  // mid-upload. The 256 MiB door is lowered through the same seam the
+  // Python suite monkeypatches (test_hosted_upload_progress.py), so a KB
+  // corpus rides the session door against the REAL fixture server.
+  const originalThreshold = RESUMABLE_UPLOAD_THRESHOLD_BYTES;
+  setResumableUploadThresholdBytes(1);
+  const { server, sessions, url } = sessionServer({ importId: "imp-42" });
+  await listen(server);
+  const dir = await mkdtemp(join(tmpdir(), "evolve-register-first-"));
+  try {
+    await mkdir(join(dir, "tasks", "abc"), { recursive: true });
+    await writeFile(join(dir, "tasks", "abc", "task.toml"), 'schema_version = "1.1"\n');
+
+    const d = datasets({ apiKey: "test-key", baseUrl: url() });
+    const events: Array<["registered", string] | ["progress", number, number]> = [];
+    const imported = await d.publish(
+      { source: { directory: dir }, name: "my-set", version: "0.1" },
+      {
+        onRegistered: (importId) => events.push(["registered", importId]),
+        onUploadProgress: (sent, total) => events.push(["progress", sent, total]),
+      }
+    );
+
+    const state = [...sessions.values()][0];
+    assert(
+      sessions.size === 1 && state.completed === 1,
+      "the publish rode the resumable session door (lowered threshold)"
+    );
+    assertEqual(
+      events.filter((e) => e[0] === "registered"),
+      [["registered", "imp-42"]],
+      "onRegistered fired exactly once, with the session open's import_id"
+    );
+    assert(
+      events[0]?.[0] === "registered",
+      "and BEFORE the first onUploadProgress event — attachable from byte zero"
+    );
+    assert(events.some((e) => e[0] === "progress"), "onUploadProgress still fired after it");
+    assertEqual(imported.id, "version-1", "the finalize's 202 maps as the publish answer");
+    assertEqual(imported.version, "0.1", "carrying the version the create declared");
+  } finally {
+    setResumableUploadThresholdBytes(originalThreshold);
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function testDatasetsPreflight() {
   console.log("\n--- datasets().preflight() posts METADATA ONLY and maps the dry-run answer ---");
   const reply = {
@@ -1479,6 +1535,51 @@ async function testWatchImportPollsToTerminal() {
       { code: "import_failed", message: "task.yaml missing for task abc" },
       "failure detail surfaced on `failure`, never `error` — `error` means the REQUEST failed"
     );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * Register-first: `receiving` maps off the wire, and its flip — the corpus
+ * finishing its upload while status stays QUEUED — fires onStatus instead of
+ * passing silently. The TS twin of the Python pin
+ * (test_watch_import_fires_on_the_receiving_flip), on the code path the
+ * CLI's watch actually rides: the change key must carry receiving alongside
+ * status, or "QUEUED (receiving)" → "QUEUED" is swallowed and the watcher
+ * sits through the whole build lead-in without a line.
+ */
+async function testWatchImportFiresOnReceivingFlip() {
+  console.log("\n--- datasets().watchImport() fires onStatus on the receiving flip ---");
+  installMockFetch();
+  try {
+    const job = { id: "imp-1", name: "deep-swe", version: "1.2", failure: null, warnings: [] };
+    const statuses = [
+      { ...job, status: "QUEUED", receiving: true, task_count: 0 },
+      { ...job, status: "QUEUED", receiving: false, task_count: 0 },
+      { ...job, status: "COMPLETED", task_count: 113 },
+    ];
+    const counters = installSettleFetch(statuses, [
+      settleDetailBody({ state: "READY", active: true }),
+    ]);
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const seen: string[] = [];
+    const final = await d.watchImport("imp-1", {
+      onStatus: (i) => seen.push(`${i.status}:${i.receiving === true}`),
+      pollIntervalMs: 1,
+    });
+
+    assertEqual(counters.importCalls(), 3, "polled through every scripted body");
+    // Three fires for three observed states — the flip is the middle one.
+    // Status alone is unchanged there (QUEUED → QUEUED), so a change key of
+    // plain status would swallow it.
+    assertEqual(
+      seen,
+      ["QUEUED:true", "QUEUED:false", "COMPLETED:false"],
+      "onStatus fires on the receiving flip, not only on status changes"
+    );
+    assertEqual(final.status, "COMPLETED", "resolves with the terminal import");
   } finally {
     restoreFetch();
   }
@@ -6320,6 +6421,7 @@ async function main() {
   await testPublishFetchedSources();
   await testPublishRequiresGitSource();
   await testPublishDirectorySource();
+  await testPublishRegisterFirstResumable();
   await testDatasetsPreflight();
   await testPublishManifestDerivedIdentity();
   await testPublishDirectoryWithoutManifestNeedsIdentity();
@@ -6327,6 +6429,7 @@ async function main() {
   await testVersionManifestMapping();
   await testGetImport();
   await testWatchImportPollsToTerminal();
+  await testWatchImportFiresOnReceivingFlip();
   await testWatchImportFiresOnProgress();
   await testWatchImportSurvivesRateLimit();
   await testWatchImportSettlesToReady();
