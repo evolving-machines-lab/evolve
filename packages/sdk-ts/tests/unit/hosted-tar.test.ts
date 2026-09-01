@@ -26,14 +26,20 @@
  *     cost ~10x a corpus's size in RSS);
  *   - the size-guarded Buffer wrapper (tarGzipDirectory, kept only for the
  *     sandbox skill mount) returns the same bytes and refuses past its cap;
- *   - an empty directory is valid bytes and a missing one rejects.
+ *   - an empty directory is valid bytes and a missing one rejects;
+ *   - a mixed corpus — incompressible blobs beside text — still unpacks
+ *     bit-exact and deterministically (the gzip member is SEGMENTED: stored
+ *     blocks for entries that sample incompressible, deflate for the rest);
+ *   - an incompressible corpus packs several-fold faster than deflating it
+ *     at level 9 — the law the segmentation exists for (a 7.7 GB corpus of
+ *     already-compressed blobs once spent ~14 minutes recompressing for ~2%).
  *
  * Usage:
  *   npm run test:unit:hosted-tar
  *   npx tsx tests/unit/hosted-tar.test.ts
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -49,7 +55,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { extract } from "tar-stream";
 
 import { tarGzipDirectory, tarGzipDirectoryToFile } from "../../src/hosted/tar.ts";
@@ -455,6 +461,90 @@ async function testEmptyDirectory(): Promise<void> {
   }
 }
 
+/**
+ * A corpus mixing incompressible blobs with text crosses every segment
+ * boundary the writer has — archive opens stored, switches to deflate,
+ * switches back, and closes stored (names are chosen so the sort puts a
+ * blob first and last). Everything must still unpack bit-exact through a
+ * plain gunzip, and the digest must not move between runs.
+ */
+async function testMixedCorpusRoundTrips(): Promise<void> {
+  console.log("\n[11] A mixed corpus round-trips across segment switches");
+  const MB = 1024 * 1024;
+  // Deterministic incompressible-looking bytes; odd length exercises the
+  // final partial stored block.
+  const blob = Buffer.allocUnsafe(3 * MB + 12345);
+  for (let i = 0; i < blob.length; i += 4) {
+    blob.writeUInt32LE(Math.imul(i ^ 0x9e3779b9, 2654435761) >>> 0, Math.min(i, blob.length - 4));
+  }
+  const text = Buffer.from("a compressible line of corpus text\n".repeat(60000)); // ~2MB
+  const root = fixture((r) => {
+    write(r, "task.toml", "id = 'mixed'\n");
+    write(r, "tests/verify.py", "assert True\n");
+  });
+  writeFileSync(join(root, "aaa-first.bin"), blob);
+  writeFileSync(join(root, "notes.md"), text);
+  writeFileSync(join(root, "zzz-last.bin"), blob);
+  try {
+    const a = await pack(root);
+    const b = await pack(root);
+    assertEqual(sha256(a), sha256(b), "a mixed corpus is still deterministic");
+    const byName = new Map((await unpack(a)).map((e) => [e.name, e]));
+    assertEqual(
+      [...byName.keys()].length,
+      5,
+      "all five entries arrive"
+    );
+    assert(byName.get("aaa-first.bin")!.content.equals(blob), "a stored entry at the archive's head round-trips bit-exact");
+    assert(byName.get("zzz-last.bin")!.content.equals(blob), "a stored entry at the archive's tail round-trips bit-exact");
+    assert(byName.get("notes.md")!.content.equals(text), "a deflated entry between them round-trips bit-exact");
+    // Smaller than its raw content: the blobs ride ~1:1, so only a working
+    // deflate segment can make up the difference.
+    assert(a.length < 2 * blob.length + text.length, "the deflate segment still compresses the text");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The law the segmented member exists for: a corpus that cannot compress is
+ * PACKED, not recompressed. Measured relative to deflating the same bytes at
+ * level 9 in the same process, so machine speed cancels out; the stored path
+ * runs ~10x faster than the deflate path, and the old always-deflate engine
+ * sat at ~1x — the halfway bound is far from both.
+ */
+async function testIncompressibleCorpusPacksFast(): Promise<void> {
+  console.log("\n[12] An incompressible corpus packs without recompression");
+  const MB = 1024 * 1024;
+  const blob = randomBytes(32 * MB);
+  const root = fixture((r) => write(r, "task.toml", "id = 'blob'\n"));
+  writeFileSync(join(root, "weights.bin"), blob);
+  const outDir = mkdtempSync(join(tmpdir(), "hosted-tar-fast-"));
+  try {
+    const t9 = performance.now();
+    gzipSync(blob, { level: 9 });
+    const deflateMs = performance.now() - t9;
+
+    const t = performance.now();
+    await tarGzipDirectoryToFile(root, join(outDir, "blob.tar.gz"));
+    const packMs = performance.now() - t;
+
+    assert(
+      packMs * 2 < deflateMs,
+      `packing 32MB of incompressible bytes beats half a level-9 deflate of them ` +
+        `(pack ${packMs.toFixed(0)}ms vs deflate ${deflateMs.toFixed(0)}ms)`
+    );
+    const entries = await unpack(readFileSync(join(outDir, "blob.tar.gz")));
+    assert(
+      entries.find((e) => e.name === "weights.bin")!.content.equals(blob),
+      "the stored blob round-trips bit-exact"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
 /** A directory that is not there rejects; it never resolves to empty bytes. */
 async function testMissingDirectoryRejects(): Promise<void> {
   console.log("\n[10] A missing directory rejects");
@@ -488,6 +578,8 @@ async function main(): Promise<void> {
   await testBufferWrapper();
   await testEmptyDirectory();
   await testMissingDirectoryRejects();
+  await testMixedCorpusRoundTrips();
+  await testIncompressibleCorpusPacksFast();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

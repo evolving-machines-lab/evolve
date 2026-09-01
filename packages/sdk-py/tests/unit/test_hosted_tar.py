@@ -24,6 +24,11 @@ Tests:
   ever held whole in memory (the F1 incident: the old bytes-returning path
   cost ~10x a corpus's size in RSS through the upload stack)
 - an empty directory is a valid empty archive; a missing one raises
+- a mixed corpus — incompressible blobs beside text — unpacks bit-exact and
+  deterministically (the gzip member is SEGMENTED: stored blocks for entries
+  that sample incompressible, deflate for the rest)
+- an incompressible corpus packs several-fold faster than deflating it at
+  level 9 — the law the segmentation exists for
 """
 
 import gzip
@@ -32,7 +37,9 @@ import io
 import os
 import tarfile
 import tempfile
+import time
 import tracemalloc
+import zlib
 
 import pytest
 
@@ -274,3 +281,78 @@ class TestStreamingAndEdges:
     def test_missing_directory_raises(self, tmp_path):
         with pytest.raises(ValueError, match='directory not found'):
             _tar_gzip_directory(str(tmp_path / 'nope'))
+
+
+# =============================================================================
+# SEGMENTED GZIP MEMBER (stored blocks for incompressible entries)
+# =============================================================================
+
+
+def _incompressible(length: int) -> bytes:
+    """Deterministic bytes that deflate cannot shrink (mixed multiplies)."""
+    out = bytearray(length)
+    for i in range(length):
+        out[i] = (i * 131 + (i >> 7) * 31 + (i >> 13) * 17 + (i * i >> 9)) & 0xFF
+    return bytes(out)
+
+
+class TestSegmentedMember:
+    """Entries that sample incompressible ride STORED deflate blocks; the
+    member stays ONE standard gzip stream any gunzip reads. Mirrors the
+    TypeScript suite's [11]/[12]."""
+
+    def test_mixed_corpus_round_trips_across_segment_switches(self, tmp_path):
+        # Archive opens stored, switches to deflate, switches back, closes
+        # stored (the sort puts a blob first and last); the odd blob length
+        # exercises the final partial stored block.
+        blob = _incompressible(3 * 1024 * 1024 + 12345)
+        text = b'a compressible line of corpus text\n' * 60000
+        write(tmp_path, 'task.toml', b"id = 'mixed'\n")
+        write(tmp_path, 'tests/verify.py', b'assert True\n')
+        write(tmp_path, 'aaa-first.bin', blob)
+        write(tmp_path, 'notes.md', text)
+        write(tmp_path, 'zzz-last.bin', blob)
+
+        first = _tar_gzip_directory(str(tmp_path))
+        second = _tar_gzip_directory(str(tmp_path))
+
+        assert sha256(first) == sha256(second), 'a mixed corpus is still deterministic'
+        by_name = {member.name: content for member, content in unpack(first)}
+        assert len(by_name) == 5
+        assert by_name['aaa-first.bin'] == blob
+        assert by_name['zzz-last.bin'] == blob
+        assert by_name['notes.md'] == text
+        # Smaller than its raw content: the blobs ride ~1:1, so only a working
+        # deflate segment can make up the difference.
+        assert len(first) < 2 * len(blob) + len(text), 'the deflate segment still compresses the text'
+        # Plain gzip reads the segmented member — the format did not fork.
+        assert len(gzip.decompress(first)) > 2 * len(blob)
+
+    def test_incompressible_corpus_packs_without_recompression(self, tmp_path):
+        # The law the segmented member exists for: a corpus that cannot
+        # compress is PACKED, not recompressed. Measured relative to a
+        # level-9 deflate of the same bytes in the same process, so machine
+        # speed cancels out; the stored path runs ~20x faster than the
+        # deflate path, and the old always-deflate engine sat at ~1x — the
+        # halfway bound is far from both.
+        blob = os.urandom(32 * 1024 * 1024)
+        corpus = tmp_path / 'corpus'
+        write(corpus, 'task.toml', b"id = 'blob'\n")
+        write(corpus, 'weights.bin', blob)
+        out = str(tmp_path / 'blob.tar.gz')
+
+        t9 = time.perf_counter()
+        zlib.compress(blob, 9)
+        deflate_seconds = time.perf_counter() - t9
+
+        t = time.perf_counter()
+        _tar_gzip_directory_to_file(str(corpus), out)
+        pack_seconds = time.perf_counter() - t
+
+        assert pack_seconds * 2 < deflate_seconds, (
+            f'packing 32MB of incompressible bytes must beat half a level-9 '
+            f'deflate of them (pack {pack_seconds:.2f}s vs deflate {deflate_seconds:.2f}s)'
+        )
+        with open(out, 'rb') as handle:
+            by_name = {member.name: content for member, content in unpack(handle.read())}
+        assert by_name['weights.bin'] == blob, 'the stored blob round-trips bit-exact'

@@ -20,7 +20,6 @@ the message plus the stable machine-readable ``code``.
 
 import asyncio
 import base64
-import gzip
 import hashlib
 import json
 import math
@@ -29,6 +28,7 @@ import re
 import secrets
 import shutil
 import stat
+import struct
 import tarfile
 import tempfile
 import time
@@ -36,12 +36,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     Any,
     AsyncIterator,
     Awaitable,
+    BinaryIO,
     Callable,
     Dict,
     Iterator,
@@ -4331,6 +4333,125 @@ def _list_corpus_files(root: str) -> 'List[tuple[str, str, int]]':
     return out
 
 
+#: An entry this size or larger is sampled for compressibility; smaller files
+#: always ride DEFLATE — they are metadata and text, and deflating them costs
+#: nothing worth a second file open. Same values as the TypeScript packer.
+_STORED_MIN_SIZE = 64 * 1024
+
+#: How much of an entry's head the compressibility sample reads.
+_STORED_SAMPLE_BYTES = 128 * 1024
+
+#: The deflate format's cap on one stored block's payload (16-bit length
+#: field), and therefore the block unit of a STORED segment.
+_STORED_BLOCK_MAX = 65535
+
+
+def _should_store(abs_path: str, size: int) -> bool:
+    """Does this entry ride STORED? True when deflate cannot meaningfully
+    shrink a sample of the file's head: level-1 deflate of the first 128 KiB
+    keeps >= 95% of its size. Already-compressed data sits at ~100% under
+    every level; text sits under ~60% even at level 1 — the classes are far
+    apart, so the threshold is not delicate. The cost of a misread is bounded
+    and one-sided per direction: a stored-but-compressible tail costs archive
+    size, a deflated-but-incompressible file costs only the CPU this feature
+    exists to save. The decision reads content, so it is deterministic. Same
+    heuristic, thresholds and arithmetic as the TypeScript packer.
+    """
+    if size < _STORED_MIN_SIZE:
+        return False
+    with open(abs_path, 'rb') as handle:
+        sample = handle.read(_STORED_SAMPLE_BYTES)
+    if not sample:
+        return False
+    deflated = len(zlib.compress(sample, 1))
+    return deflated * 20 >= len(sample) * 19  # kept >= 95% — cannot compress
+
+
+class _SegmentedGzipWriter:
+    """Writes ONE standard gzip member as a sequence of segments: DEFLATE
+    segments (level 9) for compressible bytes, STORED segments (raw copy in
+    length-prefixed deflate blocks, no compression CPU) for bytes that cannot
+    compress. ``set_stored`` switches segments — only ever called between tar
+    entries, so a switch point is a function of corpus content.
+
+    The member is assembled by hand — fixed 10-byte header, raw deflate body,
+    crc32 + length trailer — because Python's zlib exposes no deflateParams:
+    a ``GzipFile`` cannot change level mid-member. Both segment kinds end
+    byte-aligned (deflate segments via Z_SYNC_FLUSH), so segments concatenate
+    into one valid deflate stream that any inflater reads — the server's
+    extraction is untouched. A DEFLATE segment is one streaming compressobj,
+    so its ratio matches a plain gzip of the same bytes; a STORED segment is
+    framed in 65535-byte blocks, greedily per segment, so the block layout is
+    a function of content alone — never of how writes were chunked.
+
+    ``tarfile`` writes through this as its ``fileobj`` (it only ever calls
+    ``write``/``tell``); held memory is O(block).
+    """
+
+    #: CM=8 (deflate), no flags, MTIME 0, XFL 0, OS 255 (unknown).
+    _HEADER = b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff'
+    #: BFINAL stored block with an empty payload: terminates the member.
+    _FINAL_BLOCK = b'\x01\x00\x00\xff\xff'
+
+    def __init__(self, sink: BinaryIO) -> None:
+        self._sink = sink
+        self._crc = 0
+        self._plain_length = 0
+        self._held = bytearray()
+        self._deflater: 'Optional[zlib._Compress]' = None
+        self._stored = False
+        sink.write(self._HEADER)
+
+    def set_stored(self, stored: bool) -> None:
+        """Switch segment kind. Only valid between tar entries."""
+        if stored == self._stored:
+            return
+        self._finish_segment()
+        self._stored = stored
+
+    def write(self, data: bytes) -> int:
+        self._crc = zlib.crc32(data, self._crc)
+        self._plain_length += len(data)
+        if self._stored:
+            self._held += data
+            while len(self._held) >= _STORED_BLOCK_MAX:
+                self._emit_stored_block(bytes(self._held[:_STORED_BLOCK_MAX]))
+                del self._held[:_STORED_BLOCK_MAX]
+        else:
+            if self._deflater is None:
+                self._deflater = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+            out = self._deflater.compress(data)
+            if out:
+                self._sink.write(out)
+        return len(data)
+
+    def tell(self) -> int:
+        return self._plain_length
+
+    def close(self) -> None:
+        """Flush the remainder, terminate the deflate stream, write the trailer."""
+        self._finish_segment()
+        self._sink.write(self._FINAL_BLOCK)
+        self._sink.write(
+            struct.pack('<II', self._crc & 0xFFFFFFFF, self._plain_length & 0xFFFFFFFF)
+        )
+
+    def _emit_stored_block(self, block: bytes) -> None:
+        # 00 (BFINAL=0, BTYPE=stored) + LEN + ~LEN, then the bytes verbatim.
+        n = len(block)
+        self._sink.write(b'\x00' + struct.pack('<HH', n, n ^ 0xFFFF) + block)
+
+    def _finish_segment(self) -> None:
+        if self._stored:
+            if self._held:
+                self._emit_stored_block(bytes(self._held))
+                self._held.clear()
+        elif self._deflater is not None:
+            # Byte-aligned, BFINAL never set — the next segment appends cleanly.
+            self._sink.write(self._deflater.flush(zlib.Z_SYNC_FLUSH))
+            self._deflater = None
+
+
 def _tar_gzip_directory_to_file(directory: str, out_path: str) -> None:
     """Deterministically tar + gzip a corpus directory into ``out_path``.
 
@@ -4341,13 +4462,23 @@ def _tar_gzip_directory_to_file(directory: str, out_path: str) -> None:
     0o755 / 0o644 — a verifier or solution script that arrives without +x
     cannot run.
 
-    Contents match the TypeScript packer: every dotfile except ".git",
-    ".DS_Store" and ".venv" is packed, and symlinks are skipped. The bytes do
-    not match it, because the two languages' gzip implementations differ; the
-    contract is that each SDK is reproducible on its own.
+    The gzip member is segmented per entry (``_SegmentedGzipWriter``): an
+    entry whose head samples as incompressible (``_should_store``) rides in
+    STORED blocks — no compression CPU spent — and everything else rides
+    DEFLATE at level 9. Real corpora ship already-compressed blobs, and
+    gzipping those again once cost ~14 of a 16-minute publish for a 7.7 GB
+    corpus while saving ~2% of its size. The output is still one standard
+    gzip member wrapping the same tar bytes as before — any gunzip reads it —
+    but its compressed layout (and so the archive digest) moved, once, with
+    this version; provenance is per-upload, so nothing breaks.
 
-    Everything flows in O(read-buffer) memory: files stream off disk through
-    the tar writer a read buffer at a time, and the compressed output streams
+    Contents match the TypeScript packer, and so does the stored/deflate
+    decision per entry. The bytes do not match it, because the two languages'
+    deflate streams differ; the contract is that each SDK is reproducible on
+    its own.
+
+    Everything flows in O(block) memory: files stream off disk through the
+    tar writer a read buffer at a time, and the compressed output streams
     to ``out_path`` — the archive is never held in memory (the old
     bytes-returning path cost ~10x a corpus's size in RSS through the upload
     stack and crashed a machine on a 7.7 GB corpus; ``_multipart_file_body``
@@ -4359,31 +4490,29 @@ def _tar_gzip_directory_to_file(directory: str, out_path: str) -> None:
     files = _list_corpus_files(root)
 
     with open(out_path, 'wb') as sink:
-        # filename='' suppresses the gzip FNAME header field: with a real
-        # file object GzipFile would otherwise embed the (random) temp file's
-        # name in the bytes, moving the digest per run. The old in-memory sink
-        # had no .name, so no FNAME — '' keeps the bytes exactly what they
-        # always were.
-        with gzip.GzipFile(
-            fileobj=sink, mode='wb', mtime=0, compresslevel=9, filename=''
-        ) as gz:
-            # PAX rather than USTAR: a corpus path longer than the 100-byte
-            # USTAR name field is a hard error there, and the TypeScript
-            # packer accepts it. PAX emits an extended header only for the
-            # entries that need one, so ordinary names keep the same layout.
-            with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tar:
-                for rel, abs_path, mode in files:
-                    info = tarfile.TarInfo(name=rel)
-                    info.size = os.path.getsize(abs_path)
-                    info.mtime = 0
-                    info.mode = mode
-                    info.uid = 0
-                    info.gid = 0
-                    info.uname = ''
-                    info.gname = ''
-                    info.type = tarfile.REGTYPE
-                    with open(abs_path, 'rb') as handle:
-                        tar.addfile(info, handle)
+        gz = _SegmentedGzipWriter(sink)
+        # PAX rather than USTAR: a corpus path longer than the 100-byte
+        # USTAR name field is a hard error there, and the TypeScript
+        # packer accepts it. PAX emits an extended header only for the
+        # entries that need one, so ordinary names keep the same layout.
+        with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tar:  # type: ignore[call-overload]
+            for rel, abs_path, mode in files:
+                size = os.path.getsize(abs_path)
+                # tarfile writes straight through its fileobj, so a switch
+                # here lands exactly between two entries' bytes.
+                gz.set_stored(_should_store(abs_path, size))
+                info = tarfile.TarInfo(name=rel)
+                info.size = size
+                info.mtime = 0
+                info.mode = mode
+                info.uid = 0
+                info.gid = 0
+                info.uname = ''
+                info.gname = ''
+                info.type = tarfile.REGTYPE
+                with open(abs_path, 'rb') as handle:
+                    tar.addfile(info, handle)
+        gz.close()
 
 
 # =============================================================================
