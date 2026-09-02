@@ -37,6 +37,10 @@ from .hosted import (
     EFFORT_SUPPORT_VALUES,
     ActiveDataset,
     Agent,
+    AnalysesClient,
+    AnalysisPage,
+    AnalysisStatus,
+    JobListScope,
     AgentArm,
     AgentCapability,
     AgentDatasetStats,
@@ -365,6 +369,16 @@ def trials(config: Optional[HostedClientConfig] = None) -> TrialsClient:
     return TrialsClient(config)
 
 
+def analyses(config: Optional[HostedClientConfig] = None) -> AnalysesClient:
+    """Create a standalone hosted-evals analyses client.
+
+    The catalog of trace-analysis runs (``list()``), each row carrying the
+    trial, job, and task it judged. Uses EVOLVE_API_KEY unless
+    HostedClientConfig(api_key=...) is provided.
+    """
+    return AnalysesClient(config)
+
+
 def skills(config: Optional[HostedClientConfig] = None) -> SkillsClient:
     """Create a standalone hosted-evals skills client (platform uploads).
 
@@ -505,6 +519,7 @@ __all__ = [
     'AgentsClient',
     'JobsClient',
     'TrialsClient',
+    'AnalysesClient',
     'AuthClient',
     'EvolveAPIError',
     'EvolveDigestMismatchError',
@@ -596,6 +611,9 @@ __all__ = [
     'TrialFilePage',
     'JobPage',
     'TrialPage',
+    'AnalysisPage',
+    'JobListScope',
+    'AnalysisStatus',
     'JobTaskRollupPage',
     'DatasetPage',
     'AgentPage',
@@ -608,6 +626,7 @@ __all__ = [
     'agents',
     'jobs',
     'trials',
+    'analyses',
     'skills',
     'auth',
     'hosted',

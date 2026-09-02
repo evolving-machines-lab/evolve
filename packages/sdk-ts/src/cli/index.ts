@@ -9,9 +9,11 @@
  * same way, as top-level commands: their cli/main.py). Singular
  * nouns are canonical; `job`/`trial`/`analysis`/`dataset`/`skill` also answer
  * to their plurals as hidden aliases, but `agents` does NOT — that word is
- * reserved for the managed-agents CLI and refuses with the reason. The CLI
- * speaks ONLY through the SDK clients (datasets() / agents() / jobs() /
- * trials() / analyses() / skills() / auth()) — no raw HTTP lives here.
+ * reserved for the managed-agents CLI and refuses with the reason. `session`
+ * is the managed-agents lane's first noun here — list and inspect the
+ * sessions your SDK runs recorded, headless. The CLI speaks ONLY through the
+ * SDK clients (datasets() / agents() / jobs() / trials() / analyses() /
+ * skills() / auth() / sessions()) — no raw HTTP lives here.
  *
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
@@ -26,9 +28,11 @@ import { LineCounter, type Tags, parse as parseYaml, parseDocument } from "yaml"
 import { parse as parseToml } from "smol-toml";
 import {
   ANALYSIS_ARTIFACT_STREAMS,
+  ANALYSIS_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
   ImportSettleError,
+  JOB_LIST_SCOPES,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -55,6 +59,7 @@ import type {
   AgentArmInput,
   AgentInput,
   AnalysisArtifactStream,
+  AnalysisStatus,
   AnalyzeConfigInput,
   AuthStatus,
   CompareResponse,
@@ -73,6 +78,7 @@ import type {
   JobAnalysisStats,
   JobCreate,
   JobEvent,
+  JobListScope,
   JobSecretRef,
   JobSecretInline,
   JobTaskRollup,
@@ -96,6 +102,8 @@ import {
   type ManagedSecretMetadata,
   type ManagedSecretsClientConfig,
 } from "../managed-secrets";
+import { sessions } from "../sessions";
+import type { SessionInfo, SessionsConfig } from "../sessions/types";
 
 // =============================================================================
 // GRAMMAR
@@ -154,6 +162,17 @@ const LIST_FLAGS: Record<string, FlagSpec> = {
   quiet: { kind: "boolean", short: "q", help: "Print only ids, one per line (for piping)" },
   "no-trunc": { kind: "boolean", help: "Full cell content instead of one-line truncation" },
   "no-headers": { kind: "boolean", help: "Omit the header row in piped (TSV) output" },
+};
+
+/**
+ * Harbor's `--scope` (their `harbor hub job list`, cli/hub.py:816): the one
+ * visibility knob every scoped list carries. `all` is deliberately not
+ * offered — Harbor's `all` adds public rows, and nothing hosted is public.
+ */
+const SCOPE_FLAG: FlagSpec = {
+  kind: "string",
+  value: "<my|shared>",
+  help: "Visibility scope: my (what you created, the default) | shared (your organizations' rows that teammates created)",
 };
 
 const JOB_START_FLAGS: Record<string, FlagSpec> = {
@@ -371,10 +390,11 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve job start -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch",
       },
       list: {
-        summary: "List your jobs (newest first)",
+        summary: "List jobs (newest first): yours, or --scope shared for your teams'",
         flags: {
           ...LIST_FLAGS,
           search: { kind: "string", value: "<text>", help: "Free-text filter over job name and dataset names" },
+          scope: SCOPE_FLAG,
         },
         minPositionals: 0,
         maxPositionals: 0,
@@ -620,8 +640,24 @@ const GROUPS: Record<string, GroupSpec> = {
   // document, the analyzer's own transcript, and its stored artifacts —
   // never the analyzed trial's, which keep their own verbs above.
   analysis: {
-    summary: "Inspect and download trace-analysis runs",
+    summary: "List, inspect, and download trace-analysis runs",
     commands: {
+      list: {
+        summary: "List analysis runs (newest first) with the trial, job, and task each judged",
+        flags: {
+          ...LIST_FLAGS,
+          scope: SCOPE_FLAG,
+          job: { kind: "string", value: "<job-id>", help: "Only analyses of this job's trials (id or an unambiguous prefix)" },
+          status: {
+            kind: "string",
+            value: "<s1,s2,...>",
+            help: `Filter by analysis status (${ANALYSIS_STATUSES.join(", ")})`,
+          },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve analysis list --job cme12ab34 --status failed",
+      },
       show: {
         summary: "Show one analysis run in full (the verdict document)",
         flags: {},
@@ -674,6 +710,35 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<analysis-id>",
         example: "evolve analysis download cma56ef12 --stream trace-stdout",
+      },
+    },
+  },
+  // Managed-agent SESSIONS — the other hosted lane, read-only here: the runs
+  // the SDK's `.run()` recorded to the dashboard, listed and inspected
+  // headless through sessions(). A session has one owner and no
+  // organization, so there is no --scope: `my` is the only visibility.
+  session: {
+    summary: "List and inspect managed-agent sessions",
+    commands: {
+      list: {
+        summary: "List your sessions (newest first)",
+        flags: {
+          ...LIST_FLAGS,
+          state: { kind: "string", value: "<live|ended>", help: "Only live or only ended sessions" },
+          agent: { kind: "string", value: "<name>", help: "Only sessions of this agent harness (exact match)" },
+          "tag-prefix": { kind: "string", value: "<prefix>", help: "Only sessions whose tag starts with this prefix" },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve session list --state ended --tag-prefix qa- -q",
+      },
+      show: {
+        summary: "Show one session in full",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<session-id>",
+        example: "evolve session show 5f2c1a0e-7b3d-4c21-9e10-2f8a6c4d1b7e",
       },
     },
   },
@@ -1028,6 +1093,7 @@ const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
   trials: "trial",
   analyses: "analysis",
+  sessions: "session",
   datasets: "dataset",
   skills: "skill",
   secret: "secrets",
@@ -3520,10 +3586,19 @@ function jobIdIndex(inv: Invocation): Promise<string[]> {
   if (cached) return cached;
   const walk = (async () => {
     const client = jobs(clientConfig(inv));
+    // The index walks the SCOPE the verb names: `analysis list --scope shared
+    // --job <prefix>` resolves the prefix among the teammates' jobs it is
+    // about to list, never among the caller's own — a prefix that could only
+    // ever match the wrong scope's jobs would refuse every time.
+    const scope = parseScopeFlag(inv);
     const ids: string[] = [];
     let cursor: string | undefined;
     do {
-      const page = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+      const page = await client.list({
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+        ...(scope !== undefined ? { scope } : {}),
+      });
       for (const job of page.items) ids.push(job.id);
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
@@ -3578,6 +3653,38 @@ function pageOptions(inv: Invocation): { limit?: number; cursor?: string } {
     ...(inv.flags.limit !== undefined ? { limit: inv.flags.limit as number } : {}),
     ...(inv.flags.cursor !== undefined ? { cursor: String(inv.flags.cursor) } : {}),
   };
+}
+
+/** --scope, validated at the keyboard against the SDK's own vocabulary. */
+function parseScopeFlag(inv: Invocation): JobListScope | undefined {
+  if (inv.flags.scope === undefined) return undefined;
+  const scope = String(inv.flags.scope);
+  if (!(JOB_LIST_SCOPES as readonly string[]).includes(scope)) {
+    throw new CliUsageError(
+      `--scope must be one of: ${JOB_LIST_SCOPES.join(", ")}; got: ${scope}` +
+        (scope === "all" ? " (Harbor's all adds public rows — nothing hosted is public)" : "")
+    );
+  }
+  return scope as JobListScope;
+}
+
+/** --status on `analysis list`: the analysis object's own lowercase ladder. */
+function parseAnalysisStatusFilter(inv: Invocation): AnalysisStatus[] | undefined {
+  if (inv.flags.status === undefined) return undefined;
+  const statuses = String(inv.flags.status)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (statuses.length === 0) {
+    throw new CliUsageError("--status got an empty status list");
+  }
+  const unknown = statuses.filter((s) => !(ANALYSIS_STATUSES as readonly string[]).includes(s));
+  if (unknown.length > 0) {
+    throw new CliUsageError(
+      `--status must name analysis statuses (${ANALYSIS_STATUSES.join(", ")}); got: ${unknown.join(", ")}`
+    );
+  }
+  return statuses as AnalysisStatus[];
 }
 
 function parseStatusFilter(inv: Invocation): TrialStatus[] | undefined {
@@ -3704,10 +3811,12 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdJobList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, JOB_COLUMNS)) return 0;
+  const scope = parseScopeFlag(inv);
   const client = jobs(clientConfig(inv));
   const page = await client.list({
     ...pageOptions(inv),
     ...(inv.flags.search !== undefined ? { search: String(inv.flags.search) } : {}),
+    ...(scope !== undefined ? { scope } : {}),
   });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
@@ -4521,6 +4630,59 @@ async function cmdTrialStop(inv: Invocation, io: CliIO): Promise<number> {
   }
   for (const id of result.already_terminal) io.out(`already terminal ${id}`);
   for (const id of result.not_found) io.out(`not found ${id}`);
+  return 0;
+}
+
+/**
+ * An analysis's money cell, one cell wide like every other (fmtSpend's law):
+ * the settled figure at the analyzer's four-decimal precision; while the run
+ * is live, the usage reading's floor stated as a floor; nothing measured, "-".
+ */
+function fmtAnalysisSpent(a: TrialAnalysis): string {
+  if (typeof a.estimated_cost_usd === "number") return `$${a.estimated_cost_usd.toFixed(4)}`;
+  const live = a.usage?.spent_usd;
+  return typeof live === "number" && a.usage?.provisional ? `at least $${live.toFixed(4)}` : "-";
+}
+
+const ANALYSIS_COLUMNS: ListColumn<TrialAnalysis>[] = [
+  { key: "id", header: "ID", cell: (a) => a.id },
+  { key: "status", header: "STATUS", cell: (a) => a.status },
+  { key: "task", header: "TASK", cell: (a) => a.task_name },
+  { key: "job", header: "JOB", cell: (a) => a.job_id },
+  { key: "trial", header: "TRIAL", cell: (a) => a.trial_id },
+  { key: "model", header: "MODEL", cell: (a) => a.model_name },
+  { key: "attempts", header: "ATTEMPTS", cell: (a) => String(a.attempts ?? 1) },
+  { key: "spent", header: "SPENT", cell: fmtAnalysisSpent },
+  { key: "created", header: "CREATED", cell: (a) => a.created_at },
+  { key: "finished", header: "FINISHED", cell: (a) => a.finished_at ?? "-" },
+];
+const ANALYSIS_DEFAULT_COLUMNS = ["id", "status", "task", "model", "spent", "created"];
+
+async function cmdAnalysisList(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, ANALYSIS_COLUMNS)) return 0;
+  const scope = parseScopeFlag(inv);
+  const status = parseAnalysisStatusFilter(inv);
+  // --job takes a prefix like every verb that names a job.
+  const job = inv.flags.job !== undefined ? await resolveJobId(inv, String(inv.flags.job)) : undefined;
+  const client = analyses(clientConfig(inv));
+  const page = await client.list({
+    ...pageOptions(inv),
+    ...(scope !== undefined ? { scope } : {}),
+    ...(job !== undefined ? { job } : {}),
+    ...(status !== undefined ? { status } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (page.items.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No analyses.");
+    return 0;
+  }
+  renderList(inv, io, page.items, ANALYSIS_COLUMNS, ANALYSIS_DEFAULT_COLUMNS, (a) => a.id);
+  if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
+    io.out(`\nMore: evolve analysis list --cursor ${page.nextCursor}`);
+  }
   return 0;
 }
 
@@ -5456,6 +5618,117 @@ function authStatusLines(status: AuthStatus): string[] {
   return table(rows);
 }
 
+/** sessions() takes the same two knobs as the hosted clients, by its own names. */
+function sessionsConfig(inv: Invocation): SessionsConfig {
+  const config: SessionsConfig = {};
+  if (typeof inv.flags["api-key"] === "string") config.apiKey = inv.flags["api-key"];
+  if (typeof inv.flags["base-url"] === "string") config.dashboardUrl = inv.flags["base-url"];
+  return config;
+}
+
+/**
+ * A session's money cell — the one-home usage reading first (a live session's
+ * floor stated as a floor), the eventually-consistent `cost` when no reading
+ * exists, "-" when the meter never answered.
+ */
+function fmtSessionCost(s: SessionInfo): string {
+  const reading = s.usage;
+  if (reading && typeof reading.spent_usd === "number") {
+    return reading.provisional
+      ? `at least $${reading.spent_usd.toFixed(2)}`
+      : `$${reading.spent_usd.toFixed(2)}`;
+  }
+  return fmtUsd(s.cost);
+}
+
+const SESSION_COLUMNS: ListColumn<SessionInfo>[] = [
+  { key: "id", header: "ID", cell: (s) => s.id },
+  { key: "tag", header: "TAG", cell: (s) => s.tag },
+  { key: "agent", header: "AGENT", cell: (s) => s.agent },
+  { key: "model", header: "MODEL", cell: (s) => s.model ?? "-" },
+  { key: "provider", header: "PROVIDER", cell: (s) => s.provider },
+  { key: "sandbox", header: "SANDBOX", cell: (s) => s.sandboxId ?? "-" },
+  { key: "state", header: "STATE", cell: (s) => s.state },
+  { key: "runtime", header: "RUNTIME", cell: (s) => s.runtimeStatus },
+  { key: "cost", header: "COST", cell: fmtSessionCost },
+  { key: "steps", header: "STEPS", cell: (s) => String(s.stepCount) },
+  { key: "created", header: "CREATED", cell: (s) => s.createdAt },
+  { key: "ended", header: "ENDED", cell: (s) => s.endedAt ?? "-" },
+];
+const SESSION_DEFAULT_COLUMNS = ["id", "tag", "agent", "model", "state", "cost", "created"];
+
+function sessionDetailLines(s: SessionInfo): string[] {
+  const rows: string[][] = [
+    ["id", s.id],
+    ["tag", s.tag],
+    ["agent", s.agent],
+    ["model", s.model ?? "-"],
+    ["provider", s.provider],
+    ["sandbox", s.sandboxId ?? "-"],
+    ["state", s.state],
+    ["runtime", s.runtimeStatus],
+    ["cost", fmtSessionCost(s)],
+  ];
+  if (s.usage) {
+    rows.push([
+      "tokens",
+      `${s.usage.input_tokens ?? "-"} in / ${s.usage.cached_input_tokens ?? "-"} cached / ` +
+        `${s.usage.output_tokens ?? "-"} out` +
+        (s.usage.provisional ? " (provisional)" : ""),
+    ]);
+  }
+  rows.push(["steps", String(s.stepCount)]);
+  if (s.toolStats && Object.keys(s.toolStats).length > 0) {
+    rows.push([
+      "tools",
+      Object.entries(s.toolStats)
+        .map(([name, count]) => `${name} ${count}`)
+        .join(", "),
+    ]);
+  }
+  rows.push(["created", s.createdAt]);
+  rows.push(["ended", s.endedAt ?? "-"]);
+  return table(rows);
+}
+
+async function cmdSessionList(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, SESSION_COLUMNS)) return 0;
+  const state = inv.flags.state === undefined ? undefined : String(inv.flags.state);
+  if (state !== undefined && state !== "live" && state !== "ended") {
+    throw new CliUsageError(`--state must be live or ended; got: ${state}`);
+  }
+  const client = sessions(sessionsConfig(inv));
+  const page = await client.list({
+    ...pageOptions(inv),
+    ...(state !== undefined ? { state } : {}),
+    ...(inv.flags.agent !== undefined ? { agent: String(inv.flags.agent) } : {}),
+    ...(inv.flags["tag-prefix"] !== undefined ? { tagPrefix: String(inv.flags["tag-prefix"]) } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (page.items.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No sessions.");
+    return 0;
+  }
+  renderList(inv, io, page.items, SESSION_COLUMNS, SESSION_DEFAULT_COLUMNS, (s) => s.id);
+  if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
+    io.out(`\nMore: evolve session list --cursor ${page.nextCursor}`);
+  }
+  return 0;
+}
+
+async function cmdSessionShow(inv: Invocation, io: CliIO): Promise<number> {
+  const info = await sessions(sessionsConfig(inv)).get(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(info));
+  } else {
+    for (const line of sessionDetailLines(info)) io.out(line);
+  }
+  return 0;
+}
+
 async function cmdAuthStatus(inv: Invocation, io: CliIO): Promise<number> {
   const status = await auth(clientConfig(inv)).status();
   if (inv.flags.json === true) {
@@ -5624,9 +5897,12 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "trial retry": cmdTrialRetry,
   "trial regrade": cmdTrialRegrade,
   "trial stop": cmdTrialStop,
+  "analysis list": cmdAnalysisList,
   "analysis show": cmdAnalysisShow,
   "analysis trace": cmdAnalysisTrace,
   "analysis download": cmdAnalysisDownload,
+  "session list": cmdSessionList,
+  "session show": cmdSessionShow,
   "dataset list": cmdDatasetList,
   "dataset show": cmdDatasetShow,
   "dataset check": cmdDatasetCheck,

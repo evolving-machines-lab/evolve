@@ -54,6 +54,7 @@ from typing import (
     TypedDict,
     Union,
     get_args,
+    cast,
 )
 
 from . import _http
@@ -471,6 +472,18 @@ TrialStatus = Literal[
     'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED',
 ]
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
+
+#: The list scopes — Harbor's ``--scope`` on ``harbor hub job list`` (their
+#: cli/hub.py list_jobs_cmd: my | shared | all). ``my`` is what you created;
+#: ``shared`` is what your organizations' other members created — every row
+#: the per-id doors already open for you that is not your own. Harbor's
+#: ``all`` adds public rows; nothing hosted is public, so the server refuses
+#: it (``invalid_input``).
+JobListScope = Literal['my', 'shared']
+
+#: An analysis's own lifecycle ladder — lowercase, the object's Harbor
+#: dialect (spec ``TrialAnalysis.status``).
+AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
 #: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
 #: ``'measured_provisional'`` is a real gateway reading taken inside its
 #: asynchronous spend flush — an honest floor a deferred pass later confirms or
@@ -1440,6 +1453,14 @@ class TrialAnalysis(TypedDict):
     own ``usage`` follows.
     """
     id: str
+    #: Provenance: the analyzed trial, its job, and its task. Redundant on
+    #: ``Trial.analysis`` (the trial is the enclosing object) and the whole
+    #: point of an ``analyses().list()`` row, where nothing else says which
+    #: run the verdict judged. Harbor's ``trial_name`` names the same thing
+    #: by directory.
+    trial_id: str
+    job_id: str
+    task_name: str
     #: ``'queued'`` | ``'running'`` | ``'completed'`` | ``'failed'``. Every
     #: non-terminal analysis reaches ``completed`` or ``failed``; a worker
     #: death mid-run is reaped to a typed ``failed``.
@@ -2436,6 +2457,13 @@ class TrialPage:
 
 
 @dataclass
+class AnalysisPage:
+    items: List[TrialAnalysis]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
 class JobTaskRollupPage:
     items: List[JobTaskRollup]
     next_cursor: Optional[str]
@@ -3108,6 +3136,18 @@ def _page_query(
     return f'?{query}' if query else ''
 
 
+def _map_trial_analysis(data: Any) -> Optional[TrialAnalysis]:
+    """The wire's TrialAnalysis, its nested ``usage`` normalized through the
+    one shared reading rule (exactly as the trial's own ``usage`` is); the
+    dict rides otherwise verbatim. Absent and malformed both read None."""
+    if not isinstance(data, dict):
+        return None
+    return cast(
+        TrialAnalysis,
+        {**data, 'usage': _usage_reading_from_data(data.get('usage'))},
+    )
+
+
 def _map_timing(data: Any) -> Optional[TimingInfo]:
     if not isinstance(data, dict):
         return None
@@ -3225,13 +3265,7 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         # read None — "never analyzed", never a fabricated empty object. The
         # dict rides otherwise verbatim; its nested ``usage`` goes through
         # the one shared parsing rule, exactly as the trial's own does.
-        analysis=(
-            {
-                **data['analysis'],
-                'usage': _usage_reading_from_data(data['analysis'].get('usage')),
-            }
-            if isinstance(data.get('analysis'), dict) else None
-        ),
+        analysis=_map_trial_analysis(data.get('analysis')),
         environment_setup=_map_timing(data.get('environment_setup')),
         agent_setup=_map_timing(data.get('agent_setup')),
         agent_execution=_map_timing(data.get('agent_execution')),
@@ -5926,19 +5960,22 @@ class JobsClient:
         self,
         *,
         search: Optional[str] = None,
+        scope: Optional[JobListScope] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's jobs, newest first (cursor-paged).
+        """List jobs, newest first (cursor-paged).
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
         ``async for`` it to walk every job across cursor pages. ``search`` is
-        a server-side free-text filter over job name and dataset names, sent
-        on every page fetch.
+        a server-side free-text filter over job name and dataset names;
+        ``scope`` is Harbor's ``--scope`` — ``'my'`` (yours, the server's
+        default) or ``'shared'`` (your organizations' jobs that teammates
+        created). Both are sent on every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(
-                f'/api/jobs{_page_query(page_limit, page_cursor, search=search)}'
+                f'/api/jobs{_page_query(page_limit, page_cursor, search=search, scope=scope)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return JobPage(
@@ -6943,9 +6980,9 @@ class TrialsClient:
             # were stopped", exactly how such a server behaves.
             stopped_analyses=(
                 [
-                    {**item, 'usage': _usage_reading_from_data(item.get('usage'))}
-                    for item in stopped_analyses
-                    if isinstance(item, dict)
+                    mapped
+                    for mapped in (_map_trial_analysis(item) for item in stopped_analyses)
+                    if mapped is not None
                 ]
                 if isinstance(stopped_analyses, list)
                 else []
@@ -6958,6 +6995,91 @@ class TrialsClient:
 # =============================================================================
 # AUTH CLIENT
 # =============================================================================
+
+class AnalysesClient:
+    """Client for trace-analysis runs — the catalog (``GET /api/analyses``).
+
+    Created via the standalone ``analyses()`` factory. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
+
+    The per-run reads (the verdict by id, the analyzer's transcript, its
+    stored artifacts) ride the dashboard's traces feed, which is not part of
+    the OpenAPI contract; the TypeScript SDK and the CLI speak those doors.
+    This client speaks the contract's one analyses door: the list.
+
+    Example::
+
+        from evolve import analyses
+
+        async with analyses() as a:
+            async for analysis in a.list(job=job.id, status=['failed']):
+                print(analysis['task_name'], analysis['failure'])
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('analyses', config)
+
+    async def __aenter__(self) -> 'AnalysesClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    def list(
+        self,
+        *,
+        scope: Optional[JobListScope] = None,
+        job: Optional[str] = None,
+        status: Optional[List[AnalysisStatus]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """Every analysis you may read, newest first (cursor-paged).
+
+        Each row is the wire's :class:`TrialAnalysis` carrying the trial,
+        job, and task it judged (``trial_id`` / ``job_id`` / ``task_name``),
+        so a headless round is list, then read each. ``scope`` is Harbor's
+        ``--scope`` (``'my'`` — analyses of jobs you created, the server's
+        default; ``'shared'`` — of your organizations' jobs that teammates
+        created); ``job`` narrows to one job's trials; ``status`` to the
+        analysis's own lowercase ladder. Every filter rides every page
+        fetch. ``await`` for one page, ``async for`` to walk them all.
+
+        One boundary under ``scope='shared'`` today: those rows list, but
+        their per-run reads (the CLI's ``analysis show`` / ``trace`` /
+        ``download``) refuse them (404 ``Trial not found``) — the doors
+        they ride open only to the job's creator (owner ruling on aligning
+        those doors pending); ``'my'`` rows resolve on every read.
+        """
+        async def fetch_page(page_limit, page_cursor) -> AnalysisPage:
+            raw = await self._http.request_json(
+                '/api/analyses'
+                + _page_query(
+                    page_limit,
+                    page_cursor,
+                    scope=scope,
+                    job=job,
+                    status=','.join(status) if status else None,
+                )
+            )
+            items, next_cursor, has_more = _page_parts(raw)
+            analyses: List[TrialAnalysis] = []
+            for item in items:
+                mapped = _map_trial_analysis(item)
+                if mapped is None:
+                    # The row IS the answer here — unlike the OPTIONAL
+                    # Trial.analysis slot, an unreadable row fails closed.
+                    raise ValueError('The analyses list served an unreadable analysis object')
+                analyses.append(mapped)
+            return AnalysisPage(items=analyses, next_cursor=next_cursor, has_more=has_more)
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
+
 
 class AuthClient:
     """Client for caller identity.
@@ -7032,6 +7154,7 @@ class HostedEvolve:
         self._agents: Optional[AgentsClient] = None
         self._jobs: Optional[JobsClient] = None
         self._trials: Optional[TrialsClient] = None
+        self._analyses: Optional[AnalysesClient] = None
         self._skills: Optional[SkillsClient] = None
 
     @property
@@ -7063,6 +7186,13 @@ class HostedEvolve:
         return self._trials
 
     @property
+    def analyses(self) -> AnalysesClient:
+        """Trace-analysis runs: the catalog, with the trial/job/task each judged."""
+        if self._analyses is None:
+            self._analyses = AnalysesClient(self._config)
+        return self._analyses
+
+    @property
     def skills(self) -> SkillsClient:
         """Platform-stored skills, referenced as ``upload:<id>`` in agents[].skills."""
         if self._skills is None:
@@ -7084,7 +7214,7 @@ class HostedEvolve:
         await self.close()
 
     async def close(self) -> None:
-        for client in (self._datasets, self._agents, self._jobs, self._trials):
+        for client in (self._datasets, self._agents, self._jobs, self._trials, self._analyses):
             if client is not None:
                 await client.close()
 

@@ -749,6 +749,8 @@ async with sessions() as session:
         print(replay.replay_url)     # Browser replay URL
 ```
 
+The CLI wraps the same client headless — `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>` — with no Python code involved.
+
 The `sessions()` factory returns a `SessionsClient` with five methods:
 
 ```python

@@ -62,6 +62,7 @@ import {
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
+  analyses,
   auth,
   datasets,
   jobs,
@@ -180,6 +181,7 @@ const cfg = { apiKey: "drift-gate", baseUrl: "http://localhost:0" };
 const surfaces: Record<string, unknown> = {
   jobs: jobs(cfg),
   trials: trials(cfg),
+  analyses: analyses(cfg),
   datasets: datasets(cfg),
   agents: agents(cfg),
   skills: skills(cfg),
@@ -213,6 +215,10 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   retryTrial: "trials.retry",
   regradeTrial: "trials.regrade",
   stopTrials: "trials.stop",
+  // Analyses — the catalog of trace-analysis runs. The per-run reads
+  // (verdict, transcript, artifacts) ride the traces feed, which the
+  // contract does not declare (docs: "not part of the OpenAPI contract").
+  listAnalyses: "analyses.list",
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
