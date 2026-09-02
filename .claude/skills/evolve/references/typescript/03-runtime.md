@@ -732,6 +732,7 @@ const replay = await session.browserReplay(info.id);
 - `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
+- The CLI wraps the same client headless: `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>`
 - `browserReplay()` waits for the managed browser replay and returns `replayUrl` plus `downloadUrl`
   - Use `replayUrl` in your UI for browser playback
   - Use `downloadUrl` when users need the raw `.mp4` file
