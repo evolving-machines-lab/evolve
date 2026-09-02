@@ -46,6 +46,7 @@ from evolve import (
     EFFORT_SUPPORT_VALUES,
     HOSTED_ERROR_CODES,
     AgentsClient,
+    AnalysesClient,
     AuthClient,
     DatasetsClient,
     EvalSandboxProvider,
@@ -169,6 +170,10 @@ OPERATION_TO_METHOD = {
     'retryTrial': (TrialsClient, 'retry'),
     'regradeTrial': (TrialsClient, 'regrade'),
     'stopTrials': (TrialsClient, 'stop'),
+    # Analyses — the catalog of trace-analysis runs. The per-run reads
+    # (verdict, transcript, artifacts) ride the traces feed, which the
+    # contract does not declare; this SDK speaks the contract's one door.
+    'listAnalyses': (AnalysesClient, 'list'),
     # Datasets
     'listDatasets': (DatasetsClient, 'list'),
     'getDataset': (DatasetsClient, 'get'),

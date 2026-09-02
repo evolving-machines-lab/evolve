@@ -68,6 +68,7 @@ from evolve import (
     TaskProviderVerdict,
     UploadProvenance,
     agents as agents_factory,
+    analyses as analyses_factory,
     auth as auth_factory,
     datasets as datasets_factory,
     jobs as jobs_factory,
@@ -363,6 +364,7 @@ class TestFactories:
         monkeypatch.delenv('EVOLVE_API_KEY', raising=False)
         for factory in (
             datasets_factory, agents_factory, jobs_factory, trials_factory, auth_factory,
+            analyses_factory,
         ):
             client = factory()
             with pytest.raises(ValueError, match='API key'):
@@ -3913,6 +3915,21 @@ class TestJobs:
         assert 'limit=10' in url
 
     @pytest.mark.asyncio
+    async def test_list_scope_rides_every_page_fetch(self):
+        """Harbor's ``--scope my|shared`` (their cli/hub.py list_jobs_cmd):
+        forwarded verbatim on every page, absent when not asked — the
+        server's default (``my``) is the server's to state."""
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).list(scope='shared', limit=10)
+            await jobs_factory(CONFIG).list()
+
+        assert 'scope=shared' in fake.requests[0].full_url
+        assert 'scope=' not in fake.requests[1].full_url
+
+    @pytest.mark.asyncio
     async def test_tasks_maps_the_per_task_rollup(self):
         fake = FakeUrlopen([
             ('/api/jobs/job-1/tasks', {
@@ -3959,6 +3976,82 @@ class TestJobs:
         # The same page envelope as every other collection.
         assert page.next_cursor == 'abs-module-cache-flags'
         assert page.has_more is True
+
+
+ANALYSIS_ROW = {
+    'id': 'an-1',
+    'trial_id': 'run-1',
+    'job_id': 'eval-1',
+    'task_name': 'abs-module-cache-flags',
+    'status': 'failed',
+    'model_name': 'glm-5.3-flash',
+    'rubric': {'criteria': [{'name': 'reward_hacking', 'description': 'd', 'guidance': 'g'}]},
+    'summary': None,
+    'checks': None,
+    'estimated_cost_usd': 0.0366,
+    'usage': {
+        'provisional': True,
+        'spent_usd': 0.0366,
+        'input_tokens': 960596,
+        'cached_input_tokens': 912640,
+        'output_tokens': 77018,
+        'as_of': '2026-08-30T22:24:22.619Z',
+    },
+    'attempts': 1,
+    'failure': {'phase': 'artifact_read', 'message': 'MISSING /app/analysis.json'},
+    'created_at': '2026-08-30T21:50:09.010Z',
+    'finished_at': '2026-08-30T22:24:22.619Z',
+}
+
+
+class TestAnalyses:
+    """``analyses().list()`` — the catalog of trace-analysis runs
+    (GET /api/analyses). The TypeScript SDK's ``analyses().list()`` twin."""
+
+    @pytest.mark.asyncio
+    async def test_list_maps_the_page_and_rides_the_filters(self):
+        fake = FakeUrlopen([
+            ('/api/analyses', {
+                'items': [ANALYSIS_ROW, {**ANALYSIS_ROW, 'id': 'an-2', 'usage': None}],
+                'nextCursor': 'cur-a',
+                'hasMore': True,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await analyses_factory(CONFIG).list(
+                scope='shared', job='eval-1', status=['failed', 'completed'], limit=2,
+            )
+
+        url = fake.requests[0].full_url
+        assert '/api/analyses?' in url
+        assert 'scope=shared' in url
+        assert 'job=eval-1' in url
+        assert 'status=failed%2Ccompleted' in url
+        assert 'limit=2' in url
+        assert [a['id'] for a in page.items] == ['an-1', 'an-2']
+        # Provenance rides every row: the trial, job, and task it judged.
+        assert page.items[0]['trial_id'] == 'run-1'
+        assert page.items[0]['job_id'] == 'eval-1'
+        assert page.items[0]['task_name'] == 'abs-module-cache-flags'
+        assert page.items[0]['status'] == 'failed'
+        # The nested usage goes through the one shared reading rule, exactly
+        # as Trial.analysis does; an absent one reads None.
+        assert page.items[0]['usage'].spent_usd == 0.0366
+        assert page.items[1]['usage'] is None
+        assert page.next_cursor == 'cur-a'
+        assert page.has_more is True
+
+    @pytest.mark.asyncio
+    async def test_list_walks_every_page_with_the_scope(self):
+        fake = FakeUrlopen([
+            ('cursor=cur-a', {'items': [{**ANALYSIS_ROW, 'id': 'an-3'}], 'nextCursor': None, 'hasMore': False}),
+            ('/api/analyses', {'items': [ANALYSIS_ROW], 'nextCursor': 'cur-a', 'hasMore': True}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            ids = [a['id'] async for a in analyses_factory(CONFIG).list(scope='my')]
+
+        assert ids == ['an-1', 'an-3']
+        assert all('scope=my' in r.full_url for r in fake.requests)
 
 
 class TestTrials:

@@ -113,6 +113,30 @@ export const EVAL_SANDBOX_PROVIDERS = ["e2b", "daytona", "modal"] as const;
 export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
 
 /**
+ * The list scopes — Harbor's `--scope` on `harbor hub job list` (their
+ * cli/hub.py list_jobs_cmd: my | shared | all). `my` is what you created;
+ * `shared` is what your organizations' other members created — every row the
+ * per-id doors already open for you that is not your own. Harbor's `all`
+ * adds public rows; nothing hosted is public, so the server refuses it and
+ * the CLI refuses it at the keyboard. A runtime value for the same reason as
+ * TRIAL_STATUSES: the CLI validates `--scope` against it.
+ */
+export const JOB_LIST_SCOPES = ["my", "shared"] as const;
+
+/** One list scope — see JOB_LIST_SCOPES. */
+export type JobListScope = (typeof JOB_LIST_SCOPES)[number];
+
+/**
+ * An analysis's own lifecycle ladder — lowercase, the object's Harbor
+ * dialect (spec TrialAnalysis.status). A runtime value so the CLI validates
+ * `analysis list --status` against it instead of a second copy.
+ */
+export const ANALYSIS_STATUSES = ["queued", "running", "completed", "failed"] as const;
+
+/** One analysis status — see ANALYSIS_STATUSES. */
+export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
+
+/**
  * Which lane a settled trial's `agent_result.cost_usd` came from. Only
  * `"measured"` is final. `"measured_provisional"` is a real gateway reading
  * taken inside its asynchronous spend flush — an honest floor a deferred pass
@@ -1228,11 +1252,20 @@ export interface AnalysisFailure {
 export interface TrialAnalysis {
   id: string;
   /**
+   * Provenance: the analyzed trial, its job, and its task. Redundant on
+   * `Trial.analysis` (the trial is the enclosing object) and the whole point
+   * of a `analyses().list()` row, where nothing else says which run the
+   * verdict judged. Harbor's `trial_name` names the same thing by directory.
+   */
+  trial_id: string;
+  job_id: string;
+  task_name: string;
+  /**
    * Lifecycle of this analysis. Every non-terminal analysis reaches
    * `completed` or `failed`; a worker death mid-run is reaped to a typed
    * `failed`, never left `running` forever.
    */
-  status: "queued" | "running" | "completed" | "failed";
+  status: AnalysisStatus;
   model_name: string;
   rubric: Rubric;
   /**
@@ -1821,6 +1854,15 @@ export type JobPage = Page<Job>;
  *   job across cursor pages, fetching the next page for you.
  */
 export interface JobList extends Awaitable<JobPage>, AsyncIterable<Job> {}
+
+/** Cursor page of trace analyses (newest first) */
+export type AnalysisPage = Page<TrialAnalysis>;
+
+/**
+ * The handle returned by analyses().list(). Both a promise for one page and
+ * an async iterable across cursor pages, like every other list handle.
+ */
+export interface AnalysisList extends Awaitable<AnalysisPage>, AsyncIterable<TrialAnalysis> {}
 
 /**
  * One task's rollup within a job: its trial tally, mean reward over SCORED
@@ -2689,6 +2731,22 @@ export interface StartJobOptions {
 export interface ListJobsOptions extends PageOptions {
   /** Server-side free-text filter over job name and dataset names. */
   search?: string;
+  /**
+   * Visibility scope (Harbor's `--scope`): `my` — jobs you created, the
+   * server's default; `shared` — your organizations' jobs that teammates
+   * created. See JOB_LIST_SCOPES.
+   */
+  scope?: JobListScope;
+}
+
+/** Options for analyses().list() (default page 50, max 200) */
+export interface ListAnalysesOptions extends PageOptions {
+  /** Visibility scope, exactly as on jobs().list(). */
+  scope?: JobListScope;
+  /** Only analyses of this job's trials. */
+  job?: string;
+  /** Only analyses in these statuses (the object's own lowercase ladder). */
+  status?: AnalysisStatus[];
 }
 
 /** Options for jobs().tasks() (default page 50, max 200) */
@@ -3476,6 +3534,14 @@ export interface AnalysisTranscript {
  * adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
+  /**
+   * Every analysis you may read, newest first (cursor-paged) — the catalog
+   * of trace-analysis runs, `GET /api/analyses`. Each row is the wire's
+   * TrialAnalysis carrying the trial, job, and task it judged, so a
+   * headless round is list → get each. `{ scope, job, status }` narrow it;
+   * await the handle for one page, or `for await` it to walk every page.
+   */
+  list(options?: ListAnalysesOptions): AnalysisList;
   /**
    * The verdict document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same

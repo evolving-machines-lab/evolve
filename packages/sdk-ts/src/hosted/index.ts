@@ -9,6 +9,9 @@ import type {
   ActiveDataset,
   Agent,
   AgentArm,
+  AnalysisList,
+  AnalysisPage,
+  ListAnalysesOptions,
   AgentArmInput,
   AgentInfo,
   AgentInput,
@@ -135,8 +138,10 @@ import type {
 export {
   AGENT_EFFORT_SUPPORT_VALUES,
   ANALYSIS_ARTIFACT_STREAMS,
+  ANALYSIS_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
+  JOB_LIST_SCOPES,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   isHostedErrorCode,
@@ -165,6 +170,9 @@ export type {
   AnalysisArtifactStream,
   AnalysisCheck,
   AnalysisFailure,
+  AnalysisList,
+  AnalysisPage,
+  AnalysisStatus,
   AnalysisTranscript,
   AnalysisTranscriptOptions,
   AnalyzeConfig,
@@ -235,6 +243,8 @@ export type {
   ListDatasetsOptions,
   ListImportsOptions,
   ListJobTasksOptions,
+  JobListScope,
+  ListAnalysesOptions,
   ListJobsOptions,
   ListSkillsOptions,
   ListTrialFilesOptions,
@@ -2653,7 +2663,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   async function listPage(options?: ListJobsOptions): Promise<JobPage> {
     const res = await request(
       cfg,
-      `/api/jobs${pageQuery(options, { search: options?.search })}`
+      `/api/jobs${pageQuery(options, { search: options?.search, scope: options?.scope })}`
     );
     return mapPage((await res.json()) as Record<string, unknown>, mapJob);
   }
@@ -2831,9 +2841,12 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     list(options?: ListJobsOptions): JobList {
       // Await for one page (honoring options); for-await to walk every
-      // job across cursor pages. The search filter rides along on every
-      // page fetch — makePaginated forwards only limit/cursor.
-      return makePaginated((opts) => listPage({ ...opts, search: options?.search }), options);
+      // job across cursor pages. The search filter and the scope ride along
+      // on every page fetch — makePaginated forwards only limit/cursor.
+      return makePaginated(
+        (opts) => listPage({ ...opts, search: options?.search, scope: options?.scope }),
+        options
+      );
     },
 
     trials(id: string, options?: ListTrialsOptions): TrialList {
@@ -3359,7 +3372,38 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
     return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
   }
 
+  async function listPage(options?: ListAnalysesOptions): Promise<AnalysisPage> {
+    const res = await request(
+      cfg,
+      `/api/analyses${pageQuery(options, {
+        scope: options?.scope,
+        job: options?.job,
+        status: options?.status && options.status.length > 0 ? options.status.join(",") : undefined,
+      })}`
+    );
+    // The page's rows are TrialAnalysis objects; a malformed row cannot be
+    // served as "never analyzed" the way the OPTIONAL Trial.analysis slot
+    // is — here the row IS the answer, so it fails closed like get().
+    return mapPage((await res.json()) as Record<string, unknown>, (raw) => {
+      const verdict = mapTrialAnalysis(raw);
+      if (verdict === null) {
+        throw new Error("The analyses list served an unreadable analysis object");
+      }
+      return verdict;
+    });
+  }
+
   return {
+    list(options?: ListAnalysesOptions): AnalysisList {
+      // Await for one page; for-await to walk every analysis across cursor
+      // pages. The scope and filters ride along on every page fetch.
+      return makePaginated(
+        (opts) =>
+          listPage({ ...opts, scope: options?.scope, job: options?.job, status: options?.status }),
+        options
+      );
+    },
+
     async get(analysisId: string): Promise<TrialAnalysis> {
       // The feed's own verdict door: ?what=analysis answers { analysis } —
       // the wire's TrialAnalysis for EVERY analysis, not only completed ones

@@ -300,7 +300,7 @@ async for item in evals.list(search='nightly'):
     print(item.id, item.job_name, item.status, item.stats.get('cost_usd'))
 ```
 
-`list(search=...)` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block, typed as `JobStats` — a `TypedDict`, so at runtime it is still the plain wire dict, read by key, and the class only teaches type checkers the keys: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.by_status`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — the two honesty counters `n_unmeasured_trials` and `n_unmeasured_judge_trials`, which say how many settled trials that total cannot account for because nobody measured their spend (a plain count, never None; 0 means every settled trial's spend was read, not that the total has stopped moving — a `'measured_provisional'` figure is still a floor), and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
+`list(search=...)` is a server-side free-text filter over the job name and its dataset names; `list(scope='shared')` lists your organizations' jobs that teammates created instead of your own (Harbor's `--scope`; the default is `my` — see [`--scope`](#cli)). `stats` is the aggregate block, typed as `JobStats` — a `TypedDict`, so at runtime it is still the plain wire dict, read by key, and the class only teaches type checkers the keys: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.by_status`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — the two honesty counters `n_unmeasured_trials` and `n_unmeasured_judge_trials`, which say how many settled trials that total cannot account for because nobody measured their spend (a plain count, never None; 0 means every settled trial's spend was read, not that the total has stopped moving — a `'measured_provisional'` figure is still a floor), and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as a `JobFailure(code, message)` — the same grammar an API error uses, under a different key so that "error means this request failed" stays true on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.by_status` for where a job actually went wrong.
 
 ### pass@k
 
@@ -697,7 +697,7 @@ Two deviations from Harbor are deliberate and named. Harbor's `harbor analyze` i
 
 ### Reading one analysis run
 
-An analysis is itself an agent run — the analyzer boots in its own sandbox, reads the trial's tree, and leaves its own record: a transcript, raw stdout/stderr, a session home, and the verdict document. That record is readable by analysis id (the id is on `trial.analysis['id']`, and `evolve trial show` prints it on the `analysis` row) — **through the TypeScript SDK's `analyses()` client and the CLI today; the Python SDK has no `analyses` client yet**. The CLI covers the gap without any Python code:
+An analysis is itself an agent run — the analyzer boots in its own sandbox, reads the trial's tree, and leaves its own record: a transcript, raw stdout/stderr, a session home, and the verdict document. That record is readable by analysis id (the id is on `trial.analysis['id']`, and `evolve trial show` prints it on the `analysis` row) — **the per-run reads through the TypeScript SDK's `analyses()` client and the CLI today; the Python `analyses()` client speaks the contract's one analyses door, the list**. The CLI covers the per-run reads without any Python code:
 
 ```bash
 evolve analysis show <analysis-id>                       # the verdict document, human-rendered (--json = the wire object)
@@ -708,7 +708,15 @@ evolve analysis download <analysis-id> --stream trace-stdout   # or: analysis | 
 
 `show` serves the verdict for **every** analysis — a `failed` one carries its typed failure where `trial.analysis` on the trial body only ever shows the latest wave; earlier analyses stay readable here by their own ids. `trace` answers everything after `--since` in one read (there is no server-side paging); an id that names a trial or a regrade refuses with the species named rather than answering with the wrong run's events. The stream selectors speak the trial surface's null grammar — an unstored artifact is stated as absent, never printed empty — and refuse a trial or regrade id the same way, never answering with the wrong run's bytes; an analysis run stores no verifier log and no ATIF trajectory, so those selectors are refused typed rather than answered null.
 
-One boundary is deliberate and recorded: these reads ride the dashboard's traces feed, which is not part of the OpenAPI contract (the feed is the trace viewer's own plane; the contract-side verdict remains `trial.analysis`).
+One boundary is deliberate and recorded: these per-run reads ride the dashboard's traces feed, which is not part of the OpenAPI contract (the feed is the trace viewer's own plane; the contract-side verdict remains `trial.analysis`). The **list** is on the contract: `analyses().list()` (`GET /api/analyses`) is the catalog of every analysis you may read, newest first and cursor-paged, each row the same `TrialAnalysis` dict carrying `trial_id`, `job_id`, and `task_name` — the run it judged — so a headless round is list, then read each. `job=` narrows to one job's trials, `status=` to the analysis's own lowercase ladder, and `scope='shared'` lists analyses of your organizations' jobs that teammates created (see [`--scope`](#cli) below); both SDKs speak it.
+
+```python
+from evolve import analyses
+
+async with analyses() as a:
+    async for analysis in a.list(job=job.id, status=['failed']):
+        print(analysis['task_name'], analysis['failure'])
+```
 
 Saved whole, the run lands as `analysis.json` at the root (Harbor's name for the per-trial analysis artifact — their analyzer writes it into the analyzed trial's directory; here the tree IS the analysis run), the analyzer's streams and visible session home under `agent/`, and `evolve.json` carrying what Harbor's shape has no slot for: the analyzed trial/job/task, the analyzer's own sandbox, and its metered spend and tokens. Absent artifacts are absent files.
 
@@ -829,7 +837,8 @@ The SDK's TypeScript package ships the `evolve` binary — a thin shell over the
 ```
 job      start | list | show | trials | tasks | compare | cancel | delete | stop | resume | retry | regrade | download | grep
 trial    show | trace | download | retry | regrade | stop
-analysis show | trace | download
+analysis list | show | trace | download
+session  list | show
 dataset  list | show | publish | watch | download | activate
 skill    list | upload | show | delete
 agent    list | show | add | remove
@@ -893,6 +902,7 @@ The read side, worked through:
 
 ```bash
 evolve job list --limit 20 --search nightly
+evolve job list --scope shared              # your organizations' jobs that teammates created
 evolve job show <id> [id...]               # incl. a pass@k block, once attempts settle
 evolve job trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
 evolve job trials <id> --dataset deep-swe
@@ -919,9 +929,13 @@ evolve trial retry <trial-id>
 evolve trial regrade <trial-id>
 evolve trial stop <trial-id> [trial-id...]
 
-evolve analysis show <analysis-id>         # the analyzer's verdict document (id: trial show's analysis row)
+evolve analysis list --job <id> --status failed   # every analysis run, with the trial/job/task it judged; --scope shared for your teams'
+evolve analysis show <analysis-id>         # the analyzer's verdict document (id: trial show's analysis row, or analysis list)
 evolve analysis trace <analysis-id>        # the analyzer's own transcript; --since resumes
 evolve analysis download <analysis-id> --stream trace-stdout   # or save whole with -o
+
+evolve session list --state ended --tag-prefix qa-   # your managed-agent sessions (the SDK's .run() records)
+evolve session show <session-id>
 
 evolve dataset list -q
 evolve dataset show deep-swe@1.1
@@ -930,11 +944,13 @@ evolve auth status
 
 `evolve analyze <job-id>` is [Analyze](#analyze) end to end: it POSTs the wave, follows it to its settled end (analyses have no event stream, so the follow is the SDK's poll), then prints one row per analyzed trial — the criterion outcomes, the analyzer's own cost, a summary excerpt — with every failed analysis shown typed below the table. `-m/--model`, `-r/--rubric <file>` and `-e/--env <provider>` are Harbor's own three knobs (their cli/analyze.py); the rubric file is TOML, YAML, or JSON in Harbor's `{criteria}` shape (a `[[criteria]]` entry per criterion in TOML), parsed at the keyboard with unknown fields refused by name — the server still owns the bounds. `-e` is re-aimed with the verb itself: Harbor's flag picks a local environment type (docker, daytona); here it picks which **hosted** provider's sandbox the analyzer boots — there is no local backend server-side — defaulting to the platform's analysis default, daytona. `-q` suppresses the progress lines; `--json` emits NDJSON envelopes (`analysis.accepted`, `analysis.stats` per tally change, `analysis.final` carrying the job and the analyzed trials). Exit 0 only when every analysis completed — a wave with failed analyses exits 1, Harbor's own law. On `job start` / `run`, `--analyze` arms the embedded trigger (each trial analyzed as it settles; bare `--analyze` = all defaults), with `--analyze-model`, `--analyze-rubric <file>` and `--analyze-provider <provider>` as the passthrough trio — any of them implies `--analyze`, and over a `-c` config file's `analyze` object each flag overrides its own field, the retry merge rule. `job show` then carries an `analyze` row (the resolved policy) and an `analysis` row (the tally plus the analyzer's own spend, with a per-criterion line each); `trial show` prints the trial's latest analysis in full — verdicts with their explanations, the summary, the typed failure when there is one.
 
-Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
+Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`; for `analysis list` they are `id`, `status`, `task`, `job`, `trial`, `model`, `attempts`, `spent`, `created`, `finished`; for `session list` they are `id`, `tag`, `agent`, `model`, `provider`, `sandbox`, `state`, `runtime`, `cost`, `steps`, `created`, `ended`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
+
+`--scope` on `job list` and `analysis list` is Harbor's own knob (`harbor hub job list --scope`): `my` — what you created, the default — or `shared` — your organizations' rows that teammates created, exactly the rows `job show` already opens for you as a member and not one more. Harbor's third value, `all`, adds public jobs; nothing hosted is public, so `all` is refused by name rather than quietly meaning both. An API key carries its owner's membership and nothing else: there is no wider view. A **headless QA round** is one walk: `evolve job list -q`, `evolve job trials <id>`, `evolve analysis list --job <id>` and `evolve analysis show` on each, `evolve session list` for the managed-agent side — every listing pages the same way and every id it prints resolves on its `show`. Sessions carry no `--scope`: a session has one owner and no organization, so `my` is the only visibility there is.
 
 `job show` ends with a **pass@k** block — one line per evals group, each k to three decimals — whenever the platform has numbers to show. Groups that cannot answer are simply absent from it, and a job with nothing computed prints no block at all; `--json` always carries the raw `stats.evals[].pass_at_k`.
 
-Wherever a verb takes a **job id**, an unambiguous prefix of at least 8 characters works too: `job show aabbccdd` is `job show aabbccdd-…` when exactly one of your jobs starts that way. The CLI resolves the prefix against your own job list before calling the server — the wire always carries the full id — and refuses loudly when the prefix matches nothing or more than one job. Trial ids are not prefix-resolved; trial verbs take full ids.
+Wherever a verb takes a **job id**, an unambiguous prefix of at least 8 characters works too: `job show aabbccdd` is `job show aabbccdd-…` when exactly one of your jobs starts that way. The CLI resolves the prefix against the job list of the scope the verb names (`--scope`; your own by default) before calling the server — the wire always carries the full id — and refuses loudly when the prefix matches nothing or more than one job. Trial ids are not prefix-resolved; trial verbs take full ids.
 
 A rate limit is a delay, not a mystery: a `429` prints one line naming the limit and the server's `Retry-After` delay (exit 1), and the SDK's watch loops honor that delay and keep watching instead of dying mid-poll.
 

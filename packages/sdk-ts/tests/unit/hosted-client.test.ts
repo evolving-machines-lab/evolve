@@ -6400,6 +6400,90 @@ async function testDownloadPackageNotRetained() {
   }
 }
 
+async function testListJobsScope() {
+  console.log("\n--- jobs().list({ scope }) rides the scope on every page fetch ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [JOB_SUMMARY], nextCursor: null, hasMore: false },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    await e.list({ scope: "shared", limit: 5 });
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.searchParams.get("scope"), "shared", "scope forwarded verbatim");
+    assertEqual(url.searchParams.get("limit"), "5", "limit still forwarded beside it");
+
+    await e.list();
+    assert(!new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("scope"), "no scope by default");
+
+    // The iterator form carries the scope on EVERY page, like search does.
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [JOB_SUMMARY], nextCursor: null, hasMore: false },
+    });
+    const seen: string[] = [];
+    for await (const job of e.list({ scope: "my" })) seen.push(job.id);
+    assertEqual(seen.length, 1, "walks the page");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("scope"), "my", "scope rides the walk");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testListAnalyses() {
+  console.log("\n--- analyses().list() maps the page and rides scope/job/status on every fetch ---");
+  installMockFetch();
+  try {
+    const row = { ...fixtureAnalysisVerdict(), trial_id: "run-1", job_id: "eval-1", task_name: "abs-module-cache-flags" };
+    setMockResponse("/api/analyses", {
+      status: 200,
+      body: { items: [row, { ...row, id: "an-2", usage: null }], nextCursor: "cur-a", hasMore: true },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    const page = await a.list({ scope: "shared", job: "eval-1", status: ["failed", "completed"], limit: 2 });
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/analyses", "one GET on the analyses list");
+    assertEqual(url.searchParams.get("scope"), "shared", "scope forwarded");
+    assertEqual(url.searchParams.get("job"), "eval-1", "job forwarded");
+    assertEqual(url.searchParams.get("status"), "failed,completed", "status forwarded comma-joined");
+    assertEqual(url.searchParams.get("limit"), "2", "limit forwarded");
+    assertEqual(page.items.length, 2, "maps the items");
+    assertEqual(page.items[0].trial_id, "run-1", "provenance rides the row");
+    assertEqual(page.items[0].job_id, "eval-1", "provenance rides the row");
+    assertEqual(page.items[0].task_name, "abs-module-cache-flags", "provenance rides the row");
+    assertEqual(page.items[0].status, "failed", "the wire's lowercase status rides verbatim");
+    assertEqual(page.items[0].usage?.spent_usd, 0.0366, "usage goes through the one-home reading rule");
+    assertEqual(page.items[1].usage, null, "an absent usage reads null");
+    assertEqual(page.nextCursor, "cur-a", "maps nextCursor");
+    assertEqual(page.hasMore, true, "maps hasMore");
+
+    // The iterator form walks cursor pages and carries the filters on each.
+    let calls = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      const u = new URL(String(input));
+      assertEqual(u.searchParams.get("scope"), "my", `page ${calls} carries the scope`);
+      const body =
+        u.searchParams.get("cursor") === "cur-a"
+          ? { items: [{ ...row, id: "an-3" }], nextCursor: null, hasMore: false }
+          : { items: [row], nextCursor: "cur-a", hasMore: true };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const ids: string[] = [];
+      for await (const item of a.list({ scope: "my" })) ids.push(item.id);
+      assertEqual(ids, ["an-1", "an-3"], "walks every page");
+      assertEqual(calls, 2, "two pages, two requests");
+    } finally {
+      globalThis.fetch = original;
+    }
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("Hosted Evals Client Unit Tests\n");
 
@@ -6525,6 +6609,8 @@ async function main() {
   await testCompare();
   await testCompareBadIdsError();
   await testApiErrorHandling();
+  await testListJobsScope();
+  await testListAnalyses();
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(`  Passed: ${passed}`);
