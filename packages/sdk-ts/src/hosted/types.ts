@@ -865,9 +865,19 @@ export interface JobAnalysisStats {
  * A SEPARATE labeled figure by law: never merged into
  * `agent_result.cost_usd`, which is metered model spend. Exactly one of
  * `estimate_usd` / `unpriced_reason` is set — an unmeasurable lifetime (a
- * reaped run) or a rate-less type (`any`) states its reason instead of a
- * guessed number, and a GPU trial that provably never booted a sandbox
- * carries a real `estimate_usd: 0`.
+ * reaped run) or a request that let the provider choose the device (`any`,
+ * or several candidates) states its reason instead of a guessed number, and
+ * a GPU trial that provably never booted a sandbox carries a real
+ * `estimate_usd: 0`.
+ *
+ * WHICH DEVICE IS PRICED: the type the provider reported pinned to the box
+ * (`attached_gpu_type`) when it reported one, else the ONE type the create
+ * request carried (`resolved_gpu_types`: modal reserves exactly the task's
+ * first spelling; daytona receives the task's types in its own names, in
+ * order, and pins the first with capacity). The three provenance fields
+ * make the choice auditable; records priced under `rate_card.version` 1
+ * predate them and serve `declared_gpu_types` as the single spelling they
+ * kept, the other two null.
  */
 export interface TrialGpuCost {
   /** The estimate, USD, micro-dollar resolution. Null exactly when `unpriced_reason` is set. */
@@ -875,10 +885,22 @@ export interface TrialGpuCost {
   /** Why no estimate exists. Null exactly when `estimate_usd` is set. */
   unpriced_reason: string | null;
   provider: EvalSandboxProvider;
-  /** The rate card's billing name (e.g. `H100`); null when the declared type never resolved. */
+  /**
+   * The rate card's billing name the rate was looked up under (e.g. `H100`):
+   * the attached type when reported, else the one type the request carried.
+   * Null when no single device type is known.
+   */
   gpu_type: string | null;
-  /** The task's own declared spelling (first named `gpu_types` entry, or `any`). */
-  declared_gpu_type: string;
+  /** The task's own `gpu_types` list, verbatim; null when it named none (any type). */
+  declared_gpu_types: string[] | null;
+  /**
+   * What the create request carried for the provider, in the provider's
+   * spelling: modal's one reservation, daytona's ordered candidates. Null
+   * when no constraint travelled, and on rate-card v1 records.
+   */
+  resolved_gpu_types: string[] | null;
+  /** The device type the provider reported pinned to the box; null when none was reported. */
+  attached_gpu_type: string | null;
   gpu_count: number;
   /** Measured sandbox lifetime, fractional seconds; null when unmeasured. */
   duration_sec: number | null;

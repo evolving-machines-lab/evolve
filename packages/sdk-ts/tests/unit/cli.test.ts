@@ -2106,11 +2106,13 @@ function testTrialDetailGpuCost() {
         unpriced_reason: null,
         provider: "modal",
         gpu_type: "H100",
-        declared_gpu_type: "h100",
+        declared_gpu_types: ["h100"],
+        resolved_gpu_types: ["h100"],
+        attached_gpu_type: null,
         gpu_count: 1,
         duration_sec: 3600,
         rate_usd_per_gpu_sec: 0.001097,
-        rate_card: { version: 1, source: "modal.com/pricing", source_date: "2026-08-05" },
+        rate_card: { version: 2, source: "modal.com/pricing", source_date: "2026-08-05" },
         measured_from: "2026-07-29T00:00:10.000Z",
         measured_to: "2026-07-29T01:00:10.000Z",
       },
@@ -2118,7 +2120,7 @@ function testTrialDetailGpuCost() {
   ).join("\n");
   assert(priced.includes("gpu compute (est.)"), "the estimate row is labeled as an estimate");
   assert(
-    priced.includes("$3.9492 — H100 x1, 3600s on modal (rate card v1, modal.com/pricing 2026-08-05)"),
+    priced.includes("$3.9492 — H100 x1, 3600s on modal (rate card v2, modal.com/pricing 2026-08-05)"),
     "the priced row carries the full audit sentence: figure, type x count, duration, provider, card",
   );
   assert(priced.includes("$0.31"), "the model spend row keeps its own figure beside it");
@@ -2131,11 +2133,13 @@ function testTrialDetailGpuCost() {
         unpriced_reason: "the worker died mid-run",
         provider: "modal",
         gpu_type: "H100",
-        declared_gpu_type: "h100",
+        declared_gpu_types: ["h100"],
+        resolved_gpu_types: ["h100"],
+        attached_gpu_type: null,
         gpu_count: 1,
         duration_sec: null,
         rate_usd_per_gpu_sec: null,
-        rate_card: { version: 1, source: null, source_date: null },
+        rate_card: { version: 2, source: null, source_date: null },
         measured_from: null,
         measured_to: null,
       },

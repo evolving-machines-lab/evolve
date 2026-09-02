@@ -3167,11 +3167,13 @@ export function trialDetailLines(run: Trial): string[] {
   // GPU compute (lane 5): a SEPARATE labeled estimate, never folded into the
   // spent row above. Priced = the full audit sentence (what x how long x whose
   // rate card); unpriced = the server's own reason, verbatim — a number is
-  // never invented client-side.
+  // never invented client-side. The device named is the one priced
+  // (`gpu_type`); a priced record always has one, so the fallback below can
+  // only be reached by a malformed body.
   if (run.gpu_cost) {
     const g = run.gpu_cost;
     if (g.estimate_usd != null) {
-      const type = g.gpu_type ?? g.declared_gpu_type;
+      const type = g.gpu_type ?? "unknown type";
       const duration =
         g.duration_sec != null ? `${Math.round(g.duration_sec)}s` : "unmeasured";
       const card = `rate card v${g.rate_card.version}${

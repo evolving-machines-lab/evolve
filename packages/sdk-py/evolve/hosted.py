@@ -1931,10 +1931,16 @@ class Trial:
     #: versioned, source-dated rate card; a SEPARATE labeled figure NEVER
     #: merged into ``agent_result.cost_usd`` (metered model spend). Keys:
     #: ``estimate_usd``/``unpriced_reason`` (exactly one set), ``provider``,
-    #: ``gpu_type``, ``declared_gpu_type``, ``gpu_count``, ``duration_sec``,
-    #: ``rate_usd_per_gpu_sec``, ``rate_card`` ({version, source,
-    #: source_date}), ``measured_from``, ``measured_to``. A GPU trial that
-    #: provably never booted a sandbox carries a real ``estimate_usd: 0``.
+    #: ``gpu_type`` (the billing name priced: the attached type when the
+    #: provider reported one, else the one type the request carried),
+    #: ``declared_gpu_types`` (the task's list, None = any),
+    #: ``resolved_gpu_types`` (what the create request carried for the
+    #: provider), ``attached_gpu_type`` (the provider-reported pin, or
+    #: None), ``gpu_count``, ``duration_sec``, ``rate_usd_per_gpu_sec``,
+    #: ``rate_card`` ({version, source, source_date}), ``measured_from``,
+    #: ``measured_to``. A GPU trial that provably never booted a sandbox
+    #: carries a real ``estimate_usd: 0``; a request that let the provider
+    #: choose the device is unpriced with the candidates named.
     gpu_cost: Optional[Dict[str, Any]]
     # WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
     # None is honest and common — a QUEUED or CANCELLED trial never booted one.
