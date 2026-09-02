@@ -73,6 +73,8 @@ from evolve import (
     agents as agents_factory,
     analyses as analyses_factory,
     auth as auth_factory,
+    hosted as hosted_factory,
+    orgs as orgs_factory,
     datasets as datasets_factory,
     jobs as jobs_factory,
     trials as trials_factory,
@@ -4693,3 +4695,119 @@ def test_usage_reading_refuses_non_finite_floats():
     assert reading.input_tokens is None
     assert reading.cached_input_tokens == 5
     assert reading.output_tokens == 2
+
+
+class TestOrgs:
+    """The read pair — Harbor's ``auth org list`` shape and the hosted
+    ``org show`` extension (quota + usage) — and the one quota refusal every
+    job-creating door speaks."""
+
+    ORG_DETAIL = {
+        'org_id': 'org-1',
+        'slug': 'acme',
+        'display_name': 'Acme',
+        'personal': False,
+        'role': 'member',
+        'created_at': '2026-08-01T00:00:00.000Z',
+        'member_count': 3,
+        'quota': {
+            'max_concurrent_trials': 16,
+            'max_queued_trials': 10000,
+            'max_concurrent_imports': 1,
+            'max_concurrent_analyses': 4,
+            'max_concurrent_sessions': 0,
+            'monthly_budget_usd': None,
+        },
+        'usage': {
+            'in_flight_trials': 2,
+            'queued_trials': 40,
+            'in_flight_imports': 0,
+            'in_flight_analyses': 1,
+            'active_sessions': 0,
+            'month_spend_usd': 12.5,
+        },
+    }
+
+    @pytest.mark.asyncio
+    async def test_list_maps_every_org_with_the_callers_role(self):
+        fake = FakeUrlopen([
+            ('/api/orgs', {
+                'items': [
+                    {'org_id': 'org-p', 'slug': 'brando', 'display_name': 'brando',
+                     'personal': True, 'role': 'owner', 'created_at': '2026-07-01T00:00:00.000Z'},
+                    {'org_id': 'org-1', 'slug': 'acme', 'display_name': 'Acme',
+                     'personal': False, 'role': 'member', 'created_at': '2026-08-01T00:00:00.000Z'},
+                ],
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            rows = await orgs_factory(CONFIG).list()
+
+        assert fake.requests[0].full_url.endswith('/api/orgs')
+        assert fake.requests[0].get_header('Authorization') == 'Bearer test-key'
+        assert [(o.slug, o.role, o.personal) for o in rows] == [
+            ('brando', 'owner', True),
+            ('acme', 'member', False),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_get_maps_quota_and_usage_and_encodes_the_ref(self):
+        fake = FakeUrlopen([('/api/orgs/acme', self.ORG_DETAIL)])
+        with patch('evolve._http.urlopen', fake):
+            detail = await orgs_factory(CONFIG).get('acme')
+
+        assert fake.requests[0].full_url.endswith('/api/orgs/acme')
+        assert detail.slug == 'acme'
+        assert detail.member_count == 3
+        assert detail.quota.max_queued_trials == 10000
+        # A 0 ceiling stays 0 (paused), never a default; a null budget stays None.
+        assert detail.quota.max_concurrent_sessions == 0
+        assert detail.quota.monthly_budget_usd is None
+        assert detail.usage.queued_trials == 40
+        assert detail.usage.month_spend_usd == 12.5
+
+        fake = FakeUrlopen([('/api/orgs/team%2Fwith%20slash', self.ORG_DETAIL)])
+        with patch('evolve._http.urlopen', fake):
+            await orgs_factory(CONFIG).get('team/with slash')
+        assert fake.requests[0].full_url.endswith('/api/orgs/team%2Fwith%20slash')
+
+    def test_hosted_front_door_carries_orgs(self):
+        front = hosted_factory(CONFIG)
+        assert callable(front.orgs.list) and callable(front.orgs.get)
+
+    @pytest.mark.asyncio
+    async def test_quota_exceeded_is_typed_with_details_and_no_retry_after(self):
+        """Harbor's hosted refusal (hosted/submit.py:40-64): the code, the
+        ``hosted quota exceeded:`` sentence, the details block, no Retry-After."""
+        import io
+        import urllib.error
+
+        message = ('hosted quota exceeded: max_queued_trials 10000 for organization acme '
+                   '— 9980 queued, this job would add 40')
+        body = json.dumps({'error': {
+            'code': 'quota_exceeded',
+            'message': message,
+            'details': {'quota': 'max_queued_trials', 'limit': 10000, 'used': 9980,
+                        'requested': 40, 'org': 'acme'},
+            'request_id': 'req_1',
+        }}).encode('utf-8')
+
+        def fake(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 429, 'Too Many Requests', {}, io.BytesIO(body)
+            )
+
+        with patch('evolve._http.urlopen', fake):
+            with pytest.raises(EvolveAPIError) as raised:
+                await jobs_factory(CONFIG).start(
+                    datasets=[DatasetSelector(name='deep-swe')],
+                    agents=[AgentArm(name='claude', model_name='opus')],
+                )
+        err = raised.value
+        assert err.status == 429
+        assert err.code == 'quota_exceeded'
+        assert err.is_known_code()
+        assert str(err).startswith('hosted quota exceeded:')
+        assert err.details == {'quota': 'max_queued_trials', 'limit': 10000, 'used': 9980,
+                               'requested': 40, 'org': 'acme'}
+        assert err.retry_after_sec is None

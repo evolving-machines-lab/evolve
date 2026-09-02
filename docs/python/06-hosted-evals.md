@@ -842,7 +842,7 @@ session  list | show
 dataset  list | show | publish | watch | download | activate
 skill    list | upload | show | delete
 agent    list | show | add | remove
-auth     status
+auth     status | org list | org show
 secrets  set | list | delete
 ```
 
@@ -940,6 +940,8 @@ evolve session show <session-id>
 evolve dataset list -q
 evolve dataset show deep-swe@1.1
 evolve auth status
+evolve auth org list                        # the organizations you belong to
+evolve auth org show acme                   # one organization: role, members, quota and live usage
 ```
 
 `evolve analyze <job-id>` is [Analyze](#analyze) end to end: it POSTs the wave, follows it to its settled end (analyses have no event stream, so the follow is the SDK's poll), then prints one row per analyzed trial — the criterion outcomes, the analyzer's own cost, a summary excerpt — with every failed analysis shown typed below the table. `-m/--model`, `-r/--rubric <file>` and `-e/--env <provider>` are Harbor's own three knobs (their cli/analyze.py); the rubric file is TOML, YAML, or JSON in Harbor's `{criteria}` shape (a `[[criteria]]` entry per criterion in TOML), parsed at the keyboard with unknown fields refused by name — the server still owns the bounds. `-e` is re-aimed with the verb itself: Harbor's flag picks a local environment type (docker, daytona); here it picks which **hosted** provider's sandbox the analyzer boots — there is no local backend server-side — defaulting to the platform's analysis default, daytona. `-q` suppresses the progress lines; `--json` emits NDJSON envelopes (`analysis.accepted`, `analysis.stats` per tally change, `analysis.final` carrying the job and the analyzed trials). Exit 0 only when every analysis completed — a wave with failed analyses exits 1, Harbor's own law. On `job start` / `run`, `--analyze` arms the embedded trigger (each trial analyzed as it settles; bare `--analyze` = all defaults), with `--analyze-model`, `--analyze-rubric <file>` and `--analyze-provider <provider>` as the passthrough trio — any of them implies `--analyze`, and over a `-c` config file's `analyze` object each flag overrides its own field, the retry merge rule. `job show` then carries an `analyze` row (the resolved policy) and an `analysis` row (the tally plus the analyzer's own spend, with a per-criterion line each); `trial show` prints the trial's latest analysis in full — verdicts with their explanations, the summary, the typed failure when there is one.
@@ -956,7 +958,7 @@ A rate limit is a delay, not a mystery: a `429` prints one line naming the limit
 
 Closed sets are validated at the keyboard: a typo in `--stream`, `--status`, or `run`'s `-e/--env` is a usage error naming the legal values, never a round trip. The analyzer's provider knobs (`analyze -e`, `--analyze-provider`) deliberately ride to the server instead: their lineup is the server's roster, and its `invalid_input` refusal names it — no client-side copy to drift.
 
-Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish SETTLED — the version `READY`, built and, on a dataset you own, active), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`; for a publish, a version that settled `FAILED` or could not be confirmed settled in time), `2` usage error.
+Credentials: `$EVOLVE_API_KEY`, or `--api-key`; `--base-url` targets a non-default deployment. Exit codes: `0` success (with `--watch`: the job `COMPLETED`, or a publish SETTLED — the version `READY`, built and, on a dataset you own, active), `1` runtime failure (with `--watch`: `FAILED` or `CANCELLED`; for a publish, a version that settled `FAILED` or could not be confirmed settled in time), `2` usage error, and — Harbor's own exit for it — a quota refusal: a job the owning organization's queue cannot take prints `Launch quota exceeded: hosted quota exceeded: …` and exits 2 (see [Organizations and quotas](#organizations-and-quotas)).
 
 ### Signing in
 
@@ -972,6 +974,57 @@ print(status.user_id, status.email, status.key.label)
 The key descriptor's `last_used_at` is in the shape but nothing updates it yet: it stays `None` even on the key making the request. Read it as "not recorded", never as "this key is unused".
 
 Dataset publishing and agent registration have their own subcommands — shown in [Bring your own dataset](#bring-your-own-dataset) and [Bring your own agent](#bring-your-own-agent).
+
+### Organizations and quotas
+
+Every job, dataset and analysis belongs to an organization — your personal one by default, a shared one when you name it. `auth org list` is Harbor's own verb (`harbor auth org list`): the organizations you belong to, with your role in each. `auth org show <slug>` is the hosted extension: one organization in depth — your role, the member count, and the organization's **quota** beside its live **usage**:
+
+```bash
+evolve auth org list
+evolve auth org show acme
+```
+
+```
+slug                 acme
+display name         Acme
+personal             no
+role                 member
+members              3
+created              2026-08-01T00:00:00.000Z
+concurrent trials    2/16
+queued trials        40/10000
+concurrent imports   0/1
+concurrent analyses  1/4
+concurrent sessions  0/4
+month spend          $12.50 / no budget
+```
+
+```python
+from evolve import orgs
+
+mine = await orgs().list()                     # GET /api/orgs — personal org first
+acme = await orgs().get("acme")                # GET /api/orgs/acme
+print(acme.role, acme.member_count)
+print(acme.usage.queued_trials, "/", acme.quota.max_queued_trials)
+```
+
+`hosted().orgs` carries the same client behind the front door.
+
+The quota is six ceilings, every one shown **effective** — the value the platform administrator set for the organization, else the fleet default. `max_queued_trials` is the one that refuses: a job whose trials would not fit in the organization's queue is not accepted. Everything else waits — `max_concurrent_trials` (trials running at once), `max_concurrent_imports`, `max_concurrent_analyses` — or is metered by the gateway (`monthly_budget_usd`, `null` = no monthly budget, your credits stay the only backstop). `max_concurrent_sessions` is recorded and read back but not yet enforced by the managed box-create doors. A ceiling of `0` means the organization is paused. Quotas are set only by the platform administrator, from the dashboard — never with an API key and never through the SDK, so there is no verb for it here.
+
+The refusal is Harbor's own shape: a `429` with code `quota_exceeded`, a message that starts `hosted quota exceeded:`, and `details` naming the quota, its limit, what is used, what the job asked for, and the organization. There is no `Retry-After` — the wait is not a number the server knows. The CLI prints `Launch quota exceeded: …` and exits 2, as Harbor's does; `--json` carries the envelope.
+
+```python
+try:
+    await evals.start(datasets=[DatasetSelector(name="deep-swe")],
+                      agents=[AgentArm(name="claude", model_name="opus")])
+except EvolveAPIError as err:
+    if err.code == "quota_exceeded":
+        d = err.details or {}
+        print(f"{d['org']}: {d['used']}/{d['limit']} {d['quota']}, this job needed {d['requested']} more")
+```
+
+`usage` is what is happening now: trials in flight and queued, imports and analyses a worker holds, open sessions (a session belongs to its creator's personal organization, so a shared organization always reads 0), and the platform's recorded model spend since the first of the calendar month (UTC).
 
 ### Env secrets
 

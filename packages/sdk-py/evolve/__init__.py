@@ -57,6 +57,11 @@ from .hosted import (
     AttemptPhase,
     AuthClient,
     AuthStatus,
+    Organization,
+    OrganizationDetail,
+    OrgQuota,
+    OrgUsage,
+    OrgsClient,
     CapabilityDocument,
     CompareCell,
     CompareCoverage,
@@ -404,6 +409,16 @@ def auth(config: Optional[HostedClientConfig] = None) -> AuthClient:
     return AuthClient(config)
 
 
+def orgs(config: Optional[HostedClientConfig] = None) -> OrgsClient:
+    """Create a standalone hosted-evals organizations client (the read pair).
+
+    ``list()`` — every organization you belong to; ``get(slug)`` — one
+    organization's role, member count, quota and usage. Uses EVOLVE_API_KEY
+    unless HostedClientConfig(api_key=...) is provided.
+    """
+    return OrgsClient(config)
+
+
 def managed_secrets(config: Optional[ManagedSecretsClientConfig] = None) -> ManagedSecretsClient:
     """Create a standalone managed secrets client.
 
@@ -526,6 +541,7 @@ __all__ = [
     'TrialsClient',
     'AnalysesClient',
     'AuthClient',
+    'OrgsClient',
     'EvolveAPIError',
     'EvolveDigestMismatchError',
     'EvolveIncompleteDownloadError',
@@ -632,12 +648,17 @@ __all__ = [
     'DatasetImportPage',
     'ApiKey',
     'AuthStatus',
+    'Organization',
+    'OrganizationDetail',
+    'OrgQuota',
+    'OrgUsage',
     'datasets',
     'agents',
     'jobs',
     'trials',
     'analyses',
     'skills',
+    'orgs',
     'auth',
     'hosted',
     'meta',

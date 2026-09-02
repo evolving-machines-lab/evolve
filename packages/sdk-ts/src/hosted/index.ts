@@ -31,6 +31,12 @@ import type {
   AttemptPhase,
   AuthClient,
   AuthStatus,
+  Organization,
+  OrganizationDetail,
+  OrgQuota,
+  OrgRole,
+  OrgUsage,
+  OrgsClient,
   CompareCell,
   CompareCoverage,
   CompareJobAggregate,
@@ -186,6 +192,12 @@ export type {
   AttemptPhase,
   AuthClient,
   AuthStatus,
+  Organization,
+  OrganizationDetail,
+  OrgQuota,
+  OrgRole,
+  OrgUsage,
+  OrgsClient,
   Awaitable,
   CapabilityDocument,
   CompareCell,
@@ -3523,6 +3535,73 @@ export function auth(config?: HostedClientConfig): AuthClient {
   };
 }
 
+// =============================================================================
+// ORGS CLIENT — the read pair (Harbor's `auth org list` shape + the hosted
+// `auth org show` extension: quota and usage are hosted facts)
+// =============================================================================
+
+function mapOrganization(raw: Record<string, unknown>): Organization {
+  return {
+    org_id: raw.org_id as string,
+    slug: raw.slug as string,
+    display_name: raw.display_name as string,
+    personal: raw.personal === true,
+    ...(raw.role === "owner" || raw.role === "member" ? { role: raw.role } : {}),
+    created_at: raw.created_at as string,
+  };
+}
+
+function mapOrganizationDetail(raw: Record<string, unknown>): OrganizationDetail {
+  const quota = (raw.quota ?? {}) as Record<string, unknown>;
+  const usage = (raw.usage ?? {}) as Record<string, unknown>;
+  const count = (value: unknown): number => (typeof value === "number" ? value : 0);
+  return {
+    ...mapOrganization(raw),
+    member_count: count(raw.member_count),
+    quota: {
+      max_concurrent_trials: count(quota.max_concurrent_trials),
+      max_queued_trials: count(quota.max_queued_trials),
+      max_concurrent_imports: count(quota.max_concurrent_imports),
+      max_concurrent_analyses: count(quota.max_concurrent_analyses),
+      max_concurrent_sessions: count(quota.max_concurrent_sessions),
+      monthly_budget_usd:
+        typeof quota.monthly_budget_usd === "number" ? quota.monthly_budget_usd : null,
+    },
+    usage: {
+      in_flight_trials: count(usage.in_flight_trials),
+      queued_trials: count(usage.queued_trials),
+      in_flight_imports: count(usage.in_flight_imports),
+      in_flight_analyses: count(usage.in_flight_analyses),
+      active_sessions: count(usage.active_sessions),
+      month_spend_usd: count(usage.month_spend_usd),
+    },
+  };
+}
+
+/**
+ * Create an OrgsClient for the caller's organizations.
+ *
+ * Requires EVOLVE_API_KEY (or { apiKey } in config).
+ */
+export function orgs(config?: HostedClientConfig): OrgsClient {
+  const cfg = resolveConfig("orgs", config);
+
+  return {
+    async list(): Promise<Organization[]> {
+      const res = await request(cfg, "/api/orgs");
+      const raw = (await res.json()) as { items?: unknown };
+      return (Array.isArray(raw.items) ? raw.items : []).map((item) =>
+        mapOrganization(item as Record<string, unknown>)
+      );
+    },
+
+    async get(org: string): Promise<OrganizationDetail> {
+      const res = await request(cfg, `/api/orgs/${encodeURIComponent(org)}`);
+      return mapOrganizationDetail((await res.json()) as Record<string, unknown>);
+    },
+  };
+}
+
 function safeJsonParse(text: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(text);
@@ -3575,6 +3654,8 @@ export interface HostedEvolve {
   readonly trials: TrialsClient;
   /** Analysis runs: verdict, the analyzer's own transcript, stored artifacts. */
   readonly analyses: AnalysesClient;
+  /** Your organizations: list them, read one's quota and usage. */
+  readonly orgs: OrgsClient;
   /**
    * The capability document — every agent, provider, status, limit, and
    * error code the platform supports. Public: no API key required.
@@ -3612,6 +3693,7 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
   let trialsClient: TrialsClient | undefined;
   let analysesClient: AnalysesClient | undefined;
   let skillsClient: SkillsClient | undefined;
+  let orgsClient: OrgsClient | undefined;
 
   return {
     get datasets(): DatasetsClient {
@@ -3631,6 +3713,9 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
     },
     get skills(): SkillsClient {
       return (skillsClient ??= skills(config));
+    },
+    get orgs(): OrgsClient {
+      return (orgsClient ??= orgs(config));
     },
     meta(): Promise<CapabilityDocument> {
       return meta(config);

@@ -43,6 +43,7 @@ import {
   datasets,
   jobEvolveRecord,
   jobs,
+  orgs,
   passAtK,
   jobSpend,
   skills,
@@ -62,6 +63,8 @@ import type {
   AnalysisStatus,
   AnalyzeConfigInput,
   AuthStatus,
+  Organization,
+  OrganizationDetail,
   CompareResponse,
   Dataset,
   DatasetFailedTask,
@@ -905,7 +908,7 @@ const GROUPS: Record<string, GroupSpec> = {
     },
   },
   auth: {
-    summary: "Identity and API keys",
+    summary: "Identity, API keys, and your organizations",
     commands: {
       status: {
         summary: "Who am I: the caller and the API key in use",
@@ -913,6 +916,31 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 0,
         maxPositionals: 0,
         example: "evolve auth status",
+      },
+      // Harbor's `harbor auth org list` (their cli/auth.py `org_app`): the
+      // organizations the caller belongs to. Two-word verbs are the thin
+      // shell's answer to Harbor's nested sub-app.
+      "org list": {
+        summary: "List the organizations you belong to",
+        flags: {
+          columns: LIST_FLAGS.columns,
+          quiet: { kind: "boolean", short: "q", help: "Print only slugs, one per line (for piping)" },
+          "no-trunc": LIST_FLAGS["no-trunc"],
+          "no-headers": LIST_FLAGS["no-headers"],
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve auth org list",
+      },
+      // The recorded hosted extension: an organization's quota and live
+      // usage are hosted facts Harbor's closed server does not publish.
+      "org show": {
+        summary: "Show one organization: your role, members, its quota and live usage",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<slug>",
+        example: "evolve auth org show acme",
       },
     },
   },
@@ -1396,14 +1424,36 @@ export function parseArgs(argv: string[]): Invocation {
   if (rawVerb.startsWith("-")) {
     throw new CliUsageError(`"${group}" requires a command (run "evolve ${group} --help")`);
   }
-  const verb = VERB_ALIASES[rawVerb] ?? rawVerb;
-  const spec = groupSpec.commands[verb];
-  if (!spec) {
+  const resolved = resolveVerb(groupSpec, argv.slice(1));
+  if (!resolved) {
     throw new CliUsageError(
       `Unknown command "${group} ${rawVerb}" (supported: ${Object.keys(groupSpec.commands).join(", ")})`
     );
   }
-  return parseCommandArgs(`${group} ${verb}`, spec, argv.slice(2));
+  return parseCommandArgs(`${group} ${resolved.verb}`, resolved.spec, argv.slice(1 + resolved.words));
+}
+
+/**
+ * A group's verb is one word (`list`) or two (`org list` — Harbor's nested
+ * `auth org` sub-app, flattened into the thin shell's noun-verb grammar). The
+ * two-word form is tried first so a one-word verb can never shadow it, and
+ * `ls` aliases the last word either way.
+ */
+function resolveVerb(
+  groupSpec: GroupSpec,
+  words: string[]
+): { verb: string; spec: CommandSpec; words: number } | null {
+  const first = words[0];
+  const second = words[1];
+  if (first !== undefined && second !== undefined && !second.startsWith("-")) {
+    const verb = `${first} ${VERB_ALIASES[second] ?? second}`;
+    const spec = groupSpec.commands[verb];
+    if (spec) return { verb, spec, words: 2 };
+  }
+  if (first === undefined) return null;
+  const verb = VERB_ALIASES[first] ?? first;
+  const spec = groupSpec.commands[verb];
+  return spec ? { verb, spec, words: 1 } : null;
 }
 
 // =============================================================================
@@ -5821,6 +5871,67 @@ async function cmdAuthStatus(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+// Harbor's `auth org list` columns are name, display name, role, joined
+// (cli/auth.py `org_columns`); ours name the org by its slug and date it by
+// the org's own creation — the wire carries no membership date.
+const ORG_COLUMNS: ListColumn<Organization>[] = [
+  { key: "slug", header: "SLUG", cell: (o) => o.slug },
+  { key: "display_name", header: "DISPLAY NAME", cell: (o) => o.display_name },
+  { key: "role", header: "ROLE", cell: (o) => o.role ?? "-" },
+  { key: "personal", header: "PERSONAL", cell: (o) => (o.personal ? "yes" : "no") },
+  { key: "created", header: "CREATED", cell: (o) => o.created_at },
+];
+const ORG_DEFAULT_COLUMNS = ["slug", "display_name", "role", "created"];
+
+async function cmdAuthOrgList(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, ORG_COLUMNS)) return 0;
+  const rows = await orgs(clientConfig(inv)).list();
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(rows));
+    return 0;
+  }
+  if (rows.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No organizations found.");
+    return 0;
+  }
+  renderList(inv, io, rows, ORG_COLUMNS, ORG_DEFAULT_COLUMNS, (o) => o.slug);
+  return 0;
+}
+
+/** The org in depth: identity, then every ceiling as `used/limit` beside its live count. */
+function orgDetailLines(org: OrganizationDetail): string[] {
+  const { quota, usage } = org;
+  const budget =
+    quota.monthly_budget_usd === null
+      ? `${fmtUsd(usage.month_spend_usd)} / no budget`
+      : `${fmtUsd(usage.month_spend_usd)} / ${fmtUsd(quota.monthly_budget_usd)}`;
+  const rows: string[][] = [
+    ["slug", org.slug],
+    ["display name", org.display_name],
+    ["personal", org.personal ? "yes" : "no"],
+    ["role", org.role ?? "-"],
+    ["members", String(org.member_count)],
+    ["created", org.created_at],
+    ["concurrent trials", `${usage.in_flight_trials}/${quota.max_concurrent_trials}`],
+    ["queued trials", `${usage.queued_trials}/${quota.max_queued_trials}`],
+    ["concurrent imports", `${usage.in_flight_imports}/${quota.max_concurrent_imports}`],
+    ["concurrent analyses", `${usage.in_flight_analyses}/${quota.max_concurrent_analyses}`],
+    ["concurrent sessions", `${usage.active_sessions}/${quota.max_concurrent_sessions}`],
+    ["month spend", budget],
+  ];
+  return table(rows);
+}
+
+async function cmdAuthOrgShow(inv: Invocation, io: CliIO): Promise<number> {
+  const org = await orgs(clientConfig(inv)).get(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(org));
+  } else {
+    for (const line of orgDetailLines(org)) io.out(line);
+  }
+  return 0;
+}
+
 /**
  * The secrets verbs speak the managed-agents door (dashboard base URL), not
  * the hosted jobs client — same key, same host, its own client config shape.
@@ -5947,10 +6058,9 @@ function helpFor(topic: string[]): { text: string; code: number } {
   const groupSpec = GROUPS[group];
   if (!groupSpec) return { text: rootHelp(), code: 0 };
   if (topic.length === 1) return { text: groupHelp(group), code: 0 };
-  const verb = VERB_ALIASES[topic[1]] ?? topic[1];
-  const spec = groupSpec.commands[verb];
-  if (!spec) return { text: groupHelp(group), code: 0 };
-  return { text: commandHelp(`${group} ${verb}`, spec), code: 0 };
+  const resolved = resolveVerb(groupSpec, topic.slice(1));
+  if (!resolved) return { text: groupHelp(group), code: 0 };
+  return { text: commandHelp(`${group} ${resolved.verb}`, resolved.spec), code: 0 };
 }
 
 const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> = {
@@ -6001,6 +6111,8 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "agent add": cmdAgentAdd,
   "agent remove": cmdAgentRemove,
   "auth status": cmdAuthStatus,
+  "auth org list": cmdAuthOrgList,
+  "auth org show": cmdAuthOrgShow,
   "secrets set": cmdSecretsSet,
   "secrets list": cmdSecretsList,
   "secrets delete": cmdSecretsDelete,
@@ -6075,6 +6187,14 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
     // change — stderr is for eyes, stdout is for parsers.
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ error: jsonErrorBody(error) }));
+    }
+    if (error instanceof EvolveApiError && error.code === "quota_exceeded") {
+      // Harbor's own rendering of the hosted quota refusal — `Launch quota
+      // exceeded:` + the server's sentence, exit 2 (cli/hosted_jobs.py:
+      // 615-617). Before the rate-limit arm: this 429 carries no
+      // Retry-After, because the wait is not a known number.
+      io.err(`Launch quota exceeded: ${error.message}`);
+      return 2;
     }
     if (error instanceof EvolveApiError && error.status === 429) {
       // A rate limit is a delay, not a mystery: name it and honor the

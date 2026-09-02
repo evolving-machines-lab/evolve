@@ -3721,6 +3721,79 @@ export interface AuthClient {
 }
 
 // =============================================================================
+// ORGANIZATIONS (team accounts) — the read pair the CLI's `auth org` speaks
+// =============================================================================
+
+/** The caller's role in an organization: owner manages, member reads and runs. */
+export type OrgRole = "owner" | "member";
+
+/** An organization the caller belongs to (`GET /api/orgs` item; Harbor's `auth org list` row). */
+export interface Organization {
+  org_id: string;
+  /** URL-safe handle, globally unique — the `<slug>` every org verb takes. */
+  slug: string;
+  display_name: string;
+  /** True for the auto-created personal org — the invisible default owner of everything created without naming an org. */
+  personal: boolean;
+  /** The CALLER'S role; present when the read implies membership. */
+  role?: OrgRole;
+  created_at: string;
+}
+
+/**
+ * An organization's ceilings, every one EFFECTIVE — the value the platform
+ * administrator set, else the fleet default. `0` means paused: creates are
+ * refused `quota_exceeded`, queued work waits. Set only from the platform
+ * administrator's dashboard session; the SDK reads them.
+ */
+export interface OrgQuota {
+  /** Trials running at once (RUNNING or SCORING); work beyond it waits. */
+  max_concurrent_trials: number;
+  /** Trials waiting in the queue — the one refusal (`quota_exceeded`) on job create. */
+  max_queued_trials: number;
+  /** Dataset imports a worker holds at once; further imports wait. */
+  max_concurrent_imports: number;
+  /** Trace analyses running at once; further analyses wait. */
+  max_concurrent_analyses: number;
+  /** Managed-agent sessions open at once (recorded and read back; not yet enforced by the box-create doors). */
+  max_concurrent_sessions: number;
+  /** Model spend allowed this calendar month, USD; null = no monthly budget. */
+  monthly_budget_usd: number | null;
+}
+
+/** The live load beside the ceilings — what `evolve auth org show` prints as N/M. */
+export interface OrgUsage {
+  in_flight_trials: number;
+  queued_trials: number;
+  in_flight_imports: number;
+  in_flight_analyses: number;
+  /** Sessions not yet ended; always 0 on a shared org (sessions carry no organization). */
+  active_sessions: number;
+  /** Recorded model spend since the first of the current calendar month (UTC). */
+  month_spend_usd: number;
+}
+
+/** One organization in depth (`GET /api/orgs/{org}`): the row, the member count, its quota and usage. */
+export interface OrganizationDetail extends Organization {
+  member_count: number;
+  quota: OrgQuota;
+  usage: OrgUsage;
+}
+
+/**
+ * Client for the caller's organizations — the read pair. Creating, renaming,
+ * deleting, members and invite links are served by the API and stay outside
+ * the SDK until a wave asks for them; quotas are set only from the platform
+ * administrator's dashboard session, so no SDK method could ever set one.
+ */
+export interface OrgsClient {
+  /** Every organization the caller belongs to, personal first (`GET /api/orgs`). */
+  list(): Promise<Organization[]>;
+  /** One organization by slug (or id): role, member count, quota, usage (`GET /api/orgs/{org}`). */
+  get(org: string): Promise<OrganizationDetail>;
+}
+
+// =============================================================================
 // ERROR VOCABULARY
 // =============================================================================
 
@@ -3744,9 +3817,16 @@ export interface AuthClient {
 export const HOSTED_ERROR_CODES = [
   "missing_authorization",
   "invalid_api_key",
+  // A valid key created read-only, presented to a mutating route (403).
+  "read_only_key",
   "credential_service_unavailable",
   "rate_limited",
   "insufficient_credits",
+  // The owning organization's queued-trial ceiling would be crossed by
+  // this create (429, no Retry-After — the wait is not a known number).
+  // Harbor's hosted refusal: the message starts `hosted quota exceeded:`;
+  // details carry {quota, limit, used, requested, org}.
+  "quota_exceeded",
   "invalid_json",
   "invalid_input",
   "invalid_limit",
@@ -3821,6 +3901,11 @@ export const HOSTED_ERROR_CODES = [
   "secret_ambiguous",
   "secret_brokered_unsupported",
   "secret_exists",
+  // A selected task's environment.env asks for a `${VAR}` the job attaches
+  // no secret for, and the declaration states no default — refused at job
+  // create (attach-is-consent). Not secret_not_found: the row usually exists
+  // in the owner's vault; the remedy is to attach it to the job.
+  "secret_not_attached",
   "agent_version_not_found",
   "agent_version_unresolvable",
   "agent_kwarg_unsupported",
@@ -3901,6 +3986,16 @@ export const HOSTED_ERROR_CODES = [
   // for the same reason: nothing was rate-counted and there is no
   // Retry-After — the server's disk is busy.
   "too_many_concurrent_package_downloads",
+  // Team accounts (orgs, members, invite links)
+  "org_not_found",
+  "org_slug_taken",
+  "org_forbidden",
+  "org_personal_immutable",
+  "org_last_owner",
+  "org_in_use",
+  "org_member_not_found",
+  "invite_not_found",
+  "invite_invalid",
   "internal_error",
 ] as const;
 

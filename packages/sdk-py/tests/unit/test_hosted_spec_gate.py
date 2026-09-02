@@ -65,6 +65,7 @@ from evolve import (
     JobListScope,
     JobStatus,
     JobsClient,
+    OrgsClient,
     SkillsClient,
     SpendSource,
     TrialStatus,
@@ -232,6 +233,24 @@ OPERATION_TO_METHOD = {
     'getAuthStatus': (AuthClient, 'status'),
     'listApiKeys': None,   # wave 2 — no SDK method yet
     'revokeApiKey': None,  # wave 2 — no SDK method yet
+    # Team accounts (x-wave: 4). The SDK speaks the READ pair — Harbor's
+    # `auth org list` shape and the hosted `auth org show` extension (quota
+    # + usage). The other ten verbs are served by the API and stay outside
+    # the SDK until a wave asks for them; quotas are set only from the
+    # platform administrator's dashboard session, so no SDK method could
+    # ever set one.
+    'listOrgs': (OrgsClient, 'list'),
+    'getOrg': (OrgsClient, 'get'),
+    'createOrg': None,
+    'updateOrg': None,
+    'deleteOrg': None,
+    'listOrgMembers': None,
+    'updateOrgMember': None,
+    'removeOrgMember': None,
+    'listOrgInvites': None,
+    'createOrgInvite': None,
+    'revokeOrgInvite': None,
+    'acceptOrgInvite': None,
 }
 
 

@@ -7114,6 +7114,139 @@ async function testAuthStatus() {
 }
 
 // =============================================================================
+// AUTH ORG — evolve auth org list / show (Harbor's `harbor auth org list` +
+// the hosted `org show` extension), and the quota refusal's exit 2
+// =============================================================================
+
+const ORG_DETAIL = {
+  org_id: "org-1",
+  slug: "acme",
+  display_name: "Acme",
+  personal: false,
+  role: "member",
+  created_at: "2026-08-01T00:00:00.000Z",
+  member_count: 3,
+  quota: {
+    max_concurrent_trials: 16,
+    max_queued_trials: 10000,
+    max_concurrent_imports: 1,
+    max_concurrent_analyses: 4,
+    max_concurrent_sessions: 4,
+    monthly_budget_usd: null,
+  },
+  usage: {
+    in_flight_trials: 2,
+    queued_trials: 40,
+    in_flight_imports: 0,
+    in_flight_analyses: 1,
+    active_sessions: 0,
+    month_spend_usd: 12.5,
+  },
+};
+
+async function testAuthOrgVerbs() {
+  console.log("\n--- runCli: auth org list / show ---");
+
+  console.log("  [grammar]");
+  assertEqual(parseArgs(["auth", "org", "list"]).command, "auth org list", "two-word verb resolves");
+  assertEqual(parseArgs(["auth", "org", "ls"]).command, "auth org list", "ls aliases the last word");
+  const show = parseArgs(["auth", "org", "show", "acme"]);
+  assertEqual(show.command, "auth org show", "org show resolves");
+  assertEqual(show.positionals, ["acme"], "the slug is the positional");
+  assertEqual(parseArgs(["auth", "status"]).command, "auth status", "the one-word verb still resolves");
+  let usage = false;
+  try {
+    parseArgs(["auth", "org"]);
+  } catch (error) {
+    usage = error instanceof CliUsageError && /Unknown command "auth org"/.test(error.message);
+  }
+  assert(usage, "a bare `auth org` is a usage error naming the group's commands");
+  const help = captureIO();
+  assertEqual(await runCli(["help", "auth", "org", "show"], help.io), 0, "help on the two-word verb exits 0");
+  assert(help.out.join("\n").includes("Usage: evolve auth org show <slug>"), "help documents the two-word verb");
+  const groupHelp = captureIO();
+  await runCli(["auth", "--help"], groupHelp.io);
+  assert(groupHelp.out.join("\n").includes("org list"), "the group help lists the two-word verbs");
+
+  installMockFetch();
+  try {
+    setMockResponse("/api/orgs/acme", { status: 200, body: ORG_DETAIL });
+    setMockResponse("/api/orgs", {
+      status: 200,
+      body: {
+        items: [
+          { org_id: "org-p", slug: "brando", display_name: "brando", personal: true, role: "owner", created_at: "2026-07-01T00:00:00.000Z" },
+          { org_id: "org-1", slug: "acme", display_name: "Acme", personal: false, role: "member", created_at: "2026-08-01T00:00:00.000Z" },
+        ],
+      },
+    });
+
+    console.log("  [list]");
+    const list = captureIO(true);
+    assertEqual(await runCli(["auth", "org", "list", ...AUTH], list.io), 0, "list exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/orgs"), "hits GET /api/orgs");
+    assert(list.out[0].includes("SLUG") && list.out[0].includes("ROLE"), "renders the org table headers");
+    assert(list.out.some((l) => l.includes("brando") && l.includes("owner")), "personal org row");
+    assert(list.out.some((l) => l.includes("acme") && l.includes("member")), "shared org row");
+    const quiet = captureIO();
+    await runCli(["auth", "org", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["brando", "acme"], "-q prints slugs only");
+    const json = captureIO();
+    await runCli(["auth", "org", "list", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out[0]).map((o: { slug: string }) => o.slug), ["brando", "acme"], "--json is the array");
+
+    console.log("  [show]");
+    const detail = captureIO();
+    assertEqual(await runCli(["auth", "org", "show", "acme", ...AUTH], detail.io), 0, "show exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/orgs/acme"), "hits GET /api/orgs/{org}");
+    const text = detail.out.join("\n");
+    assert(text.includes("queued trials") && text.includes("40/10000"), "queued trials as used/limit");
+    assert(text.includes("concurrent trials") && text.includes("2/16"), "concurrent trials as used/limit");
+    assert(text.includes("month spend") && text.includes("$12.50 / no budget"), "spend against no budget");
+    assert(text.includes("members") && text.includes("3"), "member count");
+    const showJson = captureIO();
+    await runCli(["auth", "org", "show", "acme", "--json", ...AUTH], showJson.io);
+    assertEqual(JSON.parse(showJson.out[0]).quota.max_queued_trials, 10000, "--json carries the typed detail");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testQuotaRefusalExitsTwo() {
+  console.log("\n--- runCli: a quota_exceeded refusal prints Harbor's line and exits 2 ---");
+  installMockFetch();
+  try {
+    const message =
+      "hosted quota exceeded: max_queued_trials 3 for organization acme — 2 queued, this job would add 1";
+    setMockResponse("/api/trials/trial-1/retry", {
+      status: 429,
+      body: {
+        error: {
+          code: "quota_exceeded",
+          message,
+          details: { quota: "max_queued_trials", limit: 3, used: 2, requested: 1, org: "acme" },
+          request_id: "req_q",
+        },
+      },
+    });
+    const { io, err } = captureIO();
+    const code = await runCli(["trial", "retry", "trial-1", ...AUTH], io);
+    assertEqual(code, 2, "exit 2 — Harbor's hosted_jobs.py:615-617 law");
+    assertEqual(err, [`Launch quota exceeded: ${message}`], "one line, Harbor's own words, no Retry-After story");
+
+    const json = captureIO();
+    const jsonCode = await runCli(["trial", "retry", "trial-1", "--json", ...AUTH], json.io);
+    assertEqual(jsonCode, 2, "--json keeps exit 2");
+    const body = JSON.parse(json.out[0]);
+    assertEqual(body.error.code, "quota_exceeded", "--json carries the server's code");
+    assertEqual(body.error.details.limit, 3, "--json carries the details block");
+    assertEqual(body.error.retryAfterSec, undefined, "no retryAfterSec on a quota refusal");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // SECRETS — evolve secrets set / list / delete
 // =============================================================================
 
@@ -7865,6 +7998,8 @@ async function main() {
   await testUploadVerb();
   await testUploadVerbJsonAndGate();
   await testAuthStatus();
+  await testAuthOrgVerbs();
+  await testQuotaRefusalExitsTwo();
   await testSecretsVerbs();
   await testJobListScope();
   await testAnalysisList();
