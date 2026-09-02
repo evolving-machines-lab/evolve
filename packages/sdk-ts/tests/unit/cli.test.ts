@@ -6123,6 +6123,33 @@ async function testDatasetPublishRegisterFirst() {
           createdAt !== -1 && registeredAt !== -1 && registeredAt < createdAt,
           "and it opens the stream BEFORE import.created — attachable before the 202"
         );
+        // The transfer itself is part of the stream (B28, owner ruling
+        // 2026-09-02): the SAME 10 %-step counter human mode prints, as
+        // `upload.progress` lines between the registration and the 202.
+        const progress = events.filter((e) => e.kind === "upload.progress");
+        const archiveBytes = [...sessions.values()][0]?.size;
+        assert(
+          progress.length >= 1 && progress.length <= 11,
+          `upload.progress rides --watch --json at the 10 % cadence — at most 11 lines (got ${progress.length})`
+        );
+        assert(
+          progress.every((e) => events.indexOf(e) > registeredAt && events.indexOf(e) < createdAt),
+          "every upload.progress line sits between import.registered and import.created"
+        );
+        assert(
+          progress.every((e) => e.total_bytes === archiveBytes && typeof e.sent_bytes === "number"),
+          `each line carries sent_bytes and total_bytes — the archive's size (${archiveBytes ?? "?"})`
+        );
+        assertEqual(
+          progress[progress.length - 1]?.sent_bytes, archiveBytes,
+          "the last line is the 100 % line — sent_bytes equals total_bytes"
+        );
+        assert(
+          progress.every(
+            (e) => typeof e.elapsed_sec === "number" && Number.isFinite(e.elapsed_sec) && e.elapsed_sec >= 0
+          ),
+          "each line carries elapsed_sec, a finite non-negative number"
+        );
         assertEqual(events[events.length - 1]?.kind, "import.final", "the stream still settles to import.final");
         assert([...sessions.values()][0]?.completed === 1, "the corpus rode the session door");
       } finally {

@@ -794,7 +794,7 @@ const GROUPS: Record<string, GroupSpec> = {
       },
       watch: {
         summary:
-          "Re-attach to a publish and follow it to READY/FAILED — the same stream `dataset publish --watch` renders; works after the CLI exited, or from another machine",
+          "Re-attach to a publish and follow it to READY/FAILED — the same follow `dataset publish --watch` renders (everything from the 202 on); works after the CLI exited, or from another machine",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
@@ -5225,13 +5225,6 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
       }
     }
   }
-  // Upload progress renders CLIENT-SIDE from the stream (the SDK's flushed-
-  // byte count; no server call) — a line per 10% step, so a multi-GB corpus
-  // shows life without per-chunk spam. Harbor renders its uploads with the
-  // same M-of-N + elapsed columns in a rich Live display
-  // (REFERENCES/Harbor src/harbor/cli/upload.py:123-135); a line-based CLI
-  // keeps the counts and drops the animation. --json stays clean output.
-  let lastUploadStep = -1;
   // Register-first (the resumable chunked door): the session open pre-creates
   // the import before the first byte moves, and this prints its id so the
   // transfer is re-attachable from the very start — this terminal dying, or
@@ -5247,22 +5240,47 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     }
     io.out(`Registered import ${importId} — re-attach anytime with: evolve dataset watch ${importId}`);
   };
-  const created = await client.publish(
-    input,
-    json
-      ? { onRegistered }
-      : {
-          onRegistered,
-          onUploadProgress: (sentBytes, totalBytes) => {
-            const step = totalBytes > 0 ? Math.floor((sentBytes / totalBytes) * 10) : 10;
-            if (step <= lastUploadStep) return;
-            lastUploadStep = step;
-            io.out(
-              `upload ${fmtBytes(sentBytes)}/${fmtBytes(totalBytes)} (${Math.min(step * 10, 100)}%)`
-            );
-          },
-        }
-  );
+  // Upload progress renders CLIENT-SIDE from the stream (the SDK's own byte
+  // count — flushed bytes on the single-request door, acknowledged chunks
+  // on the chunked one; no server call) — ONE counter, one cadence, two
+  // renderings: a line per 10% step, so a multi-GB corpus shows life
+  // without per-chunk spam. Human mode prints `upload M/N (P%)`; `--watch
+  // --json` prints the same step as an `upload.progress` event
+  // {sent_bytes, total_bytes, elapsed_sec} — the transfer is part of the
+  // stream, so a piped consumer is never blind before `import.created` (an
+  // 8 GB publish printed one line, then nothing for 20 minutes, 2026-09-01;
+  // owner ruling 2026-09-02). elapsed_sec counts from the
+  // moment the corpus was handed to the SDK — packing and hashing included
+  // — the same seconds the caller has been waiting. Harbor renders its
+  // uploads with the same M-of-N + elapsed columns in a rich Live display
+  // and has no machine-readable stream (REFERENCES/Harbor
+  // src/harbor/cli/upload.py:123-135, 152-159): a line-based CLI keeps the
+  // counts and drops the animation, and the NDJSON event is the recorded
+  // deviation — `--json` on every verb is this platform's law. Non-watch
+  // --json wires no counter at all: ONE parseable document.
+  const uploadStartedAt = Date.now();
+  let lastUploadStep = -1;
+  const onUploadProgress = (sentBytes: number, totalBytes: number) => {
+    const step = totalBytes > 0 ? Math.floor((sentBytes / totalBytes) * 10) : 10;
+    if (step <= lastUploadStep) return;
+    lastUploadStep = step;
+    if (json) {
+      io.out(
+        JSON.stringify({
+          kind: "upload.progress",
+          sent_bytes: sentBytes,
+          total_bytes: totalBytes,
+          elapsed_sec: (Date.now() - uploadStartedAt) / 1000,
+        })
+      );
+      return;
+    }
+    io.out(`upload ${fmtBytes(sentBytes)}/${fmtBytes(totalBytes)} (${Math.min(step * 10, 100)}%)`);
+  };
+  const created = await client.publish(input, {
+    onRegistered,
+    ...(json && inv.flags.watch !== true ? {} : { onUploadProgress }),
+  });
   if (inv.flags.watch !== true) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -5411,14 +5429,15 @@ async function followImport(
 
 /**
  * `evolve dataset watch <name|import-id>` — re-attach to a publish and render
- * the SAME stream `dataset publish --watch` renders (followImport, the one
- * rendering home). Works after the CLI exited, and from another machine: the
- * argument is tried as an import id first (the more specific address), then
- * as a dataset name — the newest QUEUED/RUNNING import of that dataset. A
- * terminal import id still renders its settled block (exit 0/1 by outcome);
- * a NAME with no live import refuses instead, naming the newest settled
- * import — attaching a "watch" to something that finished long ago is more
- * often a typo than an intent.
+ * the same follow `dataset publish --watch` renders — everything from the 202
+ * on (followImport, the one rendering home); the transfer's own
+ * `upload.progress` lines belong to the publishing process. Works after the
+ * CLI exited, and from another machine: the argument is tried as an import
+ * id first (the more specific address), then as a dataset name — the newest
+ * QUEUED/RUNNING import of that dataset. A terminal import id still renders
+ * its settled block (exit 0/1 by outcome); a NAME with no live import
+ * refuses instead, naming the newest settled import — attaching a "watch"
+ * to something that finished long ago is more often a typo than an intent.
  */
 async function cmdDatasetWatch(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
