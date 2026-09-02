@@ -47,11 +47,14 @@ import {
   STDOUT_PREFIX_BYTES,
 } from "@daytonaio/sdk";
 import type {
+  CreateSandboxFromImageParams,
+  CreateSandboxFromSnapshotParams,
   GpuType,
   ListSandboxesQuery,
   Sandbox as DaytonaSandbox,
   SandboxState as DaytonaApiSandboxState,
 } from "@daytonaio/sdk";
+import { randomUUID } from "node:crypto";
 
 // ============================================================
 // CONSTANTS
@@ -354,6 +357,247 @@ export class DaytonaIdleTimeoutError extends Error {
         "in-box instead (see withInBoxTimeout)."
     );
     this.name = "DaytonaIdleTimeoutError";
+  }
+}
+
+// ============================================================
+// OBSERVED BOOT — what a create is DOING while its promise is pending
+// ============================================================
+
+/**
+ * Where a boot is, read off Daytona's own sandbox state. 'image_pull' is
+ * every state in which the runner is still MATERIALIZING THE IMAGE —
+ * `pending_build` (queued for the builder), `building_snapshot` (the
+ * declarative build, whose FROM step is where the base image is pulled) and
+ * `pulling_snapshot` (a built snapshot being pulled onto the runner) — and
+ * 'boot' is everything else: the container start, and the stretch before the
+ * provider has reported any state at all. Two words only, because those are
+ * the two facts a caller acts on differently: a pull that is moving is
+ * allowed to be slow; a container that is silent is not.
+ */
+export type DaytonaBootPhase = "image_pull" | "boot";
+
+const DAYTONA_IMAGE_PULL_STATES: ReadonlySet<string> = new Set([
+  "pending_build",
+  "building_snapshot",
+  "pulling_snapshot",
+]);
+
+/** The boot phase a reported sandbox state belongs to (see DaytonaBootPhase). */
+export function daytonaBootPhaseOf(state: string | null | undefined): DaytonaBootPhase {
+  return state !== null && state !== undefined && DAYTONA_IMAGE_PULL_STATES.has(state)
+    ? "image_pull"
+    : "boot";
+}
+
+/**
+ * One thing the provider reported while a create was in flight. `signal`
+ * names WHICH fact moved: the sandbox row's state changed, or the build log
+ * delivered a line (`line`, one line, trimmed — a chunk from the stream is
+ * split on newlines so a multi-line chunk is several events).
+ */
+export interface DaytonaBootProgress {
+  signal: "state" | "build_log";
+  phase: DaytonaBootPhase;
+  /** Daytona's sandbox state as last read; null until the row has been found. */
+  state: string | null;
+  sandboxId: string | null;
+  line?: string;
+}
+
+/**
+ * Thrown by createSandboxObserved when its `signal` aborted: the create was
+ * abandoned, the half-made box deleted best-effort, and this names where the
+ * boot was at that moment. The DECISION to abort is the caller's — this
+ * package reports progress and honours the abort; it never judges silence.
+ */
+export class DaytonaBootAbortedError extends Error {
+  readonly phase: DaytonaBootPhase;
+  readonly state: string | null;
+  readonly sandboxId: string | null;
+
+  constructor(phase: DaytonaBootPhase, state: string | null, sandboxId: string | null) {
+    super(
+      `Daytona sandbox boot abandoned during ${phase} (provider state ${state ?? "not yet reported"}, ` +
+        `sandbox ${sandboxId ?? "not yet created"})`
+    );
+    this.name = "DaytonaBootAbortedError";
+    this.phase = phase;
+    this.state = state;
+    this.sandboxId = sandboxId;
+  }
+}
+
+/**
+ * The label createSandboxObserved stamps on the box it creates — a fresh UUID
+ * per create — so the box is FINDABLE (daytona.list({ labels })) from the
+ * moment the control plane has a row for it, while the SDK's create promise
+ * is still opaque. Beside the caller's own labels, never in place of them.
+ */
+export const DAYTONA_BOOT_LABEL = "evolve_boot";
+
+/** How often the in-flight box's state is re-read. Measured boots move on a scale of seconds, not milliseconds. */
+export const DAYTONA_BOOT_POLL_MS = 5_000;
+
+/** The request bound on the best-effort delete of an abandoned box (seconds, the SDK's unit). */
+const DAYTONA_BOOT_ABANDON_DELETE_TIMEOUT_SEC = 30;
+
+export interface DaytonaObservedCreateOptions {
+  /** Every state change and build-log line, as it is observed. Must not throw. */
+  onProgress?: (progress: DaytonaBootProgress) => void;
+  /**
+   * Aborting it ends the wait: the create promise is abandoned, the box (if
+   * the row exists yet) is deleted best-effort, and the call rejects with
+   * DaytonaBootAbortedError. Without it the wait is unbounded — the SDK's own
+   * wall clock is OFF here (see createSandboxObserved), so a caller that
+   * passes no signal must be sure it wants to wait forever.
+   */
+  signal?: AbortSignal;
+  /** Poll period for the state read; default DAYTONA_BOOT_POLL_MS. */
+  pollMs?: number;
+}
+
+/** The slice of the Daytona client an observed create drives — structural, so tests can fake it. */
+export interface DaytonaBootClient {
+  create(
+    params: CreateSandboxFromImageParams | CreateSandboxFromSnapshotParams,
+    options: { timeout: number; onSnapshotCreateLogs?: (chunk: string) => void }
+  ): Promise<DaytonaSandbox>;
+  list(query: ListSandboxesQuery): AsyncIterable<DaytonaSandbox>;
+}
+
+/**
+ * THE BOOT-PROGRESS HOOK. `Daytona.create()` is one opaque promise: it POSTs
+ * the sandbox, polls its state, streams the build log and waits for
+ * 'started' (@daytonaio/sdk 0.203 Daytona.create) — and says nothing to its
+ * caller until it resolves or its own wall clock (`timeout`, default 60 s)
+ * gives up. That silence is the whole problem for a caller that must tell a
+ * WEDGED boot from a SLOW one: a cold declarative build of a multi-GB image
+ * legitimately runs for ten minutes (the runner pulls the base image inside
+ * the build's FROM step), and a fixed wall wide enough to survive it is a
+ * wall that also waits ten minutes on a request that will never answer.
+ *
+ * This runs the same create and, beside it, READS what the provider reports:
+ * the sandbox row — found by the DAYTONA_BOOT_LABEL stamped at create, then
+ * refreshed every `pollMs` — and the build-log stream (the SDK's
+ * onSnapshotCreateLogs). Every state change and every log line is one
+ * DaytonaBootProgress to `onProgress`; the caller decides what silence means
+ * and says so through `signal`. The SDK's own wall clock is switched OFF
+ * (`timeout: 0` — "0 means no timeout", daytona.io/docs/en/typescript-sdk/
+ * daytona) because the caller watching progress must be the only clock.
+ *
+ * ON ABORT the create promise is abandoned and the box is deleted
+ * best-effort — the row known now, and whatever the abandoned create still
+ * yields later. Deleting it is also what ends the SDK's orphaned wait: its
+ * state polls 404 and reject. The SDK's own timeout leaves the box behind
+ * instead (a trial that timed out its boot on 2026-09-01 settled with no
+ * sandbox id while the box went on building).
+ *
+ * MEASURED 2026-09-01 (alpine:3.20, declarative, one unique layer): the row
+ * was listable by label 2.5 s after the request, in state 'building_snapshot';
+ * the log callback carried BuildKit's lines including the base-image pull
+ * step ('#4 [1/1] FROM docker.io/library/alpine:3.20@sha256:…'); the state
+ * moved 'building_snapshot' → 'started' at 11 s and the create resolved at
+ * 14 s. The row's `updatedAt` moved only with the state, so it is not read.
+ */
+export async function createSandboxObserved(
+  client: DaytonaBootClient,
+  params: CreateSandboxFromImageParams | CreateSandboxFromSnapshotParams,
+  options: DaytonaObservedCreateOptions = {}
+): Promise<DaytonaSandbox> {
+  const bootId = randomUUID();
+  const pollMs = options.pollMs ?? DAYTONA_BOOT_POLL_MS;
+  let row: DaytonaSandbox | null = null;
+  let state: string | null = null;
+  let done = false;
+
+  const report = (signal: DaytonaBootProgress["signal"], line?: string): void => {
+    // A build-log line is the build speaking, whatever state the poller has
+    // caught up to — the stream can deliver before the first list finds the row.
+    const phase = signal === "build_log" ? "image_pull" : daytonaBootPhaseOf(state);
+    options.onProgress?.({
+      signal,
+      phase,
+      state,
+      sandboxId: row?.id ?? null,
+      ...(line === undefined ? {} : { line }),
+    });
+  };
+
+  const created = client.create(
+    { ...params, labels: { ...(params.labels ?? {}), [DAYTONA_BOOT_LABEL]: bootId } },
+    {
+      timeout: 0,
+      onSnapshotCreateLogs: (chunk: string) => {
+        for (const line of chunk.split("\n")) {
+          const trimmed = line.trimEnd();
+          if (trimmed.length > 0) report("build_log", trimmed);
+        }
+      },
+    }
+  );
+
+  // The state watcher. A failed read is neither progress nor a verdict — the
+  // create promise is the authority on failure; this loop only reports.
+  const watch = async (): Promise<void> => {
+    while (!done) {
+      try {
+        if (row === null) {
+          for await (const found of client.list({ labels: { [DAYTONA_BOOT_LABEL]: bootId } })) {
+            row = found;
+            break;
+          }
+        } else {
+          await row.refreshData();
+        }
+        const seen = row?.state ?? null;
+        if (seen !== state) {
+          state = seen;
+          report("state");
+        }
+      } catch {
+        /* read failed — the next tick asks again */
+      }
+      if (!done) await sleep(pollMs);
+    }
+  };
+  void watch();
+
+  const abandon = (): DaytonaBootAbortedError => {
+    const err = new DaytonaBootAbortedError(daytonaBootPhaseOf(state), state, row?.id ?? null);
+    // Whatever the abandoned create still yields is deleted, and so is the
+    // row known now — best-effort, bounded, never over the abort itself.
+    created.then(
+      (sandbox) => sandbox.delete(DAYTONA_BOOT_ABANDON_DELETE_TIMEOUT_SEC).catch(() => {}),
+      () => {}
+    );
+    if (row !== null) void row.delete(DAYTONA_BOOT_ABANDON_DELETE_TIMEOUT_SEC).catch(() => {});
+    return err;
+  };
+
+  // An abort that lands after the create settled is nothing to act on — and
+  // rejecting a promise nobody races any more would only be an unhandled
+  // rejection — so the listener is a no-op once `done`.
+  const aborted = new Promise<never>((_, reject) => {
+    const signal = options.signal;
+    if (!signal) return;
+    if (signal.aborted) {
+      reject(abandon());
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => {
+        if (!done) reject(abandon());
+      },
+      { once: true }
+    );
+  });
+
+  try {
+    return await Promise.race([created, aborted]);
+  } finally {
+    done = true;
   }
 }
 

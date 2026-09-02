@@ -21,16 +21,33 @@
  * shape exists to make acceptable; the multi-GB single-request path keeps
  * its node:http streaming transport (upload.ts) for the same reason.
  *
+ * RATE LIMITS ARE DELAYS, NOT OUTCOMES: a 429/503 on any request of the
+ * protocol (open, probe, chunk, finalize) is waited out — the server's
+ * Retry-After, read by the one law (retry-after.ts), floored at Harbor's
+ * backoff and capped at RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC — and the SAME
+ * request goes again at the SAME offset, at most
+ * RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS times per request. The chunk is
+ * safe to re-send: the platform refuses a rate-limited PATCH before its
+ * first body byte (swarm_dashboard lib/evaluations/api-errors.ts, the
+ * limiter inside the auth step; the heap gate in the PATCH route likewise),
+ * and were a chunk ever applied under a lost 429 the re-send's 409 lands
+ * in the offset re-probe below. Harbor's publisher retries transport
+ * errors only and has no 429 handling (publisher.py:44-48, 165-170) —
+ * this bound is the recorded extension for a door with a per-user rate
+ * limiter in front of every chunk.
+ *
  * REFUSALS RETURN, ERRORS THROW: any non-2xx the protocol cannot recover
  * from (a create refusal, a chunk digest mismatch, the finalize's typed
- * refusals) comes back as its WHATWG Response so the caller keeps the
- * shared throwApiError mapping; only transport failure past the attempt
- * budget throws.
+ * refusals, a 429/503 still standing after its waits) comes back as its
+ * WHATWG Response so the caller keeps the shared throwApiError mapping;
+ * only transport failure past the attempt budget throws.
  */
 import { createHash } from "node:crypto";
 import { open, stat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+
+import { readRetryAfterSec } from "./retry-after";
 
 /**
  * Switch point: archives at or under this ride the classic single POST
@@ -65,6 +82,20 @@ export const RESUMABLE_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024;
 
 /** Harbor's attempt budget, verbatim (resumable.py:20). */
 export const RESUMABLE_UPLOAD_MAX_ATTEMPTS = 4;
+
+/**
+ * The rate-limit bound, per request of the protocol: a 429/503 is waited
+ * out and the same request sent again at most this many times, then the
+ * refusal returns typed. Harbor's publisher retries transport errors only
+ * (publisher.py:44-48, 165-170) and has no 429 handling at all — ours is
+ * the recorded extension for a hosted door with a per-user rate limiter in
+ * front of every chunk PATCH (the live failure: an 8 GB publish died on ONE
+ * 429 rate_limited with retryAfterSec=9, 2026-09-01).
+ */
+export const RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS = 3;
+
+/** Cap on one honored Retry-After — a server asking for longer waits this long. */
+export const RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC = 60;
 
 /** Per-request inactivity bound — the same 600 s both SDKs hold everywhere. */
 const REQUEST_TIMEOUT_MS = 600_000;
@@ -121,6 +152,18 @@ function backoffMs(attempt: number): number {
   return Math.min(500 * 2 ** (attempt - 1), 4000);
 }
 
+/**
+ * How long one 429/503 is waited: the server's Retry-After (readRetryAfterSec's
+ * one law — body first, header second), never below Harbor's backoff for this
+ * wait (an absent or zero delay is not an instant re-send — the one thing a
+ * rate limit forbids), never above RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC.
+ * Exported for its unit test only — not API.
+ */
+export function retryAfterWaitMs(retryAfterSec: number | undefined, wait: number): number {
+  const asked = retryAfterSec === undefined ? 0 : retryAfterSec * 1000;
+  return Math.min(Math.max(asked, backoffMs(wait)), RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC * 1000);
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** One bounded fetch; AbortController because a dead server must not hang the loop. */
@@ -136,6 +179,27 @@ async function boundedFetch(
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+const isRateLimited = (res: Response): boolean => res.status === 429 || res.status === 503;
+
+/**
+ * One request of the protocol under the rate-limit law (module header): a
+ * 429/503 is waited and the SAME request sent again, at most
+ * RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS times, then the refusal returns as
+ * its Response for the typed mapping. Transport errors pass straight
+ * through to each caller's own seam — the chunk loop's re-probe, the
+ * finalize's bounded attempts.
+ */
+async function sendHonoringRetryAfter(send: () => Promise<Response>): Promise<Response> {
+  for (let waits = 0; ; waits += 1) {
+    const response = await send();
+    if (!isRateLimited(response) || waits >= RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS) return response;
+    // This refusal is spent, so its body is read here; the one that ends
+    // the waits returns above unread, envelope intact for throwApiError.
+    const text = await response.text().catch(() => "");
+    await sleep(retryAfterWaitMs(readRetryAfterSec(text, response), waits + 1));
   }
 }
 
@@ -218,10 +282,12 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
   for (const [name, value] of Object.entries(post.fields)) {
     if (value !== undefined) body[name] = value;
   }
-  const created = await boundedFetch(
-    sessionsUrl,
-    { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) },
-    timeoutMs,
+  const created = await sendHonoringRetryAfter(() =>
+    boundedFetch(
+      sessionsUrl,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) },
+      timeoutMs,
+    ),
   );
   if (!created.ok) return created;
   const session = (await created.json()) as { id: string; import_id?: string | null };
@@ -236,10 +302,8 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
   // The server's current offset — what HEAD re-reads after any stumble
   // (Harbor's recovery, resumable.py:130-135).
   const probeOffset = async (): Promise<number> => {
-    const probe = await boundedFetch(
-      sessionUrl,
-      { method: "HEAD", headers: post.headers },
-      timeoutMs,
+    const probe = await sendHonoringRetryAfter(() =>
+      boundedFetch(sessionUrl, { method: "HEAD", headers: post.headers }, timeoutMs),
     );
     if (!probe.ok) throw new Error(`upload session probe failed: HTTP ${probe.status}`);
     const offset = Number(probe.headers.get("upload-offset"));
@@ -267,22 +331,26 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
       const chunkDigest = createHash("sha256").update(chunk).digest();
       let response: Response;
       try {
-        response = await boundedFetch(
-          sessionUrl,
-          {
-            method: "PATCH",
-            headers: {
-              ...post.headers,
-              "Content-Type": "application/offset+octet-stream",
-              "Upload-Offset": String(offset),
-              // TUS's checksum-extension spelling; required by our door.
-              "Upload-Checksum": `sha256 ${chunkDigest.toString("base64")}`,
+        // Under the rate-limit law: a 429/503 waits and re-sends THIS chunk
+        // at THIS offset — the buffer is untouched until the loop advances.
+        response = await sendHonoringRetryAfter(() =>
+          boundedFetch(
+            sessionUrl,
+            {
+              method: "PATCH",
+              headers: {
+                ...post.headers,
+                "Content-Type": "application/offset+octet-stream",
+                "Upload-Offset": String(offset),
+                // TUS's checksum-extension spelling; required by our door.
+                "Upload-Checksum": `sha256 ${chunkDigest.toString("base64")}`,
+              },
+              // A fresh copy: fetch may read the body after the loop reuses
+              // the buffer for the next chunk.
+              body: new Uint8Array(chunk),
             },
-            // A fresh copy: fetch may read the body after the loop reuses
-            // the buffer for the next chunk.
-            body: new Uint8Array(chunk),
-          },
-          timeoutMs,
+            timeoutMs,
+          ),
         );
       } catch (transportError) {
         // The dropped-link seam. Bounded attempts, Harbor's backoff, then
@@ -319,11 +387,14 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
       post.onBytes?.(offset, size);
     }
 
-    // 3. Finalize — idempotent server-side, so a lost response is retried.
+    // 3. Finalize — idempotent server-side, so a lost response is retried
+    // (and a rate-limited one waited, the same law as every request above).
     let lastError: unknown;
     for (let attempt = 1; attempt <= RESUMABLE_UPLOAD_MAX_ATTEMPTS; attempt++) {
       try {
-        return await postCompletion(`${sessionUrl}/complete`, post.headers, timeoutMs);
+        return await sendHonoringRetryAfter(() =>
+          postCompletion(`${sessionUrl}/complete`, post.headers, timeoutMs),
+        );
       } catch (transportError) {
         lastError = transportError;
         if (attempt < RESUMABLE_UPLOAD_MAX_ATTEMPTS) await sleep(backoffMs(attempt));

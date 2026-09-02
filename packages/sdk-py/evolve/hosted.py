@@ -54,6 +54,7 @@ from typing import (
     TypedDict,
     Union,
     get_args,
+    cast,
 )
 
 from . import _http
@@ -85,6 +86,14 @@ UPLOAD_TIMEOUT_SEC = DOWNLOAD_TIMEOUT_SEC
 RESUMABLE_UPLOAD_THRESHOLD_BYTES = 256 * 1024 * 1024
 RESUMABLE_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024
 RESUMABLE_UPLOAD_MAX_ATTEMPTS = 4
+# The rate-limit bound, per request of the protocol: a 429/503 is waited out
+# and the same request sent again at most this many times, each wait capped,
+# then the refusal raises typed. Harbor's publisher retries transport errors
+# only and has no 429 handling (publisher.py:44-48, 165-170) — the recorded
+# extension for a hosted door with a per-user rate limiter in front of every
+# chunk PATCH. The same two numbers as hosted/resumable.ts.
+RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS = 3
+RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC = 60
 META_TIMEOUT_SEC = 30
 SSE_SOCKET_TIMEOUT_SEC = 60
 
@@ -463,6 +472,18 @@ TrialStatus = Literal[
     'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED',
 ]
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
+
+#: The list scopes — Harbor's ``--scope`` on ``harbor hub job list`` (their
+#: cli/hub.py list_jobs_cmd: my | shared | all). ``my`` is what you created;
+#: ``shared`` is what your organizations' other members created — every row
+#: the per-id doors already open for you that is not your own. Harbor's
+#: ``all`` adds public rows; nothing hosted is public, so the server refuses
+#: it (``invalid_input``).
+JobListScope = Literal['my', 'shared']
+
+#: An analysis's own lifecycle ladder — lowercase, the object's Harbor
+#: dialect (spec ``TrialAnalysis.status``).
+AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
 #: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
 #: ``'measured_provisional'`` is a real gateway reading taken inside its
 #: asynchronous spend flush — an honest floor a deferred pass later confirms or
@@ -632,6 +653,23 @@ class TaskProviderVerdict:
 
 
 @dataclass
+class TaskNote:
+    """A typed, non-fatal fact recorded about an ACCEPTED task.
+
+    Not a refusal (the task imports and runs) and not a failure (nothing
+    failed): a recorded degrade the platform states where the publisher reads
+    it. ``tests_dockerfile_not_built``: the task ships a tests/Dockerfile the
+    verifier does not build, because upstream never would on its shape — the
+    separate verifier's effective environment pins a docker_image (Harbor
+    boots it as-is), or the verifier is shared and runs inside the agent box;
+    a dependency the recipe would install must already be in the image the
+    verifier boots. ``message`` is the platform's own sentence, naming the
+    shape."""
+    code: str
+    message: str
+
+
+@dataclass
 class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
@@ -643,6 +681,10 @@ class Task:
     ``gpus``/``gpu_types`` are the task's declared GPU requirement (Harbor's
     task fields honored verbatim): 0 = a CPU task; ``gpu_types`` None = any
     type is acceptable (always None when ``gpus`` is 0).
+
+    ``notes`` are the typed, non-fatal facts recorded at import
+    (:class:`TaskNote`); [] when there is nothing to say — every task imported
+    before the notes existed, and every task on a server predating the field.
     """
     task_name: str
     agent_timeout_sec: float
@@ -650,6 +692,7 @@ class Task:
     providers: Dict[str, TaskProviderVerdict]
     gpus: int = 0
     gpu_types: Optional[List[str]] = None
+    notes: List[TaskNote] = field(default_factory=list)
 
 
 @dataclass
@@ -1432,6 +1475,14 @@ class TrialAnalysis(TypedDict):
     own ``usage`` follows.
     """
     id: str
+    #: Provenance: the analyzed trial, its job, and its task. Redundant on
+    #: ``Trial.analysis`` (the trial is the enclosing object) and the whole
+    #: point of an ``analyses().list()`` row, where nothing else says which
+    #: run the verdict judged. Harbor's ``trial_name`` names the same thing
+    #: by directory.
+    trial_id: str
+    job_id: str
+    task_name: str
     #: ``'queued'`` | ``'running'`` | ``'completed'`` | ``'failed'``. Every
     #: non-terminal analysis reaches ``completed`` or ``failed``; a worker
     #: death mid-run is reaped to a typed ``failed``.
@@ -1931,10 +1982,16 @@ class Trial:
     #: versioned, source-dated rate card; a SEPARATE labeled figure NEVER
     #: merged into ``agent_result.cost_usd`` (metered model spend). Keys:
     #: ``estimate_usd``/``unpriced_reason`` (exactly one set), ``provider``,
-    #: ``gpu_type``, ``declared_gpu_type``, ``gpu_count``, ``duration_sec``,
-    #: ``rate_usd_per_gpu_sec``, ``rate_card`` ({version, source,
-    #: source_date}), ``measured_from``, ``measured_to``. A GPU trial that
-    #: provably never booted a sandbox carries a real ``estimate_usd: 0``.
+    #: ``gpu_type`` (the billing name priced: the attached type when the
+    #: provider reported one, else the one type the request carried),
+    #: ``declared_gpu_types`` (the task's list, None = any),
+    #: ``resolved_gpu_types`` (what the create request carried for the
+    #: provider), ``attached_gpu_type`` (the provider-reported pin, or
+    #: None), ``gpu_count``, ``duration_sec``, ``rate_usd_per_gpu_sec``,
+    #: ``rate_card`` ({version, source, source_date}), ``measured_from``,
+    #: ``measured_to``. A GPU trial that provably never booted a sandbox
+    #: carries a real ``estimate_usd: 0``; a request that let the provider
+    #: choose the device is unpriced with the candidates named.
     gpu_cost: Optional[Dict[str, Any]]
     # WHERE THIS TRIAL RAN: the provider id of the box the agent executed in.
     # None is honest and common — a QUEUED or CANCELLED trial never booted one.
@@ -2204,6 +2261,11 @@ class ImportWarning:
     lacks its reference-solution record — the record operator verification
     tooling reads, never a gate. The version still publishes, activates, and
     runs; the warning makes the permanent gap visible instead of silent.
+
+    ``tests_dockerfile_not_built`` names the READY tasks that ship a
+    tests/Dockerfile the verifier never builds — their verifier image is
+    pinned, or shared (upstream semantics). Each such task carries the same
+    fact as a :class:`TaskNote` on the dataset detail.
     """
     code: str
     message: Optional[str] = None
@@ -2318,13 +2380,19 @@ class PreflightTaskVerdict:
     refusal sentence in ``reason`` — exactly what a real import would say.
     ``providers`` (present with ok True) maps each sandbox provider to a
     :class:`TaskProviderVerdict` over the toml-declared requirements (GPU,
-    sizing, network), with the compose/image-command halves deferred."""
+    sizing, network), with the compose/image-command halves deferred.
+    ``notes`` (present with ok True) are the typed task notes a task.toml
+    alone decides — today ``tests_dockerfile_not_built`` for a separate
+    verifier whose effective environment pins a docker_image, worded
+    conditionally because the door never sees the tests tree; [] when there
+    is nothing to say."""
     name: str
     ok: bool
     task_key: str
     schema_version: Optional[str] = None
     providers: Optional[Dict[str, TaskProviderVerdict]] = None
     reason: Optional[str] = None
+    notes: List[TaskNote] = field(default_factory=list)
 
 
 @dataclass
@@ -2417,6 +2485,13 @@ class JobPage:
 @dataclass
 class TrialPage:
     items: List[Trial]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class AnalysisPage:
+    items: List[TrialAnalysis]
     next_cursor: Optional[str]
     has_more: bool
 
@@ -2780,7 +2855,19 @@ def _map_task(data: Dict[str, Any]) -> Task:
             if isinstance(gpu_types_raw, list) and gpu_types_raw
             else None
         ),
+        notes=_map_task_notes(data.get('notes')),
     )
+
+
+def _map_task_notes(raw: Any) -> List[TaskNote]:
+    """The typed task notes of a task or pre-flight verdict; absent reads as []."""
+    if not isinstance(raw, list):
+        return []
+    return [
+        TaskNote(code=str(item.get('code', '')), message=str(item.get('message', '')))
+        for item in raw
+        if isinstance(item, dict)
+    ]
 
 
 def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
@@ -3094,6 +3181,18 @@ def _page_query(
     return f'?{query}' if query else ''
 
 
+def _map_trial_analysis(data: Any) -> Optional[TrialAnalysis]:
+    """The wire's TrialAnalysis, its nested ``usage`` normalized through the
+    one shared reading rule (exactly as the trial's own ``usage`` is); the
+    dict rides otherwise verbatim. Absent and malformed both read None."""
+    if not isinstance(data, dict):
+        return None
+    return cast(
+        TrialAnalysis,
+        {**data, 'usage': _usage_reading_from_data(data.get('usage'))},
+    )
+
+
 def _map_timing(data: Any) -> Optional[TimingInfo]:
     if not isinstance(data, dict):
         return None
@@ -3211,13 +3310,7 @@ def _map_trial(data: Dict[str, Any]) -> Trial:
         # read None — "never analyzed", never a fabricated empty object. The
         # dict rides otherwise verbatim; its nested ``usage`` goes through
         # the one shared parsing rule, exactly as the trial's own does.
-        analysis=(
-            {
-                **data['analysis'],
-                'usage': _usage_reading_from_data(data['analysis'].get('usage')),
-            }
-            if isinstance(data.get('analysis'), dict) else None
-        ),
+        analysis=_map_trial_analysis(data.get('analysis')),
         environment_setup=_map_timing(data.get('environment_setup')),
         agent_setup=_map_timing(data.get('agent_setup')),
         agent_execution=_map_timing(data.get('agent_execution')),
@@ -3560,6 +3653,7 @@ def _map_dataset_preflight(data: Dict[str, Any]) -> DatasetPreflight:
                     else None
                 ),
                 reason=item.get('reason'),
+                notes=_map_task_notes(item.get('notes')),
             )
             for item in data.get('tasks', [])
             if isinstance(item, dict)
@@ -3698,7 +3792,10 @@ def _header_retry_after_sec(headers: Any) -> Optional[float]:
         return None
 
 
-def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
+def _api_error(exc: urllib.error.HTTPError) -> EvolveAPIError:
+    """The ONE mapping of a refused response to the typed error — consumes
+    the HTTPError's body. Raised by :func:`_raise_api_error`; read bare by
+    the resumable upload's rate-limit waits, which need only the delay."""
     detail = exc.read().decode('utf-8', errors='replace')
     parsed = _parse_error_body(detail, str(exc.reason))
     # Header fallbacks, so an unparseable body still yields a usable request id
@@ -3711,7 +3808,7 @@ def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
     # delay and the two SDKs stopped describing one law (TypeScript's
     # readRetryAfterSec keeps the 0). Absent is the only fallback trigger.
     body_retry_sec = parsed.get('retry_after_sec')
-    raise EvolveAPIError(
+    return EvolveAPIError(
         exc.code,
         parsed['code'],
         parsed['message'],
@@ -3719,7 +3816,11 @@ def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
         details=parsed.get('details'),
         retry_after_sec=body_retry_sec if body_retry_sec is not None else header_retry_sec,
         request_id=parsed.get('request_id') or header_request_id,
-    ) from exc
+    )
+
+
+def _raise_api_error(exc: urllib.error.HTTPError) -> NoReturn:
+    raise _api_error(exc) from exc
 
 
 class _HostedHttp:
@@ -4092,6 +4193,17 @@ def _resumable_backoff_sec(attempt: int) -> float:
     return min(0.5 * (2 ** (attempt - 1)), 4.0)
 
 
+def _retry_after_wait_sec(retry_after_sec: Optional[float], wait: int) -> float:
+    """How long one 429/503 is waited: the server's Retry-After (the one
+    reading law — body first, header second), never below Harbor's backoff
+    for this wait (an absent or zero delay is not an instant re-send — the
+    one thing a rate limit forbids), never above
+    RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC. The twin of resumable.ts
+    retryAfterWaitMs."""
+    asked = retry_after_sec if retry_after_sec is not None else 0.0
+    return min(max(asked, _resumable_backoff_sec(wait)), float(RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC))
+
+
 def _upload_resumable_sync(
     http: '_HostedHttp',
     archive_path: str,
@@ -4109,6 +4221,21 @@ def _upload_resumable_sync(
     reset whenever a chunk lands. One chunk buffer lives at a time. Typed
     refusals raise EvolveAPIError through the shared mapper; only transport
     failure past the budget raises the transport error.
+
+    Rate limits are delays, not outcomes: a 429/503 on any request of the
+    protocol (open, probe, chunk, finalize) is waited out — the server's
+    Retry-After by the one reading law, floored at Harbor's backoff and
+    capped at RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC — and the SAME request
+    goes again at the SAME offset, at most
+    RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS times per request, then the
+    refusal raises typed. Re-sending the chunk is safe: the platform refuses
+    a rate-limited PATCH before its first body byte (the limiter inside the
+    auth step, swarm_dashboard lib/evaluations/api-errors.ts; the PATCH
+    route's heap gate likewise), and a chunk applied under a lost 429 comes
+    back as the 409 the offset re-probe below already handles. Harbor's
+    publisher retries transport errors only and has no 429 handling
+    (publisher.py:44-48, 165-170) — the recorded extension, twin of
+    hosted/resumable.ts.
     """
     size = os.path.getsize(archive_path)
     sha256 = _file_sha256(archive_path)
@@ -4116,8 +4243,22 @@ def _upload_resumable_sync(
     auth = {'Authorization': f'Bearer {http.api_key()}', 'Accept': 'application/json'}
 
     def request(url: str, method: str, headers: Dict[str, str], data: Optional[bytes] = None):
-        req = urllib.request.Request(url, data=data, headers={**auth, **headers}, method=method)
-        return _http.urlopen(req, timeout=UPLOAD_TIMEOUT_SEC)
+        # One request of the protocol under the rate-limit law above. Every
+        # other HTTPError (and every transport error) passes straight
+        # through to the caller's own seam.
+        waits = 0
+        while True:
+            req = urllib.request.Request(url, data=data, headers={**auth, **headers}, method=method)
+            try:
+                return _http.urlopen(req, timeout=UPLOAD_TIMEOUT_SEC)
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (429, 503) or waits >= RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS:
+                    raise
+                waits += 1
+                # This refusal is spent — its body is read for the delay;
+                # the one that ends the waits is raised above unread, so
+                # _raise_api_error still maps it with its envelope intact.
+                time.sleep(_retry_after_wait_sec(_api_error(exc).retry_after_sec, waits))
 
     # 1. Open the session (a refusal here raises typed; nothing transferred yet).
     body = {'size': size, 'sha256': sha256}
@@ -5865,19 +6006,22 @@ class JobsClient:
         self,
         *,
         search: Optional[str] = None,
+        scope: Optional[JobListScope] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's jobs, newest first (cursor-paged).
+        """List jobs, newest first (cursor-paged).
 
         ``await`` the result for one page (honoring ``limit``/``cursor``), or
         ``async for`` it to walk every job across cursor pages. ``search`` is
-        a server-side free-text filter over job name and dataset names, sent
-        on every page fetch.
+        a server-side free-text filter over job name and dataset names;
+        ``scope`` is Harbor's ``--scope`` — ``'my'`` (yours, the server's
+        default) or ``'shared'`` (your organizations' jobs that teammates
+        created). Both are sent on every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(
-                f'/api/jobs{_page_query(page_limit, page_cursor, search=search)}'
+                f'/api/jobs{_page_query(page_limit, page_cursor, search=search, scope=scope)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return JobPage(
@@ -6882,9 +7026,9 @@ class TrialsClient:
             # were stopped", exactly how such a server behaves.
             stopped_analyses=(
                 [
-                    {**item, 'usage': _usage_reading_from_data(item.get('usage'))}
-                    for item in stopped_analyses
-                    if isinstance(item, dict)
+                    mapped
+                    for mapped in (_map_trial_analysis(item) for item in stopped_analyses)
+                    if mapped is not None
                 ]
                 if isinstance(stopped_analyses, list)
                 else []
@@ -6897,6 +7041,91 @@ class TrialsClient:
 # =============================================================================
 # AUTH CLIENT
 # =============================================================================
+
+class AnalysesClient:
+    """Client for trace-analysis runs — the catalog (``GET /api/analyses``).
+
+    Created via the standalone ``analyses()`` factory. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
+
+    The per-run reads (the verdict by id, the analyzer's transcript, its
+    stored artifacts) ride the dashboard's traces feed, which is not part of
+    the OpenAPI contract; the TypeScript SDK and the CLI speak those doors.
+    This client speaks the contract's one analyses door: the list.
+
+    Example::
+
+        from evolve import analyses
+
+        async with analyses() as a:
+            async for analysis in a.list(job=job.id, status=['failed']):
+                print(analysis['task_name'], analysis['failure'])
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('analyses', config)
+
+    async def __aenter__(self) -> 'AnalysesClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    def list(
+        self,
+        *,
+        scope: Optional[JobListScope] = None,
+        job: Optional[str] = None,
+        status: Optional[List[AnalysisStatus]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """Every analysis you may read, newest first (cursor-paged).
+
+        Each row is the wire's :class:`TrialAnalysis` carrying the trial,
+        job, and task it judged (``trial_id`` / ``job_id`` / ``task_name``),
+        so a headless round is list, then read each. ``scope`` is Harbor's
+        ``--scope`` (``'my'`` — analyses of jobs you created, the server's
+        default; ``'shared'`` — of your organizations' jobs that teammates
+        created); ``job`` narrows to one job's trials; ``status`` to the
+        analysis's own lowercase ladder. Every filter rides every page
+        fetch. ``await`` for one page, ``async for`` to walk them all.
+
+        One boundary under ``scope='shared'`` today: those rows list, but
+        their per-run reads (the CLI's ``analysis show`` / ``trace`` /
+        ``download``) refuse them (404 ``Trial not found``) — the doors
+        they ride open only to the job's creator (owner ruling on aligning
+        those doors pending); ``'my'`` rows resolve on every read.
+        """
+        async def fetch_page(page_limit, page_cursor) -> AnalysisPage:
+            raw = await self._http.request_json(
+                '/api/analyses'
+                + _page_query(
+                    page_limit,
+                    page_cursor,
+                    scope=scope,
+                    job=job,
+                    status=','.join(status) if status else None,
+                )
+            )
+            items, next_cursor, has_more = _page_parts(raw)
+            analyses: List[TrialAnalysis] = []
+            for item in items:
+                mapped = _map_trial_analysis(item)
+                if mapped is None:
+                    # The row IS the answer here — unlike the OPTIONAL
+                    # Trial.analysis slot, an unreadable row fails closed.
+                    raise ValueError('The analyses list served an unreadable analysis object')
+                analyses.append(mapped)
+            return AnalysisPage(items=analyses, next_cursor=next_cursor, has_more=has_more)
+
+        return _PaginatedList(
+            fetch_page, lambda page: page.items, limit=limit, cursor=cursor
+        )
+
 
 class AuthClient:
     """Client for caller identity.
@@ -6971,6 +7200,7 @@ class HostedEvolve:
         self._agents: Optional[AgentsClient] = None
         self._jobs: Optional[JobsClient] = None
         self._trials: Optional[TrialsClient] = None
+        self._analyses: Optional[AnalysesClient] = None
         self._skills: Optional[SkillsClient] = None
 
     @property
@@ -7002,6 +7232,13 @@ class HostedEvolve:
         return self._trials
 
     @property
+    def analyses(self) -> AnalysesClient:
+        """Trace-analysis runs: the catalog, with the trial/job/task each judged."""
+        if self._analyses is None:
+            self._analyses = AnalysesClient(self._config)
+        return self._analyses
+
+    @property
     def skills(self) -> SkillsClient:
         """Platform-stored skills, referenced as ``upload:<id>`` in agents[].skills."""
         if self._skills is None:
@@ -7023,7 +7260,7 @@ class HostedEvolve:
         await self.close()
 
     async def close(self) -> None:
-        for client in (self._datasets, self._agents, self._jobs, self._trials):
+        for client in (self._datasets, self._agents, self._jobs, self._trials, self._analyses):
             if client is not None:
                 await client.close()
 

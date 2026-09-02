@@ -113,6 +113,30 @@ export const EVAL_SANDBOX_PROVIDERS = ["e2b", "daytona", "modal"] as const;
 export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
 
 /**
+ * The list scopes — Harbor's `--scope` on `harbor hub job list` (their
+ * cli/hub.py list_jobs_cmd: my | shared | all). `my` is what you created;
+ * `shared` is what your organizations' other members created — every row the
+ * per-id doors already open for you that is not your own. Harbor's `all`
+ * adds public rows; nothing hosted is public, so the server refuses it and
+ * the CLI refuses it at the keyboard. A runtime value for the same reason as
+ * TRIAL_STATUSES: the CLI validates `--scope` against it.
+ */
+export const JOB_LIST_SCOPES = ["my", "shared"] as const;
+
+/** One list scope — see JOB_LIST_SCOPES. */
+export type JobListScope = (typeof JOB_LIST_SCOPES)[number];
+
+/**
+ * An analysis's own lifecycle ladder — lowercase, the object's Harbor
+ * dialect (spec TrialAnalysis.status). A runtime value so the CLI validates
+ * `analysis list --status` against it instead of a second copy.
+ */
+export const ANALYSIS_STATUSES = ["queued", "running", "completed", "failed"] as const;
+
+/** One analysis status — see ANALYSIS_STATUSES. */
+export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
+
+/**
  * Which lane a settled trial's `agent_result.cost_usd` came from. Only
  * `"measured"` is final. `"measured_provisional"` is a real gateway reading
  * taken inside its asynchronous spend flush — an honest floor a deferred pass
@@ -865,9 +889,19 @@ export interface JobAnalysisStats {
  * A SEPARATE labeled figure by law: never merged into
  * `agent_result.cost_usd`, which is metered model spend. Exactly one of
  * `estimate_usd` / `unpriced_reason` is set — an unmeasurable lifetime (a
- * reaped run) or a rate-less type (`any`) states its reason instead of a
- * guessed number, and a GPU trial that provably never booted a sandbox
- * carries a real `estimate_usd: 0`.
+ * reaped run) or a request that let the provider choose the device (`any`,
+ * or several candidates) states its reason instead of a guessed number, and
+ * a GPU trial that provably never booted a sandbox carries a real
+ * `estimate_usd: 0`.
+ *
+ * WHICH DEVICE IS PRICED: the type the provider reported pinned to the box
+ * (`attached_gpu_type`) when it reported one, else the ONE type the create
+ * request carried (`resolved_gpu_types`: modal reserves exactly the task's
+ * first spelling; daytona receives the task's types in its own names, in
+ * order, and pins the first with capacity). The three provenance fields
+ * make the choice auditable; records priced under `rate_card.version` 1
+ * predate them and serve `declared_gpu_types` as the single spelling they
+ * kept, the other two null.
  */
 export interface TrialGpuCost {
   /** The estimate, USD, micro-dollar resolution. Null exactly when `unpriced_reason` is set. */
@@ -875,10 +909,22 @@ export interface TrialGpuCost {
   /** Why no estimate exists. Null exactly when `estimate_usd` is set. */
   unpriced_reason: string | null;
   provider: EvalSandboxProvider;
-  /** The rate card's billing name (e.g. `H100`); null when the declared type never resolved. */
+  /**
+   * The rate card's billing name the rate was looked up under (e.g. `H100`):
+   * the attached type when reported, else the one type the request carried.
+   * Null when no single device type is known.
+   */
   gpu_type: string | null;
-  /** The task's own declared spelling (first named `gpu_types` entry, or `any`). */
-  declared_gpu_type: string;
+  /** The task's own `gpu_types` list, verbatim; null when it named none (any type). */
+  declared_gpu_types: string[] | null;
+  /**
+   * What the create request carried for the provider, in the provider's
+   * spelling: modal's one reservation, daytona's ordered candidates. Null
+   * when no constraint travelled, and on rate-card v1 records.
+   */
+  resolved_gpu_types: string[] | null;
+  /** The device type the provider reported pinned to the box; null when none was reported. */
+  attached_gpu_type: string | null;
   gpu_count: number;
   /** Measured sandbox lifetime, fractional seconds; null when unmeasured. */
   duration_sec: number | null;
@@ -1228,11 +1274,20 @@ export interface AnalysisFailure {
 export interface TrialAnalysis {
   id: string;
   /**
+   * Provenance: the analyzed trial, its job, and its task. Redundant on
+   * `Trial.analysis` (the trial is the enclosing object) and the whole point
+   * of a `analyses().list()` row, where nothing else says which run the
+   * verdict judged. Harbor's `trial_name` names the same thing by directory.
+   */
+  trial_id: string;
+  job_id: string;
+  task_name: string;
+  /**
    * Lifecycle of this analysis. Every non-terminal analysis reaches
    * `completed` or `failed`; a worker death mid-run is reaped to a typed
    * `failed`, never left `running` forever.
    */
-  status: "queued" | "running" | "completed" | "failed";
+  status: AnalysisStatus;
   model_name: string;
   rubric: Rubric;
   /**
@@ -1822,6 +1877,15 @@ export type JobPage = Page<Job>;
  */
 export interface JobList extends Awaitable<JobPage>, AsyncIterable<Job> {}
 
+/** Cursor page of trace analyses (newest first) */
+export type AnalysisPage = Page<TrialAnalysis>;
+
+/**
+ * The handle returned by analyses().list(). Both a promise for one page and
+ * an async iterable across cursor pages, like every other list handle.
+ */
+export interface AnalysisList extends Awaitable<AnalysisPage>, AsyncIterable<TrialAnalysis> {}
+
 /**
  * One task's rollup within a job: its trial tally, mean reward over SCORED
  * trials, and measured cost. Sits between the job body and the trial list so
@@ -2048,6 +2112,23 @@ export type TaskProviderVerdict =
   | { ok: true; degrades_to?: "modal"; reason?: string }
   | { ok: false; reason: string };
 
+/**
+ * A typed, non-fatal fact recorded about an ACCEPTED task — not a refusal
+ * (the task imports and runs) and not a failure (nothing failed): a recorded
+ * degrade the platform states where the publisher reads it.
+ *
+ * `tests_dockerfile_not_built`: the task ships a tests/Dockerfile the verifier
+ * does not build, because upstream never would on its shape — the separate
+ * verifier's effective environment pins a docker_image (Harbor boots it
+ * as-is), or the verifier is shared and runs inside the agent box; a
+ * dependency the recipe would install must already be in the image the
+ * verifier boots. `message` is the platform's own sentence, naming the shape.
+ */
+export interface TaskNote {
+  code: "tests_dockerfile_not_built";
+  message: string;
+}
+
 /** Public task fields only — instructions, environments, and tests never leave the server */
 export interface Task {
   task_name: string;
@@ -2071,6 +2152,12 @@ export interface Task {
    * spent on a trial that cannot execute.
    */
   providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  /**
+   * Typed, non-fatal facts recorded about the task at import (TaskNote).
+   * [] when there is nothing to say — every task imported before the notes
+   * existed, and every task on a server predating the field.
+   */
+  notes: TaskNote[];
 }
 
 /**
@@ -2340,6 +2427,15 @@ export interface PreflightTaskVerdict {
    * compose/image-command halves deferred to the import.
    */
   providers?: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  /**
+   * Present with ok true: the typed task notes a task.toml alone decides —
+   * today `tests_dockerfile_not_built` for a separate verifier whose
+   * effective environment pins a docker_image (the image is booted as-is and
+   * tests/ is never built, upstream semantics), worded conditionally because
+   * the door never sees whether the tests tree ships a Dockerfile. [] when
+   * there is nothing to say; absent on servers predating the field.
+   */
+  notes?: TaskNote[];
   /** Present with ok false: the importer's refusal sentence. */
   reason?: string;
 }
@@ -2458,13 +2554,21 @@ export interface DatasetImportFailure {
  * FAILED their independent build and are not runnable in this version. The
  * names and typed reasons are on the dataset detail's `failed_tasks`; fixing
  * them is a re-publish (immutable versions).
+ *
+ * `tests_dockerfile_not_built` names the READY tasks that ship a
+ * tests/Dockerfile the verifier never builds — their verifier image is pinned,
+ * or shared (upstream semantics: Harbor boots the pinned image as-is and never
+ * builds tests/ on that shape). Not an absence and not a failure: a recorded
+ * degrade. Each such task carries the same fact as a `tests_dockerfile_not_built`
+ * note on the dataset detail (Task.notes).
  */
 export interface ImportWarning {
   code:
     | "solutions_archiving_disabled"
     | "no_solutions_archived"
     | "partial_solutions_archived"
-    | "tasks_failed_to_build";
+    | "tasks_failed_to_build"
+    | "tests_dockerfile_not_built";
   message?: string;
 }
 
@@ -2689,6 +2793,22 @@ export interface StartJobOptions {
 export interface ListJobsOptions extends PageOptions {
   /** Server-side free-text filter over job name and dataset names. */
   search?: string;
+  /**
+   * Visibility scope (Harbor's `--scope`): `my` — jobs you created, the
+   * server's default; `shared` — your organizations' jobs that teammates
+   * created. See JOB_LIST_SCOPES.
+   */
+  scope?: JobListScope;
+}
+
+/** Options for analyses().list() (default page 50, max 200) */
+export interface ListAnalysesOptions extends PageOptions {
+  /** Visibility scope, exactly as on jobs().list(). */
+  scope?: JobListScope;
+  /** Only analyses of this job's trials. */
+  job?: string;
+  /** Only analyses in these statuses (the object's own lowercase ladder). */
+  status?: AnalysisStatus[];
 }
 
 /** Options for jobs().tasks() (default page 50, max 200) */
@@ -3476,6 +3596,18 @@ export interface AnalysisTranscript {
  * adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
+  /**
+   * Every analysis you may read, newest first (cursor-paged) — the catalog
+   * of trace-analysis runs, `GET /api/analyses`. Each row is the wire's
+   * TrialAnalysis carrying the trial, job, and task it judged, so a
+   * headless round is list → get each. `{ scope, job, status }` narrow it;
+   * await the handle for one page, or `for await` it to walk every page.
+   * One boundary under `scope: "shared"` today: those rows list, but `get`,
+   * `transcript` and `artifact` refuse them (404 `Trial not found`) — the
+   * feed doors they ride open only to the job's creator (owner ruling on
+   * aligning those doors pending); `my` rows resolve on every read.
+   */
+  list(options?: ListAnalysesOptions): AnalysisList;
   /**
    * The verdict document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same

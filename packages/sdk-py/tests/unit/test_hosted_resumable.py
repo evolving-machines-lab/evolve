@@ -18,7 +18,15 @@ against a REAL local HTTP server holding a REAL in-memory session:
   that round's attempt — the transfer survives and completes (fb41406);
 - typed refusals raise EvolveAPIError through the shared mapper;
 - a server that keeps dropping exhausts RESUMABLE_UPLOAD_MAX_ATTEMPTS;
-- a lost finalize response is retried (complete is idempotent by state).
+- a lost finalize response is retried (complete is idempotent by state);
+- THE RATE-LIMIT SEAM: a 429/503 on any request of the protocol is a delay,
+  not an outcome — the server's Retry-After is waited (body first, header
+  second; never below Harbor's backoff for that wait, never above
+  RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC) and the SAME request goes again at
+  the SAME offset, at most RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS times per
+  request, then the refusal raises typed. The live failure this pins: an
+  8 GB publish died on ONE 429 rate_limited (retryAfterSec=9) during part
+  streaming, 2026-09-01.
 """
 
 import base64
@@ -26,6 +34,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -33,14 +42,28 @@ import pytest
 from evolve.hosted import (
     RESUMABLE_UPLOAD_CHUNK_BYTES,
     RESUMABLE_UPLOAD_MAX_ATTEMPTS,
+    RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS,
+    RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC,
     RESUMABLE_UPLOAD_THRESHOLD_BYTES,
     EvolveAPIError,
     _HostedHttp,
+    _retry_after_wait_sec,
     _upload_archive_resumable,
 )
 from evolve.config import HostedClientConfig
 
 CHUNK = 64 * 1024
+
+RATE_LIMIT_BODY = {
+    'error': {'code': 'rate_limited', 'message': 'Rate limit exceeded; retry after the Retry-After delay'}
+}
+
+
+def rate_limit_body(retry_after_sec=None):
+    body = {'error': dict(RATE_LIMIT_BODY['error'])}
+    if retry_after_sec is not None:
+        body['error']['retryAfterSec'] = retry_after_sec
+    return body
 
 
 class SessionState:
@@ -77,6 +100,10 @@ def make_server(faults: dict):
                 if faults.get('create_refuses'):
                     self._json(413, {'error': {'code': 'import_too_large', 'message': 'over the cap'}})
                     return
+                if faults.get('rate_limit_create_once') and not faults.get('_create_refused'):
+                    faults['_create_refused'] = True
+                    self._json(429, rate_limit_body(0.01))
+                    return
                 parsed = json.loads(body)
                 state = SessionState(
                     parsed['size'],
@@ -96,6 +123,10 @@ def make_server(faults: dict):
                 if faults.get('drop_first_complete') and state.completed == 0 and not faults.get('_complete_dropped'):
                     faults['_complete_dropped'] = True
                     self.connection.close()
+                    return
+                if faults.get('rate_limit_complete_once') and not faults.get('_complete_refused'):
+                    faults['_complete_refused'] = True
+                    self._json(429, rate_limit_body(0.01))
                     return
                 if state.offset != state.size:
                     self._json(409, {'error': {'code': 'upload_incomplete', 'message': 'missing bytes'}})
@@ -135,6 +166,25 @@ def make_server(faults: dict):
             if faults.get('drop_every_patch'):
                 self.connection.close()
                 return
+            # The rate-limit seam. Timestamps let a test measure that the
+            # Retry-After was actually waited before the same offset came back.
+            if faults.get('rate_limit_every_patch'):
+                self._json(429, rate_limit_body(0.01))
+                return
+            limited_nth = faults.get('rate_limit_patch_n')
+            if limited_nth is not None and len(state.patch_offsets) == limited_nth and '_refused_at' not in faults:
+                faults['_refused_at'] = time.monotonic()
+                if faults.get('header_only'):
+                    # A 503 with nothing but the header — no body at all.
+                    self.send_response(503)
+                    self.send_header('Retry-After', str(faults['retry_after']))
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                else:
+                    self._json(429, rate_limit_body(faults['retry_after']))
+                return
+            if '_refused_at' in faults and '_resent_at' not in faults:
+                faults['_resent_at'] = time.monotonic()
             kill_nth = faults.get('kill_patch_n')
             if kill_nth is not None and len(state.patch_offsets) == kill_nth and not faults.get('_patch_killed'):
                 # The mid-chunk link kill: the chunk NEVER lands, no answer.
@@ -326,6 +376,97 @@ def test_lost_finalize_response_is_retried(archive):
     try:
         raw = run_upload(server, path)
         assert raw['id'] == 'version-1'
+        assert list(sessions.values())[0].completed == 1
+    finally:
+        server.shutdown()
+
+
+def test_rate_limit_constants_and_the_one_wait_law():
+    """The bound is one set of numbers in both SDKs (hosted/resumable.ts
+    RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS / RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC),
+    and the wait is the server's Retry-After floored at Harbor's backoff for
+    that wait and capped at the bound."""
+    assert RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS == 3
+    assert RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC == 60
+    assert _retry_after_wait_sec(9, 1) == 9.0  # the server's 9 s is 9 s
+    assert _retry_after_wait_sec(3600, 1) == 60.0  # an hour is capped at the bound
+    assert _retry_after_wait_sec(None, 1) == 0.5  # no reading → Harbor's backoff, wait 1
+    assert _retry_after_wait_sec(None, 3) == 2.0  # no reading → Harbor's backoff, wait 3
+    assert _retry_after_wait_sec(0, 2) == 1.0  # zero is floored — never an instant re-send
+
+
+def test_rate_limited_chunk_is_waited_then_resent_at_its_own_offset(archive):
+    """The live failure: chunk 2's first PATCH answers 429 rate_limited with
+    the delay in the envelope. The transfer waits it, re-sends THE SAME chunk
+    at THE SAME offset, and completes — chunk 1 never re-sent."""
+    path, data = archive
+    faults = {'rate_limit_patch_n': 2, 'retry_after': 0.7}
+    server, sessions = make_server(faults)
+    try:
+        raw = run_upload(server, path)
+        assert raw['status'] == 'QUEUED'
+        state = list(sessions.values())[0]
+        assert hashlib.sha256(b''.join(state.received)).hexdigest() == hashlib.sha256(data).hexdigest()
+        assert state.patch_offsets.count(CHUNK) == 2  # refused once, landed once
+        assert state.patch_offsets.count(0) == 1  # resumed, not restarted
+        waited = faults['_resent_at'] - faults['_refused_at']
+        assert waited >= 0.65, f'the envelope\'s 0.7 s was not waited (measured {waited:.3f} s)'
+    finally:
+        server.shutdown()
+
+
+def test_header_only_503_is_read_by_the_same_law(archive):
+    """A 503 carrying nothing but the Retry-After header is the header-second
+    half of the one reading — waited exactly like the envelope form."""
+    path, data = archive
+    faults = {'rate_limit_patch_n': 1, 'retry_after': 0.7, 'header_only': True}
+    server, sessions = make_server(faults)
+    try:
+        raw = run_upload(server, path)
+        assert raw['status'] == 'QUEUED'
+        state = list(sessions.values())[0]
+        assert hashlib.sha256(b''.join(state.received)).hexdigest() == hashlib.sha256(data).hexdigest()
+        waited = faults['_resent_at'] - faults['_refused_at']
+        assert waited >= 0.65, f'the header\'s 0.7 s was not waited (measured {waited:.3f} s)'
+    finally:
+        server.shutdown()
+
+
+def test_persistent_rate_limit_spends_the_waits_then_raises_typed(archive):
+    """A server that never relents: 1 + RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS
+    sends of the same chunk (the 0.01 s asked is floored at the backoff:
+    0.5 + 1 + 2 s), then the refusal raises as the typed EvolveAPIError —
+    never a hang, never a bare HTTPError."""
+    path, _ = archive
+    server, sessions = make_server({'rate_limit_every_patch': True})
+    try:
+        started = time.monotonic()
+        with pytest.raises(EvolveAPIError) as excinfo:
+            run_upload(server, path)
+        elapsed = time.monotonic() - started
+        assert excinfo.value.status == 429
+        assert excinfo.value.code == 'rate_limited'
+        assert excinfo.value.retry_after_sec == 0.01  # the last refusal's own reading, intact
+        state = list(sessions.values())[0]
+        assert len(state.patch_offsets) == 1 + RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS
+        assert all(offset == 0 for offset in state.patch_offsets)  # nothing skipped
+        assert 3.4 <= elapsed < 10.0, f'three floored waits expected (measured {elapsed:.2f} s)'
+    finally:
+        server.shutdown()
+
+
+def test_rate_limited_open_and_finalize_honor_the_same_law(archive):
+    """Every request of the protocol is under the law, not only the chunk: a
+    refused session open is retried (one session, not a restart) and a
+    refused finalize is waited out (complete is idempotent by state)."""
+    path, _ = archive
+    faults = {'rate_limit_create_once': True, 'rate_limit_complete_once': True}
+    server, sessions = make_server(faults)
+    try:
+        raw = run_upload(server, path)
+        assert raw['id'] == 'version-1'
+        assert faults.get('_create_refused') and faults.get('_complete_refused')
+        assert len(sessions) == 1
         assert list(sessions.values())[0].completed == 1
     finally:
         server.shutdown()

@@ -118,7 +118,10 @@ def test_map_dataset_preflight() -> None:
             'manifest': {'ok': True, 'name': 'evolve/demo', 'short_name': 'demo', 'version': '0.1', 'task_count': 2},
             'tasks': [
                 {'name': 'a', 'ok': True, 'task_key': 'a', 'schema_version': '1.4',
-                 'providers': {'e2b': {'ok': True}, 'daytona': {'ok': False, 'reason': 'too big'}}},
+                 'providers': {'e2b': {'ok': True}, 'daytona': {'ok': False, 'reason': 'too big'}},
+                 # The typed task note the toml decides (harbor-import/16).
+                 'notes': [{'code': 'tests_dockerfile_not_built',
+                            'message': 'tests/Dockerfile, if the task ships one, is not built: verifier image pinned — upstream semantics'}]},
                 {'name': 'b', 'ok': False, 'task_key': 'b', 'reason': 'mutable :latest tag'},
             ],
             'tasks_total': 2,
@@ -132,6 +135,10 @@ def test_map_dataset_preflight() -> None:
     assert answer.manifest is not None and answer.manifest.short_name == 'demo'
     assert answer.tasks[0].providers is not None
     assert answer.tasks[0].providers['daytona'].reason == 'too big'
+    assert [note.code for note in answer.tasks[0].notes] == ['tests_dockerfile_not_built']
+    assert answer.tasks[0].notes[0].message.startswith('tests/Dockerfile, if the task ships one, is not built')
+    # A refused verdict (and an older server) carries no notes — [] never None.
+    assert answer.tasks[1].notes == []
     assert answer.tasks[1].reason == 'mutable :latest tag'
     assert (answer.tasks_total, answer.tasks_ok, answer.tasks_refused) == (2, 1, 1)
 

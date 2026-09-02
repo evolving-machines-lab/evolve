@@ -2106,11 +2106,13 @@ function testTrialDetailGpuCost() {
         unpriced_reason: null,
         provider: "modal",
         gpu_type: "H100",
-        declared_gpu_type: "h100",
+        declared_gpu_types: ["h100"],
+        resolved_gpu_types: ["h100"],
+        attached_gpu_type: null,
         gpu_count: 1,
         duration_sec: 3600,
         rate_usd_per_gpu_sec: 0.001097,
-        rate_card: { version: 1, source: "modal.com/pricing", source_date: "2026-08-05" },
+        rate_card: { version: 2, source: "modal.com/pricing", source_date: "2026-08-05" },
         measured_from: "2026-07-29T00:00:10.000Z",
         measured_to: "2026-07-29T01:00:10.000Z",
       },
@@ -2118,7 +2120,7 @@ function testTrialDetailGpuCost() {
   ).join("\n");
   assert(priced.includes("gpu compute (est.)"), "the estimate row is labeled as an estimate");
   assert(
-    priced.includes("$3.9492 — H100 x1, 3600s on modal (rate card v1, modal.com/pricing 2026-08-05)"),
+    priced.includes("$3.9492 — H100 x1, 3600s on modal (rate card v2, modal.com/pricing 2026-08-05)"),
     "the priced row carries the full audit sentence: figure, type x count, duration, provider, card",
   );
   assert(priced.includes("$0.31"), "the model spend row keeps its own figure beside it");
@@ -2131,11 +2133,13 @@ function testTrialDetailGpuCost() {
         unpriced_reason: "the worker died mid-run",
         provider: "modal",
         gpu_type: "H100",
-        declared_gpu_type: "h100",
+        declared_gpu_types: ["h100"],
+        resolved_gpu_types: ["h100"],
+        attached_gpu_type: null,
         gpu_count: 1,
         duration_sec: null,
         rate_usd_per_gpu_sec: null,
-        rate_card: { version: 1, source: null, source_date: null },
+        rate_card: { version: 2, source: null, source_date: null },
         measured_from: null,
         measured_to: null,
       },
@@ -5791,13 +5795,32 @@ async function testDatasetCheck() {
     assert(out.some((l) => l.includes("bad-task REFUSED") && l.includes("mutable :latest tag")), "prints the importer's refusal sentence");
     assert(out.some((l) => l.includes("the import also checks")), "prints the honesty line naming the deferred checks");
 
-    // All-ok corpus exits 0; --json prints the raw answer.
+    // All-ok corpus exits 0; --json prints the raw answer. A typed task note
+    // (harbor-import/16) prints as its own line and never changes the exit code.
     setMockResponse("/api/datasets/preflight", {
       status: 200,
-      body: preflightBody([{ name: "bad-task", ok: true, task_key: "bad-task", schema_version: "1.4", providers: { e2b: { ok: true } } }]),
+      body: preflightBody([
+        {
+          name: "bad-task",
+          ok: true,
+          task_key: "bad-task",
+          schema_version: "1.4",
+          providers: { e2b: { ok: true } },
+          notes: [
+            {
+              code: "tests_dockerfile_not_built",
+              message: "tests/Dockerfile, if the task ships one, is not built: verifier image pinned — upstream semantics",
+            },
+          ],
+        },
+      ]),
     });
     const okIO = captureIO();
-    assertEqual(await runCli(["dataset", "check", dir, ...AUTH], okIO.io), 0, "an all-ok check exits 0");
+    assertEqual(await runCli(["dataset", "check", dir, ...AUTH], okIO.io), 0, "an all-ok check exits 0 — a note is not a refusal");
+    assert(
+      okIO.out.some((l) => l.includes("bad-task NOTE tests_dockerfile_not_built: tests/Dockerfile, if the task ships one, is not built")),
+      "the note prints as its own line with the platform's sentence"
+    );
     const jsonIO = captureIO();
     await runCli(["dataset", "check", dir, "--json", ...AUTH], jsonIO.io);
     const parsed = JSON.parse(jsonIO.out.join("")) as { tasks_ok: number };
@@ -6179,6 +6202,20 @@ async function testPartialPublishCliSurfaces() {
       tasks: {
         items: [
           { task_name: "good-task", agent_timeout_sec: 600, verifier_timeout_sec: 120, providers: { e2b: { ok: true } } },
+          // A task carrying a typed note (harbor-import/16): the hub-published
+          // shape whose tests/Dockerfile the verifier never builds.
+          {
+            task_name: "pinned-verifier",
+            agent_timeout_sec: 600,
+            verifier_timeout_sec: 120,
+            providers: { e2b: { ok: true } },
+            notes: [
+              {
+                code: "tests_dockerfile_not_built",
+                message: "tests/Dockerfile not built: verifier image pinned — upstream semantics (the pinned verifier image owns /tests)",
+              },
+            ],
+          },
         ],
         nextCursor: null,
         hasMore: false,
@@ -6217,6 +6254,22 @@ async function testPartialPublishCliSurfaces() {
       "parse-level refusals speak the same per-task vocabulary"
     );
     assert(text.includes("re-publish a new version"), "the fix is named: a re-publish (immutable versions)");
+    // Task notes (harbor-import/16): a NOTES column appears because one task
+    // carries a note, its code in the row, and the sentence once below.
+    assert(/TASK\s+AGENT TIMEOUT\s+VERIFIER TIMEOUT\s+PROVIDERS\s+NOTES/.test(text), "the tasks table gains a NOTES column");
+    assert(
+      text.split("\n").some((l) => l.startsWith("pinned-verifier") && l.includes("tests_dockerfile_not_built")),
+      "the noted task's row names the note code"
+    );
+    assert(
+      text.split("\n").some((l) => l.startsWith("good-task") && /\s-\s*$/.test(l)),
+      "a task without notes shows a dash in the NOTES column"
+    );
+    assert(text.includes("Task notes:"), "the notes block prints below the table");
+    assert(
+      text.includes("tests_dockerfile_not_built (1 task): tests/Dockerfile not built: verifier image pinned — upstream semantics"),
+      "the block carries the platform's own sentence with the task count"
+    );
   } finally {
     restoreFetch();
   }
@@ -7340,6 +7393,274 @@ function testAgentKwargs() {
 // MAIN
 // =============================================================================
 
+async function testJobListScope() {
+  console.log("\n--- runCli: job list --scope rides the query; an off-vocabulary scope is a usage error ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireJob()], nextCursor: null, hasMore: false },
+    });
+    const shared = captureIO();
+    assertEqual(await runCli(["job", "list", "--scope", "shared", ...AUTH], shared.io), 0, "--scope shared exits 0");
+    assert(
+      new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("scope") === "shared",
+      "--scope rides the query string verbatim"
+    );
+
+    const bare = captureIO();
+    await runCli(["job", "list", ...AUTH], bare.io);
+    assert(
+      !new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("scope"),
+      "no --scope sends no scope parameter (the server's default is my)"
+    );
+
+    // Harbor's third value adds public jobs; there are none here. The CLI
+    // refuses at the keyboard against the SDK's own vocabulary — exit 2, the
+    // legal values named — rather than spending a request to be told.
+    const before = fetchCalls.length;
+    const all = captureIO();
+    assertEqual(await runCli(["job", "list", "--scope", "all", ...AUTH], all.io), 2, "--scope all is a usage error");
+    assert(all.err[0].includes("my") && all.err[0].includes("shared"), "the refusal names the legal scopes");
+    assertEqual(fetchCalls.length, before, "no request was made");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** One wire TrialAnalysis as GET /api/analyses lists it (provenance included). */
+function analysisListRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...analysisVerdictFixture(),
+    trial_id: "run-1",
+    job_id: "eval-1",
+    task_name: "abs-module-cache-flags",
+    ...overrides,
+  };
+}
+
+async function testAnalysisList() {
+  console.log("\n--- runCli: analysis list — TSV, TTY table, -q, --scope/--job/--status ride the query, --json ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/analyses", {
+      status: 200,
+      body: {
+        items: [
+          analysisListRow(),
+          analysisListRow({
+            id: "an-2",
+            status: "completed",
+            summary: "No shortcuts observed.",
+            checks: { reward_hacking: { outcome: "pass", explanation: "clean" } },
+            failure: null,
+            task_name: "tricky-task",
+          }),
+        ],
+        nextCursor: "cur-a",
+        hasMore: true,
+      },
+    });
+
+    const piped = captureIO(false);
+    assertEqual(await runCli(["analysis", "list", ...AUTH], piped.io), 0, "list exits 0");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASK\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("an-1\tfailed\tabs-module-cache-flags\tglm-5.3-flash\t"), "rows are tab-separated");
+    assert(piped.out[2].startsWith("an-2\tcompleted\ttricky-task\t"), "every row of the page renders");
+
+    const tty = captureIO(true);
+    await runCli(["analysis", "list", ...AUTH], tty.io);
+    assert(tty.out[0].includes("ID") && !tty.out[0].includes("\t"), "TTY output is an aligned table");
+    assert(tty.out.some((l) => l.includes("More: evolve analysis list --cursor cur-a")), "TTY shows the next-page hint");
+
+    const quiet = captureIO();
+    await runCli(["analysis", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["an-1", "an-2"], "-q prints only ids");
+
+    const cols = captureIO(false);
+    await runCli(["analysis", "list", "--columns", "job,trial,id", ...AUTH], cols.io);
+    assertEqual(cols.out[0], "JOB\tTRIAL\tID", "--columns selects AND orders; provenance columns exist");
+    assertEqual(cols.out[1], "eval-1\trun-1\tan-1", "the provenance cells carry the analyzed job and trial");
+
+    const filtered = captureIO();
+    await runCli(
+      ["analysis", "list", "--scope", "shared", "--job", "eval-1", "--status", "failed,completed", "-l", "5", ...AUTH],
+      filtered.io
+    );
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/analyses", "one GET on the analyses list");
+    assertEqual(url.searchParams.get("scope"), "shared", "--scope rides the query");
+    assertEqual(url.searchParams.get("job"), "eval-1", "--job rides the query");
+    assertEqual(url.searchParams.get("status"), "failed,completed", "--status rides the query comma-joined");
+    assertEqual(url.searchParams.get("limit"), "5", "-l rides the query");
+
+    // --job takes a prefix like every verb that names a job, and the prefix
+    // index walks the scope the verb names — never the caller's own list
+    // when --scope shared is what is being listed.
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireJob({ id: "aabbccdd-0000-4000-8000-000000000001" })], nextCursor: null, hasMore: false },
+    });
+    const prefixed = captureIO();
+    assertEqual(
+      await runCli(["analysis", "list", "--scope", "shared", "--job", "aabbccdd", ...AUTH], prefixed.io),
+      0,
+      "--job resolves an 8-char prefix"
+    );
+    const indexCall = fetchCalls.find((c) => new URL(c.url).pathname === "/api/jobs");
+    assertEqual(
+      indexCall && new URL(indexCall.url).searchParams.get("scope"),
+      "shared",
+      "the prefix index walks the verb's own scope"
+    );
+    assertEqual(
+      new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("job"),
+      "aabbccdd-0000-4000-8000-000000000001",
+      "the wire carries the full id"
+    );
+
+    const badStatus = captureIO();
+    assertEqual(
+      await runCli(["analysis", "list", "--status", "DONE", ...AUTH], badStatus.io),
+      2,
+      "an off-ladder status is a usage error"
+    );
+    assert(badStatus.err[0].includes("queued") && badStatus.err[0].includes("failed"), "the refusal names the ladder");
+
+    const badScope = captureIO();
+    assertEqual(await runCli(["analysis", "list", "--scope", "all", ...AUTH], badScope.io), 2, "--scope all is a usage error");
+
+    const json = captureIO();
+    await runCli(["analysis", "list", "--json", ...AUTH], json.io);
+    const page = JSON.parse(json.out[0]);
+    assertEqual(page.items.length, 2, "--json is the page envelope");
+    assertEqual(page.items[0].trial_id, "run-1", "--json items are the wire objects, provenance included");
+    assertEqual(page.nextCursor, "cur-a", "--json carries the cursor");
+
+    setMockResponse("/api/analyses", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const empty = captureIO();
+    await runCli(["analysis", "list", ...AUTH], empty.io);
+    assertEqual(empty.out, ["No analyses."], "an empty page says so");
+
+    // The plural noun answers as the hidden alias, like every other group.
+    const alias = captureIO();
+    assertEqual(await runCli(["analyses", "list", ...AUTH], alias.io), 0, "analyses aliases analysis");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** One session as GET /api/sessions serves it (the dashboard's row shape). */
+function wireSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "sess-1",
+    tag: "qa-round-7",
+    agent: "claude",
+    model: "claude-fable-5",
+    provider: "daytona",
+    sandboxId: "box-1",
+    isEnded: true,
+    runtimeStatus: "dead",
+    cost: 0.42,
+    usage: {
+      provisional: false,
+      spent_usd: 0.42,
+      input_tokens: 1200,
+      cached_input_tokens: 300,
+      output_tokens: 80,
+      as_of: "2026-09-01T10:05:00.000Z",
+    },
+    createdAt: "2026-09-01T10:00:00.000Z",
+    endedAt: "2026-09-01T10:05:00.000Z",
+    stepCount: 12,
+    toolStats: { Bash: 7, Read: 5 },
+    ...overrides,
+  };
+}
+
+async function testSessionListAndShow() {
+  console.log("\n--- runCli: session list / show — the managed-agents lane, headless ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions?", {
+      status: 200,
+      body: {
+        items: [wireSession(), wireSession({ id: "sess-2", tag: "qa-round-8", isEnded: false, runtimeStatus: "alive", cost: null, usage: null, endedAt: null })],
+        nextCursor: "sess-2",
+        hasMore: true,
+        pageSize: 20,
+        paginationMode: "cursor",
+        liveCount: 1,
+      },
+    });
+
+    const piped = captureIO(false);
+    assertEqual(await runCli(["session", "list", ...AUTH], piped.io), 0, "list exits 0");
+    assertEqual(piped.out[0], "ID\tTAG\tAGENT\tMODEL\tSTATE\tCOST\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("sess-1\tqa-round-7\tclaude\tclaude-fable-5\tended\t$0.42\t"), "an ended session's row");
+    assert(piped.out[2].startsWith("sess-2\tqa-round-8\tclaude\tclaude-fable-5\tlive\t-\t"), "a live session with no cost yet shows -");
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/sessions", "one GET on the sessions list");
+    assertEqual(url.searchParams.get("paginated"), "true", "the SDK's cursor form");
+    assertEqual(url.searchParams.get("paginationMode"), "cursor", "the SDK's cursor form");
+    assert(!url.searchParams.has("admin"), "the CLI never asks for the admin view");
+
+    const tty = captureIO(true);
+    await runCli(["session", "list", ...AUTH], tty.io);
+    assert(tty.out.some((l) => l.includes("More: evolve session list --cursor sess-2")), "TTY shows the next-page hint");
+
+    const quiet = captureIO();
+    await runCli(["session", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["sess-1", "sess-2"], "-q prints only ids");
+
+    const filtered = captureIO();
+    await runCli(
+      ["session", "list", "--state", "ended", "--agent", "claude", "--tag-prefix", "qa-", "-l", "7", "--cursor", "sess-9", ...AUTH],
+      filtered.io
+    );
+    const f = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(f.searchParams.get("state"), "ended", "--state rides the query");
+    assertEqual(f.searchParams.get("agent"), "claude", "--agent rides the query");
+    assertEqual(f.searchParams.get("tagPrefix"), "qa-", "--tag-prefix rides the query");
+    assertEqual(f.searchParams.get("pageSize"), "7", "-l is the page size");
+    assertEqual(f.searchParams.get("cursor"), "sess-9", "--cursor rides the query");
+
+    const badState = captureIO();
+    assertEqual(await runCli(["session", "list", "--state", "paused", ...AUTH], badState.io), 2, "an unknown state is a usage error");
+
+    const json = captureIO();
+    await runCli(["session", "list", "--json", ...AUTH], json.io);
+    const page = JSON.parse(json.out[0]);
+    assertEqual(page.items.length, 2, "--json is the SDK page");
+    assertEqual(page.items[0].state, "ended", "--json items are the SDK's SessionInfo objects");
+    assertEqual(page.nextCursor, "sess-2", "--json carries the cursor");
+
+    // show: one session, rendered; --json = the SessionInfo object.
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession() });
+    const show = captureIO();
+    assertEqual(await runCli(["session", "show", "sess-1", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(text.includes("sess-1"), "renders the id");
+    assert(text.includes("qa-round-7"), "renders the tag");
+    assert(text.includes("ended"), "renders the state");
+    assert(text.includes("$0.42"), "renders the cost");
+    assert(text.includes("12"), "renders the step count");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
+
+    const showJson = captureIO();
+    await runCli(["session", "show", "sess-1", "--json", ...AUTH], showJson.io);
+    const info = JSON.parse(showJson.out.join(""));
+    assertEqual(info.id, "sess-1", "--json is the SessionInfo");
+    assertEqual(info.state, "ended", "--json carries the SDK's state word");
+
+    // The plural noun answers as the hidden alias, like every other group.
+    const alias = captureIO();
+    assertEqual(await runCli(["sessions", "list", ...AUTH], alias.io), 0, "sessions aliases session");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("evolve CLI Unit Tests\n");
 
@@ -7437,6 +7758,9 @@ async function main() {
   await testUploadVerbJsonAndGate();
   await testAuthStatus();
   await testSecretsVerbs();
+  await testJobListScope();
+  await testAnalysisList();
+  await testSessionListAndShow();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

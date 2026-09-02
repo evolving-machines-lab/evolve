@@ -5,7 +5,7 @@
  * spec/openapi.yaml calls itself the single source of truth, and until this
  * file existed only its ErrorCode enum was machine-checked — every operation
  * and artifact-selector claim in it could drift from the client silently. This
- * gate holds the SDK to the contract on five axes:
+ * gate holds the SDK to the contract on seven axes:
  *
  *   1. OPERATIONS. Every operationId in the spec appears in the explicit
  *      map below, and every wave-1 operation resolves to a real client
@@ -42,6 +42,15 @@
  *      of the source the package ships — the axis that was missing while the
  *      platform stamped three lanes and the type still offered two.
  *
+ *   6. AGENT EFFORT VOCABULARY. AGENT_EFFORT_SUPPORT_VALUES — and the
+ *      AgentEffortSupport union derived from it — equal the contract's
+ *      AgentCapability.effort_support enum byte-exactly.
+ *
+ *   7. LIST-SCOPE + ANALYSIS-STATUS VOCABULARIES. JOB_LIST_SCOPES and
+ *      ANALYSIS_STATUSES — the runtime lists the CLI validates `--scope`
+ *      and `analysis list --status` against — equal the ListScope
+ *      parameter's enum and the TrialAnalysis.status enum byte-exactly.
+ *
  * The spec is parsed line-by-line against its own committed formatting. That
  * is a deliberate trade: the file is hand-written, its indentation is part of
  * its style, and a parse that finds nothing fails loudly (non-vacuity checks
@@ -57,11 +66,14 @@ import { dirname, join } from "node:path";
 
 import {
   AGENT_EFFORT_SUPPORT_VALUES,
+  ANALYSIS_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
+  JOB_LIST_SCOPES,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
+  analyses,
   auth,
   datasets,
   jobs,
@@ -180,6 +192,7 @@ const cfg = { apiKey: "drift-gate", baseUrl: "http://localhost:0" };
 const surfaces: Record<string, unknown> = {
   jobs: jobs(cfg),
   trials: trials(cfg),
+  analyses: analyses(cfg),
   datasets: datasets(cfg),
   agents: agents(cfg),
   skills: skills(cfg),
@@ -213,6 +226,10 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   retryTrial: "trials.retry",
   regradeTrial: "trials.regrade",
   stopTrials: "trials.stop",
+  // Analyses — the catalog of trace-analysis runs. The per-run reads
+  // (verdict, transcript, artifacts) ride the traces feed, which the
+  // contract does not declare (docs: "not part of the OpenAPI contract").
+  listAnalyses: "analyses.list",
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
@@ -560,6 +577,53 @@ assert(
     TYPES_SOURCE
   ),
   "AgentEffortSupport derives from AGENT_EFFORT_SUPPORT_VALUES (no shadow union)"
+);
+
+// -----------------------------------------------------------------------------
+// 7. LIST-SCOPE + ANALYSIS-STATUS VOCABULARIES — the two runtime lists the
+// CLI refuses `--scope` and `analysis list --status` against before any
+// request leaves the process. A member the contract adds or drops would
+// otherwise turn a legal value into a keyboard refusal with no gate red.
+// -----------------------------------------------------------------------------
+
+/**
+ * A query parameter's inline `enum: [a, b, c]` line, scoped to that
+ * parameter's block under components/parameters — inlineEnum's twin, one
+ * level deeper because the enum sits under the parameter's `schema:`.
+ */
+function parameterEnum(parameterName: string): string[] {
+  let inside = false;
+  for (const line of specLines) {
+    if (!inside) {
+      if (new RegExp(`^ {4}${parameterName}:\\s*$`).test(line)) inside = true;
+      continue;
+    }
+    if (/^ {4}[A-Z]\w*:\s*$/.test(line)) break;
+    const m = /^ {8}enum: \[([^\]]+)\]\s*$/.exec(line);
+    if (m) return m[1].split(",").map((s) => s.trim());
+  }
+  return [];
+}
+
+const specListScopes = parameterEnum("ListScope");
+assert(specListScopes.length >= 2, `the spec's ListScope parameter enum parsed (${specListScopes.length} members)`);
+assert(
+  JSON.stringify([...JOB_LIST_SCOPES]) === JSON.stringify(specListScopes),
+  JSON.stringify([...JOB_LIST_SCOPES]) === JSON.stringify(specListScopes)
+    ? `JOB_LIST_SCOPES is the spec's ListScope enum, byte-exactly (${specListScopes.join(", ")})`
+    : `list scopes drifted: SDK [${JOB_LIST_SCOPES.join(", ")}] vs spec [${specListScopes.join(", ")}]`
+);
+
+const specAnalysisStatuses = propertyEnum("TrialAnalysis", "status");
+assert(
+  specAnalysisStatuses.length >= 4,
+  `the spec's TrialAnalysis.status enum parsed (${specAnalysisStatuses.length} members)`
+);
+assert(
+  JSON.stringify([...ANALYSIS_STATUSES]) === JSON.stringify(specAnalysisStatuses),
+  JSON.stringify([...ANALYSIS_STATUSES]) === JSON.stringify(specAnalysisStatuses)
+    ? `ANALYSIS_STATUSES is the spec's TrialAnalysis.status enum, byte-exactly (${specAnalysisStatuses.join(", ")})`
+    : `analysis statuses drifted: SDK [${ANALYSIS_STATUSES.join(", ")}] vs spec [${specAnalysisStatuses.join(", ")}]`
 );
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

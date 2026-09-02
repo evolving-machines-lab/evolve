@@ -306,7 +306,7 @@ for await (const item of evals.list({ search: "nightly" })) {
 }
 ```
 
-`list({ search })` is a server-side free-text filter over the job name and its dataset names. `stats` is the aggregate block: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.byStatus`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — the two honesty counters `n_unmeasured_trials` and `n_unmeasured_judge_trials`, which say how many settled trials that total cannot account for because nobody measured their spend (a plain count, never null; 0 means every settled trial's spend was read, not that the total has stopped moving — a `measured_provisional` figure is still a floor), and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.byStatus` for where a job actually went wrong.
+`list({ search })` is a server-side free-text filter over the job name and its dataset names; `list({ scope: "shared" })` lists your organizations' jobs that teammates created instead of your own (Harbor's `--scope`; the default is `my` — see [`--scope`](#cli)). `stats` is the aggregate block: progress counters (cumulative, Harbor-style: errored trials are a subset of completed, cancelled a subset of errored — the disjoint breakdown is `trials.byStatus`), token totals (`n_input_tokens` includes cache tokens; `n_cache_tokens` and `n_output_tokens` beside it), measured `cost_usd` — the whole model bill, with the judge share itemized beside it as `judge_cost_usd` (see [LLM judges](#llm-judges)) — the two honesty counters `n_unmeasured_trials` and `n_unmeasured_judge_trials`, which say how many settled trials that total cannot account for because nobody measured their spend (a plain count, never null; 0 means every settled trial's spend was read, not that the total has stopped moving — a `measured_provisional` figure is still a floor), and `evals` — per-(agent, model, dataset) statistics keyed `agent__model__effort__dataset` — the dataset ref is always the LAST `__` segment, which is where Harbor-compatible readers recover it. The effort segment is always there, inserted before the dataset: a declared effort stamps itself, an omitted one stamps the agent's default (`__high`, `__max`, …) — see [Agent arms](#agent-arms). A failed job says why on `failure`, as `{ code, message }` — the same grammar an API error uses, under a different key so that `if (body.error) throw` stays correct on a healthy read. In practice you will not see it fire: `FAILED` is a [reserved job status](#statuses) that nothing sets today; read `trials.byStatus` for where a job actually went wrong.
 
 ### pass@k
 
@@ -724,7 +724,13 @@ const stdout = await a.artifact(analysisId, "trace-stdout");        // "trace-st
 
 `get()` serves the verdict for **every** analysis — a `failed` one carries its typed failure where `Trial.analysis` on the trial body only ever shows the latest wave; earlier analyses stay readable here by their own ids. `transcript()` answers everything after `since` in one read (there is no server-side paging), with `total` counting all stored rows; an id that names a trial or a regrade refuses with the species named rather than answering with the wrong run's events. `artifact()` speaks the trial surface's null grammar — null = never stored, a normal answer — and refuses a trial or regrade id the same way, never answering with the wrong run's bytes. An analysis run stores no verifier log and no ATIF trajectory — those selectors are refused typed, never answered null.
 
-One boundary is deliberate and recorded: these reads ride the dashboard's traces feed, which is not part of the OpenAPI contract (the feed is the trace viewer's own plane; the contract-side verdict remains `Trial.analysis`). The surface is TypeScript-and-CLI today — the Python SDK has no `analyses` client yet.
+One boundary is deliberate and recorded: these per-run reads ride the dashboard's traces feed, which is not part of the OpenAPI contract (the feed is the trace viewer's own plane; the contract-side verdict remains `Trial.analysis`). They are TypeScript-and-CLI today. The **list** is on the contract: `analyses().list()` (`GET /api/analyses`) is the catalog of every analysis you may read, newest first and cursor-paged, each row the same `TrialAnalysis` object carrying `trial_id`, `job_id`, and `task_name` — the run it judged — so a headless round is list, then `get()` each. `{ job }` narrows to one job's trials, `{ status }` to the analysis's own lowercase ladder, and `{ scope: "shared" }` lists analyses of your organizations' jobs that teammates created (see [`--scope`](#cli) below); both SDKs speak it. One boundary holds under `shared` today: those rows list, but `get()`, `transcript()` and `artifact()` refuse them (`Trial not found`, a 404) because the per-run doors they ride open only to the job's creator — an owner ruling on aligning those doors is pending; rows under `my`, the default, resolve on every read.
+
+```ts
+for await (const analysis of evolve.analyses.list({ job: job.id, status: ["failed"] })) {
+  console.log(analysis.task_name, analysis.failure?.phase);
+}
+```
 
 The CLI wraps the same three reads:
 
@@ -856,7 +862,8 @@ The SDK ships an `evolve` binary — a thin shell over the SDK clients. The gram
 ```
 job      start | list | show | trials | tasks | compare | cancel | delete | stop | resume | retry | regrade | download | grep
 trial    show | trace | download | retry | regrade | stop
-analysis show | trace | download
+analysis list | show | trace | download
+session  list | show
 dataset  list | show | publish | watch | download | activate
 skill    list | upload | show | delete
 agent    list | show | add | remove
@@ -920,6 +927,7 @@ The read side, worked through:
 
 ```bash
 evolve job list --limit 20 --search nightly
+evolve job list --scope shared              # your organizations' jobs that teammates created
 evolve job show <id> [id...]               # incl. a pass@k block, once attempts settle
 evolve job trials <id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
 evolve job trials <id> --dataset deep-swe
@@ -946,9 +954,13 @@ evolve trial retry <trial-id>
 evolve trial regrade <trial-id>
 evolve trial stop <trial-id> [trial-id...]
 
-evolve analysis show <analysis-id>         # the analyzer's verdict document (id: trial show's analysis row)
+evolve analysis list --job <id> --status failed   # every analysis run, with the trial/job/task it judged; --scope shared for your teams'
+evolve analysis show <analysis-id>         # the analyzer's verdict document (id: trial show's analysis row, or analysis list)
 evolve analysis trace <analysis-id>        # the analyzer's own transcript; --since resumes
 evolve analysis download <analysis-id> --stream trace-stdout   # or save whole with -o
+
+evolve session list --state ended --tag-prefix qa-   # your managed-agent sessions (the SDK's .run() records)
+evolve session show <session-id>
 
 evolve dataset list -q
 evolve dataset show deep-swe@1.1
@@ -957,11 +969,13 @@ evolve auth status
 
 `evolve analyze <job-id>` is [Analyze](#analyze) end to end: it POSTs the wave, follows it to its settled end (analyses have no event stream, so the follow is the SDK's poll), then prints one row per analyzed trial — the criterion outcomes, the analyzer's own cost, a summary excerpt — with every failed analysis shown typed below the table. `-m/--model`, `-r/--rubric <file>` and `-e/--env <provider>` are Harbor's own three knobs (their cli/analyze.py); the rubric file is TOML, YAML, or JSON in Harbor's `{criteria}` shape (a `[[criteria]]` entry per criterion in TOML), parsed at the keyboard with unknown fields refused by name — the server still owns the bounds. `-e` is re-aimed with the verb itself: Harbor's flag picks a local environment type (docker, daytona); here it picks which **hosted** provider's sandbox the analyzer boots — there is no local backend server-side — defaulting to the platform's analysis default, daytona. `-q` suppresses the progress lines; `--json` emits NDJSON envelopes (`analysis.accepted`, `analysis.stats` per tally change, `analysis.final` carrying the job and the analyzed trials). Exit 0 only when every analysis completed — a wave with failed analyses exits 1, Harbor's own law. On `job start` / `run`, `--analyze` arms the embedded trigger (each trial analyzed as it settles; bare `--analyze` = all defaults), with `--analyze-model`, `--analyze-rubric <file>` and `--analyze-provider <provider>` as the passthrough trio — any of them implies `--analyze`, and over a `-c` config file's `analyze` object each flag overrides its own field, the retry merge rule. `job show` then carries an `analyze` row (the resolved policy) and an `analysis` row (the tally plus the analyzer's own spend, with a per-criterion line each); `trial show` prints the trial's latest analysis in full — verdicts with their explanations, the summary, the typed failure when there is one.
 
-Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
+Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`; for `analysis list` they are `id`, `status`, `task`, `job`, `trial`, `model`, `attempts`, `spent`, `created`, `finished`; for `session list` they are `id`, `tag`, `agent`, `model`, `provider`, `sandbox`, `state`, `runtime`, `cost`, `steps`, `created`, `ended`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
+
+`--scope` on `job list` and `analysis list` is Harbor's own knob (`harbor hub job list --scope`): `my` — what you created, the default — or `shared` — your organizations' rows that teammates created, exactly the rows `job show` already opens for you as a member and not one more. Harbor's third value, `all`, adds public jobs; nothing hosted is public, so `all` is refused by name rather than quietly meaning both. An API key carries its owner's membership and nothing else: there is no wider view. A **headless QA round** is one walk: `evolve job list -q`, `evolve job trials <id>`, `evolve analysis list --job <id>` and `evolve analysis show` on each, `evolve session list` for the managed-agent side — every listing pages the same way, and every id printed under `my` (the default) resolves on its `show`. Under `--scope shared` one boundary holds today: `analysis list` prints rows that `analysis show`, `trace` and `download` refuse (`Trial not found`, exit 1), because those per-run doors open only to the job's creator — an owner ruling on aligning them is pending. Sessions carry no `--scope`: a session has one owner and no organization, so `my` is the only visibility there is.
 
 `job show` ends with a **pass@k** block — one line per evals group, each k to three decimals — whenever the platform has numbers to show. Groups that cannot answer are simply absent from it, and a job with nothing computed prints no block at all; `--json` always carries the raw `stats.evals[].pass_at_k`.
 
-Wherever a verb takes a **job id**, an unambiguous prefix of at least 8 characters works too: `job show aabbccdd` is `job show aabbccdd-…` when exactly one of your jobs starts that way. The CLI resolves the prefix against your own job list before calling the server — the wire always carries the full id — and refuses loudly when the prefix matches nothing or more than one job. Trial ids are not prefix-resolved; trial verbs take full ids.
+Wherever a verb takes a **job id**, an unambiguous prefix of at least 8 characters works too: `job show aabbccdd` is `job show aabbccdd-…` when exactly one of your jobs starts that way. The CLI resolves the prefix against the job list of the scope the verb names (`--scope`; your own by default) before calling the server — the wire always carries the full id — and refuses loudly when the prefix matches nothing or more than one job. Trial ids are not prefix-resolved; trial verbs take full ids.
 
 A rate limit is a delay, not a mystery: a `429` prints one line naming the limit and the server's `Retry-After` delay (exit 1), and the SDK's watch loops honor that delay and keep watching instead of dying mid-poll.
 
@@ -1387,6 +1401,12 @@ const localPublish = await catalog.publish(
 // acknowledged chunk instead of restarting a multi-GB transfer from zero.
 // Nothing to configure and no new flag: the same publish() call, the same
 // 202 back.
+//
+// A rate limit mid-transfer is a delay, not a failure: a 429 or 503 on any
+// request of the chunked door is waited out — the server's Retry-After,
+// never more than 60 s per wait — and the same chunk goes again from the
+// same offset, at most three waits per request. Only a limit still standing
+// after those waits ends the publish, as the typed EvolveApiError it is.
 
 // A chunked publish that names its version explicitly also REGISTERS FIRST:
 // the import exists — pollable, listed, visible on the dashboard — from the
@@ -1482,8 +1502,9 @@ A directory publish runs a **pre-flight** first, automatically: the client colle
 evolve dataset check ./my-swe    # standalone dry run: verdict per task, exit 1 on any refusal
 
 evolve dataset publish --dir ./my-swe --name my-swe --version 1.0
-# Pre-flight (importer harbor-import/14): 200 tasks — 198 ok, 2 refused
+# Pre-flight (importer harbor-import/16): 200 tasks — 198 ok, 2 refused
 #   broken-task REFUSED: environment.docker_image "python:latest" is a mutable :latest tag — ...
+#   pinned-verifier NOTE tests_dockerfile_not_built: tests/Dockerfile, if the task ships one, is not built: verifier image pinned — upstream semantics ...
 #
 # Nothing was uploaded. Fix the refused tasks, or pass --skip-preflight to publish anyway
 # (a refused task then lands FAILED at import).
@@ -1493,9 +1514,10 @@ evolve dataset publish --dir ./my-swe --name my-swe --version 1.0
 const answer = await catalog.preflight({ source: { directory: "./my-swe" } });
 answer.tasks_refused;        // 0 when the corpus is clean
 answer.tasks[0].providers;   // where each task can run — GPU, sizing and network verdicts per provider
+answer.tasks[0].notes;       // typed notes the toml decides — a NOTE is not a refusal; the task imports
 ```
 
-The answer is honestly partial: a `task.toml` alone cannot prove everything — the Dockerfile, the compose file and the tests tree are only read at import — so the reply names what it checked and what it deferred, and an all-ok pre-flight means "nothing decidable from the task configs refuses", not a guarantee the build succeeds. Nothing is written by a pre-flight, ever. `--skip-preflight` uploads without the check; a git publish has nothing local to check and skips it naturally.
+The answer is honestly partial: a `task.toml` alone cannot prove everything — the Dockerfile, the compose file and the tests tree are only read at import — so the reply names what it checked and what it deferred, and an all-ok pre-flight means "nothing decidable from the task configs refuses", not a guarantee the build succeeds. A `NOTE` is the other kind of answer: not a refusal but a fact the config alone already settles — today, that a `separate` verifier pinning a `docker_image` will boot that image as-is and never build a `tests/Dockerfile` (see [the task format](#not-in-the-task-layout-yet)); the same note lands on the task itself once it is published. Nothing is written by a pre-flight, ever. `--skip-preflight` uploads without the check; a git publish has nothing local to check and skips it naturally.
 
 ### Publishing from a fetchable source
 
@@ -1564,6 +1586,8 @@ What happens next:
 **Running a partially built version.** A whole-dataset (or glob) job runs the READY tasks, and the job body says so plainly in `build_exclusions` — one entry per affected dataset with the sentence to show (`note`), the counts, and the sorted failed names; silent truncation is forbidden. `n_tasks_selected` is what the filters matched before any `n_tasks` cap and `n_tasks_ran` what actually ran, so the note has two forms: uncapped, "ran N of M tasks — K failed to build"; under an `n_tasks` cap, "selection matched M tasks: K failed to build: …; ran R (n_tasks cap)" — the run was short for two separate reasons and the sentence keeps them apart. Explicitly **naming** a failed task at job create refuses typed (`task_failed_to_build`), quoting the task's own build failure: the refusal's `details.failed_tasks` carries every named one as `{task_name, failure: {code, step, message}}` — the same entry shape as the dataset detail's `failed_tasks` — never a silent skip of a task you asked for by name. Fixing a failed task is a re-publish: versions are immutable, so the fix is a new version.
 
 Reference solutions (`solution/`) are archived at publish when the corpus ships them — they are the version's permanent reference-solution record (the checkout is deleted after import), used by operator verification tooling. They gate nothing: a corpus that ships none, or only some, still publishes and activates, and the import's `warnings` say exactly which record the version will permanently lack (`no_solutions_archived`, `partial_solutions_archived`, or `solutions_archiving_disabled`).
+
+One more warning is neither an absence nor a failure: `tests_dockerfile_not_built` names the READY tasks whose `tests/Dockerfile` the verifier never builds — their verifier image is pinned, or shared, exactly as Harbor runs them (see [the task format](#not-in-the-task-layout-yet)). Each such task carries the same fact as a `tests_dockerfile_not_built` entry on its `notes`, and `evolve dataset show` lists it in a NOTES column with the sentence below the table.
 
 ### Activating
 
@@ -1736,7 +1760,7 @@ sed -i 's/Helo/Hello/' /app/greet.py
 That's the whole format. The rules that matter when converting:
 
 - `task.toml`, `instruction.md`, and `tests/test.sh` are required — a task without `tests/test.sh` fails its import by name. `pre_artifacts.sh` is optional: write one when you want to decide exactly what the agent's work looks like on its way out of the sandbox (the one above turns it into a patch), and when it is absent the platform supplies a minimal collect step and the `artifacts` manifest carries the work instead. `tests/grader.py`, `tests/config.json`, and `tests/test.patch` have named roles, and any other file under `tests/` is carried onto the verifier beside them — a helper like `tests/test_pool.py` lands next to `test.sh` and is runnable from it.
-- `tests/Dockerfile` is built for real whenever the verifier can own its own image: a `separate` verifier on a task that builds from `environment/Dockerfile` — no pinned `docker_image`, no compose — gets a verifier image built from `tests/`, so grader dependencies installed there are genuinely present. Everywhere else the verifier reuses the task image and the test files are uploaded onto it. The Dockerfile is not built on that path, so it is accepted only while it stays trivial (`FROM`, `COPY`, `WORKDIR`, `LABEL`, and permission-only `RUN chmod` lines) — a richer recipe's dependencies would be silently missing, so it is refused by name.
+- `tests/Dockerfile` is built for real exactly when Harbor would build it: a `separate` verifier whose own environment declares no `docker_image` — `[verifier.environment]` without one, or no such table on a task that builds from `environment/Dockerfile` — gets a verifier image built from `tests/`, so grader dependencies installed there are genuinely present. A `separate` verifier whose environment **pins** a `docker_image` boots that image as-is and the Dockerfile is never built, which is what Harbor does too: the pin may be the task's own image (the test files are then uploaded onto it) or a distinct verifier image (it owns `/tests`, nothing is uploaded — the shape the Harbor hub publishes, with the verifier image it built from that very Dockerfile). A `shared` verifier runs inside the agent box and never builds it either. The task imports on every one of these shapes; when the Dockerfile is present and not built, the task carries the `tests_dockerfile_not_built` note (in `dataset show`, on the task's `notes`, and in the import's `warnings`) — a dependency the recipe would install has to be in the image already, and the note is how you learn that before a verdict does.
 - The environment is `environment/Dockerfile` (built at import), a pinned `docker_image`, or `environment/docker-compose.yaml` for multi-container tasks (the agent runs in the `main` service). Any valid public image reference works for `docker_image` — Docker Hub, GHCR, ECR Public, or any other registry a pull can reach without credentials — with the tag pinned, never `:latest`. A reference that does not parse as an image reference is refused at import with the reference named; a reference that parses but cannot be pulled surfaces as an infrastructure error naming the pull, never as a task that quietly scores zero.
 - Timeouts are optional: agent defaults to 3600 s, verifier to 600 s, both published as `limits.job.default_agent_timeout_sec` and `default_verifier_timeout_sec`. A declared `timeout_sec` always wins — the corpus is the authority on how long its own task needs, and the fallback never shortens one.
 - `solution/` (`solve.sh`, or a `solution.patch` to apply) is archived at publish as the version's permanent reference-solution record — it gates nothing. A corpus that ships none anywhere (or only some) still publishes and activates; the import's `warnings` name the missing record — see [Publishing](#publishing).
@@ -2185,8 +2209,10 @@ interface TrialGpuCost {                 // GPU trials only; exactly one of the 
     estimate_usd: number | null;         // measured lifetime x rate; a provable never-booted run is a real 0
     unpriced_reason: string | null;      // why no number exists — never a guess
     provider: EvalSandboxProvider;
-    gpu_type: string | null;             // the rate card's billing name; null when 'any'/unknown
-    declared_gpu_type: string;           // the task's own spelling
+    gpu_type: string | null;             // the billing name priced: the attached type, else the one type sent
+    declared_gpu_types: string[] | null; // the task's own gpu_types list; null = any
+    resolved_gpu_types: string[] | null; // what the create request carried (modal: one; daytona: ordered candidates)
+    attached_gpu_type: string | null;    // the device the provider reported pinned; null when none reported
     gpu_count: number;
     duration_sec: number | null;         // measured sandbox lifetime
     rate_usd_per_gpu_sec: number | null; // the applied list price

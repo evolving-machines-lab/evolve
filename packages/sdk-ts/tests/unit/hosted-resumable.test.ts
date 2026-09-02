@@ -28,7 +28,16 @@
  *     and throws the transport error;
  *   - an offset that does not advance is a hard error, never a spin;
  *   - a finalize whose response is lost is retried (the server's complete is
- *     idempotent by state) and the 202 still comes back.
+ *     idempotent by state) and the 202 still comes back;
+ *   - THE RATE-LIMIT SEAM: a 429/503 on any request of the protocol is a
+ *     delay, not an outcome — the server's Retry-After is waited (read by
+ *     the ONE law, body first, header second; never below Harbor's backoff
+ *     for that wait, never above RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC) and
+ *     the SAME request goes again at the SAME offset, at most
+ *     RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS times per request, then the
+ *     refusal returns as its Response for the typed mapping. The live
+ *     failure this pins: an 8 GB publish died rc=1 on one 429 rate_limited
+ *     (retryAfterSec=9) during part streaming, 2026-09-01.
  *
  * Usage:
  *   npx tsx tests/unit/hosted-resumable.test.ts
@@ -44,7 +53,10 @@ import { listen, sessionServer, sha256 } from "./hosted-session-server.ts";
 import {
   RESUMABLE_UPLOAD_CHUNK_BYTES,
   RESUMABLE_UPLOAD_MAX_ATTEMPTS,
+  RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS,
+  RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC,
   RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+  retryAfterWaitMs,
   uploadArchiveResumable,
 } from "../../src/hosted/resumable.ts";
 
@@ -473,6 +485,219 @@ async function main(): Promise<void> {
     }
     assert(message.includes("finalize timed out"), "the silent finalize throws OUR typed timeout");
     assert(Date.now() - started < 30_000, "and does so within the bounded attempts, not a hang");
+    server.close();
+  }
+
+  console.log("\nthe rate-limit seam — constants and the one wait law");
+  {
+    assert(RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS === 3, "at most 3 Retry-After waits per request");
+    assert(RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC === 60, "each wait capped at 60 s");
+    assert(retryAfterWaitMs(9, 1) === 9_000, "the server's 9 s is honored as 9 s");
+    assert(retryAfterWaitMs(3600, 1) === 60_000, "an hour-long Retry-After is capped at the 60 s bound");
+    assert(retryAfterWaitMs(undefined, 1) === 500, "no reading at all → Harbor's backoff for wait 1 (0.5 s)");
+    assert(retryAfterWaitMs(undefined, 3) === 2_000, "no reading at all → Harbor's backoff for wait 3 (2 s)");
+    assert(retryAfterWaitMs(0, 2) === 1_000, "a zero delay is floored at the backoff — never an instant re-send");
+  }
+
+  const rateLimitBody = (retryAfterSec?: number) =>
+    JSON.stringify({
+      error: {
+        code: "rate_limited",
+        message: "Rate limit exceeded; retry after the Retry-After delay",
+        ...(retryAfterSec !== undefined ? { retryAfterSec } : {}),
+      },
+    });
+
+  console.log("\nthe rate-limit seam — a 429 mid-transfer is a delay, not a failure");
+  {
+    // The live failure: chunk 2's first PATCH answers 429 rate_limited with
+    // the delay in the envelope (retryAfterSec, the body-first law). The
+    // transfer must wait that long, re-send THE SAME chunk at THE SAME
+    // offset, and complete — chunk 1 never re-sent.
+    let refusedAt = 0;
+    let resentAt = 0;
+    const { server, sessions, url } = sessionServer({
+      onPatch: (state, _req, res) => {
+        if (state.patchOffsets.length === 2 && refusedAt === 0) {
+          refusedAt = Date.now();
+          res.statusCode = 429;
+          res.setHeader("content-type", "application/json");
+          res.end(rateLimitBody(0.7));
+          return true;
+        }
+        if (state.patchOffsets.length === 3 && resentAt === 0) resentAt = Date.now();
+        return false;
+      },
+    });
+    await listen(server);
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: { Authorization: "Bearer k" },
+      file: { path: archivePath },
+      fields: { name: "deep-swe" },
+      chunkBytes: CHUNK,
+      timeoutMs: 5_000,
+    });
+    assert(res.status === 202, "the transfer completed after the 429");
+    const state = [...sessions.values()][0];
+    assert(sha256(Buffer.concat(state.received)) === sha256(archive), "bytes still exact");
+    assert(
+      state.patchOffsets.filter((offset) => offset === CHUNK).length === 2,
+      "the refused chunk was re-sent at ITS OWN offset (once refused, once landed)"
+    );
+    assert(
+      state.patchOffsets.filter((offset) => offset === 0).length === 1,
+      "chunk 1 was never re-sent — the session resumed, not restarted"
+    );
+    assert(
+      resentAt - refusedAt >= 650,
+      `the envelope's 0.7 s was waited before the re-send (measured ${resentAt - refusedAt} ms)`
+    );
+    server.close();
+  }
+
+  console.log("\nthe rate-limit seam — a 503 with only the header is read by the same law");
+  {
+    let refusedAt = 0;
+    let resentAt = 0;
+    const { server, sessions, url } = sessionServer({
+      onPatch: (state, _req, res) => {
+        if (state.patchOffsets.length === 1 && refusedAt === 0) {
+          refusedAt = Date.now();
+          res.statusCode = 503;
+          res.setHeader("Retry-After", "0.7"); // no body at all
+          res.end();
+          return true;
+        }
+        if (state.patchOffsets.length === 2 && resentAt === 0) resentAt = Date.now();
+        return false;
+      },
+    });
+    await listen(server);
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: {},
+      file: { path: archivePath },
+      fields: {},
+      chunkBytes: CHUNK,
+      timeoutMs: 5_000,
+    });
+    assert(res.status === 202, "the transfer completed after the 503");
+    const state = [...sessions.values()][0];
+    assert(sha256(Buffer.concat(state.received)) === sha256(archive), "bytes still exact");
+    assert(resentAt - refusedAt >= 650, `the header's 0.7 s was waited (measured ${resentAt - refusedAt} ms)`);
+    server.close();
+  }
+
+  console.log("\nthe rate-limit seam — a server that never relents spends the waits, then the refusal returns typed");
+  {
+    const { server, sessions, url } = sessionServer({
+      onPatch: (_state, _req, res) => {
+        res.statusCode = 429;
+        res.setHeader("content-type", "application/json");
+        res.end(rateLimitBody(0.01)); // floored at the backoff: 0.5 + 1 + 2 s of waits
+        return true;
+      },
+    });
+    await listen(server);
+    const started = Date.now();
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: {},
+      file: { path: archivePath },
+      fields: {},
+      chunkBytes: CHUNK,
+      timeoutMs: 5_000,
+    });
+    assert(res.status === 429, "the 429 comes back as its Response for throwApiError to map — typed, never a hang");
+    const body = (await res.json()) as { error?: { code?: string } };
+    assert(body.error?.code === "rate_limited", "with the server's own envelope intact");
+    const state = [...sessions.values()][0];
+    assert(
+      state.patchOffsets.length === 1 + RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS,
+      `the chunk went out exactly 1 + ${RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS} times (got ${state.patchOffsets.length})`
+    );
+    assert(state.patchOffsets.every((offset) => offset === 0), "every attempt at the same offset — nothing skipped");
+    const elapsed = Date.now() - started;
+    assert(elapsed >= 3_400 && elapsed < 10_000, `three floored waits were spent (0.5 + 1 + 2 s; measured ${elapsed} ms)`);
+    server.close();
+  }
+
+  console.log("\nthe rate-limit seam — the wait budget is per request, so a long transfer is never starved");
+  {
+    // Two chunks, each refused twice before landing: the budget belongs to
+    // each request, so a limiter that stalls every chunk a few times still
+    // lets a thousand-chunk transfer through — only a request that stays
+    // refused past the budget ends it.
+    const refusals = new Map<number, number>();
+    const { server, sessions, url } = sessionServer({
+      onPatch: (_state, req, res) => {
+        const offset = Number(req.headers["upload-offset"]);
+        const count = refusals.get(offset) ?? 0;
+        if (offset < CHUNK * 2 && count < 2) {
+          refusals.set(offset, count + 1);
+          res.statusCode = 429;
+          res.setHeader("content-type", "application/json");
+          res.end(rateLimitBody(0.01));
+          return true;
+        }
+        return false;
+      },
+    });
+    await listen(server);
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: {},
+      file: { path: archivePath },
+      fields: {},
+      chunkBytes: CHUNK,
+      timeoutMs: 5_000,
+    });
+    assert(res.status === 202, "four refusals across two chunks — the transfer still completes");
+    const state = [...sessions.values()][0];
+    assert(sha256(Buffer.concat(state.received)) === sha256(archive), "bytes exact");
+    assert(
+      state.patchOffsets.filter((offset) => offset === 0).length === 3 &&
+        state.patchOffsets.filter((offset) => offset === CHUNK).length === 3,
+      "each stalled chunk went out 1 + 2 times, at its own offset"
+    );
+    server.close();
+  }
+
+  console.log("\nthe rate-limit seam — the session open and the finalize honor the same law");
+  {
+    let createRefused = false;
+    let completeRefused = false;
+    const { server, sessions, url } = sessionServer({
+      onCreate: (res) => {
+        if (createRefused) return false;
+        createRefused = true;
+        res.statusCode = 429;
+        res.setHeader("content-type", "application/json");
+        res.end(rateLimitBody(0.01));
+        return true;
+      },
+      onComplete: (_state, res) => {
+        if (completeRefused) return false;
+        completeRefused = true;
+        res.statusCode = 429;
+        res.setHeader("content-type", "application/json");
+        res.end(rateLimitBody(0.01));
+        return true;
+      },
+    });
+    await listen(server);
+    const res = await uploadArchiveResumable({
+      baseUrl: url(),
+      headers: {},
+      file: { path: archivePath },
+      fields: { name: "deep-swe" },
+      chunkBytes: CHUNK,
+      timeoutMs: 5_000,
+    });
+    assert(res.status === 202 && createRefused && completeRefused, "a refused open and a refused finalize were both waited out");
+    assert(sessions.size === 1, "the open was retried, not the whole transfer — one session");
+    assert([...sessions.values()][0]?.completed === 1, "the server published exactly once");
     server.close();
   }
 

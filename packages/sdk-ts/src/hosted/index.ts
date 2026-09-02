@@ -5,10 +5,14 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { DEFAULT_DASHBOARD_URL, ENV_EVOLVE_API_KEY } from "../constants";
 import { RESUMABLE_UPLOAD_THRESHOLD_BYTES } from "./resumable";
+import { readRetryAfterSec } from "./retry-after";
 import type {
   ActiveDataset,
   Agent,
   AgentArm,
+  AnalysisList,
+  AnalysisPage,
+  ListAnalysesOptions,
   AgentArmInput,
   AgentInfo,
   AgentInput,
@@ -135,8 +139,10 @@ import type {
 export {
   AGENT_EFFORT_SUPPORT_VALUES,
   ANALYSIS_ARTIFACT_STREAMS,
+  ANALYSIS_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
+  JOB_LIST_SCOPES,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   isHostedErrorCode,
@@ -165,6 +171,9 @@ export type {
   AnalysisArtifactStream,
   AnalysisCheck,
   AnalysisFailure,
+  AnalysisList,
+  AnalysisPage,
+  AnalysisStatus,
   AnalysisTranscript,
   AnalysisTranscriptOptions,
   AnalyzeConfig,
@@ -235,6 +244,8 @@ export type {
   ListDatasetsOptions,
   ListImportsOptions,
   ListJobTasksOptions,
+  JobListScope,
+  ListAnalysesOptions,
   ListJobsOptions,
   ListSkillsOptions,
   ListTrialFilesOptions,
@@ -250,6 +261,7 @@ export type {
   PreflightDeferredCheck,
   PreflightManifestVerdict,
   PreflightTaskVerdict,
+  TaskNote,
   PublishDatasetInput,
   PublishDatasetOptions,
   RegradeRequest,
@@ -407,34 +419,6 @@ export class EvolveApiError extends Error {
   isKnownCode(): boolean {
     return isHostedErrorCode(this.code);
   }
-}
-
-/**
- * The ONE Retry-After reading: the envelope's `retryAfterSec` first and the
- * `Retry-After` header second, because a cross-origin browser fetch cannot
- * always see the header. Every retry path reads the delay through here — the
- * typed error AND the SSE follow's own backoff — so the same 429 delays the
- * same amount whichever half of the wire carries the number.
- */
-function readRetryAfterSec(text: string, res: Response): number | undefined {
-  try {
-    const body = JSON.parse(text) as { error?: { retryAfterSec?: unknown } };
-    const fromBody = body?.error?.retryAfterSec;
-    // Finite or absent, in the BODY too: `JSON.parse('1e400')` is Infinity, and
-    // a caller sleeping Infinity is parked forever with no bound and no output.
-    // A delay that cannot be waited is no reading at all.
-    if (typeof fromBody === "number" && Number.isFinite(fromBody)) return fromBody;
-  } catch {
-    // Unparseable body: the header is the only reading left.
-  }
-  // An ABSENT header is no reading at all, never zero: `Number(null)` is 0 and
-  // 0 is finite, so a bare Number() told the caller to retry instantly — the
-  // one thing a rate limit forbids. Empty is absent, and the HTTP-date form
-  // (which we do not parse) is unreadable — both leave "retry shortly".
-  const rawHeader = res.headers?.get?.("retry-after");
-  if (typeof rawHeader !== "string" || rawHeader.trim() === "") return undefined;
-  const fromHeader = Number(rawHeader);
-  return Number.isFinite(fromHeader) ? fromHeader : undefined;
 }
 
 /** Map a non-ok Response to the typed EvolveApiError and throw it. */
@@ -792,6 +776,9 @@ function mapTask(raw: Record<string, unknown>): Task {
     // Per-provider capability verdicts — the law: where a task can run is
     // visible before any money is spent.
     providers: raw.providers as Task["providers"],
+    // Typed task notes (recorded degrades). Absent (older server) reads as
+    // "nothing to say" — never a crash.
+    notes: Array.isArray(raw.notes) ? (raw.notes as Task["notes"]) : [],
   };
 }
 
@@ -2653,7 +2640,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   async function listPage(options?: ListJobsOptions): Promise<JobPage> {
     const res = await request(
       cfg,
-      `/api/jobs${pageQuery(options, { search: options?.search })}`
+      `/api/jobs${pageQuery(options, { search: options?.search, scope: options?.scope })}`
     );
     return mapPage((await res.json()) as Record<string, unknown>, mapJob);
   }
@@ -2831,9 +2818,12 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     list(options?: ListJobsOptions): JobList {
       // Await for one page (honoring options); for-await to walk every
-      // job across cursor pages. The search filter rides along on every
-      // page fetch — makePaginated forwards only limit/cursor.
-      return makePaginated((opts) => listPage({ ...opts, search: options?.search }), options);
+      // job across cursor pages. The search filter and the scope ride along
+      // on every page fetch — makePaginated forwards only limit/cursor.
+      return makePaginated(
+        (opts) => listPage({ ...opts, search: options?.search, scope: options?.scope }),
+        options
+      );
     },
 
     trials(id: string, options?: ListTrialsOptions): TrialList {
@@ -3359,7 +3349,38 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
     return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
   }
 
+  async function listPage(options?: ListAnalysesOptions): Promise<AnalysisPage> {
+    const res = await request(
+      cfg,
+      `/api/analyses${pageQuery(options, {
+        scope: options?.scope,
+        job: options?.job,
+        status: options?.status && options.status.length > 0 ? options.status.join(",") : undefined,
+      })}`
+    );
+    // The page's rows are TrialAnalysis objects; a malformed row cannot be
+    // served as "never analyzed" the way the OPTIONAL Trial.analysis slot
+    // is — here the row IS the answer, so it fails closed like get().
+    return mapPage((await res.json()) as Record<string, unknown>, (raw) => {
+      const verdict = mapTrialAnalysis(raw);
+      if (verdict === null) {
+        throw new Error("The analyses list served an unreadable analysis object");
+      }
+      return verdict;
+    });
+  }
+
   return {
+    list(options?: ListAnalysesOptions): AnalysisList {
+      // Await for one page; for-await to walk every analysis across cursor
+      // pages. The scope and filters ride along on every page fetch.
+      return makePaginated(
+        (opts) =>
+          listPage({ ...opts, scope: options?.scope, job: options?.job, status: options?.status }),
+        options
+      );
+    },
+
     async get(analysisId: string): Promise<TrialAnalysis> {
       // The feed's own verdict door: ?what=analysis answers { analysis } —
       // the wire's TrialAnalysis for EVERY analysis, not only completed ones
