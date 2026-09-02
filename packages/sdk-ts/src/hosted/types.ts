@@ -1794,9 +1794,10 @@ export interface TrialSpendData {
 
 /**
  * A trial reached a terminal status. `reward` is present only on the scored
- * path; `exception_type` only on a failure; `attempt_phase` appears when the
- * settle happened mid-phase (worker death), which is exactly when knowing the
- * phase is worth having.
+ * path; `exception_type` and `exception_message` only on a failure (a cancel
+ * carries `exception_type` alone — see `exception_message`); `attempt_phase`
+ * appears when the settle happened mid-phase (worker death), which is exactly
+ * when knowing the phase is worth having.
  */
 export interface TrialSettledData {
   trial_id: string;
@@ -1805,6 +1806,16 @@ export interface TrialSettledData {
   /** Zero is a reward; absent means the trial did not score. */
   reward?: number | null;
   exception_type?: string;
+  /**
+   * The failure in its own words — the same text the trial's
+   * `exception_info.exception_message` holds at settle time (a later
+   * auto-retry verdict is appended to the trial's copy, never to this
+   * frame's). Present only on a failure, beside `exception_type`. Two settled
+   * frames carry `exception_type` alone: a cancel (`CancelledError` — stopped,
+   * not failed; no words are stored) and an event recorded before this field
+   * existed.
+   */
+  exception_message?: string;
   attempt_phase?: AttemptPhase | null;
 }
 
