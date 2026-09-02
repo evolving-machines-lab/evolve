@@ -1444,14 +1444,14 @@ evolve dataset publish \
 evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
 ```
 
-A publish never has to be babysat by the terminal that started it. `evolve dataset watch` re-attaches to a publish and renders exactly the stream `--watch` renders — after the CLI exited, from another machine, or from a teammate's shell:
+A publish never has to be babysat by the terminal that started it. `evolve dataset watch` re-attaches to a publish and renders exactly the follow `--watch` renders (everything from the 202 on) — after the CLI exited, from another machine, or from a teammate's shell:
 
 ```bash
 evolve dataset watch my-swe        # the dataset's newest queued/running publish
 evolve dataset watch cmt9x…        # or the import id itself
 ```
 
-Large uploads make the id available from the very start: an archive over the chunked-upload threshold registers its import the moment the upload session opens, the CLI prints `Registered import <id> — re-attach anytime with: evolve dataset watch <id>`, and until the corpus finishes arriving the import reads `QUEUED (receiving)` — visible in `dataset list`, `dataset show`, and the dashboard alike. A name with no live publish refuses and names the newest settled import instead; `--json` streams the same NDJSON events as `publish --watch`, opened with `import.attached`. If the upload behind a receiving import is abandoned, the import is removed with it and the watch ends saying so — never a forever-QUEUED ghost.
+Large uploads make the id available from the very start: an archive over the chunked-upload threshold registers its import the moment the upload session opens, the CLI prints `Registered import <id> — re-attach anytime with: evolve dataset watch <id>`, and until the corpus finishes arriving the import reads `QUEUED (receiving)` — visible in `dataset list`, `dataset show`, and the dashboard alike. A name with no live publish refuses and names the newest settled import instead; `--json` streams the same follow events as `publish --watch` — everything from the 202 on — opened with `import.attached`; the transfer's own `upload.progress` lines belong to the publishing process and never appear here. If the upload behind a receiving import is abandoned, the import is removed with it and the watch ends saying so — never a forever-QUEUED ghost.
 
 The transfer itself reports as it goes, in both renderings. Human mode prints `upload <sent>/<total> (P%)` once per 10% of the archive; `--json --watch` prints the same steps as `upload.progress` events — `{"kind":"upload.progress","sent_bytes":…,"total_bytes":…,"elapsed_sec":…}`, at most eleven lines per publish, all of them before `import.created` — so a piped consumer watches a multi-GB corpus move instead of waiting blind for the 202. `sent_bytes` and `total_bytes` are the SDK's own upload counter, the numbers `on_upload_progress` hands you; `elapsed_sec` counts from the moment the corpus was handed to the SDK, packing and hashing included. Non-watch `--json` stays one document and prints no progress. Harbor's `harbor upload` shows the same M-of-N and elapsed columns in a live terminal display and has no machine-readable stream; the event is the recorded deviation, so `--json` holds on this verb too.
 

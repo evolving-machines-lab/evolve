@@ -1,11 +1,12 @@
 /**
  * Shared test fixture: the REAL minimal upload-session server behind the
- * resumable publish door. One home, three suites — the transport suite
+ * resumable publish door. One home, four suites — the transport suite
  * (hosted-resumable.test.ts) drives uploadArchiveResumable() straight at
  * it, the client suite (hosted-client.test.ts) drives publish() through
- * it, and the CLI suite (cli.test.ts) drives `dataset publish` end to end
+ * it, the CLI suite (cli.test.ts) drives `dataset publish` end to end
  * over it (the finalize rides node:http, which no fetch mock can see, so
- * only a real server can host those flows).
+ * only a real server can host those flows), and the piped-consumer suite
+ * (cli-ndjson-pipe.test.ts) spawns the built bin against it.
  *
  * It verifies each chunk's Upload-Checksum, advances the offset, answers
  * HEAD probes, and assembles at complete. `faults` lets one test inject
