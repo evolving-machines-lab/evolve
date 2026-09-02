@@ -793,7 +793,7 @@ const GROUPS: Record<string, GroupSpec> = {
       },
       watch: {
         summary:
-          "Re-attach to a publish and follow it to READY/FAILED — the same stream `dataset publish --watch` renders; works after the CLI exited, or from another machine",
+          "Re-attach to a publish and follow it to READY/FAILED — the same follow `dataset publish --watch` renders (everything from the 202 on); works after the CLI exited, or from another machine",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
@@ -5394,14 +5394,15 @@ async function followImport(
 
 /**
  * `evolve dataset watch <name|import-id>` — re-attach to a publish and render
- * the SAME stream `dataset publish --watch` renders (followImport, the one
- * rendering home). Works after the CLI exited, and from another machine: the
- * argument is tried as an import id first (the more specific address), then
- * as a dataset name — the newest QUEUED/RUNNING import of that dataset. A
- * terminal import id still renders its settled block (exit 0/1 by outcome);
- * a NAME with no live import refuses instead, naming the newest settled
- * import — attaching a "watch" to something that finished long ago is more
- * often a typo than an intent.
+ * the same follow `dataset publish --watch` renders — everything from the 202
+ * on (followImport, the one rendering home); the transfer's own
+ * `upload.progress` lines belong to the publishing process. Works after the
+ * CLI exited, and from another machine: the argument is tried as an import
+ * id first (the more specific address), then as a dataset name — the newest
+ * QUEUED/RUNNING import of that dataset. A terminal import id still renders
+ * its settled block (exit 0/1 by outcome); a NAME with no live import
+ * refuses instead, naming the newest settled import — attaching a "watch"
+ * to something that finished long ago is more often a typo than an intent.
  */
 async function cmdDatasetWatch(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
