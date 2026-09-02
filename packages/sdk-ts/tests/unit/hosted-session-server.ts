@@ -9,7 +9,11 @@
  *
  * It verifies each chunk's Upload-Checksum, advances the offset, answers
  * HEAD probes, and assembles at complete. `faults` lets one test inject
- * exactly one behavior at one moment.
+ * exactly one behavior at one moment. A hook may answer with a promise:
+ * the request is then HELD (its body already read) until the promise
+ * settles, and its answer resolves whether the default path runs — the
+ * causal gates of the piped-consumer suite (cli-ndjson-pipe.test.ts) hold
+ * a chunk or the finalize until the consumer has received a line.
  */
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -30,8 +34,12 @@ export interface SessionState {
 
 export interface SessionServerFaults {
   onCreate?: (res: ServerResponse) => boolean;
-  onPatch?: (state: SessionState, req: IncomingMessage, res: ServerResponse) => boolean;
-  onComplete?: (state: SessionState, res: ServerResponse) => boolean;
+  onPatch?: (
+    state: SessionState,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => boolean | Promise<boolean>;
+  onComplete?: (state: SessionState, res: ServerResponse) => boolean | Promise<boolean>;
   /**
    * Register-first: when set, the create 201 carries this `import_id` — the
    * pre-created import a watcher may attach to mid-upload. Unset = the
@@ -57,7 +65,7 @@ export function sessionServer(faults: SessionServerFaults): {
   const server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk) => chunks.push(chunk as Buffer));
-    req.on("end", () => {
+    req.on("end", async () => {
       const body = Buffer.concat(chunks);
       const url = req.url ?? "";
       if (req.method === "POST" && url === "/api/datasets/publish/uploads") {
@@ -107,7 +115,7 @@ export function sessionServer(faults: SessionServerFaults): {
       if (req.method === "PATCH") {
         const offset = Number(req.headers["upload-offset"]);
         state.patchOffsets.push(offset);
-        if (faults.onPatch?.(state, req, res)) return;
+        if (await faults.onPatch?.(state, req, res)) return;
         if (offset !== state.offset) {
           res.statusCode = 409;
           res.setHeader("content-type", "application/json");
@@ -140,7 +148,7 @@ export function sessionServer(faults: SessionServerFaults): {
         return;
       }
       if (req.method === "POST" && match[2] === "/complete") {
-        if (faults.onComplete?.(state, res)) return;
+        if (await faults.onComplete?.(state, res)) return;
         if (state.offset !== state.size) {
           res.statusCode = 409;
           res.setHeader("content-type", "application/json");
