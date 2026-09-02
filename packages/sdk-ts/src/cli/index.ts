@@ -3093,7 +3093,10 @@ const DATASET_COLUMNS: ListColumn<Dataset>[] = [
 ];
 const DATASET_DEFAULT_COLUMNS = ["name", "active", "state", "tasks", "title"];
 
-/** "sha256:<hex>" cut to the length every skill surface prints (19 chars). */
+/**
+ * "sha256:<hex>" cut to the length every digest surface prints — `sha256:` +
+ * the first 12 hex + `…` — the skills DIGEST column and the dataset source line.
+ */
 function fmtDigestShort(digest: string): string {
   return digest.length > 19 ? `${digest.slice(0, 19)}…` : digest;
 }
@@ -4840,17 +4843,13 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
   return 0;
 }
 
-/** `sha256:` + the digest's first 12 hex — the prefix kept so a digest never reads as a commit. */
-function shortDigest(digest: string): string {
-  return `sha256:${digest.replace(/^sha256:/, "").slice(0, 12)}`;
-}
-
 /**
  * The `source:` line(s) of `dataset show`, one reading per publish kind. The
  * locator is printed in the spelling `dataset publish` takes back — the
  * repository @ ref for `--git`/`--ref`, the url for `--from <url>`,
- * `hub:org/name[@ref]` for `--from hub:…` — and the identity shortened to
- * 12 hex: a commit bare, a digest `sha256:`-prefixed.
+ * `hub:org/name[@ref]` for `--from hub:…` — and the identity shortened: a
+ * commit to 12 hex, bare; a digest in `fmtDigestShort`'s spelling, so it
+ * never reads as a commit.
  */
 function versionSourceLines(source: DatasetVersionSource): string[] {
   switch (source.kind) {
@@ -4862,17 +4861,17 @@ function versionSourceLines(source: DatasetVersionSource): string[] {
       ];
     }
     case "archive":
-      return [`source: uploaded archive (${shortDigest(source.digest)})`];
+      return [`source: uploaded archive (${fmtDigestShort(source.digest)})`];
     case "archive_url":
-      return [`source: ${source.archive_url} (${shortDigest(source.digest)})`];
+      return [`source: ${source.archive_url} (${fmtDigestShort(source.digest)})`];
     case "hub_package":
-      return [`source: hub:${source.hub_package} (${shortDigest(source.digest)})`];
+      return [`source: hub:${source.hub_package} (${fmtDigestShort(source.digest)})`];
   }
 }
 
-/** The versions table's SOURCE cell: a git version's commit (12 hex), any other kind's digest. */
+/** The versions table's SOURCE cell: a git version's commit (12 hex), any other kind's digest (`fmtDigestShort`). */
 function versionSourceCell(source: DatasetVersionSource): string {
-  return source.kind === "git" ? source.commit.slice(0, 12) : shortDigest(source.digest);
+  return source.kind === "git" ? source.commit.slice(0, 12) : fmtDigestShort(source.digest);
 }
 
 function datasetDetailLines(b: Dataset): string[] {

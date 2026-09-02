@@ -5476,20 +5476,20 @@ async function testDatasetShowSourceKinds() {
     assertEqual(await runCli(["dataset", "show", "kinds", ...AUTH], show.io), 0, "show exits 0");
     const text = show.out.join("\n");
     assert(
-      text.includes(`source: hub:cookbook/hello-world (sha256:${"ab".repeat(6)})`),
+      text.includes(`source: hub:cookbook/hello-world (sha256:${"ab".repeat(6)}…)`),
       "a hub version prints the --from spelling of its reference and the pinned content hash"
     );
     assert(text.includes("SOURCE") && !text.includes("COMMIT"), "the identity column is SOURCE — a digest is not a commit");
     assert(
-      show.out.some((l) => l.startsWith("3 ") && l.includes(`sha256:${"ab".repeat(6)}`)),
+      show.out.some((l) => l.startsWith("3 ") && l.includes(`sha256:${"ab".repeat(6)}…`)),
       "the hub row carries its digest in the SOURCE column"
     );
     assert(
-      show.out.some((l) => l.startsWith("2 ") && l.includes(`sha256:${"cd".repeat(6)}`)),
+      show.out.some((l) => l.startsWith("2 ") && l.includes(`sha256:${"cd".repeat(6)}…`)),
       "the archive_url row carries the fetched digest"
     );
     assert(
-      show.out.some((l) => l.startsWith("1 ") && l.includes(`sha256:${"ef".repeat(6)}`)),
+      show.out.some((l) => l.startsWith("1 ") && l.includes(`sha256:${"ef".repeat(6)}…`)),
       "the uploaded-archive row carries the upload digest"
     );
 
@@ -5497,7 +5497,7 @@ async function testDatasetShowSourceKinds() {
     const showUrl = captureIO();
     assertEqual(await runCli(["dataset", "show", "kinds@2", ...AUTH], showUrl.io), 0, "show @2 exits 0");
     assert(
-      showUrl.out.join("\n").includes(`source: ${ARCHIVE_URL} (sha256:${"cd".repeat(6)})`),
+      showUrl.out.join("\n").includes(`source: ${ARCHIVE_URL} (sha256:${"cd".repeat(6)}…)`),
       "a fetched-tarball version prints its url as given and the fetched digest"
     );
 
@@ -5505,7 +5505,7 @@ async function testDatasetShowSourceKinds() {
     const showUpload = captureIO();
     assertEqual(await runCli(["dataset", "show", "kinds@1", ...AUTH], showUpload.io), 0, "show @1 exits 0");
     assert(
-      showUpload.out.join("\n").includes(`source: uploaded archive (sha256:${"ef".repeat(6)})`),
+      showUpload.out.join("\n").includes(`source: uploaded archive (sha256:${"ef".repeat(6)}…)`),
       "an uploaded-directory version says so and prints the upload digest"
     );
   } finally {
