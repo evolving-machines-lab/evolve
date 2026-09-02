@@ -1,7 +1,7 @@
 """The Python half of the contract drift gate — the mirror of the TypeScript
 SDK's hosted-spec-gate.test.ts, against the same spec/openapi.yaml.
 
-Three axes, same law as the TypeScript gate:
+Seven axes, same law as the TypeScript gate:
 
 1. OPERATIONS. Every operationId in the spec appears in the explicit map
    below, and every wave-1 operation resolves to a real client method. The
@@ -35,6 +35,17 @@ equality.
    enum — the money-reading path, where a lane the platform stamps and the
    type does not offer is a caller reading a provisional floor as unknown.
 
+6. AGENT EFFORT VOCABULARY. ``EFFORT_SUPPORT_VALUES`` and the
+   ``EffortSupport`` Literal equal the contract's
+   ``AgentCapability.effort_support`` enum byte-exactly.
+
+7. LIST-SCOPE + ANALYSIS-STATUS VOCABULARIES. The ``JobListScope`` /
+   ``AnalysisStatus`` Literals — what ``jobs().list(scope=)`` and
+   ``analyses().list(scope=, status=)`` accept — equal the ``ListScope``
+   parameter's enum and the ``TrialAnalysis.status`` enum byte-exactly;
+   the TypeScript gate pins the same two lists the CLI validates its
+   flags against.
+
 The spec is parsed line-by-line against its own committed formatting; every
 parse asserts non-vacuity so an empty parse fails loudly instead of passing.
 """
@@ -47,9 +58,11 @@ from evolve import (
     HOSTED_ERROR_CODES,
     AgentsClient,
     AnalysesClient,
+    AnalysisStatus,
     AuthClient,
     DatasetsClient,
     EvalSandboxProvider,
+    JobListScope,
     JobStatus,
     JobsClient,
     SkillsClient,
@@ -421,3 +434,36 @@ def test_effort_support_vocabulary_matches_the_spec_enum():
     assert len(members) >= 3, 'the effort_support enum parse found too few — spec moved?'
     assert list(EFFORT_SUPPORT_VALUES) == members
     assert list(typing.get_args(EffortSupport)) == members
+
+
+def _spec_parameter_enum(parameter: str) -> 'list[str]':
+    """A query parameter's inline ``enum: [a, b, c]``, scoped to that
+    parameter's block under components/parameters — ``_spec_inline_enum``'s
+    twin, one level deeper because the enum sits under the parameter's
+    ``schema:``."""
+    inside = False
+    for line in _spec_lines():
+        if not inside:
+            inside = re.match(rf'^ {{4}}{parameter}:\s*$', line) is not None
+            continue
+        if re.match(r'^ {4}[A-Z]\w*:\s*$', line):
+            break
+        matched = re.match(r'^ {8}enum: \[([^\]]+)\]\s*$', line)
+        if matched:
+            return [member.strip() for member in matched.group(1).split(',')]
+    return []
+
+
+def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
+    """The list-scope and analysis-status vocabularies — what
+    ``jobs().list(scope=)`` and ``analyses().list(scope=, status=)`` accept —
+    held to the contract like any other closed set. A member the contract
+    adds or drops would otherwise leave a legal value untyped here and, on
+    the TypeScript side, refused at the CLI keyboard with no gate red."""
+    scopes = _spec_parameter_enum('ListScope')
+    assert len(scopes) >= 2, 'the ListScope parse found too few — spec moved?'
+    assert list(typing.get_args(JobListScope)) == scopes
+
+    statuses = _spec_property_enum('TrialAnalysis', 'status')
+    assert len(statuses) >= 4, 'the TrialAnalysis.status parse found too few — spec moved?'
+    assert list(typing.get_args(AnalysisStatus)) == statuses
