@@ -705,21 +705,88 @@ async function testVersionSourceMapping() {
     assertEqual(
       failed.source,
       {
+        kind: "git",
         git_url: "https://github.com/laude-institute/harbor",
         ref: "v0.20.0",
         commit: "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
         path: "examples/tasks/network-policy-matrix/extra-allowed-hosts",
       },
-      "a FAILED git version serves its full provenance — url, requested ref, PEELED commit, subfolder"
+      "a FAILED git version serves its full provenance — url, requested ref, PEELED commit, subfolder; a kind-less git object from an older server maps as git"
     );
     assertEqual(detail.upstream, null, "upstream stays the ACTIVE version's field — null when nothing activated");
     assertEqual(
-      detail.selected_version?.source?.commit,
+      detail.selected_version?.source?.kind === "git" ? detail.selected_version.source.commit : null,
       "459ff6ec99417589b7f679d14ddf3b3f0ae4f1dc",
       "selected_version carries the same per-version source"
     );
     assertEqual(upload.source, null, "a non-git version maps source null — never a fake");
     assertEqual(garbage.source, null, "an unreadable source value maps to null, never a throw");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testVersionSourceKinds() {
+  console.log("\n--- datasets().get() maps every version source kind (B34), keyed by the wire's `kind` ---");
+  installMockFetch();
+  try {
+    // Round 5, 2026-09-02: a hub, a fetched-tarball and a --dir publish all
+    // mapped to source null. Each kind now rides through as its own shape;
+    // an unknown kind is "nothing to report", never a guess.
+    const DIGEST = `sha256:${"ab".repeat(32)}`;
+    const ARCHIVE_URL =
+      "https://github.com/harbor-framework/benchmark-template/archive/5cb860aab849e1b3a542beef82d50295212fc532.tar.gz";
+    const row = (version: string, source: unknown) => ({
+      version,
+      state: "READY",
+      created_at: "2026-09-02T00:00:00.000Z",
+      task_count: 1,
+      source,
+    });
+    const versions = [
+      row("4", { kind: "hub_package", hub_package: "cookbook/hello-world", digest: DIGEST }),
+      row("3", { kind: "archive_url", archive_url: ARCHIVE_URL, digest: DIGEST }),
+      row("2", { kind: "archive", digest: DIGEST }),
+      row("1", { kind: "git", git_url: "https://github.com/acme/bench", ref: "v1", commit: "c".repeat(40), path: null }),
+      row("0.9", { kind: "carrier-pigeon", digest: DIGEST }),
+      row("0.8", { kind: "hub_package", digest: DIGEST }),
+    ];
+    setMockResponse("/api/datasets/kinds", {
+      status: 200,
+      body: {
+        name: "kinds",
+        title: null,
+        description: null,
+        active_version: versions[0],
+        versions,
+        selected_version: versions[0],
+        tasks: { items: [], nextCursor: null, hasMore: false },
+        upstream: null,
+      },
+    });
+
+    const d = datasets({ apiKey: "test-key", baseUrl: BASE });
+    const detail = await d.get("kinds");
+    const [hub, url, upload, git, unknown, halfHub] = detail.versions ?? [];
+    assertEqual(
+      hub.source,
+      { kind: "hub_package", hub_package: "cookbook/hello-world", digest: DIGEST },
+      "a hub version maps its reference as given and the pinned content hash"
+    );
+    assertEqual(
+      url.source,
+      { kind: "archive_url", archive_url: ARCHIVE_URL, digest: DIGEST },
+      "a fetched-tarball version maps its url as given and the fetched digest"
+    );
+    assertEqual(upload.source, { kind: "archive", digest: DIGEST }, "an uploaded-directory version maps its upload digest");
+    assertEqual(
+      git.source,
+      { kind: "git", git_url: "https://github.com/acme/bench", ref: "v1", commit: "c".repeat(40), path: null },
+      "a git version maps unchanged, kind included"
+    );
+    assertEqual(unknown.source, null, "a kind this SDK does not know maps to null — nothing to report, never a guess");
+    assertEqual(halfHub.source, null, "a hub object missing its locator maps to null — never a partial object");
+    assertEqual(detail.active_version?.source, hub.source, "active_version carries the same mapped source");
   } finally {
     restoreFetch();
   }
@@ -6505,6 +6572,7 @@ async function main() {
   await testPartialPublishReads();
   await testJobBuildExclusionsMapping();
   await testVersionSourceMapping();
+  await testVersionSourceKinds();
   await testActivateNotReady409();
   await testGetActive();
   await testGetActiveNoActiveVersion();

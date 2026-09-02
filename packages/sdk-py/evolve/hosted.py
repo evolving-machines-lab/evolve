@@ -530,15 +530,12 @@ class DatasetManifestMetadata:
 
 
 @dataclass
-class DatasetVersionSource:
-    """One version's git provenance.
+class DatasetVersionGitSource:
+    """A version published from a git repository (``git_url`` + ``git_ref``).
 
     The repository, the ref exactly as requested, the RESOLVED commit the
     clone landed on (for an annotated tag, the peeled commit — never the tag
-    object), and the repository subfolder the corpus was read from. Served on
-    EVERY git-imported version whatever its state — a version whose build
-    FAILED can never become the active version, so this is where its
-    imported bytes stay observable.
+    object), and the repository subfolder the corpus was read from.
     """
     #: The ref the import was asked for, exactly as requested: a sha, a tag,
     #: or (legacy rows) a branch.
@@ -552,6 +549,56 @@ class DatasetVersionSource:
     #: The repository subfolder the corpus was read from; ``None`` =
     #: repository root.
     path: Optional[str] = None
+    #: The publish kind, in the publish request's own words.
+    kind: Literal['git'] = field(default='git', init=False)
+
+
+@dataclass
+class DatasetVersionArchiveSource:
+    """A version published from an UPLOADED archive — the multipart ``archive``
+    part, which is what ``publish(directory=...)`` and the CLI's ``--dir``
+    send. No locator: the bytes came from the client."""
+    #: ``sha256:<hex>`` over the uploaded tarball's bytes.
+    digest: str
+    kind: Literal['archive'] = field(default='archive', init=False)
+
+
+@dataclass
+class DatasetVersionArchiveUrlSource:
+    """A version published from a fetched tarball (``archive_url``)."""
+    #: The public https url the corpus tarball was fetched from, as given.
+    archive_url: str
+    #: ``sha256:<hex>`` over the fetched tarball's bytes.
+    digest: str
+    kind: Literal['archive_url'] = field(default='archive_url', init=False)
+
+
+@dataclass
+class DatasetVersionHubSource:
+    """A version published from a Harbor hub package (``hub_package``)."""
+    #: The package reference as given — ``org/name`` or ``org/name@ref``
+    #: (Harbor's reference grammar).
+    hub_package: str
+    #: ``sha256:<hex>`` — the hub's content hash over the task file set
+    #: (Harbor's recipe), the immutable hub version the import was pinned to,
+    #: whatever the reference's tag points at today.
+    digest: str
+    kind: Literal['hub_package'] = field(default='hub_package', init=False)
+
+
+#: What one version was imported from — the LOCATOR the publish named (what
+#: you would pass to publish the same source again) and the IDENTITY the
+#: import resolved it to — one dataclass per publish kind, each carrying its
+#: ``kind`` in the publish request's own words. Served on EVERY version
+#: whatever its state: a version whose build FAILED can never become the
+#: active version, so this is where its imported bytes stay observable.
+#: Every ``digest`` is spelled ``sha256:<hex>``; a git ``commit`` is a bare sha.
+DatasetVersionSource = Union[
+    DatasetVersionGitSource,
+    DatasetVersionArchiveSource,
+    DatasetVersionArchiveUrlSource,
+    DatasetVersionHubSource,
+]
 
 
 @dataclass
@@ -632,10 +679,12 @@ class DatasetVersion:
     #: ``None`` when the corpus carried no manifest, and on servers that
     #: predate the field — absence is "nothing to report", never a crash.
     manifest: Optional[DatasetManifestMetadata] = None
-    #: What THIS version was imported from — git only. ``None`` when the
-    #: version was not imported from a git remote (an uploaded tarball, a
-    #: seeded directory, a pre-provenance row), and on servers that predate
-    #: the field — never a fabricated value.
+    #: What THIS version was imported from, per publish kind (``kind``: git /
+    #: archive / archive_url / hub_package). ``None`` when the platform
+    #: recorded nothing readable (a seeded directory, a pre-provenance row,
+    #: or a fetched archive_url / hub_package row whose locator was never
+    #: stored), and on servers that predate the field — never a fabricated
+    #: value.
     source: Optional[DatasetVersionSource] = None
 
 
@@ -2740,28 +2789,43 @@ def _map_version_manifest(data: Any) -> Optional[DatasetManifestMetadata]:
 
 
 def _map_version_source(data: Any) -> Optional[DatasetVersionSource]:
-    """Map a version's own git provenance, tolerating every server generation.
+    """Map a version's ``source`` — one dataclass per publish kind, keyed by
+    the wire's ``kind`` — tolerating every server generation.
 
-    Absent (an older server, or a non-git version — an uploaded tarball has
-    no git upstream) or unreadable input is ``None`` — "nothing to report",
-    never a fabricated value and never a crash. Served on every git-imported
-    version, including one whose build FAILED (it can never
-    activate, so it never appears as ``upstream``).
+    A server from before the kinds existed served the git shape alone,
+    without ``kind`` — its ``commit`` still names it. A kind this SDK does
+    not know, an object missing its kind's fields, absent or unreadable
+    input is ``None`` — "nothing to report", never a fabricated value and
+    never a crash. Served on every version, including one whose build
+    FAILED (it can never activate, so it never appears as ``upstream``).
     """
     if not isinstance(data, dict):
         return None
-    ref = data.get('ref')
-    commit = data.get('commit')
-    if not isinstance(ref, str) or not isinstance(commit, str):
-        return None
-    git_url = data.get('git_url')
-    path = data.get('path')
-    return DatasetVersionSource(
-        ref=ref,
-        commit=commit,
-        git_url=git_url if isinstance(git_url, str) else None,
-        path=path if isinstance(path, str) else None,
-    )
+
+    def text(key: str) -> Optional[str]:
+        value = data.get(key)
+        return value if isinstance(value, str) else None
+
+    kind = text('kind') or ('git' if text('commit') is not None else None)
+    if kind == 'git':
+        ref, commit = text('ref'), text('commit')
+        if ref is None or commit is None:
+            return None
+        return DatasetVersionGitSource(ref=ref, commit=commit, git_url=text('git_url'), path=text('path'))
+    if kind == 'archive':
+        digest = text('digest')
+        return None if digest is None else DatasetVersionArchiveSource(digest=digest)
+    if kind == 'archive_url':
+        archive_url, digest = text('archive_url'), text('digest')
+        if archive_url is None or digest is None:
+            return None
+        return DatasetVersionArchiveUrlSource(archive_url=archive_url, digest=digest)
+    if kind == 'hub_package':
+        hub_package, digest = text('hub_package'), text('digest')
+        if hub_package is None or digest is None:
+            return None
+        return DatasetVersionHubSource(hub_package=hub_package, digest=digest)
+    return None
 
 
 def _map_dataset_version(data: Dict[str, Any]) -> DatasetVersion:

@@ -53,7 +53,10 @@ from evolve import (
     DatasetFailedTask,
     DatasetRef,
     DatasetSelector,
-    DatasetVersionSource,
+    DatasetVersionArchiveSource,
+    DatasetVersionArchiveUrlSource,
+    DatasetVersionGitSource,
+    DatasetVersionHubSource,
     JobBuildExclusion,
     TaskBuildFailure,
     EvolveAPIError,
@@ -709,7 +712,7 @@ class TestDatasets:
         failed, upload, garbage = detail.versions
         # A FAILED git version serves its full provenance: url, the ref
         # exactly as requested, the PEELED commit, and the subfolder.
-        assert failed.source == DatasetVersionSource(
+        assert failed.source == DatasetVersionGitSource(
             ref='v0.20.0',
             commit=peeled,
             git_url='https://github.com/laude-institute/harbor',
@@ -722,6 +725,64 @@ class TestDatasets:
         # Non-git and unreadable sources are None — never a fabricated value.
         assert upload.source is None
         assert garbage.source is None
+
+    @pytest.mark.asyncio
+    async def test_get_maps_every_version_source_kind(self):
+        # B34 (round 5, 2026-09-02): the three non-git publish kinds used to
+        # answer source=None. Each now maps to its own dataclass, keyed by the
+        # wire's `kind` in the publish request's own words; an older server's
+        # kind-less git object still maps as git; an unknown kind is None.
+        digest = 'sha256:' + 'ab' * 32
+        versions = [
+            {'version': '4', 'state': 'READY', 'created_at': '2026-09-02', 'task_count': 1,
+             'source': {'kind': 'hub_package', 'hub_package': 'cookbook/hello-world', 'digest': digest}},
+            {'version': '3', 'state': 'READY', 'created_at': '2026-09-02', 'task_count': 1,
+             'source': {'kind': 'archive_url',
+                        'archive_url': 'https://github.com/harbor-framework/benchmark-template/archive/5cb860aa.tar.gz',
+                        'digest': digest}},
+            {'version': '2', 'state': 'READY', 'created_at': '2026-09-02', 'task_count': 1,
+             'source': {'kind': 'archive', 'digest': digest}},
+            {'version': '1', 'state': 'READY', 'created_at': '2026-09-02', 'task_count': 1,
+             'source': {'kind': 'git', 'git_url': 'https://github.com/acme/bench', 'ref': 'v1',
+                        'commit': 'c' * 40, 'path': None}},
+            {'version': '0.9', 'state': 'READY', 'created_at': '2026-08-01', 'task_count': 1,
+             'source': {'git_url': 'https://github.com/acme/bench', 'ref': 'v0', 'commit': 'd' * 40, 'path': 'sub'}},
+            {'version': '0.8', 'state': 'READY', 'created_at': '2026-08-01', 'task_count': 1,
+             'source': {'kind': 'carrier-pigeon', 'digest': digest}},
+        ]
+        fake = FakeUrlopen([
+            ('/api/datasets/kinds', {
+                'name': 'kinds', 'title': None, 'description': None,
+                'active_version': versions[0], 'versions': versions,
+                'selected_version': versions[0],
+                'tasks': {'items': [], 'nextCursor': None, 'hasMore': False},
+                'upstream': None, 'created_at': '2026-09-02', 'updated_at': '2026-09-02',
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            detail = await datasets_factory(CONFIG).get('kinds')
+
+        hub, url, upload, git, legacy_git, unknown = detail.versions
+        assert hub.source == DatasetVersionHubSource(hub_package='cookbook/hello-world', digest=digest)
+        assert hub.source.kind == 'hub_package'
+        assert url.source == DatasetVersionArchiveUrlSource(
+            archive_url='https://github.com/harbor-framework/benchmark-template/archive/5cb860aa.tar.gz',
+            digest=digest,
+        )
+        assert url.source.kind == 'archive_url'
+        assert upload.source == DatasetVersionArchiveSource(digest=digest)
+        assert upload.source.kind == 'archive'
+        assert git.source == DatasetVersionGitSource(
+            ref='v1', commit='c' * 40, git_url='https://github.com/acme/bench', path=None,
+        )
+        assert git.source.kind == 'git'
+        # An older server sends the git shape without `kind`: still git.
+        assert legacy_git.source == DatasetVersionGitSource(
+            ref='v0', commit='d' * 40, git_url='https://github.com/acme/bench', path='sub',
+        )
+        # A kind this SDK does not know is "nothing to report", never a guess.
+        assert unknown.source is None
+        assert detail.active_version.source == hub.source
 
     @pytest.mark.asyncio
     async def test_get_active_resolves_runnable_shape(self):

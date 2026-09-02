@@ -95,6 +95,7 @@ import type {
   TrialAnalysis,
   TrialStatus,
   UpstreamStatus,
+  DatasetVersionSource,
   UsageReading,
 } from "../hosted/types";
 import {
@@ -4839,6 +4840,41 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
   return 0;
 }
 
+/** `sha256:` + the digest's first 12 hex — the prefix kept so a digest never reads as a commit. */
+function shortDigest(digest: string): string {
+  return `sha256:${digest.replace(/^sha256:/, "").slice(0, 12)}`;
+}
+
+/**
+ * The `source:` line(s) of `dataset show`, one reading per publish kind. The
+ * locator is printed in the spelling `dataset publish` takes back — the
+ * repository @ ref for `--git`/`--ref`, the url for `--from <url>`,
+ * `hub:org/name[@ref]` for `--from hub:…` — and the identity shortened to
+ * 12 hex: a commit bare, a digest `sha256:`-prefixed.
+ */
+function versionSourceLines(source: DatasetVersionSource): string[] {
+  switch (source.kind) {
+    case "git": {
+      const refPart = source.ref === source.commit ? "" : ` @ ${source.ref}`;
+      return [
+        `source: ${source.git_url ?? "?"}${refPart} (commit ${source.commit.slice(0, 12)})`,
+        ...(source.path ? [`  subfolder: ${source.path}`] : []),
+      ];
+    }
+    case "archive":
+      return [`source: uploaded archive (${shortDigest(source.digest)})`];
+    case "archive_url":
+      return [`source: ${source.archive_url} (${shortDigest(source.digest)})`];
+    case "hub_package":
+      return [`source: hub:${source.hub_package} (${shortDigest(source.digest)})`];
+  }
+}
+
+/** The versions table's SOURCE cell: a git version's commit (12 hex), any other kind's digest. */
+function versionSourceCell(source: DatasetVersionSource): string {
+  return source.kind === "git" ? source.commit.slice(0, 12) : shortDigest(source.digest);
+}
+
 function datasetDetailLines(b: Dataset): string[] {
   const lines = table([
     ["name", b.name],
@@ -4846,19 +4882,17 @@ function datasetDetailLines(b: Dataset): string[] {
     ["description", b.description ?? "-"],
     ["active version", b.active_version?.version ?? "-"],
   ]);
-  // PROVENANCE: what the SHOWN version was built from — the repository, the
-  // requested ref, the resolved commit, and the subfolder when the import was
-  // narrowed to one. The selected version's own `source` wins: `dataset show
-  // name@version` must say what THAT version imported even when its build
-  // FAILED and it can never activate — exactly the moment a user needs the
-  // resolved sha. `upstream` (the active version's provenance) is the
-  // fallback for a server that predates per-version `source`. Quiet block,
-  // like the manifest below: a dataset without a git source prints nothing.
+  // PROVENANCE: what the SHOWN version was built from, one line per publish
+  // kind (versionSourceLines). The selected version's own `source` wins:
+  // `dataset show name@version` must say what THAT version imported even
+  // when its build FAILED and it can never activate — exactly the moment a
+  // user needs the resolved sha or digest. `upstream` (the active version's
+  // git provenance) is the fallback for a server that predates per-version
+  // `source`. Quiet block, like the manifest below: a dataset that recorded
+  // no source prints nothing.
   const shown = b.selected_version?.source ?? b.active_version?.source ?? null;
   if (shown) {
-    const refPart = shown.ref === shown.commit ? "" : ` @ ${shown.ref}`;
-    lines.push(`source: ${shown.git_url ?? "?"}${refPart} (commit ${shown.commit.slice(0, 12)})`);
-    if (shown.path) lines.push(`  subfolder: ${shown.path}`);
+    lines.push(...versionSourceLines(shown));
   } else if (b.upstream) {
     const u = b.upstream;
     const refPart = u.ref === u.current_commit ? "" : ` @ ${u.ref}`;
@@ -4883,8 +4917,9 @@ function datasetDetailLines(b: Dataset): string[] {
   }
   if (b.versions && b.versions.length > 0) {
     lines.push("");
-    // The COMMIT column appears when some version carries git provenance, and
-    // shows EVERY version's resolved sha — a FAILED version can never
+    // The SOURCE column appears when some version carries provenance, and
+    // shows EVERY version's resolved identity — a commit for a git version, a
+    // digest for the others (versionSourceCell). A FAILED version can never
     // activate, and this column is where its imported bytes stay observable.
     const anySource = b.versions.some((v) => v.source != null);
     // The FAILED column appears only when some version lost tasks to its
@@ -4892,7 +4927,7 @@ function datasetDetailLines(b: Dataset): string[] {
     // table. TASKS stays the READY (runnable) count.
     const anyFailed = b.versions.some((v) => v.n_failed_tasks > 0);
     const rows = [
-      ["VERSION", "STATE", "TASKS", ...(anyFailed ? ["FAILED"] : []), "CREATED", ...(anySource ? ["COMMIT"] : [])],
+      ["VERSION", "STATE", "TASKS", ...(anyFailed ? ["FAILED"] : []), "CREATED", ...(anySource ? ["SOURCE"] : [])],
     ];
     for (const v of b.versions) {
       rows.push([
@@ -4901,7 +4936,7 @@ function datasetDetailLines(b: Dataset): string[] {
         String(v.task_count),
         ...(anyFailed ? [v.n_failed_tasks > 0 ? String(v.n_failed_tasks) : "-"] : []),
         v.created_at ?? "-",
-        ...(anySource ? [v.source ? v.source.commit.slice(0, 12) : "-"] : []),
+        ...(anySource ? [v.source ? versionSourceCell(v.source) : "-"] : []),
       ]);
     }
     lines.push(...table(rows));
