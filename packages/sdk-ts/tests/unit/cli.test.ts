@@ -7195,6 +7195,23 @@ async function testAuthOrgVerbs() {
     await runCli(["auth", "org", "list", "--json", ...AUTH], json.io);
     assertEqual(JSON.parse(json.out[0]).map((o: { slug: string }) => o.slug), ["brando", "acme"], "--json is the array");
 
+    // Harbor's --search (cli/auth.py:140-142, :219-227): a case-insensitive
+    // substring filter over name, display name and role, applied to every
+    // output mode — the table, -q, and --json alike.
+    console.log("  [search]");
+    const searched = captureIO();
+    await runCli(["auth", "org", "list", "--search", "acme", "-q", ...AUTH], searched.io);
+    assertEqual(searched.out, ["acme"], "--search acme keeps only the acme row");
+    const byRole = captureIO();
+    await runCli(["auth", "org", "list", "--search", "OWNER", "-q", ...AUTH], byRole.io);
+    assertEqual(byRole.out, ["brando"], "--search matches the role, case-insensitively");
+    const byDisplay = captureIO();
+    await runCli(["auth", "org", "list", "--search", "Acm", "--json", ...AUTH], byDisplay.io);
+    assertEqual(JSON.parse(byDisplay.out[0]).map((o: { slug: string }) => o.slug), ["acme"], "--search filters the --json array too");
+    const none = captureIO();
+    assertEqual(await runCli(["auth", "org", "list", "--search", "zzz", ...AUTH], none.io), 0, "an empty match still exits 0");
+    assertEqual(none.out, ["No organizations found."], "an empty match says so");
+
     console.log("  [show]");
     const detail = captureIO();
     assertEqual(await runCli(["auth", "org", "show", "acme", ...AUTH], detail.io), 0, "show exits 0");

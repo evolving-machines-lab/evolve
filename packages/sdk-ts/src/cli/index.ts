@@ -918,11 +918,14 @@ const GROUPS: Record<string, GroupSpec> = {
         example: "evolve auth status",
       },
       // Harbor's `harbor auth org list` (their cli/auth.py `org_app`): the
-      // organizations the caller belongs to. Two-word verbs are the thin
-      // shell's answer to Harbor's nested sub-app.
+      // organizations the caller belongs to, with Harbor's own flag set —
+      // --search, --columns, -q, --no-trunc, --no-headers, --json (cli/
+      // auth.py:140-170). Two-word verbs are the thin shell's answer to
+      // Harbor's nested sub-app.
       "org list": {
         summary: "List the organizations you belong to",
         flags: {
+          search: { kind: "string", value: "<text>", help: "Free-text filter over slug, display name and role" },
           columns: LIST_FLAGS.columns,
           quiet: { kind: "boolean", short: "q", help: "Print only slugs, one per line (for piping)" },
           "no-trunc": LIST_FLAGS["no-trunc"],
@@ -5883,9 +5886,27 @@ const ORG_COLUMNS: ListColumn<Organization>[] = [
 ];
 const ORG_DEFAULT_COLUMNS = ["slug", "display_name", "role", "created"];
 
+/**
+ * Harbor's `--search` on `auth org list` (cli/auth.py:219-227): the list
+ * endpoint takes no filter, so the CLI narrows the rows itself — a
+ * case-insensitive substring match over slug (their `name`), display name
+ * and role, before every output mode (table, -q and --json alike).
+ */
+function searchOrgs(rows: Organization[], search: string): Organization[] {
+  const needle = search.toLowerCase();
+  return rows.filter(
+    (o) =>
+      o.slug.toLowerCase().includes(needle) ||
+      o.display_name.toLowerCase().includes(needle) ||
+      (o.role ?? "").toLowerCase().includes(needle)
+  );
+}
+
 async function cmdAuthOrgList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, ORG_COLUMNS)) return 0;
-  const rows = await orgs(clientConfig(inv)).list();
+  const listed = await orgs(clientConfig(inv)).list();
+  const rows =
+    inv.flags.search !== undefined ? searchOrgs(listed, String(inv.flags.search)) : listed;
   if (inv.flags.json === true) {
     io.out(JSON.stringify(rows));
     return 0;

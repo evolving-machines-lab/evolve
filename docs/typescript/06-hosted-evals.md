@@ -965,7 +965,7 @@ evolve session show <session-id>
 evolve dataset list -q
 evolve dataset show deep-swe@1.1
 evolve auth status
-evolve auth org list                        # the organizations you belong to
+evolve auth org list --search acme          # the organizations you belong to; --search narrows by slug, display name or role
 evolve auth org show acme                   # one organization: role, members, quota and live usage
 ```
 
@@ -1001,7 +1001,7 @@ Dataset publishing and agent registration have their own subcommands — shown i
 
 ### Organizations and quotas
 
-Every job, dataset and analysis belongs to an organization — your personal one by default, a shared one when you name it. `auth org list` is Harbor's own verb (`harbor auth org list`): the organizations you belong to, with your role in each. `auth org show <slug>` is the hosted extension: one organization in depth — your role, the member count, and the organization's **quota** beside its live **usage**:
+Every job, dataset and analysis belongs to an organization — your personal one by default, a shared one when you name it. `auth org list` is Harbor's own verb (`harbor auth org list`): the organizations you belong to, with your role in each. `--search <text>` narrows it the way Harbor's does — a case-insensitive match over the slug, the display name and your role. `auth org show <slug>` is the hosted extension: one organization in depth — your role, the member count, and the organization's **quota** beside its live **usage**:
 
 ```bash
 evolve auth org list
