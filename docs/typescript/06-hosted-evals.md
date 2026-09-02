@@ -2191,8 +2191,10 @@ interface TrialGpuCost {                 // GPU trials only; exactly one of the 
     estimate_usd: number | null;         // measured lifetime x rate; a provable never-booted run is a real 0
     unpriced_reason: string | null;      // why no number exists — never a guess
     provider: EvalSandboxProvider;
-    gpu_type: string | null;             // the rate card's billing name; null when 'any'/unknown
-    declared_gpu_type: string;           // the task's own spelling
+    gpu_type: string | null;             // the billing name priced: the attached type, else the one type sent
+    declared_gpu_types: string[] | null; // the task's own gpu_types list; null = any
+    resolved_gpu_types: string[] | null; // what the create request carried (modal: one; daytona: ordered candidates)
+    attached_gpu_type: string | null;    // the device the provider reported pinned; null when none reported
     gpu_count: number;
     duration_sec: number | null;         // measured sandbox lifetime
     rate_usd_per_gpu_sec: number | null; // the applied list price

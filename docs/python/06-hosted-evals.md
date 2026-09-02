@@ -2096,8 +2096,10 @@ class Trial:                        # list rows and detail, one shape
     sandbox_provider: Optional[EvalSandboxProvider]
     gpu_cost: Optional[Dict[str, Any]]            # GPU compute ESTIMATE; keys: estimate_usd,
                                                   #   unpriced_reason (exactly one set), provider,
-                                                  #   gpu_type, declared_gpu_type, gpu_count,
-                                                  #   duration_sec, rate_usd_per_gpu_sec,
+                                                  #   gpu_type (the device priced), declared_gpu_types,
+                                                  #   resolved_gpu_types (what the request carried),
+                                                  #   attached_gpu_type (the provider's reported pin),
+                                                  #   gpu_count, duration_sec, rate_usd_per_gpu_sec,
                                                   #   rate_card {version, source, source_date},
                                                   #   measured_from, measured_to.
                                                   # None on non-GPU trials; never inside cost_usd
