@@ -2139,7 +2139,8 @@ export interface DatasetVersion {
   /**
    * What THIS version was imported from, per publish kind (`kind`: git /
    * archive / archive_url / hub_package). Null when the platform recorded
-   * nothing readable (a seeded directory, a pre-provenance row), and on
+   * nothing readable (a seeded directory, a pre-provenance row, or a fetched
+   * archive_url / hub_package row whose locator was never stored), and on
    * servers that predate the field — absence is "nothing to report", never a
    * fabricated value.
    */

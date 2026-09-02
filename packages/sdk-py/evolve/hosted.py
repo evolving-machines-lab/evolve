@@ -681,8 +681,10 @@ class DatasetVersion:
     manifest: Optional[DatasetManifestMetadata] = None
     #: What THIS version was imported from, per publish kind (``kind``: git /
     #: archive / archive_url / hub_package). ``None`` when the platform
-    #: recorded nothing readable (a seeded directory, a pre-provenance row),
-    #: and on servers that predate the field — never a fabricated value.
+    #: recorded nothing readable (a seeded directory, a pre-provenance row,
+    #: or a fetched archive_url / hub_package row whose locator was never
+    #: stored), and on servers that predate the field — never a fabricated
+    #: value.
     source: Optional[DatasetVersionSource] = None
 
 
