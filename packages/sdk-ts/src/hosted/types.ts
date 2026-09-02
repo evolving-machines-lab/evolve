@@ -3540,6 +3540,10 @@ export interface AnalysesClient {
    * TrialAnalysis carrying the trial, job, and task it judged, so a
    * headless round is list → get each. `{ scope, job, status }` narrow it;
    * await the handle for one page, or `for await` it to walk every page.
+   * One boundary under `scope: "shared"` today: those rows list, but `get`,
+   * `transcript` and `artifact` refuse them (404 `Trial not found`) — the
+   * feed doors they ride open only to the job's creator (owner ruling on
+   * aligning those doors pending); `my` rows resolve on every read.
    */
   list(options?: ListAnalysesOptions): AnalysisList;
   /**

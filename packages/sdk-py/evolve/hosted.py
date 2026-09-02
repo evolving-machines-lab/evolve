@@ -6986,6 +6986,12 @@ class AnalysesClient:
         created); ``job`` narrows to one job's trials; ``status`` to the
         analysis's own lowercase ladder. Every filter rides every page
         fetch. ``await`` for one page, ``async for`` to walk them all.
+
+        One boundary under ``scope='shared'`` today: those rows list, but
+        their per-run reads (the CLI's ``analysis show`` / ``trace`` /
+        ``download``) refuse them (404 ``Trial not found``) — the doors
+        they ride open only to the job's creator (owner ruling on aligning
+        those doors pending); ``'my'`` rows resolve on every read.
         """
         async def fetch_page(page_limit, page_cursor) -> AnalysisPage:
             raw = await self._http.request_json(
