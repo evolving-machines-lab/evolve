@@ -4911,7 +4911,13 @@ function datasetDetailLines(b: Dataset): string[] {
     // The GPU column appears only when some listed task declares GPUs — a
     // CPU-only dataset (the overwhelmingly common case) keeps its exact table.
     const anyGpu = b.tasks.items.some((t) => (t.gpus ?? 0) > 0);
-    const rows = [["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT", ...(anyGpu ? ["GPU"] : []), "PROVIDERS"]];
+    // The NOTES column appears only when some listed task carries a typed
+    // note (a recorded degrade — e.g. tests_dockerfile_not_built); the
+    // sentence behind each code prints once below the table.
+    const anyNotes = b.tasks.items.some((t) => (t.notes ?? []).length > 0);
+    const rows = [
+      ["TASK", "AGENT TIMEOUT", "VERIFIER TIMEOUT", ...(anyGpu ? ["GPU"] : []), "PROVIDERS", ...(anyNotes ? ["NOTES"] : [])],
+    ];
     for (const t of b.tasks.items) {
       rows.push([
         t.task_name,
@@ -4919,9 +4925,26 @@ function datasetDetailLines(b: Dataset): string[] {
         `${t.verifier_timeout_sec}s`,
         ...(anyGpu ? [fmtGpu(t) ?? "-"] : []),
         fmtProviders(t.providers),
+        ...(anyNotes ? [(t.notes ?? []).map((n) => n.code).join(", ") || "-"] : []),
       ]);
     }
     lines.push(...table(rows));
+    if (anyNotes) {
+      // One line per distinct note sentence, with the tasks it applies to —
+      // the platform's own words, never paraphrased here.
+      const byMessage = new Map<string, { code: string; tasks: string[] }>();
+      for (const t of b.tasks.items) {
+        for (const note of t.notes ?? []) {
+          const entry = byMessage.get(note.message) ?? { code: note.code, tasks: [] };
+          entry.tasks.push(t.task_name);
+          byMessage.set(note.message, entry);
+        }
+      }
+      lines.push("", "Task notes:");
+      for (const [message, entry] of byMessage) {
+        lines.push(`  ${entry.code} (${entry.tasks.length} task${entry.tasks.length === 1 ? "" : "s"}): ${message}`);
+      }
+    }
     if (b.tasks.nextCursor) {
       lines.push(`More tasks: evolve dataset show ${b.name} --cursor ${b.tasks.nextCursor}`);
     }
@@ -5089,6 +5112,12 @@ function preflightLines(answer: DatasetPreflight): string[] {
           : `${provider}: ${(verdict as { reason?: string }).reason}`
       );
     if (notes.length > 0) lines.push(`  ${task.name}: ${notes.join(" · ")}`);
+    // Typed task notes the toml decides (recorded degrades, e.g. a
+    // tests/Dockerfile the verifier will not build) — the platform's own
+    // sentence, one line each.
+    for (const note of task.notes ?? []) {
+      lines.push(`  ${task.name} NOTE ${note.code}: ${note.message}`);
+    }
   }
   lines.push(
     `Checked from task.toml alone; the import also checks: ${answer.deferred.map((d) => d.name).join(", ")}.`

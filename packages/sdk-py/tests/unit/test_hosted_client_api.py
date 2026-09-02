@@ -468,6 +468,8 @@ class TestDatasets:
                                 'daytona': {'ok': True},
                                 'modal': {'ok': False, 'reason': 'multi-container tasks are not supported on modal'},
                             },
+                            'notes': [{'code': 'tests_dockerfile_not_built',
+                                       'message': 'tests/Dockerfile not built: verifier image pinned — upstream semantics'}],
                         },
                         {
                             'task_name': 'no-verdict-yet',
@@ -522,6 +524,12 @@ class TestDatasets:
         # The task's declared GPU requirement, Harbor's own vocabulary.
         assert task.gpus == 1
         assert task.gpu_types == ['H100']
+        # Typed task notes (harbor-import/16) map verbatim; a task the server
+        # sends without the field reads as [] (the second item below).
+        assert [(n.code, n.message) for n in task.notes] == [
+            ('tests_dockerfile_not_built', 'tests/Dockerfile not built: verifier image pinned — upstream semantics')
+        ]
+        assert detail.tasks.items[1].notes == []
         # Per-provider capability verdicts — visible before any money is spent.
         # A GPU degrade arrives as ok WITH degrades_to + this provider's reason.
         assert task.providers['e2b'] == TaskProviderVerdict(

@@ -2112,6 +2112,23 @@ export type TaskProviderVerdict =
   | { ok: true; degrades_to?: "modal"; reason?: string }
   | { ok: false; reason: string };
 
+/**
+ * A typed, non-fatal fact recorded about an ACCEPTED task — not a refusal
+ * (the task imports and runs) and not a failure (nothing failed): a recorded
+ * degrade the platform states where the publisher reads it.
+ *
+ * `tests_dockerfile_not_built`: the task ships a tests/Dockerfile the verifier
+ * does not build, because upstream never would on its shape — the separate
+ * verifier's effective environment pins a docker_image (Harbor boots it
+ * as-is), or the verifier is shared and runs inside the agent box; a
+ * dependency the recipe would install must already be in the image the
+ * verifier boots. `message` is the platform's own sentence, naming the shape.
+ */
+export interface TaskNote {
+  code: "tests_dockerfile_not_built";
+  message: string;
+}
+
 /** Public task fields only — instructions, environments, and tests never leave the server */
 export interface Task {
   task_name: string;
@@ -2135,6 +2152,12 @@ export interface Task {
    * spent on a trial that cannot execute.
    */
   providers: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  /**
+   * Typed, non-fatal facts recorded about the task at import (TaskNote).
+   * [] when there is nothing to say — every task imported before the notes
+   * existed, and every task on a server predating the field.
+   */
+  notes: TaskNote[];
 }
 
 /**
@@ -2404,6 +2427,15 @@ export interface PreflightTaskVerdict {
    * compose/image-command halves deferred to the import.
    */
   providers?: Record<EvalSandboxProvider, TaskProviderVerdict>;
+  /**
+   * Present with ok true: the typed task notes a task.toml alone decides —
+   * today `tests_dockerfile_not_built` for a separate verifier whose
+   * effective environment pins a docker_image (the image is booted as-is and
+   * tests/ is never built, upstream semantics), worded conditionally because
+   * the door never sees whether the tests tree ships a Dockerfile. [] when
+   * there is nothing to say; absent on servers predating the field.
+   */
+  notes?: TaskNote[];
   /** Present with ok false: the importer's refusal sentence. */
   reason?: string;
 }
@@ -2522,13 +2554,21 @@ export interface DatasetImportFailure {
  * FAILED their independent build and are not runnable in this version. The
  * names and typed reasons are on the dataset detail's `failed_tasks`; fixing
  * them is a re-publish (immutable versions).
+ *
+ * `tests_dockerfile_not_built` names the READY tasks that ship a
+ * tests/Dockerfile the verifier never builds — their verifier image is pinned,
+ * or shared (upstream semantics: Harbor boots the pinned image as-is and never
+ * builds tests/ on that shape). Not an absence and not a failure: a recorded
+ * degrade. Each such task carries the same fact as a `tests_dockerfile_not_built`
+ * note on the dataset detail (Task.notes).
  */
 export interface ImportWarning {
   code:
     | "solutions_archiving_disabled"
     | "no_solutions_archived"
     | "partial_solutions_archived"
-    | "tasks_failed_to_build";
+    | "tasks_failed_to_build"
+    | "tests_dockerfile_not_built";
   message?: string;
 }
 

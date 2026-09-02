@@ -508,6 +508,7 @@ export {
   type PreflightDeferredCheck,
   type PreflightManifestVerdict,
   type PreflightTaskVerdict,
+  type TaskNote,
   type DatasetSource,
   type DatasetImportStatus,
   type DatasetImportFailure,

@@ -653,6 +653,23 @@ class TaskProviderVerdict:
 
 
 @dataclass
+class TaskNote:
+    """A typed, non-fatal fact recorded about an ACCEPTED task.
+
+    Not a refusal (the task imports and runs) and not a failure (nothing
+    failed): a recorded degrade the platform states where the publisher reads
+    it. ``tests_dockerfile_not_built``: the task ships a tests/Dockerfile the
+    verifier does not build, because upstream never would on its shape — the
+    separate verifier's effective environment pins a docker_image (Harbor
+    boots it as-is), or the verifier is shared and runs inside the agent box;
+    a dependency the recipe would install must already be in the image the
+    verifier boots. ``message`` is the platform's own sentence, naming the
+    shape."""
+    code: str
+    message: str
+
+
+@dataclass
 class Task:
     """Public task fields only — instructions/environments/tests never leave the server.
 
@@ -664,6 +681,10 @@ class Task:
     ``gpus``/``gpu_types`` are the task's declared GPU requirement (Harbor's
     task fields honored verbatim): 0 = a CPU task; ``gpu_types`` None = any
     type is acceptable (always None when ``gpus`` is 0).
+
+    ``notes`` are the typed, non-fatal facts recorded at import
+    (:class:`TaskNote`); [] when there is nothing to say — every task imported
+    before the notes existed, and every task on a server predating the field.
     """
     task_name: str
     agent_timeout_sec: float
@@ -671,6 +692,7 @@ class Task:
     providers: Dict[str, TaskProviderVerdict]
     gpus: int = 0
     gpu_types: Optional[List[str]] = None
+    notes: List[TaskNote] = field(default_factory=list)
 
 
 @dataclass
@@ -2239,6 +2261,11 @@ class ImportWarning:
     lacks its reference-solution record — the record operator verification
     tooling reads, never a gate. The version still publishes, activates, and
     runs; the warning makes the permanent gap visible instead of silent.
+
+    ``tests_dockerfile_not_built`` names the READY tasks that ship a
+    tests/Dockerfile the verifier never builds — their verifier image is
+    pinned, or shared (upstream semantics). Each such task carries the same
+    fact as a :class:`TaskNote` on the dataset detail.
     """
     code: str
     message: Optional[str] = None
@@ -2353,13 +2380,19 @@ class PreflightTaskVerdict:
     refusal sentence in ``reason`` — exactly what a real import would say.
     ``providers`` (present with ok True) maps each sandbox provider to a
     :class:`TaskProviderVerdict` over the toml-declared requirements (GPU,
-    sizing, network), with the compose/image-command halves deferred."""
+    sizing, network), with the compose/image-command halves deferred.
+    ``notes`` (present with ok True) are the typed task notes a task.toml
+    alone decides — today ``tests_dockerfile_not_built`` for a separate
+    verifier whose effective environment pins a docker_image, worded
+    conditionally because the door never sees the tests tree; [] when there
+    is nothing to say."""
     name: str
     ok: bool
     task_key: str
     schema_version: Optional[str] = None
     providers: Optional[Dict[str, TaskProviderVerdict]] = None
     reason: Optional[str] = None
+    notes: List[TaskNote] = field(default_factory=list)
 
 
 @dataclass
@@ -2822,7 +2855,19 @@ def _map_task(data: Dict[str, Any]) -> Task:
             if isinstance(gpu_types_raw, list) and gpu_types_raw
             else None
         ),
+        notes=_map_task_notes(data.get('notes')),
     )
+
+
+def _map_task_notes(raw: Any) -> List[TaskNote]:
+    """The typed task notes of a task or pre-flight verdict; absent reads as []."""
+    if not isinstance(raw, list):
+        return []
+    return [
+        TaskNote(code=str(item.get('code', '')), message=str(item.get('message', '')))
+        for item in raw
+        if isinstance(item, dict)
+    ]
 
 
 def _map_dataset_detail(raw: Dict[str, Any]) -> Dataset:
@@ -3608,6 +3653,7 @@ def _map_dataset_preflight(data: Dict[str, Any]) -> DatasetPreflight:
                     else None
                 ),
                 reason=item.get('reason'),
+                notes=_map_task_notes(item.get('notes')),
             )
             for item in data.get('tasks', [])
             if isinstance(item, dict)

@@ -5795,13 +5795,32 @@ async function testDatasetCheck() {
     assert(out.some((l) => l.includes("bad-task REFUSED") && l.includes("mutable :latest tag")), "prints the importer's refusal sentence");
     assert(out.some((l) => l.includes("the import also checks")), "prints the honesty line naming the deferred checks");
 
-    // All-ok corpus exits 0; --json prints the raw answer.
+    // All-ok corpus exits 0; --json prints the raw answer. A typed task note
+    // (harbor-import/16) prints as its own line and never changes the exit code.
     setMockResponse("/api/datasets/preflight", {
       status: 200,
-      body: preflightBody([{ name: "bad-task", ok: true, task_key: "bad-task", schema_version: "1.4", providers: { e2b: { ok: true } } }]),
+      body: preflightBody([
+        {
+          name: "bad-task",
+          ok: true,
+          task_key: "bad-task",
+          schema_version: "1.4",
+          providers: { e2b: { ok: true } },
+          notes: [
+            {
+              code: "tests_dockerfile_not_built",
+              message: "tests/Dockerfile, if the task ships one, is not built: verifier image pinned — upstream semantics",
+            },
+          ],
+        },
+      ]),
     });
     const okIO = captureIO();
-    assertEqual(await runCli(["dataset", "check", dir, ...AUTH], okIO.io), 0, "an all-ok check exits 0");
+    assertEqual(await runCli(["dataset", "check", dir, ...AUTH], okIO.io), 0, "an all-ok check exits 0 — a note is not a refusal");
+    assert(
+      okIO.out.some((l) => l.includes("bad-task NOTE tests_dockerfile_not_built: tests/Dockerfile, if the task ships one, is not built")),
+      "the note prints as its own line with the platform's sentence"
+    );
     const jsonIO = captureIO();
     await runCli(["dataset", "check", dir, "--json", ...AUTH], jsonIO.io);
     const parsed = JSON.parse(jsonIO.out.join("")) as { tasks_ok: number };
@@ -6183,6 +6202,20 @@ async function testPartialPublishCliSurfaces() {
       tasks: {
         items: [
           { task_name: "good-task", agent_timeout_sec: 600, verifier_timeout_sec: 120, providers: { e2b: { ok: true } } },
+          // A task carrying a typed note (harbor-import/16): the hub-published
+          // shape whose tests/Dockerfile the verifier never builds.
+          {
+            task_name: "pinned-verifier",
+            agent_timeout_sec: 600,
+            verifier_timeout_sec: 120,
+            providers: { e2b: { ok: true } },
+            notes: [
+              {
+                code: "tests_dockerfile_not_built",
+                message: "tests/Dockerfile not built: verifier image pinned — upstream semantics (the pinned verifier image owns /tests)",
+              },
+            ],
+          },
         ],
         nextCursor: null,
         hasMore: false,
@@ -6221,6 +6254,22 @@ async function testPartialPublishCliSurfaces() {
       "parse-level refusals speak the same per-task vocabulary"
     );
     assert(text.includes("re-publish a new version"), "the fix is named: a re-publish (immutable versions)");
+    // Task notes (harbor-import/16): a NOTES column appears because one task
+    // carries a note, its code in the row, and the sentence once below.
+    assert(/TASK\s+AGENT TIMEOUT\s+VERIFIER TIMEOUT\s+PROVIDERS\s+NOTES/.test(text), "the tasks table gains a NOTES column");
+    assert(
+      text.split("\n").some((l) => l.startsWith("pinned-verifier") && l.includes("tests_dockerfile_not_built")),
+      "the noted task's row names the note code"
+    );
+    assert(
+      text.split("\n").some((l) => l.startsWith("good-task") && /\s-\s*$/.test(l)),
+      "a task without notes shows a dash in the NOTES column"
+    );
+    assert(text.includes("Task notes:"), "the notes block prints below the table");
+    assert(
+      text.includes("tests_dockerfile_not_built (1 task): tests/Dockerfile not built: verifier image pinned — upstream semantics"),
+      "the block carries the platform's own sentence with the task count"
+    );
   } finally {
     restoreFetch();
   }
