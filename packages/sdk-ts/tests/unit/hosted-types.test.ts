@@ -125,7 +125,10 @@ function narrows(event: JobEvent): string {
       const reward: number | null | undefined = event.data.reward;
       // attempt_phase appears when the settle happened mid-phase.
       const phase: string | null | undefined = event.data.attempt_phase;
-      return `${taskName} ${status} ${reward ?? "-"} ${phase ?? "-"}`;
+      // exception_message is the failure in its own words — failures only;
+      // a cancel carries exception_type alone, so it is optional here.
+      const words: string | undefined = event.data.exception_message;
+      return `${taskName} ${status} ${reward ?? "-"} ${phase ?? "-"} ${words ?? "-"}`;
     }
     case "job.created": {
       const datasets: { name: string; version: string }[] = event.data.datasets;

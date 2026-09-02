@@ -5423,10 +5423,90 @@ async function testDatasetShowVersionSource() {
       text.includes("subfolder: examples/tasks/network-policy-matrix/extra-allowed-hosts"),
       "the narrowed import names its subfolder"
     );
-    assert(text.includes("COMMIT"), "the versions table grows a COMMIT column when a version carries git provenance");
+    assert(text.includes("SOURCE"), "the versions table grows a SOURCE column when a version carries provenance");
     assert(
       show.out.some((l) => l.includes("1.0") && l.includes("FAILED") && l.includes(PEELED.slice(0, 12))),
       "the FAILED version's row carries its resolved commit"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testDatasetShowSourceKinds() {
+  console.log("\n--- dataset show renders every publish kind's source, not only git (B34) ---");
+  installMockFetch();
+  try {
+    // Round 5, 2026-09-02: a hub, a fetched-tarball and a --dir publish all
+    // answered `source: null`; the human page printed nothing and the
+    // versions table had no column for them. Each kind now has its own line,
+    // spelled so the locator can be pasted back into `--from`.
+    const HUB_DIGEST = `sha256:${"ab".repeat(32)}`;
+    const URL_DIGEST = `sha256:${"cd".repeat(32)}`;
+    const UPLOAD_DIGEST = `sha256:${"ef".repeat(32)}`;
+    const ARCHIVE_URL =
+      "https://github.com/harbor-framework/benchmark-template/archive/5cb860aab849e1b3a542beef82d50295212fc532.tar.gz";
+    const row = (version: string, source: Record<string, unknown>) => ({
+      version,
+      state: "READY",
+      created_at: "2026-09-02T00:00:00Z",
+      task_count: 1,
+      n_failed_tasks: 0,
+      manifest: null,
+      source,
+    });
+    const hub = row("3", { kind: "hub_package", hub_package: "cookbook/hello-world", digest: HUB_DIGEST });
+    const url = row("2", { kind: "archive_url", archive_url: ARCHIVE_URL, digest: URL_DIGEST });
+    const upload = row("1", { kind: "archive", digest: UPLOAD_DIGEST });
+    const body = (selected: typeof hub) => ({
+      name: "kinds",
+      title: null,
+      description: null,
+      active_version: hub,
+      versions: [hub, url, upload],
+      selected_version: selected,
+      tasks: { items: [], nextCursor: null, hasMore: false },
+      upstream: null,
+      created_at: "2026-09-02T00:00:00Z",
+      updated_at: "2026-09-02T00:00:00Z",
+    });
+
+    setMockResponse("/api/datasets/kinds", { status: 200, body: body(hub) });
+    const show = captureIO();
+    assertEqual(await runCli(["dataset", "show", "kinds", ...AUTH], show.io), 0, "show exits 0");
+    const text = show.out.join("\n");
+    assert(
+      text.includes(`source: hub:cookbook/hello-world (sha256:${"ab".repeat(6)}…)`),
+      "a hub version prints the --from spelling of its reference and the pinned content hash"
+    );
+    assert(text.includes("SOURCE") && !text.includes("COMMIT"), "the identity column is SOURCE — a digest is not a commit");
+    assert(
+      show.out.some((l) => l.startsWith("3 ") && l.includes(`sha256:${"ab".repeat(6)}…`)),
+      "the hub row carries its digest in the SOURCE column"
+    );
+    assert(
+      show.out.some((l) => l.startsWith("2 ") && l.includes(`sha256:${"cd".repeat(6)}…`)),
+      "the archive_url row carries the fetched digest"
+    );
+    assert(
+      show.out.some((l) => l.startsWith("1 ") && l.includes(`sha256:${"ef".repeat(6)}…`)),
+      "the uploaded-archive row carries the upload digest"
+    );
+
+    setMockResponse("/api/datasets/kinds", { status: 200, body: body(url) });
+    const showUrl = captureIO();
+    assertEqual(await runCli(["dataset", "show", "kinds@2", ...AUTH], showUrl.io), 0, "show @2 exits 0");
+    assert(
+      showUrl.out.join("\n").includes(`source: ${ARCHIVE_URL} (sha256:${"cd".repeat(6)}…)`),
+      "a fetched-tarball version prints its url as given and the fetched digest"
+    );
+
+    setMockResponse("/api/datasets/kinds", { status: 200, body: body(upload) });
+    const showUpload = captureIO();
+    assertEqual(await runCli(["dataset", "show", "kinds@1", ...AUTH], showUpload.io), 0, "show @1 exits 0");
+    assert(
+      showUpload.out.join("\n").includes(`source: uploaded archive (sha256:${"ef".repeat(6)}…)`),
+      "an uploaded-directory version says so and prints the upload digest"
     );
   } finally {
     restoreFetch();
@@ -6042,6 +6122,33 @@ async function testDatasetPublishRegisterFirst() {
         assert(
           createdAt !== -1 && registeredAt !== -1 && registeredAt < createdAt,
           "and it opens the stream BEFORE import.created — attachable before the 202"
+        );
+        // The transfer itself is part of the stream (B28, owner ruling
+        // 2026-09-02): the SAME 10 %-step counter human mode prints, as
+        // `upload.progress` lines between the registration and the 202.
+        const progress = events.filter((e) => e.kind === "upload.progress");
+        const archiveBytes = [...sessions.values()][0]?.size;
+        assert(
+          progress.length >= 1 && progress.length <= 11,
+          `upload.progress rides --watch --json at the 10 % cadence — at most 11 lines (got ${progress.length})`
+        );
+        assert(
+          progress.every((e) => events.indexOf(e) > registeredAt && events.indexOf(e) < createdAt),
+          "every upload.progress line sits between import.registered and import.created"
+        );
+        assert(
+          progress.every((e) => e.total_bytes === archiveBytes && typeof e.sent_bytes === "number"),
+          `each line carries sent_bytes and total_bytes — the archive's size (${archiveBytes ?? "?"})`
+        );
+        assertEqual(
+          progress[progress.length - 1]?.sent_bytes, archiveBytes,
+          "the last line is the 100 % line — sent_bytes equals total_bytes"
+        );
+        assert(
+          progress.every(
+            (e) => typeof e.elapsed_sec === "number" && Number.isFinite(e.elapsed_sec) && e.elapsed_sec >= 0
+          ),
+          "each line carries elapsed_sec, a finite non-negative number"
         );
         assertEqual(events[events.length - 1]?.kind, "import.final", "the stream still settles to import.final");
         assert([...sessions.values()][0]?.completed === 1, "the corpus rode the session door");
@@ -7738,6 +7845,7 @@ async function main() {
   await testDatasetListAndShow();
   await testDatasetProvenanceAndPinNotice();
   await testDatasetShowVersionSource();
+  await testDatasetShowSourceKinds();
   await testDatasetPublishWatch();
   await testDatasetWatchVerb();
   await testDatasetCheck();

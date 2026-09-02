@@ -49,6 +49,10 @@ import type {
   DatasetPatch,
   DatasetRef,
   DatasetVersion,
+  DatasetVersionArchiveSource,
+  DatasetVersionArchiveUrlSource,
+  DatasetVersionGitSource,
+  DatasetVersionHubSource,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -205,6 +209,10 @@ export type {
   DatasetSelector,
   DatasetSource,
   DatasetVersion,
+  DatasetVersionArchiveSource,
+  DatasetVersionArchiveUrlSource,
+  DatasetVersionGitSource,
+  DatasetVersionHubSource,
   DatasetVersionSource,
   DatasetVersionState,
   DatasetsClient,
@@ -701,22 +709,46 @@ function mapVersionManifest(raw: unknown): DatasetVersion["manifest"] {
 }
 
 /**
- * A version's own git provenance ({git_url, ref, commit, path}) — served on
- * every git-imported version, including one whose build FAILED (it can never
- * activate, so it never appears as `upstream`). Absent (an older
- * server, or a non-git version) or unreadable input is null — "nothing to
- * report", never a fabricated value and never a crash.
+ * A version's own `source` — one shape per publish kind (git / archive /
+ * archive_url / hub_package), served on every version, including one whose
+ * build FAILED (it can never activate, so it never appears as `upstream`).
+ * Absent (an older server, a version that recorded nothing readable) or
+ * unreadable input is null — "nothing to report", never a fabricated value
+ * and never a crash.
  */
 function mapVersionSource(raw: unknown): DatasetVersion["source"] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const blob = raw as Record<string, unknown>;
-  if (typeof blob.ref !== "string" || typeof blob.commit !== "string") return null;
-  return {
-    git_url: typeof blob.git_url === "string" ? blob.git_url : null,
-    ref: blob.ref,
-    commit: blob.commit,
-    path: typeof blob.path === "string" ? blob.path : null,
-  };
+  const text = (key: string): string | null => (typeof blob[key] === "string" ? (blob[key] as string) : null);
+  // One shape per publish kind, keyed by the wire's `kind`. A server from
+  // before the kinds existed served the git shape alone, without `kind` —
+  // its `commit` still names it. A kind this SDK does not know, or an object
+  // missing its kind's fields, is null: nothing to report, never a guess.
+  const kind = text("kind") ?? (text("commit") !== null ? "git" : null);
+  switch (kind) {
+    case "git": {
+      const ref = text("ref");
+      const commit = text("commit");
+      if (ref === null || commit === null) return null;
+      return { kind: "git", git_url: text("git_url"), ref, commit, path: text("path") };
+    }
+    case "archive": {
+      const digest = text("digest");
+      return digest === null ? null : { kind: "archive", digest };
+    }
+    case "archive_url": {
+      const archive_url = text("archive_url");
+      const digest = text("digest");
+      return archive_url === null || digest === null ? null : { kind: "archive_url", archive_url, digest };
+    }
+    case "hub_package": {
+      const hub_package = text("hub_package");
+      const digest = text("digest");
+      return hub_package === null || digest === null ? null : { kind: "hub_package", hub_package, digest };
+    }
+    default:
+      return null;
+  }
 }
 
 function mapDatasetVersion(raw: Record<string, unknown>): DatasetVersion {

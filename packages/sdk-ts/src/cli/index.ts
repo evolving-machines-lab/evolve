@@ -95,6 +95,7 @@ import type {
   TrialAnalysis,
   TrialStatus,
   UpstreamStatus,
+  DatasetVersionSource,
   UsageReading,
 } from "../hosted/types";
 import {
@@ -793,7 +794,7 @@ const GROUPS: Record<string, GroupSpec> = {
       },
       watch: {
         summary:
-          "Re-attach to a publish and follow it to READY/FAILED — the same stream `dataset publish --watch` renders; works after the CLI exited, or from another machine",
+          "Re-attach to a publish and follow it to READY/FAILED — the same follow `dataset publish --watch` renders (everything from the 202 on); works after the CLI exited, or from another machine",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
@@ -3092,7 +3093,10 @@ const DATASET_COLUMNS: ListColumn<Dataset>[] = [
 ];
 const DATASET_DEFAULT_COLUMNS = ["name", "active", "state", "tasks", "title"];
 
-/** "sha256:<hex>" cut to the length every skill surface prints (19 chars). */
+/**
+ * "sha256:<hex>" cut to the length every digest surface prints — `sha256:` +
+ * the first 12 hex + `…` — the skills DIGEST column and the dataset source line.
+ */
 function fmtDigestShort(digest: string): string {
   return digest.length > 19 ? `${digest.slice(0, 19)}…` : digest;
 }
@@ -4839,6 +4843,37 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
   return 0;
 }
 
+/**
+ * The `source:` line(s) of `dataset show`, one reading per publish kind. The
+ * locator is printed in the spelling `dataset publish` takes back — the
+ * repository @ ref for `--git`/`--ref`, the url for `--from <url>`,
+ * `hub:org/name[@ref]` for `--from hub:…` — and the identity shortened: a
+ * commit to 12 hex, bare; a digest in `fmtDigestShort`'s spelling, so it
+ * never reads as a commit.
+ */
+function versionSourceLines(source: DatasetVersionSource): string[] {
+  switch (source.kind) {
+    case "git": {
+      const refPart = source.ref === source.commit ? "" : ` @ ${source.ref}`;
+      return [
+        `source: ${source.git_url ?? "?"}${refPart} (commit ${source.commit.slice(0, 12)})`,
+        ...(source.path ? [`  subfolder: ${source.path}`] : []),
+      ];
+    }
+    case "archive":
+      return [`source: uploaded archive (${fmtDigestShort(source.digest)})`];
+    case "archive_url":
+      return [`source: ${source.archive_url} (${fmtDigestShort(source.digest)})`];
+    case "hub_package":
+      return [`source: hub:${source.hub_package} (${fmtDigestShort(source.digest)})`];
+  }
+}
+
+/** The versions table's SOURCE cell: a git version's commit (12 hex), any other kind's digest (`fmtDigestShort`). */
+function versionSourceCell(source: DatasetVersionSource): string {
+  return source.kind === "git" ? source.commit.slice(0, 12) : fmtDigestShort(source.digest);
+}
+
 function datasetDetailLines(b: Dataset): string[] {
   const lines = table([
     ["name", b.name],
@@ -4846,19 +4881,17 @@ function datasetDetailLines(b: Dataset): string[] {
     ["description", b.description ?? "-"],
     ["active version", b.active_version?.version ?? "-"],
   ]);
-  // PROVENANCE: what the SHOWN version was built from — the repository, the
-  // requested ref, the resolved commit, and the subfolder when the import was
-  // narrowed to one. The selected version's own `source` wins: `dataset show
-  // name@version` must say what THAT version imported even when its build
-  // FAILED and it can never activate — exactly the moment a user needs the
-  // resolved sha. `upstream` (the active version's provenance) is the
-  // fallback for a server that predates per-version `source`. Quiet block,
-  // like the manifest below: a dataset without a git source prints nothing.
+  // PROVENANCE: what the SHOWN version was built from, one line per publish
+  // kind (versionSourceLines). The selected version's own `source` wins:
+  // `dataset show name@version` must say what THAT version imported even
+  // when its build FAILED and it can never activate — exactly the moment a
+  // user needs the resolved sha or digest. `upstream` (the active version's
+  // git provenance) is the fallback for a server that predates per-version
+  // `source`. Quiet block, like the manifest below: a dataset that recorded
+  // no source prints nothing.
   const shown = b.selected_version?.source ?? b.active_version?.source ?? null;
   if (shown) {
-    const refPart = shown.ref === shown.commit ? "" : ` @ ${shown.ref}`;
-    lines.push(`source: ${shown.git_url ?? "?"}${refPart} (commit ${shown.commit.slice(0, 12)})`);
-    if (shown.path) lines.push(`  subfolder: ${shown.path}`);
+    lines.push(...versionSourceLines(shown));
   } else if (b.upstream) {
     const u = b.upstream;
     const refPart = u.ref === u.current_commit ? "" : ` @ ${u.ref}`;
@@ -4883,8 +4916,9 @@ function datasetDetailLines(b: Dataset): string[] {
   }
   if (b.versions && b.versions.length > 0) {
     lines.push("");
-    // The COMMIT column appears when some version carries git provenance, and
-    // shows EVERY version's resolved sha — a FAILED version can never
+    // The SOURCE column appears when some version carries provenance, and
+    // shows EVERY version's resolved identity — a commit for a git version, a
+    // digest for the others (versionSourceCell). A FAILED version can never
     // activate, and this column is where its imported bytes stay observable.
     const anySource = b.versions.some((v) => v.source != null);
     // The FAILED column appears only when some version lost tasks to its
@@ -4892,7 +4926,7 @@ function datasetDetailLines(b: Dataset): string[] {
     // table. TASKS stays the READY (runnable) count.
     const anyFailed = b.versions.some((v) => v.n_failed_tasks > 0);
     const rows = [
-      ["VERSION", "STATE", "TASKS", ...(anyFailed ? ["FAILED"] : []), "CREATED", ...(anySource ? ["COMMIT"] : [])],
+      ["VERSION", "STATE", "TASKS", ...(anyFailed ? ["FAILED"] : []), "CREATED", ...(anySource ? ["SOURCE"] : [])],
     ];
     for (const v of b.versions) {
       rows.push([
@@ -4901,7 +4935,7 @@ function datasetDetailLines(b: Dataset): string[] {
         String(v.task_count),
         ...(anyFailed ? [v.n_failed_tasks > 0 ? String(v.n_failed_tasks) : "-"] : []),
         v.created_at ?? "-",
-        ...(anySource ? [v.source ? v.source.commit.slice(0, 12) : "-"] : []),
+        ...(anySource ? [v.source ? versionSourceCell(v.source) : "-"] : []),
       ]);
     }
     lines.push(...table(rows));
@@ -5190,13 +5224,6 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
       }
     }
   }
-  // Upload progress renders CLIENT-SIDE from the stream (the SDK's flushed-
-  // byte count; no server call) — a line per 10% step, so a multi-GB corpus
-  // shows life without per-chunk spam. Harbor renders its uploads with the
-  // same M-of-N + elapsed columns in a rich Live display
-  // (REFERENCES/Harbor src/harbor/cli/upload.py:123-135); a line-based CLI
-  // keeps the counts and drops the animation. --json stays clean output.
-  let lastUploadStep = -1;
   // Register-first (the resumable chunked door): the session open pre-creates
   // the import before the first byte moves, and this prints its id so the
   // transfer is re-attachable from the very start — this terminal dying, or
@@ -5212,22 +5239,47 @@ async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
     }
     io.out(`Registered import ${importId} — re-attach anytime with: evolve dataset watch ${importId}`);
   };
-  const created = await client.publish(
-    input,
-    json
-      ? { onRegistered }
-      : {
-          onRegistered,
-          onUploadProgress: (sentBytes, totalBytes) => {
-            const step = totalBytes > 0 ? Math.floor((sentBytes / totalBytes) * 10) : 10;
-            if (step <= lastUploadStep) return;
-            lastUploadStep = step;
-            io.out(
-              `upload ${fmtBytes(sentBytes)}/${fmtBytes(totalBytes)} (${Math.min(step * 10, 100)}%)`
-            );
-          },
-        }
-  );
+  // Upload progress renders CLIENT-SIDE from the stream (the SDK's own byte
+  // count — flushed bytes on the single-request door, acknowledged chunks
+  // on the chunked one; no server call) — ONE counter, one cadence, two
+  // renderings: a line per 10% step, so a multi-GB corpus shows life
+  // without per-chunk spam. Human mode prints `upload M/N (P%)`; `--watch
+  // --json` prints the same step as an `upload.progress` event
+  // {sent_bytes, total_bytes, elapsed_sec} — the transfer is part of the
+  // stream, so a piped consumer is never blind before `import.created` (an
+  // 8 GB publish printed one line, then nothing for 20 minutes, 2026-09-01;
+  // owner ruling 2026-09-02). elapsed_sec counts from the
+  // moment the corpus was handed to the SDK — packing and hashing included
+  // — the same seconds the caller has been waiting. Harbor renders its
+  // uploads with the same M-of-N + elapsed columns in a rich Live display
+  // and has no machine-readable stream (REFERENCES/Harbor
+  // src/harbor/cli/upload.py:123-135, 152-159): a line-based CLI keeps the
+  // counts and drops the animation, and the NDJSON event is the recorded
+  // deviation — `--json` on every verb is this platform's law. Non-watch
+  // --json wires no counter at all: ONE parseable document.
+  const uploadStartedAt = Date.now();
+  let lastUploadStep = -1;
+  const onUploadProgress = (sentBytes: number, totalBytes: number) => {
+    const step = totalBytes > 0 ? Math.floor((sentBytes / totalBytes) * 10) : 10;
+    if (step <= lastUploadStep) return;
+    lastUploadStep = step;
+    if (json) {
+      io.out(
+        JSON.stringify({
+          kind: "upload.progress",
+          sent_bytes: sentBytes,
+          total_bytes: totalBytes,
+          elapsed_sec: (Date.now() - uploadStartedAt) / 1000,
+        })
+      );
+      return;
+    }
+    io.out(`upload ${fmtBytes(sentBytes)}/${fmtBytes(totalBytes)} (${Math.min(step * 10, 100)}%)`);
+  };
+  const created = await client.publish(input, {
+    onRegistered,
+    ...(json && inv.flags.watch !== true ? {} : { onUploadProgress }),
+  });
   if (inv.flags.watch !== true) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -5376,14 +5428,15 @@ async function followImport(
 
 /**
  * `evolve dataset watch <name|import-id>` — re-attach to a publish and render
- * the SAME stream `dataset publish --watch` renders (followImport, the one
- * rendering home). Works after the CLI exited, and from another machine: the
- * argument is tried as an import id first (the more specific address), then
- * as a dataset name — the newest QUEUED/RUNNING import of that dataset. A
- * terminal import id still renders its settled block (exit 0/1 by outcome);
- * a NAME with no live import refuses instead, naming the newest settled
- * import — attaching a "watch" to something that finished long ago is more
- * often a typo than an intent.
+ * the same follow `dataset publish --watch` renders — everything from the 202
+ * on (followImport, the one rendering home); the transfer's own
+ * `upload.progress` lines belong to the publishing process. Works after the
+ * CLI exited, and from another machine: the argument is tried as an import
+ * id first (the more specific address), then as a dataset name — the newest
+ * QUEUED/RUNNING import of that dataset. A terminal import id still renders
+ * its settled block (exit 0/1 by outcome); a NAME with no live import
+ * refuses instead, naming the newest settled import — attaching a "watch"
+ * to something that finished long ago is more often a typo than an intent.
  */
 async function cmdDatasetWatch(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;

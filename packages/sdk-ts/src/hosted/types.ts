@@ -1794,9 +1794,10 @@ export interface TrialSpendData {
 
 /**
  * A trial reached a terminal status. `reward` is present only on the scored
- * path; `exception_type` only on a failure; `attempt_phase` appears when the
- * settle happened mid-phase (worker death), which is exactly when knowing the
- * phase is worth having.
+ * path; `exception_type` and `exception_message` only on a failure (a cancel
+ * carries `exception_type` alone — see `exception_message`); `attempt_phase`
+ * appears when the settle happened mid-phase (worker death), which is exactly
+ * when knowing the phase is worth having.
  */
 export interface TrialSettledData {
   trial_id: string;
@@ -1805,6 +1806,16 @@ export interface TrialSettledData {
   /** Zero is a reward; absent means the trial did not score. */
   reward?: number | null;
   exception_type?: string;
+  /**
+   * The failure in its own words — the same text the trial's
+   * `exception_info.exception_message` holds at settle time (a later
+   * auto-retry verdict is appended to the trial's copy, never to this
+   * frame's). Present only on a failure, beside `exception_type`. Two settled
+   * frames carry `exception_type` alone: a cancel (`CancelledError` — stopped,
+   * not failed; no words are stored) and an event recorded before this field
+   * existed.
+   */
+  exception_message?: string;
   attempt_phase?: AttemptPhase | null;
 }
 
@@ -1974,14 +1985,13 @@ export interface DatasetManifestMetadata {
 }
 
 /**
- * One version's git provenance: the repository, the ref exactly as requested,
- * the RESOLVED commit the clone landed on (for an annotated tag, the peeled
- * commit — never the tag object), and the repository subfolder the corpus was
- * read from. Served on EVERY git-imported version whatever its state — a
- * version whose build FAILED can never become the active version, so this is
- * where its imported bytes stay observable.
+ * A version published from a git repository (`git_url` + `git_ref`): the
+ * repository, the ref exactly as requested, the RESOLVED commit the clone
+ * landed on (for an annotated tag, the peeled commit — never the tag
+ * object), and the repository subfolder the corpus was read from.
  */
-export interface DatasetVersionSource {
+export interface DatasetVersionGitSource {
+  kind: "git";
   /**
    * The repository this version was imported from, userinfo (an embedded
    * token) stripped; null only when the stored url cannot be parsed.
@@ -1994,6 +2004,54 @@ export interface DatasetVersionSource {
   /** The repository subfolder the corpus was read from; null = repository root. */
   path: string | null;
 }
+
+/**
+ * A version published from an UPLOADED archive — the multipart `archive`
+ * part, which is what `publish({ source: { directory } })` and the CLI's
+ * `--dir` send. No locator: the bytes came from the client.
+ */
+export interface DatasetVersionArchiveSource {
+  kind: "archive";
+  /** `sha256:<hex>` over the uploaded tarball's bytes. */
+  digest: string;
+}
+
+/** A version published from a fetched tarball (`archive_url`). */
+export interface DatasetVersionArchiveUrlSource {
+  kind: "archive_url";
+  /** The public https url the corpus tarball was fetched from, as given. */
+  archive_url: string;
+  /** `sha256:<hex>` over the fetched tarball's bytes. */
+  digest: string;
+}
+
+/** A version published from a Harbor hub package (`hub_package`). */
+export interface DatasetVersionHubSource {
+  kind: "hub_package";
+  /** The package reference as given — `org/name` or `org/name@ref` (Harbor's reference grammar). */
+  hub_package: string;
+  /**
+   * `sha256:<hex>` — the hub's content hash over the task file set (Harbor's
+   * recipe), the immutable hub version the import was pinned to, whatever
+   * the reference's tag points at today.
+   */
+  digest: string;
+}
+
+/**
+ * What one version was imported from — the LOCATOR the publish named (what
+ * you would pass to publish the same source again) and the IDENTITY the
+ * import resolved it to — one shape per publish kind, discriminated on
+ * `kind` in the publish request's own vocabulary. Served on EVERY version
+ * whatever its state: a version whose build FAILED can never become the
+ * active version, so this is where its imported bytes stay observable.
+ * Every `digest` is spelled `sha256:<hex>`; a git `commit` is a bare sha.
+ */
+export type DatasetVersionSource =
+  | DatasetVersionGitSource
+  | DatasetVersionArchiveSource
+  | DatasetVersionArchiveUrlSource
+  | DatasetVersionHubSource;
 
 /**
  * One task's own terminal build state inside a published version — the
@@ -2090,10 +2148,12 @@ export interface DatasetVersion {
    */
   manifest: DatasetManifestMetadata | null;
   /**
-   * What THIS version was imported from — git only. Null when the version was
-   * not imported from a git remote (an uploaded tarball, a seeded directory,
-   * a pre-provenance row), and on servers that predate the field — absence is
-   * "nothing to report", never a fabricated value.
+   * What THIS version was imported from, per publish kind (`kind`: git /
+   * archive / archive_url / hub_package). Null when the platform recorded
+   * nothing readable (a seeded directory, a pre-provenance row, or a fetched
+   * archive_url / hub_package row whose locator was never stored), and on
+   * servers that predate the field — absence is "nothing to report", never a
+   * fabricated value.
    */
   source: DatasetVersionSource | null;
 }
