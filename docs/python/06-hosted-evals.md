@@ -1453,7 +1453,7 @@ evolve dataset watch cmt9x…        # or the import id itself
 
 Large uploads make the id available from the very start: an archive over the chunked-upload threshold registers its import the moment the upload session opens, the CLI prints `Registered import <id> — re-attach anytime with: evolve dataset watch <id>`, and until the corpus finishes arriving the import reads `QUEUED (receiving)` — visible in `dataset list`, `dataset show`, and the dashboard alike. A name with no live publish refuses and names the newest settled import instead; `--json` streams the same NDJSON events as `publish --watch`, opened with `import.attached`. If the upload behind a receiving import is abandoned, the import is removed with it and the watch ends saying so — never a forever-QUEUED ghost.
 
-Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane: the resolved commit for a git publish, the sha256 of the exact uploaded bytes for a directory. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url. A git publish may name one repository subfolder (`git_path` / `--path`) and the platform fetches just that folder via git sparse checkout — the subfolder becomes the corpus root, the recorded provenance keeps the path beside the resolved commit, and a path that is not a directory at the pinned ref fails the import loudly rather than landing an empty version.
+Every lane resolves to the same thing — a task-layout directory — and is held to the same rules. The corpus root is a directory whose `tasks/` subdirectory holds one directory per task, or the tasks directory itself. Provenance is recorded per lane on the version's `source`: `DatasetVersionGitSource(git_url, ref, commit, path)` for a git publish (the resolved commit), `DatasetVersionArchiveSource(digest)` for a directory (the sha256 of the exact uploaded bytes), `DatasetVersionArchiveUrlSource(archive_url, digest)` for a fetched tarball and `DatasetVersionHubSource(hub_package, digest)` for a hub package — every digest spelled `sha256:<hex>`. On the wire a publish is `multipart/form-data` — the SDK produces it for you — and uploads past the compressed-size cap are refused with a `413 import_too_large`. The metadata parts come first, so a name owned by someone else is refused with the `409` before the upload is received rather than after. A git source must be an `https://` url: the import runs on a worker with no ssh client, so `ssh://` and `git@` remotes are refused at validation rather than failing inside the job — for a private repository, put a token in the https url. A git publish may name one repository subfolder (`git_path` / `--path`) and the platform fetches just that folder via git sparse checkout — the subfolder becomes the corpus root, the recorded provenance keeps the path beside the resolved commit, and a path that is not a directory at the pinned ref fails the import loudly rather than landing an empty version.
 
 ### Pre-flight: check a corpus before uploading it
 
@@ -1509,6 +1509,14 @@ evolve dataset publish --from hub:cookbook/test@sha256:51b00e00… --watch   # d
 A hub reference is resolved when the publish is **accepted**, and the resolved content digest is what the platform later fetches by — the same pinning rule as a git tag, so a hub tag moved after your 202 can never deliver different bytes. A task package imports as a one-task dataset; a dataset package fetches every member task the hub pins by digest — and every fetched archive is verified against the hub's own digest with Harbor's exact content-hash recipe before anything lands. A reference the hub does not show — nonexistent, or private — is refused with `hub_package_not_found` (the platform reads the hub anonymously; private packages need credentials, which are not supported yet), and a hub that cannot be reached at accept time is `hub_unreachable` (502): nothing was created, retry the publish.
 
 Both fetched sources are **public only**: `archive_url` must be https, resolve to a public host, and carry no credentials in the URL — authenticated sources are a planned follow-up. The fetched bytes pass exactly the validation and size caps an uploaded archive does, plus one earlier gate: where the source declares its size up front (the hub publishes per-file sizes; a server's `Content-Length` counts too), a corpus over the cap is refused before the download spends anything.
+
+The tarball may wrap the corpus in one top-level directory — the shape every GitHub and GitLab archive URL and a `tar -czf <dir>` tarball produce — and the platform reads inside it, so a repository's archive URL publishes as-is:
+
+```bash
+evolve dataset publish --from https://github.com/harbor-framework/benchmark-template/archive/5cb860aab849e1b3a542beef82d50295212fc532.tar.gz --name template --version 1.0 --watch
+```
+
+The published version records where it came from: `dataset show template --json` answers `latest_version.source` as `{"kind": "archive_url", "archive_url": ..., "digest": ...}` (in Python, a `DatasetVersionArchiveUrlSource`), the digest being `sha256:<hex>` over the bytes that were fetched; a hub publish records a `DatasetVersionHubSource` with the reference as you gave it and the hub content hash the import was pinned to.
 
 ### The dataset manifest (dataset.toml)
 
@@ -1610,7 +1618,7 @@ if dataset.upstream and dataset.upstream.moved:
     print(f'{dataset.upstream.ref} has moved past {dataset.upstream.current_commit}')
 ```
 
-`upstream` also carries the same provenance for the **active** version: `git_url` (userinfo stripped — an embedded token never reaches the wire), the requested `ref`, the resolved commit (`current_commit`), and the repository subfolder (`path`, `None` for the repository root). But provenance is not an active-version privilege — **every** git-imported version carries its own `source` object (`ref`, `commit`, `git_url`, `path`) whatever its state, so a version that FAILED (which can never activate) still says exactly which bytes it imported; for an annotated tag, `commit` is the peeled commit the clone landed on, never the tag object. A version that did not come from a git remote serves `source=None` — never a fabricated value. Beside the provenance ride the watch fields: where the ref points now (`latest_commit`, `None` when the last check failed), `acked_commit` (the newest commit a local version already exists for), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`.
+`upstream` also carries the same provenance for the **active** version: `git_url` (userinfo stripped — an embedded token never reaches the wire), the requested `ref`, the resolved commit (`current_commit`), and the repository subfolder (`path`, `None` for the repository root). But provenance is not an active-version privilege — **every** version carries its own `source` object whatever its state, so a version that FAILED (which can never activate) still says exactly which bytes it imported. `source` is one dataclass per publish kind, each carrying its `kind` in the publish request's own words: `DatasetVersionGitSource` (`kind='git'`: `git_url`, `ref`, `commit`, `path` — for an annotated tag, `commit` is the peeled commit the clone landed on, never the tag object), `DatasetVersionArchiveSource` (`kind='archive'`: `digest`, an uploaded directory), `DatasetVersionArchiveUrlSource` (`kind='archive_url'`: `archive_url`, `digest`, a fetched tarball) and `DatasetVersionHubSource` (`kind='hub_package'`: `hub_package` as you gave it, `digest` — the hub content hash the import was pinned to). It is `None` only when nothing readable was recorded — a version published before provenance was kept — never a fabricated value. Beside the provenance ride the watch fields: where the ref points now (`latest_commit`, `None` when the last check failed), `acked_commit` (the newest commit a local version already exists for), `moved` (the field a badge branches on), `checked_at`, `error` (why the last check failed — show "could not check", never "up to date"), and `auto_import`.
 
 It is `None`, not "up to date", when the active version did not come from a git remote — an uploaded corpus, or one published before provenance was recorded. A version pinned to an exact commit sha serves its provenance with the watch at rest (`latest_commit`/`checked_at`/`error` `None`, `moved` `False`): a pin cannot move, and nothing checks one. A tag keeps the watch — a re-pointed tag is an update worth a badge. A failed check keeps the last known answer and sets `error`: a network blip should not quietly erase an update that is genuinely available.
 
@@ -2236,14 +2244,32 @@ class DatasetVersion:               # one shape on every surface
     state: str                      # the lifecycle above
     created_at: str
     task_count: int
-    source: Optional[DatasetVersionSource]  # THIS version's git provenance; None = not a git import
+    source: Optional[DatasetVersionSource]  # THIS version's provenance, per publish kind; None = nothing recorded
+
+DatasetVersionSource = Union[       # served on EVERY version, active or not; one dataclass per publish kind
+    DatasetVersionGitSource, DatasetVersionArchiveSource,
+    DatasetVersionArchiveUrlSource, DatasetVersionHubSource]
 
 @dataclass
-class DatasetVersionSource:         # served on EVERY git-imported version, active or not
+class DatasetVersionGitSource:      # a git publish (kind == 'git')
     ref: str                        # exactly as requested: a sha, a tag, or (legacy) a branch
     commit: str                     # the RESOLVED sha — for an annotated tag, the peeled commit
     git_url: Optional[str]          # userinfo stripped; None only if the stored url is unparseable
     path: Optional[str]             # repository subfolder; None = repository root
+
+@dataclass
+class DatasetVersionArchiveSource:  # an uploaded directory (kind == 'archive')
+    digest: str                     # sha256:<hex> over the uploaded bytes
+
+@dataclass
+class DatasetVersionArchiveUrlSource:  # a fetched tarball (kind == 'archive_url')
+    archive_url: str                # the url as given
+    digest: str                     # sha256:<hex> over the fetched bytes
+
+@dataclass
+class DatasetVersionHubSource:      # a Harbor hub package (kind == 'hub_package')
+    hub_package: str                # the reference as given: org/name or org/name@ref
+    digest: str                     # the hub content hash the import was pinned to
 
 @dataclass
 class Task:                         # public fields only
