@@ -412,7 +412,7 @@ Beside the parsed trace, every trial archives its raw record, and one vocabulary
 | `trace-parsed` | The parsed event timeline — what `trace()` / `trace_events()` page |
 | `trace-stdout` | The agent process's stdout, byte for byte |
 | `trace-stderr` | The agent process's stderr, byte for byte |
-| `trace-atif` | The normalized trajectory — an ATIF v1.7 document built from the parsed trace |
+| `trace-atif` | The normalized trajectory — an ATIF v1.7 document built from the parsed trace; for an uploaded trial, the archive's own `agent/trajectory.json` served verbatim |
 | `trajectory` | Reserved: the harness's own native session file (not served yet — the server answers not-found until its wave lands) |
 | `agent-home` | The CLI's whole home folder, collected after the run |
 | `verifier` | Everything the scoring step printed |
@@ -428,7 +428,7 @@ home = await t.artifact(trial_id, 'agent-home')       # dict[path, text] | None
 
 `trace-stdout` and `trace-stderr` are the referee whenever the parsed trace looks wrong. `agent-home` is the agent CLI's entire home folder (`/root/.claude`, `/root/.codex`, …) collected whole after the run, subagent transcripts included by construction, keyed by sandbox path. `None` is a normal answer, never an error: the trial never stored that artifact (it was cancelled early, the agent wrote nothing, or the trace was purged).
 
-`trace-atif` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and None keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial). It is the same document the job archive places at Harbor's own path `agent/trajectory.json`; the separate `trajectory` name stays reserved for a different artifact — the harness's own native session file.
+`trace-atif` is the normalized view of the same run: one **ATIF v1.7** document (Harbor's Agent Trajectory Interchange Format — the strict interchange schema its trainer and analysis tooling read), built server-side from the stored parsed trace — for an uploaded trial, the archive's own `agent/trajectory.json` served verbatim, never rebuilt. The instruction opens it as the first `user` step, each agent turn carries its message, reasoning, tool calls and their observed results, and `final_metrics` states the trial's token totals and measured cost. It answers on the same `{log}` envelope as the raw logs — the string is the JSON document — and None keeps the same meaning: nothing was stored (or the id is a regrade result, whose agent half belongs to its immutable source trial). It is the same document the job archive places at Harbor's own path `agent/trajectory.json`; the separate `trajectory` name stays reserved for a different artifact — the harness's own native session file.
 
 The CLI speaks the same words. `evolve trial download <trial-id> --stream <name>` prints one artifact to stdout. Without `--stream` the trial is written out whole under `<dir>/<trial-id>/`, and the layout is **Harbor's trial tree** — Harbor's own names and folders, not the artifact names in the table above:
 
