@@ -1,11 +1,13 @@
 {
-  "$comment": "The hosted evals API's error-code vocabulary, checked in so two repos that share no test runner can be held to one list. The contract owns it: the ErrorCode enum in spec/openapi.yaml is the only place a code may be added. This file is that enum's shadow, and the tests keep everyone honest \u2014 the server regenerates these exact bytes and diffs them, the TypeScript SDK asserts HOSTED_ERROR_CODES equals codes[], and the Python SDK asserts both its tuple and its Literal do. Adding a code therefore means: spec enum, this file, both SDK lists.",
+  "$comment": "The hosted evals API's error-code vocabulary, checked in so two repos that share no test runner can be held to one list. The contract owns it: the ErrorCode enum in spec/openapi.yaml is the only place a code may be added. This file is that enum's shadow, and the tests keep everyone honest — the server regenerates these exact bytes and diffs them, the TypeScript SDK asserts HOSTED_ERROR_CODES equals codes[], and the Python SDK asserts both its tuple and its Literal do. Adding a code therefore means: spec enum, this file, both SDK lists.",
   "codes": [
     "missing_authorization",
     "invalid_api_key",
+    "read_only_key",
     "credential_service_unavailable",
     "rate_limited",
     "insufficient_credits",
+    "quota_exceeded",
     "invalid_json",
     "invalid_input",
     "invalid_limit",
@@ -60,6 +62,7 @@
     "secret_ambiguous",
     "secret_brokered_unsupported",
     "secret_exists",
+    "secret_not_attached",
     "agent_version_not_found",
     "agent_version_unresolvable",
     "agent_kwarg_unsupported",
@@ -96,6 +99,15 @@
     "package_corrupt",
     "package_missing",
     "too_many_concurrent_package_downloads",
+    "org_not_found",
+    "org_slug_taken",
+    "org_forbidden",
+    "org_personal_immutable",
+    "org_last_owner",
+    "org_in_use",
+    "org_member_not_found",
+    "invite_not_found",
+    "invite_invalid",
     "internal_error"
   ]
 }

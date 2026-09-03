@@ -78,6 +78,7 @@ import {
   datasets,
   jobs,
   meta,
+  orgs,
   skills,
   trials,
 } from "../../src/hosted/index";
@@ -197,6 +198,7 @@ const surfaces: Record<string, unknown> = {
   agents: agents(cfg),
   skills: skills(cfg),
   auth: auth(cfg),
+  orgs: orgs(cfg),
   meta,
 };
 
@@ -275,6 +277,24 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   getAuthStatus: "auth.status",
   listApiKeys: null, // wave 2 — no SDK method yet
   revokeApiKey: null, // wave 2 — no SDK method yet
+  // Team accounts (x-wave: 4). The SDK speaks the READ pair — Harbor's
+  // `auth org list` shape and the hosted `auth org show` extension (quota
+  // + usage). The other ten verbs are served by the API and stay outside
+  // the SDK until a wave asks for them; quotas are set only from the
+  // platform administrator's dashboard session, so no SDK method could
+  // ever set one.
+  listOrgs: "orgs.list",
+  getOrg: "orgs.get",
+  createOrg: null,
+  updateOrg: null,
+  deleteOrg: null,
+  listOrgMembers: null,
+  updateOrgMember: null,
+  removeOrgMember: null,
+  listOrgInvites: null,
+  createOrgInvite: null,
+  revokeOrgInvite: null,
+  acceptOrgInvite: null,
 };
 
 function resolve(path: string): unknown {
