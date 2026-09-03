@@ -1429,6 +1429,14 @@ export function parseArgs(argv: string[]): Invocation {
   }
   const resolved = resolveVerb(groupSpec, argv.slice(1));
   if (!resolved) {
+    // The first word of a two-word verb on its own (`auth org`, `auth org
+    // --help`) asks for the group's help, as Harbor's nested sub-app prints
+    // its own when called bare (Typer's no_args_is_help, cli/auth.py:14-16)
+    // — never a usage error.
+    const next = argv[2];
+    if (isVerbPrefix(groupSpec, rawVerb) && (next === undefined || next === "--help" || next === "-h")) {
+      return { command: "help", positionals: [group, rawVerb], flags: {} };
+    }
     throw new CliUsageError(
       `Unknown command "${group} ${rawVerb}" (supported: ${Object.keys(groupSpec.commands).join(", ")})`
     );
@@ -1457,6 +1465,11 @@ function resolveVerb(
   const verb = VERB_ALIASES[first] ?? first;
   const spec = groupSpec.commands[verb];
   return spec ? { verb, spec, words: 1 } : null;
+}
+
+/** Whether a word begins one of the group's two-word verbs (`org` in `auth org list`). */
+function isVerbPrefix(groupSpec: GroupSpec, word: string): boolean {
+  return Object.keys(groupSpec.commands).some((verb) => verb.startsWith(`${word} `));
 }
 
 // =============================================================================

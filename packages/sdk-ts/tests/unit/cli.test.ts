@@ -7157,13 +7157,24 @@ async function testAuthOrgVerbs() {
   assertEqual(show.command, "auth org show", "org show resolves");
   assertEqual(show.positionals, ["acme"], "the slug is the positional");
   assertEqual(parseArgs(["auth", "status"]).command, "auth status", "the one-word verb still resolves");
+  // Harbor's `harbor auth org` is a nested sub-app that prints its own help
+  // when called bare (Typer's no_args_is_help, cli/auth.py:14-16); ours
+  // flattens the sub-app into two-word verbs, so the first word alone — or
+  // with --help — asks for the group's help at exit 0, never a usage error.
+  assertEqual(parseArgs(["auth", "org"]).command, "help", "a bare `auth org` asks for help");
+  assertEqual(parseArgs(["auth", "org"]).positionals, ["auth", "org"], "naming the group and the prefix");
+  assertEqual(parseArgs(["auth", "org", "--help"]).command, "help", "`auth org --help` asks for help");
+  assertEqual(parseArgs(["auth", "org", "-h"]).command, "help", "`auth org -h` asks for help");
+  const prefixHelp = captureIO();
+  assertEqual(await runCli(["auth", "org"], prefixHelp.io), 0, "a bare `auth org` exits 0");
+  assert(prefixHelp.out.join("\n").includes("org list"), "and prints the group help naming the two-word verbs");
   let usage = false;
   try {
-    parseArgs(["auth", "org"]);
+    parseArgs(["auth", "org", "frob"]);
   } catch (error) {
     usage = error instanceof CliUsageError && /Unknown command "auth org"/.test(error.message);
   }
-  assert(usage, "a bare `auth org` is a usage error naming the group's commands");
+  assert(usage, "an unknown word after the prefix is still a usage error naming the group's commands");
   const help = captureIO();
   assertEqual(await runCli(["help", "auth", "org", "show"], help.io), 0, "help on the two-word verb exits 0");
   assert(help.out.join("\n").includes("Usage: evolve auth org show <slug>"), "help documents the two-word verb");

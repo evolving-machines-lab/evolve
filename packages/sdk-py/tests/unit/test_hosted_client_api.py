@@ -63,6 +63,7 @@ from evolve import (
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
     HostedClientConfig,
+    OrganizationDetail,
     OrgQuota,
     OrgUsage,
     JobCounts,
@@ -4832,6 +4833,18 @@ class TestOrgs:
         with patch('evolve._http.urlopen', fake):
             await orgs_factory(CONFIG).get('team/with slash')
         assert fake.requests[0].full_url.endswith('/api/orgs/team%2Fwith%20slash')
+
+    def test_detail_requires_member_count_quota_and_usage_by_keyword(self):
+        """The depth ``OrganizationDetail`` adds over the row — ``member_count``,
+        ``quota``, ``usage`` — has no default, exactly as the TypeScript
+        interface requires it: a caller that omits the three is told which
+        three, never handed an all-zero quota that reads "paused everywhere"."""
+        with pytest.raises(TypeError) as raised:
+            OrganizationDetail(org_id='x', slug='s', display_name='d', personal=False)
+        message = str(raised.value)
+        assert 'OrganizationDetail' in message
+        assert all(name in message for name in ('member_count', 'quota', 'usage'))
+        assert 'max_concurrent_sandboxes' not in message
 
     def test_hosted_front_door_carries_orgs(self):
         front = hosted_factory(CONFIG)

@@ -1,7 +1,7 @@
 """The Python half of the contract drift gate — the mirror of the TypeScript
 SDK's hosted-spec-gate.test.ts, against the same spec/openapi.yaml.
 
-Seven axes, same law as the TypeScript gate:
+Eight axes, same law as the TypeScript gate:
 
 1. OPERATIONS. Every operationId in the spec appears in the explicit map
    below, and every wave-1 operation resolves to a real client method. The
@@ -46,6 +46,10 @@ equality.
    the TypeScript gate pins the same two lists the CLI validates its
    flags against.
 
+8. ORG ROLE VOCABULARY. The ``OrgRole`` Literal — the caller's role on
+   ``Organization`` — equals the contract's ``OrgRole`` enum byte-exactly;
+   the TypeScript gate pins its ``OrgRole`` union the same way.
+
 The spec is parsed line-by-line against its own committed formatting; every
 parse asserts non-vacuity so an empty parse fails loudly instead of passing.
 """
@@ -65,6 +69,7 @@ from evolve import (
     JobListScope,
     JobStatus,
     JobsClient,
+    OrgRole,
     OrgsClient,
     SkillsClient,
     SpendSource,
@@ -420,6 +425,14 @@ def test_spend_source_literal_matches_the_spec_enum():
     lanes = _spec_inline_enum('SpendSource')
     assert len(lanes) >= 3, 'the SpendSource parse found too few — spec moved?'
     assert list(typing.get_args(SpendSource)) == lanes
+
+
+def test_org_role_literal_matches_the_spec_enum():
+    """The caller's role on an organization — ``Organization.role`` — held
+    to the contract's ``OrgRole`` enum like every other closed vocabulary."""
+    roles = _spec_inline_enum('OrgRole')
+    assert len(roles) >= 2, 'the OrgRole parse found too few — spec moved?'
+    assert list(typing.get_args(OrgRole)) == roles
 
 
 def _spec_property_enum(schema: str, prop: str) -> 'list[str]':

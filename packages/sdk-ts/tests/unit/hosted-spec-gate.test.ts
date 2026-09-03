@@ -5,7 +5,7 @@
  * spec/openapi.yaml calls itself the single source of truth, and until this
  * file existed only its ErrorCode enum was machine-checked — every operation
  * and artifact-selector claim in it could drift from the client silently. This
- * gate holds the SDK to the contract on seven axes:
+ * gate holds the SDK to the contract on eight axes:
  *
  *   1. OPERATIONS. Every operationId in the spec appears in the explicit
  *      map below, and every wave-1 operation resolves to a real client
@@ -50,6 +50,11 @@
  *      ANALYSIS_STATUSES — the runtime lists the CLI validates `--scope`
  *      and `analysis list --status` against — equal the ListScope
  *      parameter's enum and the TrialAnalysis.status enum byte-exactly.
+ *
+ *   8. ORG ROLE VOCABULARY. The published `OrgRole` union — the caller's
+ *      role on `Organization` — equals the contract's OrgRole enum
+ *      byte-exactly; type-only like `SpendSource`, so read out of the
+ *      shipped source the same way.
  *
  * The spec is parsed line-by-line against its own committed formatting. That
  * is a deliberate trade: the file is hand-written, its indentation is part of
@@ -527,10 +532,16 @@ assert(
 // -----------------------------------------------------------------------------
 
 const TYPES_SOURCE = readFileSync(join(PACKAGE_ROOT, "src", "hosted", "types.ts"), "utf8");
-const declaredSpendSources = (/export type SpendSource =([^;]+);/.exec(TYPES_SOURCE)?.[1] ?? "")
-  .split("|")
-  .map((member) => member.trim().replace(/^"|"$/g, ""))
-  .filter((member) => member.length > 0);
+
+/** The members of a published string-literal union (`export type X = "a" | "b";`), read out of the shipped source. */
+function declaredUnion(typeName: string): string[] {
+  return (new RegExp(`export type ${typeName} =([^;]+);`).exec(TYPES_SOURCE)?.[1] ?? "")
+    .split("|")
+    .map((member) => member.trim().replace(/^"|"$/g, ""))
+    .filter((member) => member.length > 0);
+}
+
+const declaredSpendSources = declaredUnion("SpendSource");
 const specSpendSources = inlineEnum("SpendSource");
 
 assert(specSpendSources.length >= 3, `the spec's SpendSource enum parsed (${specSpendSources.length} lanes)`);
@@ -644,6 +655,25 @@ assert(
   JSON.stringify([...ANALYSIS_STATUSES]) === JSON.stringify(specAnalysisStatuses)
     ? `ANALYSIS_STATUSES is the spec's TrialAnalysis.status enum, byte-exactly (${specAnalysisStatuses.join(", ")})`
     : `analysis statuses drifted: SDK [${ANALYSIS_STATUSES.join(", ")}] vs spec [${specAnalysisStatuses.join(", ")}]`
+);
+
+// -----------------------------------------------------------------------------
+// 8. ORG ROLE VOCABULARY — the caller's role on an organization. `OrgRole`
+// is a type-only union like `SpendSource`, so it is read out of the shipped
+// source and held to the contract's OrgRole enum member for member; the
+// Python gate pins its `OrgRole` Literal the same way.
+// -----------------------------------------------------------------------------
+
+const declaredOrgRoles = declaredUnion("OrgRole");
+const specOrgRoles = inlineEnum("OrgRole");
+
+assert(specOrgRoles.length >= 2, `the spec's OrgRole enum parsed (${specOrgRoles.length} roles)`);
+assert(declaredOrgRoles.length >= 2, `the published OrgRole union parsed from types.ts (${declaredOrgRoles.length} roles)`);
+assert(
+  JSON.stringify(declaredOrgRoles) === JSON.stringify(specOrgRoles),
+  JSON.stringify(declaredOrgRoles) === JSON.stringify(specOrgRoles)
+    ? `OrgRole is the spec's enum, byte-exactly (${specOrgRoles.join(", ")})`
+    : `org roles drifted: SDK [${declaredOrgRoles.join(", ")}] vs spec [${specOrgRoles.join(", ")}]`
 );
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

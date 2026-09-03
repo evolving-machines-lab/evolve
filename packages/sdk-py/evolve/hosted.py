@@ -522,6 +522,9 @@ VerifierEnvironmentMode = Literal['shared', 'separate']
 AttemptPhase = Literal[
     'prepare', 'build', 'boot', 'install', 'agent', 'verify', 'persist'
 ]
+#: The caller's role in an organization: owner manages, member reads and
+#: runs (spec ``OrgRole``).
+OrgRole = Literal['owner', 'member']
 
 
 @dataclass
@@ -2550,9 +2553,8 @@ class Organization:
     #: True for the auto-created personal org — the invisible default owner
     #: of everything created without naming an org.
     personal: bool
-    #: The CALLER'S role ("owner" | "member"); None when the read implies no
-    #: membership.
-    role: Optional[str] = None
+    #: The CALLER'S role; None when the read implies no membership.
+    role: Optional[OrgRole] = None
     created_at: str = ''
 
 
@@ -2606,9 +2608,12 @@ class OrgUsage:
 class OrganizationDetail(Organization):
     """One organization in depth (``GET /api/orgs/{org}``): the row, the
     member count, its quota and usage."""
-    member_count: int = 0
-    quota: OrgQuota = field(default_factory=lambda: OrgQuota(0, 0, 0, 0, 0, None))
-    usage: OrgUsage = field(default_factory=lambda: OrgUsage(0, 0, 0, 0, 0, 0.0))
+    # Keyword-only so the three can stay required behind the row's defaulted
+    # ``role`` / ``created_at``; no default quota — an all-zero one would read
+    # "paused everywhere", a silent zero.
+    member_count: int = field(kw_only=True)
+    quota: OrgQuota = field(kw_only=True)
+    usage: OrgUsage = field(kw_only=True)
 
 
 # The ONE page envelope, on every collection this surface returns — top level
