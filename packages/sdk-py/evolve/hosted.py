@@ -137,9 +137,16 @@ _TERMINAL_EVENT_TYPES = {'job.completed', 'job.cancelled', 'job.failed'}
 HostedErrorCode = Literal[
     'missing_authorization',
     'invalid_api_key',
+    # A valid key created read-only, presented to a mutating route (403).
+    'read_only_key',
     'credential_service_unavailable',
     'rate_limited',
     'insufficient_credits',
+    # The owning organization's queued-trial ceiling would be crossed by
+    # this create (429, no Retry-After — the wait is not a known number).
+    # Harbor's hosted refusal: the message starts ``hosted quota exceeded:``;
+    # details carry {quota, limit, used, requested, org}.
+    'quota_exceeded',
     'invalid_json',
     'invalid_input',
     'invalid_limit',
@@ -214,6 +221,11 @@ HostedErrorCode = Literal[
     'secret_ambiguous',
     'secret_brokered_unsupported',
     'secret_exists',
+    # A selected task's environment.env asks for a ``${VAR}`` the job
+    # attaches no secret for, and the declaration states no default —
+    # refused at job create (attach-is-consent). Not secret_not_found: the
+    # row usually exists in the owner's vault; the remedy is to attach it.
+    'secret_not_attached',
     'agent_version_not_found',
     'agent_version_unresolvable',
     'agent_kwarg_unsupported',
@@ -296,6 +308,16 @@ HostedErrorCode = Literal[
     # distinct from rate_limited for the same reason: nothing was
     # rate-counted and there is no Retry-After — the server's disk is busy.
     'too_many_concurrent_package_downloads',
+    # Team accounts (orgs, members, invite links)
+    'org_not_found',
+    'org_slug_taken',
+    'org_forbidden',
+    'org_personal_immutable',
+    'org_last_owner',
+    'org_in_use',
+    'org_member_not_found',
+    'invite_not_found',
+    'invite_invalid',
     'internal_error',
 ]
 
@@ -500,6 +522,9 @@ VerifierEnvironmentMode = Literal['shared', 'separate']
 AttemptPhase = Literal[
     'prepare', 'build', 'boot', 'install', 'agent', 'verify', 'persist'
 ]
+#: The caller's role in an organization: owner manages, member reads and
+#: runs (spec ``OrgRole``).
+OrgRole = Literal['owner', 'member']
 
 
 @dataclass
@@ -2517,6 +2542,80 @@ class AuthStatus:
     key: ApiKey
 
 
+@dataclass
+class Organization:
+    """An organization the caller belongs to (``GET /api/orgs`` item; Harbor's
+    ``auth org list`` row)."""
+    org_id: str
+    #: URL-safe handle, globally unique — the ``<slug>`` every org verb takes.
+    slug: str
+    display_name: str
+    #: True for the auto-created personal org — the invisible default owner
+    #: of everything created without naming an org.
+    personal: bool
+    #: The CALLER'S role; None when the read implies no membership.
+    role: Optional[OrgRole] = None
+    created_at: str = ''
+
+
+@dataclass
+class OrgQuota:
+    """An organization's ceilings, every one EFFECTIVE — the value the
+    platform administrator set, else the fleet default. ``0`` means paused:
+    creates are refused ``quota_exceeded``, queued work waits. Set only from
+    the platform administrator's dashboard session; the SDK reads them."""
+    #: Trials running at once (RUNNING or SCORING); work beyond it waits.
+    max_concurrent_trials: int
+    #: Trials waiting in the queue — the one refusal (``quota_exceeded``) on
+    #: job create.
+    max_queued_trials: int
+    #: Dataset imports a worker holds at once; further imports wait.
+    max_concurrent_imports: int
+    #: Trace analyses running at once; further analyses wait.
+    max_concurrent_analyses: int
+    #: Managed-agent sessions open at once (recorded and read back; not yet
+    #: enforced by the box-create doors).
+    max_concurrent_sessions: int
+    #: Model spend allowed this calendar month, USD; None = no monthly budget.
+    monthly_budget_usd: Optional[float]
+    #: Sandboxes of this organization in flight on e2b at once — trials, trace
+    #: analyses, regrade verifiers and managed sessions together; work beyond
+    #: it waits; 0 pauses the organization on that provider; fleet default =
+    #: the platform's own e2b ceiling.
+    max_concurrent_sandboxes_e2b: int
+    #: The same ceiling on daytona.
+    max_concurrent_sandboxes_daytona: int
+    #: The same ceiling on modal.
+    max_concurrent_sandboxes_modal: int
+
+
+@dataclass
+class OrgUsage:
+    """The live load beside the ceilings — what ``evolve auth org show``
+    prints as N/M."""
+    in_flight_trials: int
+    queued_trials: int
+    in_flight_imports: int
+    in_flight_analyses: int
+    #: Sessions not yet ended; always 0 on a shared org (sessions carry no
+    #: organization).
+    active_sessions: int
+    #: Recorded model spend since the first of the current calendar month (UTC).
+    month_spend_usd: float
+
+
+@dataclass
+class OrganizationDetail(Organization):
+    """One organization in depth (``GET /api/orgs/{org}``): the row, the
+    member count, its quota and usage."""
+    # Keyword-only so the three can stay required behind the row's defaulted
+    # ``role`` / ``created_at``; no default quota — an all-zero one would read
+    # "paused everywhere", a silent zero.
+    member_count: int = field(kw_only=True)
+    quota: OrgQuota = field(kw_only=True)
+    usage: OrgUsage = field(kw_only=True)
+
+
 # The ONE page envelope, on every collection this surface returns — top level
 # or nested. ``next_cursor`` means one thing everywhere: pass it back as
 # ``cursor=`` for the next page, and None means there is no next page. It never
@@ -3212,6 +3311,66 @@ def _map_auth_status(data: Dict[str, Any]) -> AuthStatus:
             label=key.get('label'),
             created_at=key.get('created_at', ''),
             last_used_at=key.get('last_used_at'),
+        ),
+    )
+
+
+def _map_organization(data: Dict[str, Any]) -> Organization:
+    role = data.get('role')
+    return Organization(
+        org_id=data.get('org_id', ''),
+        slug=data.get('slug', ''),
+        display_name=data.get('display_name', ''),
+        personal=data.get('personal') is True,
+        role=role if role in ('owner', 'member') else None,
+        created_at=data.get('created_at', ''),
+    )
+
+
+def _map_organization_detail(data: Dict[str, Any]) -> OrganizationDetail:
+    def count(source: Dict[str, Any], key: str) -> int:
+        value = source.get(key)
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+    quota = data.get('quota') if isinstance(data.get('quota'), dict) else {}
+    usage = data.get('usage') if isinstance(data.get('usage'), dict) else {}
+    budget = quota.get('monthly_budget_usd')
+    base = _map_organization(data)
+    return OrganizationDetail(
+        org_id=base.org_id,
+        slug=base.slug,
+        display_name=base.display_name,
+        personal=base.personal,
+        role=base.role,
+        created_at=base.created_at,
+        member_count=count(data, 'member_count'),
+        quota=OrgQuota(
+            max_concurrent_trials=count(quota, 'max_concurrent_trials'),
+            max_queued_trials=count(quota, 'max_queued_trials'),
+            max_concurrent_imports=count(quota, 'max_concurrent_imports'),
+            max_concurrent_analyses=count(quota, 'max_concurrent_analyses'),
+            max_concurrent_sessions=count(quota, 'max_concurrent_sessions'),
+            monthly_budget_usd=(
+                float(budget)
+                if isinstance(budget, (int, float)) and not isinstance(budget, bool)
+                else None
+            ),
+            max_concurrent_sandboxes_e2b=count(quota, 'max_concurrent_sandboxes_e2b'),
+            max_concurrent_sandboxes_daytona=count(quota, 'max_concurrent_sandboxes_daytona'),
+            max_concurrent_sandboxes_modal=count(quota, 'max_concurrent_sandboxes_modal'),
+        ),
+        usage=OrgUsage(
+            in_flight_trials=count(usage, 'in_flight_trials'),
+            queued_trials=count(usage, 'queued_trials'),
+            in_flight_imports=count(usage, 'in_flight_imports'),
+            in_flight_analyses=count(usage, 'in_flight_analyses'),
+            active_sessions=count(usage, 'active_sessions'),
+            month_spend_usd=(
+                float(usage.get('month_spend_usd'))
+                if isinstance(usage.get('month_spend_usd'), (int, float))
+                and not isinstance(usage.get('month_spend_usd'), bool)
+                else 0.0
+            ),
         ),
     )
 
@@ -7216,6 +7375,43 @@ class AuthClient:
         return _map_auth_status(raw)
 
 
+class OrgsClient:
+    """Client for the caller's organizations — the read pair.
+
+    Created via the standalone ``orgs()`` factory. ``list()`` is Harbor's
+    ``harbor auth org list`` shape; ``get()`` is the hosted extension that
+    reads one organization's quota and usage. Creating, renaming, deleting,
+    members and invite links are served by the API and stay outside the SDK
+    until a wave asks for them; quotas are set only from the platform
+    administrator's dashboard session, so no SDK method could ever set one.
+    Requires ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is
+    given.
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('orgs', config)
+
+    async def __aenter__(self) -> 'OrgsClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    async def list(self) -> List[Organization]:
+        """Every organization the caller belongs to, personal first (``GET /api/orgs``)."""
+        raw = await self._http.request_json('/api/orgs')
+        items = raw.get('items') if isinstance(raw.get('items'), list) else []
+        return [_map_organization(item) for item in items if isinstance(item, dict)]
+
+    async def get(self, org: str) -> OrganizationDetail:
+        """One organization by slug (or id): role, member count, quota, usage (``GET /api/orgs/{org}``)."""
+        raw = await self._http.request_json(f'/api/orgs/{urllib.parse.quote(org, safe="")}')
+        return _map_organization_detail(raw)
+
+
 def _parse_dataset_ref(ref: str) -> 'tuple[str, Optional[str]]':
     at = ref.find('@')
     if at == -1:
@@ -7266,6 +7462,7 @@ class HostedEvolve:
         self._trials: Optional[TrialsClient] = None
         self._analyses: Optional[AnalysesClient] = None
         self._skills: Optional[SkillsClient] = None
+        self._orgs: Optional[OrgsClient] = None
 
     @property
     def datasets(self) -> DatasetsClient:
@@ -7308,6 +7505,13 @@ class HostedEvolve:
         if self._skills is None:
             self._skills = SkillsClient(self._config)
         return self._skills
+
+    @property
+    def orgs(self) -> OrgsClient:
+        """Your organizations: list them, read one's quota and usage."""
+        if self._orgs is None:
+            self._orgs = OrgsClient(self._config)
+        return self._orgs
 
     async def meta(self) -> CapabilityDocument:
         """The capability document. Public: no API key required.

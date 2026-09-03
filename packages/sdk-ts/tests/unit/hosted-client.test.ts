@@ -224,7 +224,9 @@ import {
   agents,
   analyses,
   datasets,
+  hosted,
   jobs,
+  orgs,
   skills,
   trials,
   EvolveApiError,
@@ -6561,6 +6563,201 @@ async function testListAnalyses() {
   }
 }
 
+// =============================================================================
+// ORGS — the read pair (Harbor's `auth org list` shape + the hosted `auth org
+// show` extension), and the one quota refusal every job-creating door speaks
+// =============================================================================
+
+async function testOrgs() {
+  console.log("\n--- orgs(): list + get map the org, its quota and usage; quota_exceeded is typed ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/orgs/acme", {
+      status: 200,
+      body: {
+        org_id: "org-1",
+        slug: "acme",
+        display_name: "Acme",
+        personal: false,
+        role: "member",
+        created_at: "2026-08-01T00:00:00.000Z",
+        member_count: 3,
+        quota: {
+          max_concurrent_trials: 16,
+          max_queued_trials: 10000,
+          max_concurrent_imports: 1,
+          max_concurrent_analyses: 4,
+          max_concurrent_sessions: 0,
+          monthly_budget_usd: null,
+          max_concurrent_sandboxes_e2b: 0,
+          max_concurrent_sandboxes_daytona: 200,
+          max_concurrent_sandboxes_modal: 60,
+        },
+        usage: {
+          in_flight_trials: 2,
+          queued_trials: 40,
+          in_flight_imports: 0,
+          in_flight_analyses: 1,
+          active_sessions: 0,
+          month_spend_usd: 12.5,
+        },
+      },
+    });
+    // Nine distinct ceilings and six distinct counts: a swapped field shows.
+    const WIDGETS_QUOTA = {
+      max_concurrent_trials: 8,
+      max_queued_trials: 500,
+      max_concurrent_imports: 2,
+      max_concurrent_analyses: 3,
+      max_concurrent_sessions: 1,
+      monthly_budget_usd: 250.5,
+      max_concurrent_sandboxes_e2b: 7,
+      max_concurrent_sandboxes_daytona: 9,
+      max_concurrent_sandboxes_modal: 11,
+    };
+    const WIDGETS_USAGE = {
+      in_flight_trials: 2,
+      queued_trials: 40,
+      in_flight_imports: 3,
+      in_flight_analyses: 1,
+      active_sessions: 5,
+      month_spend_usd: 12.5,
+    };
+    setMockResponse("/api/orgs/widgets-inc", {
+      status: 200,
+      body: {
+        org_id: "org-2",
+        slug: "widgets-inc",
+        display_name: "Widgets",
+        personal: true,
+        role: "owner",
+        created_at: "2026-08-15T00:00:00.000Z",
+        member_count: 1,
+        quota: WIDGETS_QUOTA,
+        usage: WIDGETS_USAGE,
+      },
+    });
+    setMockResponse("/api/orgs", {
+      status: 200,
+      body: {
+        items: [
+          {
+            org_id: "org-p",
+            slug: "brando",
+            display_name: "brando",
+            personal: true,
+            role: "owner",
+            created_at: "2026-07-01T00:00:00.000Z",
+          },
+          {
+            org_id: "org-1",
+            slug: "acme",
+            display_name: "Acme",
+            personal: false,
+            role: "member",
+            created_at: "2026-08-01T00:00:00.000Z",
+          },
+          // A role the wire vocabulary does not name, and no `personal`:
+          // the role is dropped (never passed through), personal reads false.
+          {
+            org_id: "org-2",
+            slug: "widgets-inc",
+            display_name: "Widgets",
+            role: "ADMIN",
+            created_at: "2026-08-15T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+    const client = orgs({ apiKey: "test-key", baseUrl: BASE });
+
+    const listed = await client.list();
+    assert(fetchCalls[fetchCalls.length - 1].url === `${BASE}/api/orgs`, "list hits GET /api/orgs");
+    assertEqual(
+      listed.map((o) => [o.slug, o.role ?? "(none)", o.personal]),
+      [
+        ["brando", "owner", true],
+        ["acme", "member", false],
+        ["widgets-inc", "(none)", false],
+      ],
+      "list maps every org with the caller's role, personal first as served; an unknown role is dropped, a missing personal is false"
+    );
+    assert(listed[2] !== undefined && !("role" in listed[2]), "a dropped role is absent, not undefined-valued");
+
+    const detail = await client.get("acme");
+    assert(fetchCalls[fetchCalls.length - 1].url === `${BASE}/api/orgs/acme`, "get hits GET /api/orgs/{org}");
+    assertEqual(detail.member_count, 3, "member_count");
+    assertEqual(detail.quota.max_concurrent_sessions, 0, "a 0 ceiling stays 0 (paused), never a default");
+    assertEqual(detail.quota.max_concurrent_sandboxes_e2b, 0, "a 0 sandbox ceiling stays 0 (paused on that provider), never a default");
+    assertEqual(
+      [detail.quota.max_concurrent_sandboxes_daytona, detail.quota.max_concurrent_sandboxes_modal],
+      [200, 60],
+      "the other two provider ceilings map to their own keys"
+    );
+    assertEqual(detail.quota.monthly_budget_usd, null, "a null budget stays null (no monthly budget)");
+    assertEqual(detail.quota.max_queued_trials, 10000, "the queued ceiling");
+    assertEqual(detail.usage.queued_trials, 40, "usage.queued_trials");
+    assertEqual(detail.usage.month_spend_usd, 12.5, "usage.month_spend_usd");
+
+    const widgets = await client.get("widgets-inc");
+    assertEqual(widgets.quota, WIDGETS_QUOTA, "every quota field maps to its own key; a number budget stays a number");
+    assertEqual(widgets.usage, WIDGETS_USAGE, "every usage field maps to its own key");
+    assertEqual(
+      [widgets.org_id, widgets.slug, widgets.display_name, widgets.personal, widgets.role, widgets.created_at, widgets.member_count],
+      ["org-2", "widgets-inc", "Widgets", true, "owner", "2026-08-15T00:00:00.000Z", 1],
+      "the detail's identity fields"
+    );
+
+    await client.get("team/with slash");
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.endsWith("/api/orgs/team%2Fwith%20slash"),
+      "the org ref is path-encoded"
+    );
+
+    const front = hosted({ apiKey: "test-key", baseUrl: BASE });
+    assert(typeof front.orgs.list === "function", "hosted().orgs is the same client behind the front door");
+
+    // THE ONE QUOTA REFUSAL — Harbor's shape (hosted/submit.py:40-64): code
+    // quota_exceeded, the `hosted quota exceeded:` sentence, the details
+    // block, and NO retryAfterSec (the wait is not a known number).
+    setMockResponse("/api/jobs", {
+      status: 429,
+      body: {
+        error: {
+          code: "quota_exceeded",
+          message:
+            "hosted quota exceeded: max_queued_trials 10000 for organization acme — 9980 queued, this job would add 40",
+          details: { quota: "max_queued_trials", limit: 10000, used: 9980, requested: 40, org: "acme" },
+          request_id: "req_1",
+        },
+      },
+    });
+    let threw = false;
+    try {
+      await jobs({ apiKey: "test-key", baseUrl: BASE }).start({
+        datasets: [{ name: "deep-swe" }],
+        agents: [{ name: "claude", model_name: "opus" }],
+      });
+    } catch (e: any) {
+      threw = true;
+      assert(e instanceof EvolveApiError, "quota refusal throws EvolveApiError");
+      assertEqual(e.status, 429, "429");
+      assertEqual(e.code, "quota_exceeded", "code quota_exceeded");
+      assert(isHostedErrorCode(e.code), "quota_exceeded is a known code in this SDK");
+      assert(e.message.startsWith("hosted quota exceeded:"), "message keeps Harbor's prefix");
+      assertEqual(e.details?.limit, 10000, "details.limit");
+      assertEqual(e.details?.used, 9980, "details.used");
+      assertEqual(e.details?.requested, 40, "details.requested");
+      assertEqual(e.details?.org, "acme", "details.org");
+      assertEqual(e.retryAfterSec, undefined, "no retryAfterSec: the wait is not a known number");
+    }
+    assert(threw, "start() throws on quota_exceeded");
+    assert(isHostedErrorCode("org_not_found"), "the team-accounts codes are known too");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("Hosted Evals Client Unit Tests\n");
 
@@ -6689,6 +6886,7 @@ async function main() {
   await testApiErrorHandling();
   await testListJobsScope();
   await testListAnalyses();
+  await testOrgs();
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(`  Passed: ${passed}`);

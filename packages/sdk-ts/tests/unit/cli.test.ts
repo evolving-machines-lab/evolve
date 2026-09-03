@@ -7114,6 +7114,242 @@ async function testAuthStatus() {
 }
 
 // =============================================================================
+// AUTH ORG — evolve auth org list / show (Harbor's `harbor auth org list` +
+// the hosted `org show` extension), and the quota refusal's exit 2
+// =============================================================================
+
+const ORG_DETAIL = {
+  org_id: "org-1",
+  slug: "acme",
+  display_name: "Acme",
+  personal: false,
+  role: "member",
+  created_at: "2026-08-01T00:00:00.000Z",
+  member_count: 3,
+  quota: {
+    max_concurrent_trials: 16,
+    max_queued_trials: 10000,
+    max_concurrent_imports: 1,
+    max_concurrent_analyses: 4,
+    max_concurrent_sessions: 4,
+    monthly_budget_usd: null,
+    max_concurrent_sandboxes_e2b: 100,
+    max_concurrent_sandboxes_daytona: 200,
+    max_concurrent_sandboxes_modal: 0,
+  },
+  usage: {
+    in_flight_trials: 2,
+    queued_trials: 40,
+    in_flight_imports: 0,
+    in_flight_analyses: 1,
+    active_sessions: 0,
+    month_spend_usd: 12.5,
+  },
+};
+
+async function testAuthOrgVerbs() {
+  console.log("\n--- runCli: auth org list / show ---");
+
+  console.log("  [grammar]");
+  assertEqual(parseArgs(["auth", "org", "list"]).command, "auth org list", "two-word verb resolves");
+  assertEqual(parseArgs(["auth", "org", "ls"]).command, "auth org list", "ls aliases the last word");
+  const show = parseArgs(["auth", "org", "show", "acme"]);
+  assertEqual(show.command, "auth org show", "org show resolves");
+  assertEqual(show.positionals, ["acme"], "the slug is the positional");
+  assertEqual(parseArgs(["auth", "status"]).command, "auth status", "the one-word verb still resolves");
+  // Harbor's `harbor auth org` is a nested sub-app that prints its own help
+  // when called bare (Typer's no_args_is_help, cli/auth.py:14-16); ours
+  // flattens the sub-app into two-word verbs, so the first word alone — or
+  // with --help — asks for the group's help at exit 0, never a usage error.
+  assertEqual(parseArgs(["auth", "org"]).command, "help", "a bare `auth org` asks for help");
+  assertEqual(parseArgs(["auth", "org"]).positionals, ["auth", "org"], "naming the group and the prefix");
+  assertEqual(parseArgs(["auth", "org", "--help"]).command, "help", "`auth org --help` asks for help");
+  assertEqual(parseArgs(["auth", "org", "-h"]).command, "help", "`auth org -h` asks for help");
+  const prefixHelp = captureIO();
+  assertEqual(await runCli(["auth", "org"], prefixHelp.io), 0, "a bare `auth org` exits 0");
+  assert(prefixHelp.out.join("\n").includes("org list"), "and prints the group help naming the two-word verbs");
+  let usage = false;
+  try {
+    parseArgs(["auth", "org", "frob"]);
+  } catch (error) {
+    usage = error instanceof CliUsageError && /Unknown command "auth org"/.test(error.message);
+  }
+  assert(usage, "an unknown word after the prefix is still a usage error naming the group's commands");
+  const help = captureIO();
+  assertEqual(await runCli(["help", "auth", "org", "show"], help.io), 0, "help on the two-word verb exits 0");
+  assert(help.out.join("\n").includes("Usage: evolve auth org show <slug>"), "help documents the two-word verb");
+  const groupHelp = captureIO();
+  await runCli(["auth", "--help"], groupHelp.io);
+  assert(groupHelp.out.join("\n").includes("org list"), "the group help lists the two-word verbs");
+
+  installMockFetch();
+  try {
+    setMockResponse("/api/orgs/acme", { status: 200, body: ORG_DETAIL });
+    // A personal org under a budget, read without a role (the detail's
+    // `role` is present only when the read implies membership).
+    setMockResponse("/api/orgs/widgets-inc", {
+      status: 200,
+      body: {
+        ...ORG_DETAIL,
+        org_id: "org-2",
+        slug: "widgets-inc",
+        display_name: "Widgets",
+        personal: true,
+        role: undefined,
+        member_count: 1,
+        quota: { ...ORG_DETAIL.quota, monthly_budget_usd: 100 },
+      },
+    });
+    setMockResponse("/api/orgs", {
+      status: 200,
+      body: {
+        items: [
+          { org_id: "org-p", slug: "brando", display_name: "brando", personal: true, role: "owner", created_at: "2026-07-01T00:00:00.000Z" },
+          { org_id: "org-1", slug: "acme", display_name: "Acme Corp", personal: false, role: "member", created_at: "2026-08-01T00:00:00.000Z" },
+          // No role on the wire: the cell is "-".
+          { org_id: "org-2", slug: "widgets-inc", display_name: "Widgets", personal: false, created_at: "2026-08-15T00:00:00.000Z" },
+        ],
+      },
+    });
+    const collapse = (line: string) => line.replace(/\s+/g, " ").trim();
+
+    console.log("  [list]");
+    const list = captureIO(true);
+    assertEqual(await runCli(["auth", "org", "list", ...AUTH], list.io), 0, "list exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/orgs"), "hits GET /api/orgs");
+    // Harbor's org_columns are name, display name, role, joined (cli/auth.py);
+    // ours: slug, display name, role, created — PERSONAL is opt-in.
+    assertEqual(collapse(list.out[0]), "SLUG DISPLAY NAME ROLE CREATED", "the default columns, in order, nothing more");
+    assertEqual(collapse(list.out[1]), "brando brando owner 2026-07-01T00:00:00.000Z", "personal org row");
+    assertEqual(collapse(list.out[2]), "acme Acme Corp member 2026-08-01T00:00:00.000Z", "shared org row carries the display name");
+    assertEqual(collapse(list.out[3]), "widgets-inc Widgets - 2026-08-15T00:00:00.000Z", "a row without a role prints -");
+    const piped = captureIO();
+    await runCli(["auth", "org", "list", ...AUTH], piped.io);
+    assertEqual(piped.out[0], "SLUG\tDISPLAY NAME\tROLE\tCREATED", "piped output is TSV with the header");
+    assertEqual(piped.out[3], "widgets-inc\tWidgets\t-\t2026-08-15T00:00:00.000Z", "piped cells are exact");
+    const bare = captureIO();
+    await runCli(["auth", "org", "list", "--no-headers", ...AUTH], bare.io);
+    assertEqual(bare.out[0], "brando\tbrando\towner\t2026-07-01T00:00:00.000Z", "--no-headers starts at the first row");
+    const quiet = captureIO();
+    await runCli(["auth", "org", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["brando", "acme", "widgets-inc"], "-q prints slugs only");
+    const json = captureIO();
+    await runCli(["auth", "org", "list", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out[0]).map((o: { slug: string }) => o.slug), ["brando", "acme", "widgets-inc"], "--json is the array");
+
+    console.log("  [columns]");
+    const chosen = captureIO(true);
+    await runCli(["auth", "org", "list", "--columns", "slug,personal", ...AUTH], chosen.io);
+    assertEqual(chosen.out.map(collapse), ["SLUG PERSONAL", "brando yes", "acme no", "widgets-inc no"], "--columns picks and orders; personal prints yes/no");
+    const before = fetchCalls.length;
+    const colsHelp = captureIO();
+    assertEqual(await runCli(["auth", "org", "list", "--columns", "help", ...AUTH], colsHelp.io), 0, "--columns help exits 0");
+    assertEqual(colsHelp.out, ["slug", "display_name", "role", "personal", "created"], "--columns help lists the five keys");
+    assertEqual(fetchCalls.length, before, "--columns help makes no request");
+    const badCol = captureIO();
+    assertEqual(await runCli(["auth", "org", "list", "--columns", "frob", ...AUTH], badCol.io), 2, "an unknown column exits 2");
+
+    // Harbor's --search (cli/auth.py:140-142, :219-227): a case-insensitive
+    // substring filter over name, display name and role, applied to every
+    // output mode — the table, -q, and --json alike.
+    console.log("  [search]");
+    const searched = captureIO();
+    await runCli(["auth", "org", "list", "--search", "acme", "-q", ...AUTH], searched.io);
+    assertEqual(searched.out, ["acme"], "--search acme keeps only the acme row");
+    const bySlug = captureIO();
+    await runCli(["auth", "org", "list", "--search", "inc", "-q", ...AUTH], bySlug.io);
+    assertEqual(bySlug.out, ["widgets-inc"], "--search matches the slug alone (no display name or role carries it)");
+    const byRole = captureIO();
+    await runCli(["auth", "org", "list", "--search", "OWNER", "-q", ...AUTH], byRole.io);
+    assertEqual(byRole.out, ["brando"], "--search matches the role, case-insensitively");
+    const byDisplay = captureIO();
+    await runCli(["auth", "org", "list", "--search", "corp", "--json", ...AUTH], byDisplay.io);
+    assertEqual(JSON.parse(byDisplay.out[0]).map((o: { slug: string }) => o.slug), ["acme"], "--search matches the display name, case-insensitively, and filters the --json array too");
+    const none = captureIO();
+    assertEqual(await runCli(["auth", "org", "list", "--search", "zzz", ...AUTH], none.io), 0, "an empty match still exits 0");
+    assertEqual(none.out, ["No organizations found."], "an empty match says so");
+    const noneQuiet = captureIO();
+    assertEqual(await runCli(["auth", "org", "list", "--search", "zzz", "-q", ...AUTH], noneQuiet.io), 0, "an empty match under -q exits 0");
+    assertEqual(noneQuiet.out, [], "an empty match under -q prints nothing (a pipe gets no slugs, no prose)");
+
+    console.log("  [show]");
+    const detail = captureIO();
+    assertEqual(await runCli(["auth", "org", "show", "acme", ...AUTH], detail.io), 0, "show exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/orgs/acme"), "hits GET /api/orgs/{org}");
+    const text = detail.out.join("\n");
+    // Every line, as used/limit — a swapped pair reads wrong on any of them.
+    for (const [label, value] of [
+      ["slug", "acme"],
+      ["display name", "Acme"],
+      ["personal", "no"],
+      ["role", "member"],
+      ["members", "3"],
+      ["created", "2026-08-01T00:00:00.000Z"],
+      ["concurrent trials", "2/16"],
+      ["queued trials", "40/10000"],
+      ["concurrent imports", "0/1"],
+      ["concurrent analyses", "1/4"],
+      ["concurrent sessions", "0/4"],
+      // The three per-provider sandbox ceilings print alone (the wire carries
+      // no per-organization sandbox count); a 0 prints 0 — paused there.
+      ["e2b sandbox ceiling", "100"],
+      ["daytona sandbox ceiling", "200"],
+      ["modal sandbox ceiling", "0"],
+      ["month spend", "$12.50 / no budget"],
+    ]) {
+      const line = new RegExp(`^${label.replace(/ /g, "\\s")}\\s+${value.replace(/[$/.]/g, "\\$&")}$`, "m");
+      assert(line.test(text), `show prints "${label}  ${value}"`);
+    }
+    const budgeted = captureIO();
+    await runCli(["auth", "org", "show", "widgets-inc", ...AUTH], budgeted.io);
+    const budgetedText = budgeted.out.join("\n");
+    assert(/^month spend\s+\$12\.50 \/ \$100\.00$/m.test(budgetedText), "spend against a budget prints both figures");
+    assert(/^personal\s+yes$/m.test(budgetedText), "a personal org says so");
+    assert(/^role\s+-$/m.test(budgetedText), "no role on the wire prints -");
+    assert(/^members\s+1$/m.test(budgetedText), "member count");
+    const showJson = captureIO();
+    await runCli(["auth", "org", "show", "acme", "--json", ...AUTH], showJson.io);
+    assertEqual(JSON.parse(showJson.out[0]).quota.max_queued_trials, 10000, "--json carries the typed detail");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testQuotaRefusalExitsTwo() {
+  console.log("\n--- runCli: a quota_exceeded refusal prints Harbor's line and exits 2 ---");
+  installMockFetch();
+  try {
+    const message =
+      "hosted quota exceeded: max_queued_trials 3 for organization acme — 2 queued, this job would add 1";
+    setMockResponse("/api/trials/trial-1/retry", {
+      status: 429,
+      body: {
+        error: {
+          code: "quota_exceeded",
+          message,
+          details: { quota: "max_queued_trials", limit: 3, used: 2, requested: 1, org: "acme" },
+          request_id: "req_q",
+        },
+      },
+    });
+    const { io, err } = captureIO();
+    const code = await runCli(["trial", "retry", "trial-1", ...AUTH], io);
+    assertEqual(code, 2, "exit 2 — Harbor's hosted_jobs.py:615-617 law");
+    assertEqual(err, [`Launch quota exceeded: ${message}`], "one line, Harbor's own words, no Retry-After story");
+
+    const json = captureIO();
+    const jsonCode = await runCli(["trial", "retry", "trial-1", "--json", ...AUTH], json.io);
+    assertEqual(jsonCode, 2, "--json keeps exit 2");
+    const body = JSON.parse(json.out[0]);
+    assertEqual(body.error.code, "quota_exceeded", "--json carries the server's code");
+    assertEqual(body.error.details.limit, 3, "--json carries the details block");
+    assertEqual(body.error.retryAfterSec, undefined, "no retryAfterSec on a quota refusal");
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
 // SECRETS — evolve secrets set / list / delete
 // =============================================================================
 
@@ -7865,6 +8101,8 @@ async function main() {
   await testUploadVerb();
   await testUploadVerbJsonAndGate();
   await testAuthStatus();
+  await testAuthOrgVerbs();
+  await testQuotaRefusalExitsTwo();
   await testSecretsVerbs();
   await testJobListScope();
   await testAnalysisList();
