@@ -3566,6 +3566,9 @@ function mapOrganizationDetail(raw: Record<string, unknown>): OrganizationDetail
       max_concurrent_sessions: count(quota.max_concurrent_sessions),
       monthly_budget_usd:
         typeof quota.monthly_budget_usd === "number" ? quota.monthly_budget_usd : null,
+      max_concurrent_sandboxes_e2b: count(quota.max_concurrent_sandboxes_e2b),
+      max_concurrent_sandboxes_daytona: count(quota.max_concurrent_sandboxes_daytona),
+      max_concurrent_sandboxes_modal: count(quota.max_concurrent_sandboxes_modal),
     },
     usage: {
       in_flight_trials: count(usage.in_flight_trials),

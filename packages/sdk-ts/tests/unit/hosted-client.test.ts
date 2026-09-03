@@ -6589,6 +6589,9 @@ async function testOrgs() {
           max_concurrent_analyses: 4,
           max_concurrent_sessions: 0,
           monthly_budget_usd: null,
+          max_concurrent_sandboxes_e2b: 0,
+          max_concurrent_sandboxes_daytona: 200,
+          max_concurrent_sandboxes_modal: 60,
         },
         usage: {
           in_flight_trials: 2,
@@ -6600,7 +6603,7 @@ async function testOrgs() {
         },
       },
     });
-    // Six distinct ceilings and six distinct counts: a swapped field shows.
+    // Nine distinct ceilings and six distinct counts: a swapped field shows.
     const WIDGETS_QUOTA = {
       max_concurrent_trials: 8,
       max_queued_trials: 500,
@@ -6608,6 +6611,9 @@ async function testOrgs() {
       max_concurrent_analyses: 3,
       max_concurrent_sessions: 1,
       monthly_budget_usd: 250.5,
+      max_concurrent_sandboxes_e2b: 7,
+      max_concurrent_sandboxes_daytona: 9,
+      max_concurrent_sandboxes_modal: 11,
     };
     const WIDGETS_USAGE = {
       in_flight_trials: 2,
@@ -6682,6 +6688,12 @@ async function testOrgs() {
     assert(fetchCalls[fetchCalls.length - 1].url === `${BASE}/api/orgs/acme`, "get hits GET /api/orgs/{org}");
     assertEqual(detail.member_count, 3, "member_count");
     assertEqual(detail.quota.max_concurrent_sessions, 0, "a 0 ceiling stays 0 (paused), never a default");
+    assertEqual(detail.quota.max_concurrent_sandboxes_e2b, 0, "a 0 sandbox ceiling stays 0 (paused on that provider), never a default");
+    assertEqual(
+      [detail.quota.max_concurrent_sandboxes_daytona, detail.quota.max_concurrent_sandboxes_modal],
+      [200, 60],
+      "the other two provider ceilings map to their own keys"
+    );
     assertEqual(detail.quota.monthly_budget_usd, null, "a null budget stays null (no monthly budget)");
     assertEqual(detail.quota.max_queued_trials, 10000, "the queued ceiling");
     assertEqual(detail.usage.queued_trials, 40, "usage.queued_trials");

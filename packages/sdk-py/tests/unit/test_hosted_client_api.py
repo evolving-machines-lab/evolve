@@ -4719,6 +4719,9 @@ class TestOrgs:
             'max_concurrent_analyses': 4,
             'max_concurrent_sessions': 0,
             'monthly_budget_usd': None,
+            'max_concurrent_sandboxes_e2b': 0,
+            'max_concurrent_sandboxes_daytona': 200,
+            'max_concurrent_sandboxes_modal': 60,
         },
         'usage': {
             'in_flight_trials': 2,
@@ -4770,7 +4773,7 @@ class TestOrgs:
 
     @pytest.mark.asyncio
     async def test_get_maps_every_quota_and_usage_field_to_its_own_key(self):
-        """Six distinct ceilings and six distinct counts: a swapped field shows;
+        """Nine distinct ceilings and six distinct counts: a swapped field shows;
         a number budget stays a number."""
         quota = {
             'max_concurrent_trials': 8,
@@ -4779,6 +4782,9 @@ class TestOrgs:
             'max_concurrent_analyses': 3,
             'max_concurrent_sessions': 1,
             'monthly_budget_usd': 250.5,
+            'max_concurrent_sandboxes_e2b': 7,
+            'max_concurrent_sandboxes_daytona': 9,
+            'max_concurrent_sandboxes_modal': 11,
         }
         usage = {
             'in_flight_trials': 2,
@@ -4814,6 +4820,11 @@ class TestOrgs:
         # A 0 ceiling stays 0 (paused), never a default; a null budget stays None.
         assert detail.quota.max_concurrent_sessions == 0
         assert detail.quota.monthly_budget_usd is None
+        # A 0 sandbox ceiling stays 0 (paused on that provider); the other two
+        # provider ceilings map to their own keys.
+        assert detail.quota.max_concurrent_sandboxes_e2b == 0
+        assert (detail.quota.max_concurrent_sandboxes_daytona,
+                detail.quota.max_concurrent_sandboxes_modal) == (200, 60)
         assert detail.usage.queued_trials == 40
         assert detail.usage.month_spend_usd == 12.5
 

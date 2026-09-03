@@ -3759,6 +3759,12 @@ export interface OrgQuota {
   max_concurrent_sessions: number;
   /** Model spend allowed this calendar month, USD; null = no monthly budget. */
   monthly_budget_usd: number | null;
+  /** Sandboxes of this organization in flight on e2b at once — trials, trace analyses, regrade verifiers and managed sessions together; work beyond it waits; 0 pauses the organization on that provider; fleet default = the platform's own e2b ceiling. */
+  max_concurrent_sandboxes_e2b: number;
+  /** The same ceiling on daytona: the organization's sandboxes in flight there at once; work beyond it waits; 0 pauses the organization on daytona; fleet default = the platform's own daytona ceiling. */
+  max_concurrent_sandboxes_daytona: number;
+  /** The same ceiling on modal: the organization's sandboxes in flight there at once; work beyond it waits; 0 pauses the organization on modal; fleet default = the platform's own modal ceiling. */
+  max_concurrent_sandboxes_modal: number;
 }
 
 /** The live load beside the ceilings — what `evolve auth org show` prints as N/M. */
