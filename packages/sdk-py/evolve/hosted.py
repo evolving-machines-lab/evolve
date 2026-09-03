@@ -2576,6 +2576,15 @@ class OrgQuota:
     max_concurrent_sessions: int
     #: Model spend allowed this calendar month, USD; None = no monthly budget.
     monthly_budget_usd: Optional[float]
+    #: Sandboxes of this organization in flight on e2b at once — trials, trace
+    #: analyses, regrade verifiers and managed sessions together; work beyond
+    #: it waits; 0 pauses the organization on that provider; fleet default =
+    #: the platform's own e2b ceiling.
+    max_concurrent_sandboxes_e2b: int
+    #: The same ceiling on daytona.
+    max_concurrent_sandboxes_daytona: int
+    #: The same ceiling on modal.
+    max_concurrent_sandboxes_modal: int
 
 
 @dataclass
@@ -3341,6 +3350,9 @@ def _map_organization_detail(data: Dict[str, Any]) -> OrganizationDetail:
                 if isinstance(budget, (int, float)) and not isinstance(budget, bool)
                 else None
             ),
+            max_concurrent_sandboxes_e2b=count(quota, 'max_concurrent_sandboxes_e2b'),
+            max_concurrent_sandboxes_daytona=count(quota, 'max_concurrent_sandboxes_daytona'),
+            max_concurrent_sandboxes_modal=count(quota, 'max_concurrent_sandboxes_modal'),
         ),
         usage=OrgUsage(
             in_flight_trials=count(usage, 'in_flight_trials'),

@@ -5919,7 +5919,11 @@ async function cmdAuthOrgList(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
-/** The org in depth: identity, then every ceiling as `used/limit` beside its live count. */
+/**
+ * The org in depth: identity, then every ceiling as `used/limit` beside its
+ * live count — except the three per-provider sandbox ceilings, printed alone:
+ * the wire carries no per-organization sandbox count (`OrgUsage` is six counts).
+ */
 function orgDetailLines(org: OrganizationDetail): string[] {
   const { quota, usage } = org;
   const budget =
@@ -5938,6 +5942,9 @@ function orgDetailLines(org: OrganizationDetail): string[] {
     ["concurrent imports", `${usage.in_flight_imports}/${quota.max_concurrent_imports}`],
     ["concurrent analyses", `${usage.in_flight_analyses}/${quota.max_concurrent_analyses}`],
     ["concurrent sessions", `${usage.active_sessions}/${quota.max_concurrent_sessions}`],
+    ["e2b sandbox ceiling", String(quota.max_concurrent_sandboxes_e2b)],
+    ["daytona sandbox ceiling", String(quota.max_concurrent_sandboxes_daytona)],
+    ["modal sandbox ceiling", String(quota.max_concurrent_sandboxes_modal)],
     ["month spend", budget],
   ];
   return table(rows);

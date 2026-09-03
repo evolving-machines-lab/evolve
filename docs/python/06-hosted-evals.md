@@ -985,18 +985,21 @@ evolve auth org show acme
 ```
 
 ```
-slug                 acme
-display name         Acme
-personal             no
-role                 member
-members              3
-created              2026-08-01T00:00:00.000Z
-concurrent trials    2/16
-queued trials        40/10000
-concurrent imports   0/1
-concurrent analyses  1/4
-concurrent sessions  0/4
-month spend          $12.50 / no budget
+slug                     acme
+display name             Acme
+personal                 no
+role                     member
+members                  3
+created                  2026-08-01T00:00:00.000Z
+concurrent trials        2/16
+queued trials            40/10000
+concurrent imports       0/1
+concurrent analyses      1/4
+concurrent sessions      0/4
+e2b sandbox ceiling      100
+daytona sandbox ceiling  200
+modal sandbox ceiling    60
+month spend              $12.50 / no budget
 ```
 
 ```python
@@ -1010,7 +1013,7 @@ print(acme.usage.queued_trials, "/", acme.quota.max_queued_trials)
 
 `hosted().orgs` carries the same client behind the front door.
 
-The quota is six ceilings, every one shown **effective** — the value the platform administrator set for the organization, else the fleet default. `max_queued_trials` is the one that refuses: a job whose trials would not fit in the organization's queue is not accepted. Everything else waits — `max_concurrent_trials` (trials running at once), `max_concurrent_imports`, `max_concurrent_analyses` — or is metered by the gateway (`monthly_budget_usd`, `null` = no monthly budget, your credits stay the only backstop — a number is the organization's ceiling on metered model spend per 30-day window, enforced by the gateway on every key the platform mints for the organization's work, and a run the gateway refuses on it settles typed rather than scored: `failure_phase` `budget_exhausted`, the detail starting `team:` and carrying the gateway's own sentence; the same shape with `user:` when the account's credits run out, and with `other:` when a gateway budget above the run that the platform did not set for your organization — the fleet's own global stop — is exhausted; never retried automatically, and `job resume` picks such trials up once the budget is raised). `max_concurrent_sessions` is recorded and read back but not yet enforced by the managed box-create doors. A ceiling of `0` means the organization is paused. Quotas are set only by the platform administrator, from the dashboard — never with an API key and never through the SDK, so there is no verb for it here.
+The quota is nine ceilings, every one shown **effective** — the value the platform administrator set for the organization, else the fleet default. `max_queued_trials` is the one that refuses: a job whose trials would not fit in the organization's queue is not accepted. Everything else waits — `max_concurrent_trials` (trials running at once), `max_concurrent_imports`, `max_concurrent_analyses` — or is metered by the gateway (`monthly_budget_usd`, `null` = no monthly budget, your credits stay the only backstop — a number is the organization's ceiling on metered model spend per 30-day window, enforced by the gateway on every key the platform mints for the organization's work, and a run the gateway refuses on it settles typed rather than scored: `failure_phase` `budget_exhausted`, the detail starting `team:` and carrying the gateway's own sentence; the same shape with `user:` when the account's credits run out, and with `other:` when a gateway budget above the run that the platform did not set for your organization — the fleet's own global stop — is exhausted; never retried automatically, and `job resume` picks such trials up once the budget is raised). `max_concurrent_sessions` is recorded and read back but not yet enforced by the managed box-create doors. The three `max_concurrent_sandboxes_e2b` / `_daytona` / `_modal` ceilings bound the organization's sandboxes in flight on each provider — trials, trace analyses, regrade verifiers and managed sessions together; work beyond one waits, `0` pauses the organization on that provider only, and an organization with no value of its own reads back the platform's fleet ceiling for that provider, which is then the only bound. On any of the other six, a ceiling of `0` pauses the organization as a whole. Quotas are set only by the platform administrator, from the dashboard — never with an API key and never through the SDK, so there is no verb for it here.
 
 The refusal is Harbor's own shape: a `429` with code `quota_exceeded`, a message that starts `hosted quota exceeded:`, and `details` naming the quota, its limit, what is used, what the job asked for, and the organization. There is no `Retry-After` — the wait is not a number the server knows. The CLI prints `Launch quota exceeded: …` and exits 2, as Harbor's does; `--json` carries the envelope.
 

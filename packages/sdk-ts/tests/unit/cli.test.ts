@@ -7133,6 +7133,9 @@ const ORG_DETAIL = {
     max_concurrent_analyses: 4,
     max_concurrent_sessions: 4,
     monthly_budget_usd: null,
+    max_concurrent_sandboxes_e2b: 100,
+    max_concurrent_sandboxes_daytona: 200,
+    max_concurrent_sandboxes_modal: 0,
   },
   usage: {
     in_flight_trials: 2,
@@ -7276,6 +7279,11 @@ async function testAuthOrgVerbs() {
       ["concurrent imports", "0/1"],
       ["concurrent analyses", "1/4"],
       ["concurrent sessions", "0/4"],
+      // The three per-provider sandbox ceilings print alone (the wire carries
+      // no per-organization sandbox count); a 0 prints 0 — paused there.
+      ["e2b sandbox ceiling", "100"],
+      ["daytona sandbox ceiling", "200"],
+      ["modal sandbox ceiling", "0"],
       ["month spend", "$12.50 / no budget"],
     ]) {
       const line = new RegExp(`^${label.replace(/ /g, "\\s")}\\s+${value.replace(/[$/.]/g, "\\$&")}$`, "m");
