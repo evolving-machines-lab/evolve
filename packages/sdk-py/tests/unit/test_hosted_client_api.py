@@ -63,6 +63,8 @@ from evolve import (
     EvolveDigestMismatchError,
     EvolveIncompleteDownloadError,
     HostedClientConfig,
+    OrgQuota,
+    OrgUsage,
     JobCounts,
     JobDeleteResult,
     JobFailure,
@@ -4749,6 +4751,55 @@ class TestOrgs:
             ('brando', 'owner', True),
             ('acme', 'member', False),
         ]
+
+    @pytest.mark.asyncio
+    async def test_list_drops_an_unknown_role_and_reads_personal_strictly(self):
+        """A role the wire vocabulary does not name is dropped, never passed
+        through; ``personal`` is True only when the wire says exactly that."""
+        fake = FakeUrlopen([
+            ('/api/orgs', {
+                'items': [
+                    {'org_id': 'org-2', 'slug': 'widgets-inc', 'display_name': 'Widgets',
+                     'role': 'ADMIN', 'created_at': '2026-08-15T00:00:00.000Z'},
+                ],
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            rows = await orgs_factory(CONFIG).list()
+        assert [(o.slug, o.role, o.personal) for o in rows] == [('widgets-inc', None, False)]
+
+    @pytest.mark.asyncio
+    async def test_get_maps_every_quota_and_usage_field_to_its_own_key(self):
+        """Six distinct ceilings and six distinct counts: a swapped field shows;
+        a number budget stays a number."""
+        quota = {
+            'max_concurrent_trials': 8,
+            'max_queued_trials': 500,
+            'max_concurrent_imports': 2,
+            'max_concurrent_analyses': 3,
+            'max_concurrent_sessions': 1,
+            'monthly_budget_usd': 250.5,
+        }
+        usage = {
+            'in_flight_trials': 2,
+            'queued_trials': 40,
+            'in_flight_imports': 3,
+            'in_flight_analyses': 1,
+            'active_sessions': 5,
+            'month_spend_usd': 12.5,
+        }
+        fake = FakeUrlopen([('/api/orgs/widgets-inc', {
+            'org_id': 'org-2', 'slug': 'widgets-inc', 'display_name': 'Widgets',
+            'personal': True, 'role': 'owner', 'created_at': '2026-08-15T00:00:00.000Z',
+            'member_count': 1, 'quota': quota, 'usage': usage,
+        })])
+        with patch('evolve._http.urlopen', fake):
+            detail = await orgs_factory(CONFIG).get('widgets-inc')
+        assert detail.quota == OrgQuota(**quota)
+        assert detail.usage == OrgUsage(**usage)
+        assert (detail.org_id, detail.slug, detail.display_name, detail.personal,
+                detail.role, detail.created_at, detail.member_count) == (
+            'org-2', 'widgets-inc', 'Widgets', True, 'owner', '2026-08-15T00:00:00.000Z', 1)
 
     @pytest.mark.asyncio
     async def test_get_maps_quota_and_usage_and_encodes_the_ref(self):

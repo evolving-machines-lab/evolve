@@ -6600,6 +6600,37 @@ async function testOrgs() {
         },
       },
     });
+    // Six distinct ceilings and six distinct counts: a swapped field shows.
+    const WIDGETS_QUOTA = {
+      max_concurrent_trials: 8,
+      max_queued_trials: 500,
+      max_concurrent_imports: 2,
+      max_concurrent_analyses: 3,
+      max_concurrent_sessions: 1,
+      monthly_budget_usd: 250.5,
+    };
+    const WIDGETS_USAGE = {
+      in_flight_trials: 2,
+      queued_trials: 40,
+      in_flight_imports: 3,
+      in_flight_analyses: 1,
+      active_sessions: 5,
+      month_spend_usd: 12.5,
+    };
+    setMockResponse("/api/orgs/widgets-inc", {
+      status: 200,
+      body: {
+        org_id: "org-2",
+        slug: "widgets-inc",
+        display_name: "Widgets",
+        personal: true,
+        role: "owner",
+        created_at: "2026-08-15T00:00:00.000Z",
+        member_count: 1,
+        quota: WIDGETS_QUOTA,
+        usage: WIDGETS_USAGE,
+      },
+    });
     setMockResponse("/api/orgs", {
       status: 200,
       body: {
@@ -6620,6 +6651,15 @@ async function testOrgs() {
             role: "member",
             created_at: "2026-08-01T00:00:00.000Z",
           },
+          // A role the wire vocabulary does not name, and no `personal`:
+          // the role is dropped (never passed through), personal reads false.
+          {
+            org_id: "org-2",
+            slug: "widgets-inc",
+            display_name: "Widgets",
+            role: "ADMIN",
+            created_at: "2026-08-15T00:00:00.000Z",
+          },
         ],
       },
     });
@@ -6628,13 +6668,15 @@ async function testOrgs() {
     const listed = await client.list();
     assert(fetchCalls[fetchCalls.length - 1].url === `${BASE}/api/orgs`, "list hits GET /api/orgs");
     assertEqual(
-      listed.map((o) => [o.slug, o.role, o.personal]),
+      listed.map((o) => [o.slug, o.role ?? "(none)", o.personal]),
       [
         ["brando", "owner", true],
         ["acme", "member", false],
+        ["widgets-inc", "(none)", false],
       ],
-      "list maps every org with the caller's role, personal first as served"
+      "list maps every org with the caller's role, personal first as served; an unknown role is dropped, a missing personal is false"
     );
+    assert(listed[2] !== undefined && !("role" in listed[2]), "a dropped role is absent, not undefined-valued");
 
     const detail = await client.get("acme");
     assert(fetchCalls[fetchCalls.length - 1].url === `${BASE}/api/orgs/acme`, "get hits GET /api/orgs/{org}");
@@ -6644,6 +6686,15 @@ async function testOrgs() {
     assertEqual(detail.quota.max_queued_trials, 10000, "the queued ceiling");
     assertEqual(detail.usage.queued_trials, 40, "usage.queued_trials");
     assertEqual(detail.usage.month_spend_usd, 12.5, "usage.month_spend_usd");
+
+    const widgets = await client.get("widgets-inc");
+    assertEqual(widgets.quota, WIDGETS_QUOTA, "every quota field maps to its own key; a number budget stays a number");
+    assertEqual(widgets.usage, WIDGETS_USAGE, "every usage field maps to its own key");
+    assertEqual(
+      [widgets.org_id, widgets.slug, widgets.display_name, widgets.personal, widgets.role, widgets.created_at, widgets.member_count],
+      ["org-2", "widgets-inc", "Widgets", true, "owner", "2026-08-15T00:00:00.000Z", 1],
+      "the detail's identity fields"
+    );
 
     await client.get("team/with slash");
     assert(
