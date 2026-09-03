@@ -7176,7 +7176,7 @@ async function testAuthOrgVerbs() {
       body: {
         items: [
           { org_id: "org-p", slug: "brando", display_name: "brando", personal: true, role: "owner", created_at: "2026-07-01T00:00:00.000Z" },
-          { org_id: "org-1", slug: "acme", display_name: "Acme", personal: false, role: "member", created_at: "2026-08-01T00:00:00.000Z" },
+          { org_id: "org-1", slug: "acme", display_name: "Acme Corp", personal: false, role: "member", created_at: "2026-08-01T00:00:00.000Z" },
         ],
       },
     });
@@ -7206,8 +7206,8 @@ async function testAuthOrgVerbs() {
     await runCli(["auth", "org", "list", "--search", "OWNER", "-q", ...AUTH], byRole.io);
     assertEqual(byRole.out, ["brando"], "--search matches the role, case-insensitively");
     const byDisplay = captureIO();
-    await runCli(["auth", "org", "list", "--search", "Acm", "--json", ...AUTH], byDisplay.io);
-    assertEqual(JSON.parse(byDisplay.out[0]).map((o: { slug: string }) => o.slug), ["acme"], "--search filters the --json array too");
+    await runCli(["auth", "org", "list", "--search", "corp", "--json", ...AUTH], byDisplay.io);
+    assertEqual(JSON.parse(byDisplay.out[0]).map((o: { slug: string }) => o.slug), ["acme"], "--search matches the display name, case-insensitively, and filters the --json array too");
     const none = captureIO();
     assertEqual(await runCli(["auth", "org", "list", "--search", "zzz", ...AUTH], none.io), 0, "an empty match still exits 0");
     assertEqual(none.out, ["No organizations found."], "an empty match says so");
