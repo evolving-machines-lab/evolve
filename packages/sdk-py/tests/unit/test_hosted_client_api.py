@@ -3322,6 +3322,46 @@ class TestJobs:
         assert slept == [2.0, 4.0, 8.0, 16.0, 15.0]
 
     @pytest.mark.asyncio
+    async def test_watch_analysis_rate_limit_sleep_is_bounded_by_the_deadline(self):
+        """The 429 sleep honours the server's Retry-After but never past the
+        deadline: with every read rate-limited at ``retryAfterSec`` 20 and a
+        45-s ``timeout_s``, the third sleep is clamped to the 5 s left and
+        the TimeoutError lands ON the deadline, not one Retry-After after."""
+        import io
+        import urllib.error
+
+        clock = {'t': 0.0}
+        slept = []
+
+        def always_rate_limited(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 429, 'Too Many Requests', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'rate_limited',
+                    'message': 'slow down',
+                    'retryAfterSec': 20.0,
+                }}).encode('utf-8')),
+            )
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+            clock['t'] += seconds
+
+        with patch('evolve._http.urlopen', always_rate_limited), patch(
+            'evolve.hosted.asyncio.sleep', fake_sleep
+        ), patch('evolve.hosted.time.monotonic', lambda: clock['t']):
+            with pytest.raises(TimeoutError):
+                await jobs_factory(CONFIG).watch_analysis(
+                    'job-1', poll_interval_s=2.0, timeout_s=45.0
+                )
+
+        assert clock['t'] == 45.0
+        # Retry-After 20 beats the 2 / 4 / 8 backoff on the first two sleeps
+        # (40 s elapsed); only 5 s remain before the third, so it is clamped
+        # and the deadline check on the next 429 raises.
+        assert slept == [20.0, 20.0, 5.0]
+
+    @pytest.mark.asyncio
     async def test_download_bytes_and_streamed_file(self, tmp_path):
         archive = gzip.compress(json.dumps({'job': {'id': 'job-1'}}).encode('utf-8'))
         headers = {
