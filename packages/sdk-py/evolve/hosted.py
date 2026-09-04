@@ -1022,6 +1022,13 @@ class CapabilityDocument:
     #: Fleet-wide cap on concurrently in-flight trials of GPU-declaring tasks
     #: (platform-paid GPU compute). None on servers predating the field.
     gpu_concurrency_cap: Optional[int] = None
+    #: The trace analyzer's roster and defaults, the wire's own keys:
+    #: ``default_model`` (what an omitted ``analyze['model_name']`` takes),
+    #: ``reasoning_efforts`` (what ``analyze['reasoning_effort']`` accepts —
+    #: the claude harness's, the analyzer IS that harness) and ``models``
+    #: (every roster model with the effort an omitted ``reasoning_effort``
+    #: takes for it). None on servers predating the field.
+    analyze: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -1461,23 +1468,38 @@ class AnalyzeConfigInput(TypedDict, total=False):
     PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
     it arms the embedded trigger (each trial is analyzed server-side right
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
-    means "all defaults" — glm-5.3-flash over Harbor's default rubric
-    (reward_hacking, task_specification). The analyzer always runs the
+    means "all defaults" — deepseek-v4-flash-vision at its per-model
+    effort (high) over Harbor's default rubric (reward_hacking,
+    task_specification). The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
     names none; its spend is capped per analysis and metered as its own
     line, never blended into the trial's own bill.
     """
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
-    #: glm-5.3-flash on this platform's claude roster (a recorded deviation
-    #: from Harbor's claude-haiku-4-5 default — analysis is input-dominated,
-    #: and flash is the input-price frontier; name glm-5.3 to escalate).
+    #: deepseek-v4-flash-vision on this platform's claude roster (DeepSeek
+    #: V4 Flash Vision served by Fireworks; a recorded deviation from
+    #: Harbor's claude-haiku-4-5 default — analysis is input-dominated, and
+    #: this is the roster's intelligence-per-input-dollar frontier;
+    #: glm-5.3-flash and haiku stay as alternatives, glm-5.3 to escalate).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
     #: Off-roster models are refused typed (``invalid_input``).
     model_name: str
     rubric: Rubric
+    #: Reasoning effort the analyzer runs at — the platform's
+    #: ``agents[].reasoning_effort`` vocabulary applied to the analyzer,
+    #: which IS the claude harness: accepted values are ``meta()``'s
+    #: ``analyze['reasoning_efforts']``, an unknown value is refused
+    #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
+    #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
+    #: high on deepseek-v4-flash-vision, low on glm-5.3-flash — the
+    #: platform's ruling for a model whose thinking Z.ai documents as
+    #: forced, with no levels — the claude harness default elsewhere). Always passed to the analyzer explicitly and
+    #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
+    #: hosted extension: Harbor's analyze has no effort option.
+    reasoning_effort: str
     #: The provider whose sandbox the analyzer boots — the job lineup, the
     #: same vocabulary as ``sandbox_provider`` on ``jobs().start()`` and held
     #: to the same rule: an unknown value is refused ``invalid_input`` naming
@@ -1498,6 +1520,12 @@ class AnalyzeConfig(TypedDict):
     """
     model_name: str
     rubric: Rubric
+    #: The effort this policy's analyses run at. Named at create it is
+    #: served as stored; when the create named none, this echoes the
+    #: per-model default of the day for ``model_name`` — the value the next
+    #: enqueue under this policy stamps (the same nuance as
+    #: ``sandbox_provider`` below).
+    reasoning_effort: str
     #: The provider this policy's analyses run on. Named at create it is
     #: served as stored, forever. When the create named none, this echoes the
     #: platform's analysis default OF THE DAY — the value the next enqueue
@@ -1563,6 +1591,10 @@ class TrialAnalysis(TypedDict):
     #: death mid-run is reaped to a typed ``failed``.
     status: str
     model_name: str
+    #: The reasoning effort THIS analysis ran at — passed to the analyzer
+    #: explicitly, so it is what the model was asked for. None only on
+    #: analyses recorded before the effort was stamped.
+    reasoning_effort: Optional[str]
     rubric: Rubric
     #: 3–5 sentence overview of the trial (Harbor's summary contract). None
     #: until completed.
@@ -2923,6 +2955,7 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
         ],
         platform_constraints=raw.get('platform_constraints', []),
         network_modes=raw.get('network_modes', []),
+        analyze=raw.get('analyze') if isinstance(raw.get('analyze'), dict) else None,
         statuses={
             key: StatusVocabulary(
                 values=value.get('values', []),
@@ -6315,8 +6348,9 @@ class JobsClient:
         trigger (Harbor's ``harbor analyze`` vocabulary, the spec's
         AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
         server-side right after it settles (CANCELLED trials are skipped),
-        ``{}`` means "all defaults" (glm-5.3-flash, Harbor's default
-        rubric), and the response echoes the RESOLVED policy as
+        ``{}`` means "all defaults" (deepseek-v4-flash-vision at its
+        per-model effort, Harbor's default rubric), and the response
+        echoes the RESOLVED policy as
         ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
         analysis runs and :meth:`analyze` remains the manual door. The five
         ``*timeout_multiplier`` arguments are
@@ -6888,6 +6922,7 @@ class JobsClient:
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
         sandbox_provider: Optional[EvalSandboxProvider] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Job:
         """Analyze a terminal job's trial traces (rubric-driven, Harbor's
         ``harbor analyze``), server-side.
@@ -6902,16 +6937,22 @@ class JobsClient:
         model) runs a fresh wave once the previous one has settled.
         ``sandbox_provider`` picks the provider whose sandbox the analyzer
         boots — the job lineup; omitted, the platform's analysis default
-        applies (daytona unless the operator retuned the fleet). Every
-        argument omitted means the defaults: glm-5.3-flash over Harbor's
-        default rubric (reward_hacking, task_specification), on the
-        platform's analysis default provider. CANCELLED trials are never
-        analyzed.
+        applies (daytona unless the operator retuned the fleet).
+        ``reasoning_effort`` is the arms' effort vocabulary applied to the
+        analyzer (``meta().analyze['reasoning_efforts']``); omitted, the
+        per-model default applies (high on deepseek-v4-flash-vision, low
+        on glm-5.3-flash, the claude harness default elsewhere) — the
+        effort is always passed explicitly and recorded on each analysis.
+        Every argument omitted means the defaults: deepseek-v4-flash-vision
+        at high over Harbor's default rubric (reward_hacking,
+        task_specification), on the platform's analysis default provider.
+        CANCELLED trials are never analyzed.
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
         or duplicate criteria, bounds), ``invalid_input`` (off-roster model,
-        or a provider outside the lineup — the message names the roster),
+        an effort outside the vocabulary, or a provider outside the lineup
+        — the message names the legal values),
         ``analysis_already_running`` (one wave at a time),
         ``no_analyzable_trials`` (every trial CANCELLED).
         """
@@ -6922,6 +6963,8 @@ class JobsClient:
             body['rubric'] = rubric
         if sandbox_provider is not None:
             body['sandbox_provider'] = sandbox_provider
+        if reasoning_effort is not None:
+            body['reasoning_effort'] = reasoning_effort
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}/analyze', method='POST', body=body
         )

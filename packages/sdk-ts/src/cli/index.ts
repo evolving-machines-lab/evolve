@@ -339,6 +339,13 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "Sandbox provider the analyzer runs on (implies --analyze; the job lineup, GET /api/meta; " +
       "default: the platform's analysis default)",
   },
+  "analyze-effort": {
+    kind: "string",
+    value: "<value>",
+    help:
+      "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
+      "default: the per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
+  },
   "timeout-multiplier": {
     kind: "number",
     value: "<x>",
@@ -1083,8 +1090,20 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help:
-          "Model the analyzer agent runs (default: glm-5.3-flash; glm-5.3 to escalate; " +
-          "must be on the claude roster, GET /api/meta)",
+          "Model the analyzer agent runs (default: deepseek-v4-flash-vision; glm-5.3-flash and " +
+          "haiku as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
+      },
+      // The one option beyond Harbor's analyze trio, recorded as the hosted
+      // extension it is: `run`'s own --effort (the platform's reasoning_effort
+      // vocabulary, GET /api/meta) applied to the analyzer, which IS the claude
+      // harness. Same flag name as `run`; the server refuses an unknown value
+      // exactly as it refuses an arm's.
+      effort: {
+        kind: "string",
+        value: "<value>",
+        help:
+          "Reasoning effort the analyzer runs at (values: GET /api/meta analyze; default: the " +
+          "per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
       },
       rubric: {
         kind: "string",
@@ -2475,7 +2494,7 @@ export function buildJobInput(
   if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
 
   // Embedded analysis: PRESENCE of the object is the switch (the spec's
-  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the four
+  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the five
   // flags arms it — --analyze bare means "all defaults" — and the sub-flags
   // override the file's fields one by one, the same merge rule as retry.
   const analyzeArmed =
@@ -2483,6 +2502,7 @@ export function buildJobInput(
     f["analyze-model"] !== undefined ||
     f["analyze-rubric"] !== undefined ||
     f["analyze-provider"] !== undefined ||
+    f["analyze-effort"] !== undefined ||
     base.analyze !== undefined;
   const analyze: AnalyzeConfigInput = { ...(base.analyze ?? {}) };
   if (f["analyze-model"] !== undefined) analyze.model_name = String(f["analyze-model"]);
@@ -2495,6 +2515,9 @@ export function buildJobInput(
   if (f["analyze-provider"] !== undefined) {
     analyze.sandbox_provider = String(f["analyze-provider"]) as EvalSandboxProvider;
   }
+  // Same verbatim ride as --effort on the arms: the server's effort
+  // vocabulary (GET /api/meta) is the one copy, and its refusal names it.
+  if (f["analyze-effort"] !== undefined) analyze.reasoning_effort = String(f["analyze-effort"]);
 
   // Timeout multipliers: Harbor's five flags verbatim (their
   // cli/jobs.py:378-424), flat on the body exactly as their JobConfig
@@ -4337,6 +4360,9 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   if (inv.flags.env !== undefined) {
     req.sandbox_provider = String(inv.flags.env) as EvalSandboxProvider;
   }
+  // --effort rides verbatim too (the run verb's own flag applied to the
+  // analyzer): the server's effort vocabulary is the one copy.
+  if (inv.flags.effort !== undefined) req.reasoning_effort = String(inv.flags.effort);
   const accepted = await client.analyze(id, req);
   if (json) {
     io.out(JSON.stringify({ kind: "analysis.accepted", job: accepted }));

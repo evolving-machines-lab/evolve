@@ -3148,6 +3148,7 @@ class TestJobs:
                 model_name='claude-haiku-4-5-20251001',
                 rubric=ANALYZE_RUBRIC,
                 sandbox_provider='modal',
+                reasoning_effort='low',
             )
 
         assert fake.requests[0].get_method() == 'POST'
@@ -3157,6 +3158,7 @@ class TestJobs:
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
             'sandbox_provider': 'modal',
+            'reasoning_effort': 'low',
         }
         assert job.id == 'job-1'
         # The resolved echo maps verbatim — the provider echo rides it.
