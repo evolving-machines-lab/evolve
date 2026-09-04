@@ -7310,16 +7310,42 @@ async function testJobImportVerbs() {
           wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
           wireJobImport({ id: "imp-b", status: "QUEUED", receiving: true, source: null }),
         ],
-        nextCursor: null,
-        hasMore: false,
+        nextCursor: "cur-imp",
+        hasMore: true,
       },
     });
-    const list = captureIO();
+    const list = captureIO(true);
     assertEqual(await runCli(["job", "imports", "--status", "COMPLETED", ...AUTH], list.io), 0, "job imports exits 0");
     assert(list.out[0].includes("ID") && list.out[0].includes("STATUS") && list.out[0].includes("JOB"), "a header row");
+    assert(!list.out[0].includes("\t"), "TTY output is an aligned table");
     assert(list.out.some((l) => l.includes("imp-a") && l.includes("COMPLETED") && l.includes("eval-up1") && l.includes("55")), "the completed row");
     assert(list.out.some((l) => l.includes("imp-b") && l.includes("QUEUED (receiving)")), "a receiving row says so");
+    assert(list.out.some((l) => l.includes("More: evolve job imports --cursor cur-imp")), "TTY shows the sibling next-page hint");
     assert(fetchCalls[fetchCalls.length - 1].url.includes("status=COMPLETED"), "--status rides the query");
+
+    // The shared list precedence (renderList): piped = TSV, --no-headers,
+    // --columns selects and orders, --columns help answers without a request.
+    const piped = captureIO(false);
+    await runCli(["job", "imports", ...AUTH], piped.io);
+    assertEqual(piped.out[0], "ID\tSTATUS\tJOB\tTRIALS\tDATASET\tCREATED", "piped output is TSV with the six default headers");
+    assert(piped.out[1].startsWith("imp-a\tCOMPLETED\teval-up1\t55\tdeep-swe@1.1\t"), "piped rows are TSV cells");
+    assert(!piped.out.some((l) => l.includes("More:")), "no paging hint when piped");
+    const noHeaders = captureIO(false);
+    await runCli(["job", "imports", "--no-headers", ...AUTH], noHeaders.io);
+    assert(noHeaders.out[0].startsWith("imp-a\t"), "--no-headers drops the header row");
+    const cols = captureIO(false);
+    await runCli(["job", "imports", "--columns", "status,id", ...AUTH], cols.io);
+    assertEqual(cols.out[0], "STATUS\tID", "--columns selects AND orders");
+    assertEqual(cols.out[1], "COMPLETED\timp-a", "cells follow the chosen order");
+    assertEqual(cols.out[2], "QUEUED (receiving)\timp-b", "the status cell is the receiving-aware spelling");
+    const before = fetchCalls.length;
+    const colsHelp = captureIO();
+    assertEqual(await runCli(["job", "imports", "--columns", "help", ...AUTH], colsHelp.io), 0, "--columns help exits 0");
+    assertEqual(colsHelp.out, ["id", "status", "job", "trials", "dataset", "created"], "--columns help lists the six keys");
+    assertEqual(fetchCalls.length, before, "--columns help makes no request");
+    const badCol = captureIO();
+    assertEqual(await runCli(["job", "imports", "--columns", "frob", ...AUTH], badCol.io), 2, "unknown column exits 2");
+    assert(badCol.err[0].includes("available:"), "unknown column names the valid keys");
     const quiet = captureIO();
     await runCli(["job", "imports", "-q", ...AUTH], quiet.io);
     assertEqual(quiet.out, ["imp-a", "imp-b"], "-q prints ids only");

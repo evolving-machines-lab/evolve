@@ -4730,8 +4730,19 @@ async function cmdUpload(inv: Invocation, io: CliIO): Promise<number> {
   return followJobImport(inv, imported, io, "accepted");
 }
 
+const JOB_IMPORT_COLUMNS: ListColumn<JobImport>[] = [
+  { key: "id", header: "ID", cell: (i) => i.id },
+  { key: "status", header: "STATUS", cell: jobImportStatus },
+  { key: "job", header: "JOB", cell: (i) => i.job_id ?? "-" },
+  { key: "trials", header: "TRIALS", cell: (i) => (i.n_trials_uploaded === null ? "-" : String(i.n_trials_uploaded)) },
+  { key: "dataset", header: "DATASET", cell: (i) => i.dataset ?? "-" },
+  { key: "created", header: "CREATED", cell: (i) => i.created_at ?? "" },
+];
+const JOB_IMPORT_DEFAULT_COLUMNS = ["id", "status", "job", "trials", "dataset", "created"];
+
 /** `evolve job imports` — the caller's job imports, newest first. */
 async function cmdJobImports(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, JOB_IMPORT_COLUMNS)) return 0;
   const client = jobs(clientConfig(inv));
   const status = inv.flags.status as string | undefined;
   if (status !== undefined && !["QUEUED", "RUNNING", "COMPLETED", "FAILED"].includes(status)) {
@@ -4745,20 +4756,14 @@ async function cmdJobImports(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(page));
     return 0;
   }
-  if (inv.flags.quiet === true) {
-    for (const imported of page.items) io.out(imported.id);
+  if (page.items.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No job imports.");
     return 0;
   }
-  const rows = page.items.map((imported) => [
-    imported.id,
-    jobImportStatus(imported),
-    imported.job_id ?? "-",
-    imported.n_trials_uploaded === null ? "-" : String(imported.n_trials_uploaded),
-    imported.dataset ?? "-",
-    imported.created_at ?? "",
-  ]);
-  for (const line of table([["ID", "STATUS", "JOB", "TRIALS", "DATASET", "CREATED"], ...rows])) io.out(line);
-  if (page.hasMore && page.nextCursor) io.out(`\nnext: --cursor ${page.nextCursor}`);
+  renderList(inv, io, page.items, JOB_IMPORT_COLUMNS, JOB_IMPORT_DEFAULT_COLUMNS, (i) => i.id);
+  if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
+    io.out(`\nMore: evolve job imports --cursor ${page.nextCursor}`);
+  }
   return 0;
 }
 
