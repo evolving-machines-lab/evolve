@@ -90,6 +90,10 @@ evolve/
 - **Edit existing files**, don't create new ones unless necessary
 - **Versioning is the publish workflow's job.** Do not hand-edit `version` in `packages/sdk-ts/package.json` or `packages/sdk-py/pyproject.toml`.
 
+### Claude review in CI
+
+Comment `@claude ...` on a PR or issue to run `.github/workflows/claude.yml`. GitHub dispatches `issue_comment` events only from the **default branch** (`main`), so that workflow must be merged to `main` before the trigger works — a copy sitting on `project-sable` alone will never fire.
+
 ### Build and test
 
 ```bash
