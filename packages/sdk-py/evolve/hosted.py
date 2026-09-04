@@ -1484,8 +1484,9 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: (``{trial_path}``, ``{task_section}``, ``{criteria_guidance}``): the
     #: three tokens are substituted, an unknown ``{token}`` renders empty,
     #: ``{{`` and ``}}`` write a literal brace, and any other brace text is
-    #: left as written (Harbor's Python renderer would convert or raise
-    #: there); the output contract (write ``analysis.json`` matching the
+    #: left as written (Harbor's Python renderer would render it empty,
+    #: convert it or raise there — ``{ x }`` empty, ``{x!r}`` quoted,
+    #: ``{"a": 1}`` an error); the output contract (write ``analysis.json`` matching the
     #: rubric's schema) is appended after it exactly as Harbor appends it.
     #: Stored AS GIVEN and FROZEN into each analysis, like the rubric.
     #: Omitted = the built-in prompt (``None`` on the resolved echo and on

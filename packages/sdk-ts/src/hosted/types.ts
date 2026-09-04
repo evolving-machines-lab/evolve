@@ -522,7 +522,8 @@ export interface AnalyzeConfigInput {
    * `{task_section}`, `{criteria_guidance}`): the three tokens are
    * substituted, an unknown `{token}` renders empty, `{{` and `}}` write a
    * literal brace, and any other brace text is left as written (Harbor's
-   * Python renderer would convert or raise there); the output contract (write
+   * Python renderer would render it empty, convert it or raise there —
+   * `{ x }` empty, `{x!r}` quoted, `{"a": 1}` an error); the output contract (write
    * `analysis.json` matching the rubric's schema) is appended after it exactly
    * as Harbor appends it, so a custom prompt can never opt out of the
    * deliverable. Stored AS GIVEN and FROZEN into each analysis the config

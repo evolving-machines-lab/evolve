@@ -700,7 +700,7 @@ await evals.analyze(job.id, {
 });
 ```
 
-A prompt file looks like Harbor's own `analyze.txt`. Three tokens are rendered for you — `{trial_path}` (where the trial's tree sits in the analyzer's sandbox), `{task_section}` (the task's paths, or Harbor's sentence for an unavailable task) and `{criteria_guidance}` (one line per rubric criterion). An unknown `{token}` renders empty, `{{` and `}}` write a literal brace, and any other brace text is left as written (Harbor's Python renderer would convert or raise there). The output contract (write `analysis.json` matching the rubric's schema) is appended after your text exactly as Harbor appends it, so a custom prompt shapes *how* the analyzer reads the evidence and can never opt out of the deliverable:
+A prompt file looks like Harbor's own `analyze.txt`. Three tokens are rendered for you — `{trial_path}` (where the trial's tree sits in the analyzer's sandbox), `{task_section}` (the task's paths, or Harbor's sentence for an unavailable task) and `{criteria_guidance}` (one line per rubric criterion). An unknown `{token}` renders empty, `{{` and `}}` write a literal brace, and any other brace text is left as written (Harbor's Python renderer would render it empty, convert it or raise there — `{ x }` empty, `{x!r}` quoted, `{"a": 1}` an error). The output contract (write `analysis.json` matching the rubric's schema) is appended after your text exactly as Harbor appends it, so a custom prompt shapes *how* the analyzer reads the evidence and can never opt out of the deliverable:
 
 ```text
 Judge only whether the agent gamed its reward. The trial is at {trial_path};
