@@ -486,8 +486,9 @@ export interface Rubric {
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
- * wave. `{}` is legal and means "all defaults": glm-5.3-flash over
- * Harbor's default rubric (reward_hacking, task_specification — their
+ * wave. `{}` is legal and means "all defaults": deepseek-v4-flash-vision
+ * at its per-model effort (high) over Harbor's default rubric
+ * (reward_hacking, task_specification — their
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
  * The analyzer always runs the claude-code harness (Harbor's default analyze
@@ -499,20 +500,36 @@ export interface Rubric {
 export interface AnalyzeConfigInput {
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * glm-5.3-flash on this platform's claude roster — a recorded deviation
-   * from Harbor's default analyze model (their cli/analyze.py
-   * `claude-haiku-4-5`): analysis is input-dominated, and flash is the
-   * input-price frontier; name `glm-5.3` (or any roster member) to
-   * escalate. The value speaks the same vocabulary as
-   * `agents[].model_name`: either advertised spelling is accepted and
-   * stored AS GIVEN (the default is the roster alias), the wire id is
-   * resolved only when the analyzer runs, and every stored analysis serves
-   * the spelling it was created under. Must be on the claude roster
-   * (`GET /api/meta`, `harnesses[].models`); anything else is refused at
-   * accept (`invalid_input`, roster in the message).
+   * deepseek-v4-flash-vision on this platform's claude roster (DeepSeek V4
+   * Flash Vision served by Fireworks) — a recorded deviation from Harbor's
+   * default analyze model (their cli/analyze.py `claude-haiku-4-5`):
+   * analysis is input-dominated, and this is the roster's intelligence-per-
+   * input-dollar frontier at ~135 tok/s; `glm-5.3-flash` and `haiku` stay
+   * on the roster as alternatives, `glm-5.3` to escalate. The value speaks
+   * the same vocabulary as `agents[].model_name`: either advertised
+   * spelling is accepted and stored AS GIVEN (the default is the roster
+   * alias), the wire id is resolved only when the analyzer runs, and every
+   * stored analysis serves the spelling it was created under. Must be on
+   * the claude roster (`GET /api/meta`, `agents[].models`); anything else
+   * is refused at accept (`invalid_input`, roster in the message).
    */
   model_name?: string;
   rubric?: Rubric;
+  /**
+   * Reasoning effort the analyzer runs at — the platform's `agents[].
+   * reasoning_effort` vocabulary applied to the analyzer, which IS the
+   * claude harness: the accepted values are `GET /api/meta`'s
+   * `analyze.reasoning_efforts`, an unknown value is refused
+   * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
+   * applies (`analyze.models[].default_reasoning_effort`: high on
+   * deepseek-v4-flash-vision, low on glm-5.3-flash — its thinking is forced
+   * and only a low effort shrinks it — the claude harness default
+   * elsewhere). The effort is always passed to the analyzer explicitly and
+   * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
+   * extension: Harbor's analyze has no effort option; this is the run
+   * door's existing platform vocabulary applied to analyze.
+   */
+  reasoning_effort?: string;
   /**
    * The provider whose sandbox the analyzer boots — the job lineup, the same
    * vocabulary as `JobCreate.sandbox_provider` and held to the same rule: an
@@ -537,6 +554,13 @@ export interface AnalyzeConfigInput {
 export interface AnalyzeConfig {
   model_name: string;
   rubric: Rubric;
+  /**
+   * The effort this policy's analyses run at. Named at create it is served
+   * as stored; when the create named none, this echoes the per-model
+   * default of the day for `model_name` — the value the next enqueue under
+   * this policy stamps (the same nuance as `sandbox_provider` below).
+   */
+  reasoning_effort: string;
   /**
    * The provider this policy's analyses run on. Named at create it is served
    * as stored, forever. When the create named none, this echoes the
@@ -1289,6 +1313,12 @@ export interface TrialAnalysis {
    */
   status: AnalysisStatus;
   model_name: string;
+  /**
+   * The reasoning effort THIS analysis ran at — passed to the analyzer
+   * explicitly, so it is what the model was asked for. Null only on
+   * analyses recorded before the effort was stamped.
+   */
+  reasoning_effort: string | null;
   rubric: Rubric;
   /**
    * 3–5 sentence overview of what happened during the trial (Harbor's
@@ -3363,8 +3393,9 @@ export interface JobsClient {
    * with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
-   * (or `{}`) means the defaults: glm-5.3-flash over Harbor's default
-   * rubric. CANCELLED trials are never analyzed.
+   * (or `{}`) means the defaults: deepseek-v4-flash-vision at its
+   * per-model effort over Harbor's default rubric. CANCELLED trials are
+   * never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
   /**
@@ -4188,6 +4219,18 @@ export interface CapabilityDocument {
     trial: StatusVocabulary;
     import: StatusVocabulary;
     dataset_version: StatusVocabulary;
+  };
+  /**
+   * The trace analyzer's roster and defaults: the model an omitted
+   * `analyze.model_name` takes, the efforts `analyze.reasoning_effort`
+   * accepts (the claude harness's — the analyzer IS that harness), and
+   * every roster model with the effort an omitted `reasoning_effort` takes
+   * for it. Absent on servers predating the field.
+   */
+  analyze?: {
+    default_model: string;
+    reasoning_efforts: string[];
+    models: { alias: string; model_id: string; default_reasoning_effort: string }[];
   };
   limits: {
     job: {

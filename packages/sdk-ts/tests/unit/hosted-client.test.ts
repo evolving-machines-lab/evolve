@@ -3553,6 +3553,7 @@ async function testAnalyzeJob() {
       model_name: "claude-haiku-4-5-20251001",
       rubric: ANALYZE_RUBRIC,
       sandbox_provider: "modal",
+      reasoning_effort: "low",
     });
     const call = fetchCalls[fetchCalls.length - 1];
     assertEqual(call.init?.method, "POST", "uses POST");
@@ -3563,8 +3564,9 @@ async function testAnalyzeJob() {
         model_name: "claude-haiku-4-5-20251001",
         rubric: ANALYZE_RUBRIC,
         sandbox_provider: "modal",
+        reasoning_effort: "low",
       },
-      "the config rides the body verbatim — sandbox_provider included"
+      "the config rides the body verbatim — sandbox_provider and reasoning_effort included"
     );
     // THE RESPONSE IS THE JOB — analyses are not a separate resource.
     assertEqual(job.id, "eval-1", "returns the job body");

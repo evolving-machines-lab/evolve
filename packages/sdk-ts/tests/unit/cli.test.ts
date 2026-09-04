@@ -3737,13 +3737,19 @@ function testBuildJobInputAnalyze() {
       "--analyze-model", "claude-haiku-4-5-20251001",
       "--analyze-rubric", "rubric.json",
       "--analyze-provider", "modal",
+      "--analyze-effort", "low",
     ]),
     () => JSON.stringify(CLI_RUBRIC)
   );
   assertEqual(
     withFields.analyze,
-    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC, sandbox_provider: "modal" },
-    "--analyze-model/--analyze-rubric/--analyze-provider imply --analyze and fill their fields"
+    {
+      model_name: "claude-haiku-4-5-20251001",
+      rubric: CLI_RUBRIC,
+      sandbox_provider: "modal",
+      reasoning_effort: "low",
+    },
+    "--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
   );
 
   // The provider VALUE is the server's to rule (the lineup lives on GET
@@ -3840,7 +3846,7 @@ async function testAnalyzeVerbEndToEnd() {
     });
     const { io, out } = captureIO();
     const code = await runCli(
-      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", ...AUTH],
+      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0 when every analysis completed");
@@ -3848,8 +3854,8 @@ async function testAnalyzeVerbEndToEnd() {
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001", sandbox_provider: "daytona" },
-      "-m/-e ride the body as model_name/sandbox_provider; no rubric key when none given"
+      { model_name: "claude-haiku-4-5-20251001", sandbox_provider: "daytona", reasoning_effort: "low" },
+      "-m/-e/--effort ride the body as model_name/sandbox_provider/reasoning_effort; no rubric key when none given"
     );
     assert(jobReads >= 2, "follows the wave by polling the job");
     assert(
