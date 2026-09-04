@@ -217,6 +217,18 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   watchJob: "jobs.watch",
   downloadJob: "jobs.download",
   uploadJob: "jobs.upload",
+  // The job upload's resumable session door and its read pair (wave 3
+  // A6): jobs.upload() IS the SDK answer for the session operations — it
+  // switches to them automatically above the size threshold, the dataset
+  // publish's own rule — and the read pair are the import verbs.
+  createJobUpload: "jobs.upload",
+  getJobUpload: "jobs.upload",
+  probeJobUpload: "jobs.upload",
+  appendJobUploadChunk: "jobs.upload",
+  deleteJobUpload: "jobs.upload",
+  completeJobUpload: "jobs.upload",
+  listJobImports: "jobs.listImports",
+  getJobImport: "jobs.getImport",
   deleteJob: "jobs.delete",
   resumeJob: "jobs.resume",
   retryJob: "jobs.retry",

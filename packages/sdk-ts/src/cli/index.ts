@@ -18,8 +18,8 @@
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
  * ids-only lists. Exit codes: 0 success (watch: job COMPLETED / publish
- * COMPLETED), 1 runtime/API failure (watch: FAILED or CANCELLED), 2 usage
- * error.
+ * COMPLETED / every analysis completed), 1 runtime/API failure (watch:
+ * FAILED or CANCELLED / any analysis failed), 2 usage error.
  */
 
 import { existsSync, readFileSync, realpathSync } from "fs";
@@ -69,6 +69,8 @@ import type {
   Dataset,
   DatasetFailedTask,
   DatasetImport,
+  JobImport,
+  JobImportProgress,
   DatasetImportProgress,
   DatasetPreflight,
   DatasetSelector,
@@ -330,12 +332,26 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<path>",
     help: "Rubric file for the analyzer (TOML/YAML/JSON, Harbor's {criteria} shape; implies --analyze)",
   },
+  "analyze-prompt": {
+    kind: "string",
+    value: "<path>",
+    help:
+      "Prompt file for the analyzer agent (Harbor's -p/--prompt; replaces the built-in prompt; " +
+      "implies --analyze)",
+  },
   "analyze-provider": {
     kind: "string",
     value: "<provider>",
     help:
       "Sandbox provider the analyzer runs on (implies --analyze; the job lineup, GET /api/meta; " +
       "default: the platform's analysis default)",
+  },
+  "analyze-effort": {
+    kind: "string",
+    value: "<value>",
+    help:
+      "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
+      "default: the per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
   },
   "timeout-multiplier": {
     kind: "number",
@@ -518,6 +534,26 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<id>",
         example: "evolve job regrade cme12ab34 --task tricky-task",
+      },
+      imports: {
+        summary: "List your job imports (uploads) newest first — how an import id is found again",
+        flags: {
+          ...LIST_FLAGS,
+          status: { kind: "string", value: "<QUEUED|RUNNING|COMPLETED|FAILED>", help: "Filter by import status" },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve job imports --status RUNNING",
+      },
+      import: {
+        summary: "Show one job import (an upload's record); --watch follows it to the job or its typed failure",
+        flags: {
+          watch: { kind: "boolean", help: "Poll until the import settles: COMPLETED (the job is printed) or FAILED" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<import-id>",
+        example: "evolve job import 4f1c… --watch",
       },
       download: {
         summary:
@@ -1054,15 +1090,27 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // server-side.
   analyze: {
     summary:
-      "Analyze a terminal job's trial traces against a rubric (server-side; follows the wave to its settled end)",
+      "Analyze a terminal job's trial traces against a rubric (server-side; add --watch to follow the wave)",
     flags: {
       model: {
         kind: "string",
         short: "m",
         value: "<name>",
         help:
-          "Model the analyzer agent runs (default: glm-5.3-flash; glm-5.3 to escalate; " +
-          "must be on the claude roster, GET /api/meta)",
+          "Model the analyzer agent runs (default: deepseek-v4-flash-vision; glm-5.3-flash and " +
+          "haiku as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
+      },
+      // The one option beyond Harbor's analyze trio, recorded as the hosted
+      // extension it is: `run`'s own --effort (the platform's reasoning_effort
+      // vocabulary, GET /api/meta) applied to the analyzer, which IS the claude
+      // harness. Same flag name as `run`; the server refuses an unknown value
+      // exactly as it refuses an arm's.
+      effort: {
+        kind: "string",
+        value: "<value>",
+        help:
+          "Reasoning effort the analyzer runs at (values: GET /api/meta analyze; default: the " +
+          "per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
       },
       rubric: {
         kind: "string",
@@ -1072,6 +1120,15 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
           "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} " +
           "shape; default: Harbor's default rubric — reward_hacking, task_specification)",
       },
+      prompt: {
+        kind: "string",
+        short: "p",
+        value: "<path>",
+        help:
+          "Prompt file for the evaluator agent (Harbor's -p/--prompt; its text replaces the " +
+          "built-in prompt, {trial_path}/{task_section}/{criteria_guidance} rendered). " +
+          "Uses the built-in default if not specified",
+      },
       env: {
         kind: "string",
         short: "e",
@@ -1080,16 +1137,21 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
           "Sandbox provider the analyzer runs on (Harbor's -e/--env; the job lineup, " +
           "GET /api/meta; default: the platform's analysis default)",
       },
+      watch: {
+        kind: "boolean",
+        help:
+          "Poll until every analysis settles (2 s between reads, backing off to 30 s while nothing changes)",
+      },
       quiet: {
         kind: "boolean",
         short: "q",
-        help: "Suppress the progress lines; print the final block only",
+        help: "With --watch: suppress the progress lines, print the final block only",
       },
     },
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
-    example: "evolve analyze cme12ab34 -r rubric.toml",
+    example: "evolve analyze cme12ab34 -r rubric.toml -p prompt.txt --watch",
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
   // cli/main.py); ours is a deliberate subset — no --public/--share-org/
@@ -1099,7 +1161,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // nothing real to do).
   upload: {
     summary:
-      "Upload a Harbor job directory (or its .tar.gz) as a terminal job — Harbor's upload, in reverse",
+      "Upload a Harbor job directory (or its .tar.gz, or a public url of one) as a terminal job — Harbor's upload, in reverse; follows the import to the job",
     flags: {
       dataset: {
         kind: "string",
@@ -1107,8 +1169,17 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<name[@version]>",
         help: "Link the uploaded trials to a published dataset version by task name",
       },
+      from: {
+        kind: "string",
+        value: "<url>",
+        help: "A public https url of the job archive (.tar.gz) the SERVER fetches itself — no local bytes (instead of <job_dir>)",
+      },
+      "no-wait": {
+        kind: "boolean",
+        help: "Return after the 202 with the import id instead of following the ingest to the job (re-attach with: evolve job import <id> --watch)",
+      },
     },
-    minPositionals: 1,
+    minPositionals: 0,
     maxPositionals: 1,
     positionalUsage: "<job_dir>",
     example: "evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1",
@@ -2126,6 +2197,34 @@ function loadAgentConfigFile(
 }
 
 /**
+ * Read a local prompt file for `analyze -p` / `run --analyze-prompt` — Harbor's
+ * `-p/--prompt` (their cli/analyze.py:94-99), whose TEXT replaces the built-in
+ * analyze.txt as the analyzer's instruction template (analyzer.py:130-134
+ * `prompt_path.read_text()`). Read verbatim, no parsing: the tokens
+ * (`{trial_path}`, `{task_section}`, `{criteria_guidance}`) are rendered
+ * server-side. Ruled here: the file must be readable and non-empty; the
+ * server owns the bound (32,000 characters) and refuses it typed
+ * (`invalid_input` naming `analyze.prompt`).
+ */
+export function loadPromptFile(
+  path: string,
+  read: (path: string) => string = (p) => readFileSync(p, "utf-8")
+): string {
+  let text: string;
+  try {
+    text = read(path);
+  } catch (error) {
+    throw new CliUsageError(`--prompt: cannot read ${path}: ${(error as Error).message}`);
+  }
+  if (text.trim().length === 0) {
+    throw new CliUsageError(
+      `--prompt: ${path} is empty — the analyzer's prompt file must carry the instruction text`
+    );
+  }
+  return text;
+}
+
+/**
  * Read and parse a local rubric file for `analyze -r` / `run --analyze-rubric`
  * into the spec's Rubric shape — Harbor's own loader law (their
  * cli/quality_checker/models.py load_rubric): TOML, YAML, or JSON by
@@ -2444,19 +2543,24 @@ export function buildJobInput(
   if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
 
   // Embedded analysis: PRESENCE of the object is the switch (the spec's
-  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the four
+  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the five
   // flags arms it — --analyze bare means "all defaults" — and the sub-flags
   // override the file's fields one by one, the same merge rule as retry.
   const analyzeArmed =
     f.analyze === true ||
     f["analyze-model"] !== undefined ||
     f["analyze-rubric"] !== undefined ||
+    f["analyze-prompt"] !== undefined ||
     f["analyze-provider"] !== undefined ||
+    f["analyze-effort"] !== undefined ||
     base.analyze !== undefined;
   const analyze: AnalyzeConfigInput = { ...(base.analyze ?? {}) };
   if (f["analyze-model"] !== undefined) analyze.model_name = String(f["analyze-model"]);
   if (f["analyze-rubric"] !== undefined) {
     analyze.rubric = loadRubricFile(String(f["analyze-rubric"]), read);
+  }
+  if (f["analyze-prompt"] !== undefined) {
+    analyze.prompt = loadPromptFile(String(f["analyze-prompt"]), read);
   }
   // Unlike -e/--env, the value rides verbatim: the analyzer's provider lineup
   // is the server's roster (GET /api/meta), and its refusal (`invalid_input`,
@@ -2464,6 +2568,9 @@ export function buildJobInput(
   if (f["analyze-provider"] !== undefined) {
     analyze.sandbox_provider = String(f["analyze-provider"]) as EvalSandboxProvider;
   }
+  // Same verbatim ride as --effort on the arms: the server's effort
+  // vocabulary (GET /api/meta) is the one copy, and its refusal names it.
+  if (f["analyze-effort"] !== undefined) analyze.reasoning_effort = String(f["analyze-effort"]);
 
   // Timeout multipliers: Harbor's five flags verbatim (their
   // cli/jobs.py:378-424), flat on the body exactly as their JobConfig
@@ -4291,6 +4398,7 @@ export function analysisResultLines(runs: Trial[]): string[] {
 
 async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
+  const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   const client = jobs(clientConfig(inv));
   const id = await resolveJobId(inv, inv.positionals[0]);
@@ -4300,13 +4408,36 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const req: AnalyzeConfigInput = {};
   if (inv.flags.model !== undefined) req.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) req.rubric = loadRubricFile(String(inv.flags.rubric));
+  // -p rides as the file's TEXT (Harbor's -p/--prompt read_text()); the
+  // server owns the bound and the rendering.
+  if (inv.flags.prompt !== undefined) req.prompt = loadPromptFile(String(inv.flags.prompt));
   // -e rides verbatim, like --analyze-provider on run: the analyzer's
   // provider lineup is the server's roster, and its `invalid_input` refusal
   // names it — no client-side copy to drift.
   if (inv.flags.env !== undefined) {
     req.sandbox_provider = String(inv.flags.env) as EvalSandboxProvider;
   }
+  // --effort rides verbatim too (the run verb's own flag applied to the
+  // analyzer): the server's effort vocabulary is the one copy.
+  if (inv.flags.effort !== undefined) req.reasoning_effort = String(inv.flags.effort);
+  // The 202 IS the queued batch — the job body, `stats.analysis` counting
+  // the enqueued rows as pending — and the verb returns with it, the shape
+  // of `job start` / `run`: Harbor's hosted launch prints the accepted job
+  // and returns (their cli/hosted_jobs.py run_hosted_launch), and the wait
+  // is a separate poll (their hub.py status_cmd: "polling this command is
+  // the point of --json"). --watch is that poll, opted in.
   const accepted = await client.analyze(id, req);
+  if (!watch) {
+    if (json) {
+      io.out(JSON.stringify(accepted));
+    } else {
+      for (const line of jobLines(accepted)) io.out(line);
+      io.out("");
+      io.out(`Follow it with: evolve job show ${accepted.id}`);
+    }
+    return 0;
+  }
+
   if (json) {
     io.out(JSON.stringify({ kind: "analysis.accepted", job: accepted }));
   } else if (!quiet) {
@@ -4450,25 +4581,202 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   }
 }
 
+/** The import id with its status, receiving marked — the job-import twin of statusWithReceiving. */
+function jobImportStatus(imported: JobImport): string {
+  return imported.receiving ? `${imported.status} (receiving)` : imported.status;
+}
+
+/** The detail rows of one job import (`job import <id>`, and the follow's settled record). */
+function jobImportLines(imported: JobImport): string[] {
+  const rows: string[][] = [
+    ["id", imported.id],
+    ["status", jobImportStatus(imported)],
+  ];
+  if (imported.source !== null) {
+    rows.push([
+      "source",
+      imported.source.type === "archive"
+        ? `archive (sha256:${imported.source.sha256.slice(0, 12)}…)`
+        : imported.source.type === "archive_url"
+          ? `url ${imported.source.url}`
+          : `hub job ${imported.source.job_id}`,
+    ]);
+  }
+  if (imported.dataset !== null) rows.push(["dataset", imported.dataset]);
+  if (imported.job_id !== null) rows.push(["job", imported.job_id]);
+  if (imported.n_trials_uploaded !== null) rows.push(["trials", String(imported.n_trials_uploaded)]);
+  if (imported.progress !== null) rows.push(["phase", imported.progress.phase]);
+  if (imported.failure !== null) rows.push(["failure", `${imported.failure.code}: ${imported.failure.message}`]);
+  return table(rows);
+}
+
+/** One line per observed status change of a job import under --watch. */
+function jobImportStatusLine(imported: JobImport): string {
+  const detail =
+    imported.failure !== null ? truncate(`${imported.failure.code}: ${imported.failure.message}`, 140) : "";
+  return `status ${jobImportStatus(imported).padEnd(20)} ${detail}`.trimEnd();
+}
+
+/** One line per observed phase change of a job import under --watch. */
+function jobImportProgressLine(progress: JobImportProgress, nowMs = Date.now()): string {
+  const elapsed = fmtDurationMs(nowMs - Date.parse(progress.started_at));
+  return `phase  ${progress.phase.padEnd(20)} ${elapsed} elapsed`;
+}
+
 /**
- * `evolve upload <job_dir>` — Harbor's top-level upload verb, in reverse: the
- * SDK validates the directory gate (their sentences), packs, and POSTs; this
- * handler only renders the created record. The next step for an uploaded job
- * is analysis — it is already terminal, so there is nothing to watch.
+ * Follow a job import to its settle and render the outcome: COMPLETED
+ * prints the ingested JOB (the record `evolve upload` printed before the
+ * door became asynchronous) and the analyze hint; FAILED prints the typed
+ * failure and exits 1 — the same exit and the same code a synchronous
+ * refusal once produced, one hop later. In --json mode the follow is silent
+ * and ONE document is printed at the end: the Job on success, the failure
+ * envelope on FAILED — exactly the shapes scripts branched on before.
+ */
+async function followJobImport(
+  inv: Invocation,
+  imported: JobImport,
+  io: CliIO,
+  opening: "accepted" | "attached"
+): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const json = inv.flags.json === true;
+  if (!json) {
+    io.out(
+      opening === "accepted"
+        ? `Upload accepted: import ${imported.id} ${jobImportStatus(imported)} — watching…`
+        : `Import ${imported.id} ${jobImportStatus(imported)} — watching…`
+    );
+  }
+  const final = await client.watchImport(imported.id, {
+    onStatus: (current) => {
+      if (!json) io.out(jobImportStatusLine(current));
+    },
+    onProgress: (progress) => {
+      if (!json) io.out(jobImportProgressLine(progress));
+    },
+  });
+  if (final.status === "FAILED" || final.job_id === null) {
+    const failure = final.failure ?? {
+      code: "import_failed",
+      message: "the import settled without a job and without a recorded failure",
+    };
+    if (json) io.out(JSON.stringify({ error: failure }));
+    io.err(`Error: ${failure.message}`);
+    return 1;
+  }
+  const job = await client.get(final.job_id);
+  if (json) {
+    io.out(JSON.stringify(job));
+    return 0;
+  }
+  io.out("");
+  for (const line of jobLines(job)) io.out(line);
+  io.out("");
+  io.out(`Analyze it with: evolve analyze ${job.id}`);
+  return 0;
+}
+
+/**
+ * `evolve upload <job_dir>` — Harbor's top-level upload verb, in reverse:
+ * the SDK validates the directory gate (their sentences), packs to a temp
+ * file, and streams; the door answers 202 with the job import, and this
+ * handler FOLLOWS it to the ingested job by default (the record the verb
+ * always printed), or prints the import with `--no-wait`. `--from <url>`
+ * hands the server a public archive url instead of local bytes (the
+ * dataset publish verb's own flag). Transfer progress prints once per 10 %
+ * in human mode; a resumable session's import id prints as soon as it is
+ * registered so a watcher can re-attach from anywhere.
  */
 async function cmdUpload(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
+  const json = inv.flags.json === true;
   const dataset = inv.flags.dataset as string | undefined;
-  const created = await client.upload(inv.positionals[0], {
+  const from = inv.flags.from as string | undefined;
+  const positional = inv.positionals[0];
+  if (from !== undefined && positional !== undefined) {
+    throw new CliUsageError('"upload" takes EXACTLY ONE source: <job_dir>, or --from <url>');
+  }
+  if (from === undefined && positional === undefined) {
+    throw new CliUsageError('"upload" needs a source: <job_dir> (or its .tar.gz), or --from <url>');
+  }
+  if (from !== undefined && !from.trim().startsWith("https://")) {
+    throw new CliUsageError(`"--from" takes a public https url of a job archive (got "${from}")`);
+  }
+  let lastTenth = -1;
+  const imported = await client.upload(from !== undefined ? { archive_url: from.trim() } : positional, {
     ...(dataset !== undefined ? { dataset } : {}),
+    onUploadProgress: (sent, total) => {
+      if (json) return;
+      const tenth = total > 0 ? Math.floor((sent / total) * 10) : 10;
+      if (tenth === lastTenth) return;
+      lastTenth = tenth;
+      io.out(`upload ${sent}/${total} (${Math.min(100, tenth * 10)}%)`);
+    },
+    onRegistered: (importId) => {
+      if (json) return;
+      io.out(`Registered import ${importId} — re-attach anytime with: evolve job import ${importId} --watch`);
+    },
   });
-  if (inv.flags.json === true) {
-    io.out(JSON.stringify(created));
+  if (inv.flags["no-wait"] === true) {
+    if (json) {
+      io.out(JSON.stringify(imported));
+      return 0;
+    }
+    for (const line of jobImportLines(imported)) io.out(line);
+    io.out("");
+    io.out(`Follow it with: evolve job import ${imported.id} --watch`);
     return 0;
   }
-  for (const line of jobLines(created)) io.out(line);
-  io.out("");
-  io.out(`Analyze it with: evolve analyze ${created.id}`);
+  return followJobImport(inv, imported, io, "accepted");
+}
+
+const JOB_IMPORT_COLUMNS: ListColumn<JobImport>[] = [
+  { key: "id", header: "ID", cell: (i) => i.id },
+  { key: "status", header: "STATUS", cell: jobImportStatus },
+  { key: "job", header: "JOB", cell: (i) => i.job_id ?? "-" },
+  { key: "trials", header: "TRIALS", cell: (i) => (i.n_trials_uploaded === null ? "-" : String(i.n_trials_uploaded)) },
+  { key: "dataset", header: "DATASET", cell: (i) => i.dataset ?? "-" },
+  { key: "created", header: "CREATED", cell: (i) => i.created_at ?? "" },
+];
+const JOB_IMPORT_DEFAULT_COLUMNS = ["id", "status", "job", "trials", "dataset", "created"];
+
+/** `evolve job imports` — the caller's job imports, newest first. */
+async function cmdJobImports(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, JOB_IMPORT_COLUMNS)) return 0;
+  const client = jobs(clientConfig(inv));
+  const status = inv.flags.status as string | undefined;
+  if (status !== undefined && !["QUEUED", "RUNNING", "COMPLETED", "FAILED"].includes(status)) {
+    throw new CliUsageError(`"--status" must be one of QUEUED, RUNNING, COMPLETED, FAILED (got "${status}")`);
+  }
+  const page = await client.listImports({
+    ...pageOptions(inv),
+    ...(status !== undefined ? { status: status as JobImport["status"] } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (page.items.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No job imports.");
+    return 0;
+  }
+  renderList(inv, io, page.items, JOB_IMPORT_COLUMNS, JOB_IMPORT_DEFAULT_COLUMNS, (i) => i.id);
+  if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
+    io.out(`\nMore: evolve job imports --cursor ${page.nextCursor}`);
+  }
+  return 0;
+}
+
+/** `evolve job import <id>` — one job import; `--watch` follows it to the job or its typed failure. */
+async function cmdJobImport(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const imported = await client.getImport(inv.positionals[0]);
+  if (inv.flags.watch === true) return followJobImport(inv, imported, io, "attached");
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(imported));
+    return 0;
+  }
+  for (const line of jobImportLines(imported)) io.out(line);
   return 0;
 }
 
@@ -5939,10 +6247,15 @@ async function cmdAuthOrgList(inv: Invocation, io: CliIO): Promise<number> {
  */
 function orgDetailLines(org: OrganizationDetail): string[] {
   const { quota, usage } = org;
+  // Spend and budget are ONE meter — the gateway's, on the UTC calendar
+  // month — so the fraction is honest; a spend the platform holds no copy
+  // of prints `unavailable`, never $0.00, and a held copy says how old it is.
+  const spend = usage.month_spend_usd === null ? "unavailable" : fmtUsd(usage.month_spend_usd);
+  const asOf = usage.month_spend_as_of === null ? "" : ` (as of ${usage.month_spend_as_of})`;
   const budget =
     quota.monthly_budget_usd === null
-      ? `${fmtUsd(usage.month_spend_usd)} / no budget`
-      : `${fmtUsd(usage.month_spend_usd)} / ${fmtUsd(quota.monthly_budget_usd)}`;
+      ? `${spend} / no budget${asOf}`
+      : `${spend} / ${fmtUsd(quota.monthly_budget_usd)}${asOf}`;
   const rows: string[][] = [
     ["slug", org.slug],
     ["display name", org.display_name],
@@ -6123,6 +6436,8 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job retry": cmdJobRetry,
   "job regrade": cmdJobRegrade,
   "job download": cmdJobDownload,
+  "job imports": cmdJobImports,
+  "job import": cmdJobImport,
   "job grep": cmdJobGrep,
   "trial show": cmdTrialShow,
   "trial trace": cmdTrialTrace,

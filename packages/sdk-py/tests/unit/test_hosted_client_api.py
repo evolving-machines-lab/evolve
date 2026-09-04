@@ -68,6 +68,9 @@ from evolve import (
     OrgUsage,
     JobCounts,
     JobDeleteResult,
+    JobImport,
+    JobImportFailure,
+    JobImportSource,
     JobFailure,
     NoActiveVersionError,
     SourceJob,
@@ -174,6 +177,21 @@ class FakeUrlopen:
 
 
 CONFIG = HostedClientConfig(api_key='test-key', base_url='http://localhost:3000')
+
+
+JOB_IMPORT_ACCEPTED = {
+    'id': 'imp-1',
+    'status': 'QUEUED',
+    'receiving': False,
+    'source': {'type': 'archive', 'sha256': 'ab' * 32},
+    'dataset': None,
+    'job_id': None,
+    'n_trials_uploaded': None,
+    'failure': None,
+    'progress': None,
+    'created_at': '2026-09-04T10:00:00.000Z',
+    'updated_at': '2026-09-04T10:00:00.000Z',
+}
 
 
 def _settle_detail_body(*, name='my-set', version='1.2', state, active=False):
@@ -290,6 +308,7 @@ ANALYZED_JOB = {
     'analyze': {
         'model_name': 'claude-haiku-4-5-20251001',
         'rubric': ANALYZE_RUBRIC,
+        'prompt': None,
         'sandbox_provider': 'daytona',
     },
     'stats': {
@@ -2150,10 +2169,11 @@ class TestJobs:
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['analyze'] == {'model_name': 'claude-haiku-4-5-20251001'}
         # The resolved echo carries the provider the create left to the
-        # platform's analysis default.
+        # platform's analysis default, and the prompt it left to the built-in.
         assert job.analyze == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'prompt': None,
             'sandbox_provider': 'daytona',
         }
 
@@ -3129,22 +3149,29 @@ class TestJobs:
                 'job-1',
                 model_name='claude-haiku-4-5-20251001',
                 rubric=ANALYZE_RUBRIC,
+                prompt='Only reward hacking matters. {criteria_guidance}',
                 sandbox_provider='modal',
+                reasoning_effort='low',
             )
 
         assert fake.requests[0].get_method() == 'POST'
         assert fake.requests[0].full_url.endswith('/api/jobs/job-1/analyze')
         sent = json.loads(fake.requests[0].data.decode('utf-8'))
+        # The prompt is Harbor's -p/--prompt file as TEXT; it rides verbatim.
         assert sent == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'prompt': 'Only reward hacking matters. {criteria_guidance}',
             'sandbox_provider': 'modal',
+            'reasoning_effort': 'low',
         }
         assert job.id == 'job-1'
-        # The resolved echo maps verbatim — the provider echo rides it.
+        # The resolved echo maps verbatim — the provider echo and the prompt
+        # (None = the built-in) ride it.
         assert job.analyze == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'prompt': None,
             'sandbox_provider': 'daytona',
         }
         assert job.stats['analysis'] == ANALYZED_JOB['stats']['analysis']
@@ -3222,6 +3249,146 @@ class TestJobs:
         assert final.stats['analysis']['n_pending'] == 0
 
     @pytest.mark.asyncio
+    async def test_watch_analysis_backs_off_while_unchanged(self):
+        """The poll interval doubles while the tally stands still — up to the
+        30-s ceiling the job watch's reconnect uses — and snaps back to the
+        initial interval on every tally change; no new parameter."""
+
+        def tally_of(n_completed, n_pending):
+            return {
+                **ANALYZED_JOB,
+                'stats': {
+                    **ANALYZED_JOB['stats'],
+                    'analysis': {
+                        'n_completed': n_completed,
+                        'n_failed': 0,
+                        'n_pending': n_pending,
+                        'cost_usd': None,
+                        'checks': {},
+                    },
+                },
+            }
+
+        sequence = [
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(1, 1),
+            tally_of(1, 1),
+            tally_of(2, 0),
+        ]
+        reads = {'n': 0}
+
+        def fake(request, timeout=None):
+            body = sequence[min(reads['n'], len(sequence) - 1)]
+            reads['n'] += 1
+            return FakeResponse(body, {}, 200)
+
+        slept = []
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+
+        changes = []
+        with patch('evolve._http.urlopen', fake), patch('evolve.hosted.asyncio.sleep', fake_sleep):
+            final = await jobs_factory(CONFIG).watch_analysis(
+                'job-1',
+                on_stats=lambda job: changes.append(job.stats['analysis']['n_pending']),
+                poll_interval_s=2.0,
+            )
+
+        assert reads['n'] == 8
+        assert changes == [2, 1, 0]
+        assert final.stats['analysis']['n_pending'] == 0
+        # 2 · 4 · 8 · 16 · 30 (the ceiling) — the change at read 6 resets to
+        # 2 — 4, then the settled read ends the watch without a sleep.
+        assert slept == [2.0, 4.0, 8.0, 16.0, 30.0, 2.0, 4.0]
+
+    @pytest.mark.asyncio
+    async def test_watch_analysis_timeout_is_bounded_under_backoff(self):
+        """``timeout_s`` bounds the whole watch: the last sleep before the
+        deadline is clamped to the time left, so the TimeoutError lands ON
+        the deadline, never one backoff step (up to 30 s) after it. The
+        doubling state itself is not clamped."""
+        body = {
+            **ANALYZED_JOB,
+            'stats': {
+                **ANALYZED_JOB['stats'],
+                'analysis': {
+                    'n_completed': 0,
+                    'n_failed': 0,
+                    'n_pending': 3,
+                    'cost_usd': None,
+                    'checks': {},
+                },
+            },
+        }
+        clock = {'t': 0.0}
+        slept = []
+
+        def fake(request, timeout=None):
+            return FakeResponse(body, {}, 200)
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+            clock['t'] += seconds
+
+        with patch('evolve._http.urlopen', fake), patch(
+            'evolve.hosted.asyncio.sleep', fake_sleep
+        ), patch('evolve.hosted.time.monotonic', lambda: clock['t']):
+            with pytest.raises(TimeoutError):
+                await jobs_factory(CONFIG).watch_analysis(
+                    'job-1', poll_interval_s=2.0, timeout_s=45.0
+                )
+
+        assert clock['t'] == 45.0
+        # 2 + 4 + 8 + 16 = 30 s elapsed; the next step would be 30 s but only
+        # 15 s remain, so the sleep is 15 s and the deadline read raises.
+        assert slept == [2.0, 4.0, 8.0, 16.0, 15.0]
+
+    @pytest.mark.asyncio
+    async def test_watch_analysis_rate_limit_sleep_is_bounded_by_the_deadline(self):
+        """The 429 sleep honours the server's Retry-After but never past the
+        deadline: with every read rate-limited at ``retryAfterSec`` 20 and a
+        45-s ``timeout_s``, the third sleep is clamped to the 5 s left and
+        the TimeoutError lands ON the deadline, not one Retry-After after."""
+        import io
+        import urllib.error
+
+        clock = {'t': 0.0}
+        slept = []
+
+        def always_rate_limited(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 429, 'Too Many Requests', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'rate_limited',
+                    'message': 'slow down',
+                    'retryAfterSec': 20.0,
+                }}).encode('utf-8')),
+            )
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+            clock['t'] += seconds
+
+        with patch('evolve._http.urlopen', always_rate_limited), patch(
+            'evolve.hosted.asyncio.sleep', fake_sleep
+        ), patch('evolve.hosted.time.monotonic', lambda: clock['t']):
+            with pytest.raises(TimeoutError):
+                await jobs_factory(CONFIG).watch_analysis(
+                    'job-1', poll_interval_s=2.0, timeout_s=45.0
+                )
+
+        assert clock['t'] == 45.0
+        # Retry-After 20 beats the 2 / 4 / 8 backoff on the first two sleeps
+        # (40 s elapsed); only 5 s remain before the third, so it is clamped
+        # and the deadline check on the next 429 raises.
+        assert slept == [20.0, 20.0, 5.0]
+
+    @pytest.mark.asyncio
     async def test_download_bytes_and_streamed_file(self, tmp_path):
         archive = gzip.compress(json.dumps({'job': {'id': 'job-1'}}).encode('utf-8'))
         headers = {
@@ -3279,20 +3446,12 @@ class TestJobs:
 
         job_dir = tmp_path / 'job'
         self._write_job_dir(job_dir)
-        uploaded_body = {
-            **JOB_SUMMARY,
-            'id': 'job-up1',
-            'status': 'COMPLETED',
-            'upload': {
-                'original_job_id': 'orig-123',
-                'original_job_name': '2026-08-27__12-00-00',
-                'uploaded_at': '2026-08-28T10:00:00.000Z',
-            },
-            'finished_at': '2026-08-28T10:00:00.000Z',
-        }
-        fake = FakeUrlopen([('/api/jobs/upload', uploaded_body)])
+        fake = FakeUrlopen([('/api/jobs/upload', JOB_IMPORT_ACCEPTED, {}, 202)])
+        progress = []
         with patch('evolve._http.urlopen', fake):
-            job = await jobs_factory(CONFIG).upload(str(job_dir))
+            imported = await jobs_factory(CONFIG).upload(
+                str(job_dir), on_upload_progress=lambda sent, total: progress.append((sent, total)),
+            )
 
         request = fake.requests[0]
         assert request.full_url.endswith('/api/jobs/upload')
@@ -3305,29 +3464,51 @@ class TestJobs:
         reference = tmp_path / 'reference.tar.gz'
         _tar_gzip_directory_to_file(str(job_dir), str(reference))
         assert parts['archive'] == reference.read_bytes()
+        assert progress and progress[-1][0] == progress[-1][1]
 
-        assert job.id == 'job-up1'
-        assert job.status == 'COMPLETED'
-        assert job.upload == UploadProvenance(
-            original_job_id='orig-123',
-            original_job_name='2026-08-27__12-00-00',
-            uploaded_at='2026-08-28T10:00:00.000Z',
-            reported_totals=None,
-        )
+        # THE ANSWER IS THE IMPORT, not the job: the door moved the bytes
+        # and a worker ingests them — job_id is None until it settles.
+        assert isinstance(imported, JobImport)
+        assert imported.id == 'imp-1'
+        assert imported.status == 'QUEUED'
+        assert imported.receiving is False
+        assert imported.source == JobImportSource(type='archive', sha256='ab' * 32)
+        assert imported.job_id is None
+        assert imported.failure is None
 
     @pytest.mark.asyncio
     async def test_upload_sends_the_dataset_hint_before_the_archive(self, tmp_path):
         job_dir = tmp_path / 'job'
         self._write_job_dir(job_dir)
-        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_SUMMARY, 'id': 'job-up1'})])
+        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_IMPORT_ACCEPTED, 'dataset': 'deep-swe@1.1'}, {}, 202)])
         with patch('evolve._http.urlopen', fake):
-            await jobs_factory(CONFIG).upload(str(job_dir), dataset='deep-swe@1.1')
+            imported = await jobs_factory(CONFIG).upload(str(job_dir), dataset='deep-swe@1.1')
 
         parts = _multipart_parts(fake.requests[0])
         # Metadata first, so the server can refuse a bad hint before receiving
         # the upload — the same order every multipart route here keeps.
         assert list(parts) == ['dataset', 'archive']
         assert parts['dataset'] == b'deep-swe@1.1'
+        assert imported.dataset == 'deep-swe@1.1'
+
+    @pytest.mark.asyncio
+    async def test_upload_archive_url_hands_the_server_a_url_and_no_bytes(self):
+        body = {**JOB_IMPORT_ACCEPTED, 'id': 'imp-url',
+                'source': {'type': 'archive_url', 'url': 'https://archives.example.com/job.tar.gz'}}
+        fake = FakeUrlopen([('/api/jobs/upload', body, {}, 202)])
+        with patch('evolve._http.urlopen', fake):
+            imported = await jobs_factory(CONFIG).upload(
+                archive_url='https://archives.example.com/job.tar.gz', dataset='deep-swe',
+            )
+        parts = _multipart_parts(fake.requests[0])
+        assert list(parts) == ['dataset', 'archive_url']
+        assert parts['archive_url'] == b'https://archives.example.com/job.tar.gz'
+        assert imported.source == JobImportSource(type='archive_url', url='https://archives.example.com/job.tar.gz')
+
+        with pytest.raises(ValueError):
+            await jobs_factory(CONFIG).upload()  # no source
+        with pytest.raises(ValueError):
+            await jobs_factory(CONFIG).upload('dir', archive_url='https://x')  # two sources
 
     @pytest.mark.asyncio
     async def test_upload_refuses_a_non_job_directory_with_harbors_sentences(self, tmp_path):
@@ -3362,12 +3543,125 @@ class TestJobs:
         packed = gzip.compress(b'the archive the server built')
         archive_path = tmp_path / 'job-job-1-results.tar.gz'
         archive_path.write_bytes(packed)
-        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_SUMMARY, 'id': 'job-up2'})])
+        fake = FakeUrlopen([('/api/jobs/upload', JOB_IMPORT_ACCEPTED, {}, 202)])
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).upload(str(archive_path))
 
         parts = _multipart_parts(fake.requests[0])
         assert parts['archive'] == packed  # byte-for-byte, never re-packed
+
+    @pytest.mark.asyncio
+    async def test_upload_over_the_switch_rides_the_job_session_door(self, tmp_path, monkeypatch):
+        """The dataset publish's own switch, on the job door's path: a KB
+        fixture rides the resumable sessions when the threshold is lowered,
+        opening on /api/jobs/upload/uploads (never the classic door), and the
+        register-first import id is handed over before the first chunk."""
+        import sys
+
+        hosted = sys.modules['evolve.hosted']
+        job_dir = tmp_path / 'job'
+        self._write_job_dir(job_dir)
+        monkeypatch.setattr(hosted, 'RESUMABLE_UPLOAD_THRESHOLD_BYTES', 16)
+        seen = []
+        received = {'bytes': 0}
+
+        class SessionResponse:
+            def __init__(self, status, body, headers=None):
+                self.status = status
+                self._body = json.dumps(body).encode('utf-8') if body is not None else b''
+                self.headers = headers or {}
+
+            def read(self):
+                return self._body
+
+            def getheader(self, name, default=None):
+                return self.headers.get(name, default)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            url = request.full_url
+            method = request.get_method()
+            seen.append((method, url))
+            if method == 'POST' and url.endswith('/api/jobs/upload/uploads'):
+                return SessionResponse(201, {
+                    'id': 'up-1', 'state': 'RECEIVING', 'offset': 0, 'size': 0,
+                    'import_id': 'imp-9', 'chunk_min_bytes': 1, 'chunk_max_bytes': 33554432,
+                })
+            if method == 'PATCH':
+                received['bytes'] += len(request.data)
+                return SessionResponse(204, None, {'Upload-Offset': str(received['bytes'])})
+            if method == 'POST' and url.endswith('/api/jobs/upload/uploads/up-1/complete'):
+                return SessionResponse(202, {**JOB_IMPORT_ACCEPTED, 'id': 'imp-9'})
+            raise AssertionError(f'unexpected {method} {url}')
+
+        registered = []
+        with patch('evolve._http.urlopen', fake_urlopen):
+            imported = await jobs_factory(CONFIG).upload(
+                str(job_dir), on_registered=registered.append,
+            )
+        assert seen[0][0] == 'POST' and seen[0][1].endswith('/api/jobs/upload/uploads')
+        assert any(m == 'PATCH' and u.endswith('/api/jobs/upload/uploads/up-1') for m, u in seen)
+        assert seen[-1][1].endswith('/api/jobs/upload/uploads/up-1/complete')
+        assert not any(u.endswith('/api/jobs/upload') for _, u in seen)
+        assert registered == ['imp-9']
+        assert imported.id == 'imp-9'
+
+    @pytest.mark.asyncio
+    async def test_get_list_and_watch_import(self):
+        running = {**JOB_IMPORT_ACCEPTED, 'status': 'RUNNING', 'progress': {
+            'phase': 'extracting', 'started_at': '2026-09-04T10:00:00.000Z',
+            'phases': [{'name': 'fetching', 'started_at': '2026-09-04T10:00:00.000Z',
+                        'completed_at': '2026-09-04T10:00:01.000Z'},
+                       {'name': 'extracting', 'started_at': '2026-09-04T10:00:01.000Z'}],
+        }}
+        completed = {**JOB_IMPORT_ACCEPTED, 'status': 'COMPLETED', 'job_id': 'job-up1', 'n_trials_uploaded': 2}
+        fake = FakeUrlopen([
+            ('/api/jobs/imports/imp-1', running),
+            ('/api/jobs/imports?', {'items': [completed], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = jobs_factory(CONFIG)
+            one = await client.get_import('imp-1')
+            assert one.status == 'RUNNING'
+            assert one.progress.phase == 'extracting'
+            assert one.progress.phases[0].completed_at == '2026-09-04T10:00:01.000Z'
+            page = await client.list_imports(status='COMPLETED')
+            assert page.items[0].job_id == 'job-up1'
+            assert 'status=COMPLETED' in fake.requests[-1].full_url
+
+        # The watch: RUNNING -> COMPLETED, on_status per change, on_progress
+        # per phase-record change, the settle is the COMPLETED import.
+        sequence = [running, running, completed]
+        calls = {'n': 0}
+
+        class Seq:
+            def __call__(self, request, timeout=None):
+                body = sequence[min(calls['n'], len(sequence) - 1)]
+                calls['n'] += 1
+                return FakeResponse(body, {}, 200)
+
+        statuses, phases = [], []
+        with patch('evolve._http.urlopen', Seq()):
+            final = await jobs_factory(CONFIG).watch_import(
+                'imp-w', poll_interval_s=0.001,
+                on_status=lambda i: statuses.append(i.status),
+                on_progress=lambda p, i: phases.append(p.phase),
+            )
+        assert final.status == 'COMPLETED' and final.job_id == 'job-up1'
+        assert statuses == ['RUNNING', 'COMPLETED']
+        assert phases == ['extracting']
+
+        failed = {**JOB_IMPORT_ACCEPTED, 'status': 'FAILED',
+                  'failure': {'code': 'invalid_trial', 'message': 'trial "t1": bad', 'details': {'trial': 't1'}}}
+        with patch('evolve._http.urlopen', FakeUrlopen([('/api/jobs/imports/imp-f', failed)])):
+            settled = await jobs_factory(CONFIG).watch_import('imp-f', poll_interval_s=0.001)
+        assert settled.status == 'FAILED'
+        assert settled.failure == JobImportFailure(code='invalid_trial', message='trial "t1": bad', details={'trial': 't1'})
 
     @pytest.mark.asyncio
     async def test_upload_surfaces_typed_refusals(self, tmp_path):
@@ -4731,6 +5025,7 @@ class TestOrgs:
             'in_flight_analyses': 1,
             'active_sessions': 0,
             'month_spend_usd': 12.5,
+            'month_spend_as_of': '2026-08-15T11:58:00.000Z',
         },
     }
 
@@ -4794,6 +5089,7 @@ class TestOrgs:
             'in_flight_analyses': 1,
             'active_sessions': 5,
             'month_spend_usd': 12.5,
+            'month_spend_as_of': '2026-08-15T11:58:00.000Z',
         }
         fake = FakeUrlopen([('/api/orgs/widgets-inc', {
             'org_id': 'org-2', 'slug': 'widgets-inc', 'display_name': 'Widgets',
@@ -4828,11 +5124,26 @@ class TestOrgs:
                 detail.quota.max_concurrent_sandboxes_modal) == (200, 60)
         assert detail.usage.queued_trials == 40
         assert detail.usage.month_spend_usd == 12.5
+        assert detail.usage.month_spend_as_of == '2026-08-15T11:58:00.000Z'
 
         fake = FakeUrlopen([('/api/orgs/team%2Fwith%20slash', self.ORG_DETAIL)])
         with patch('evolve._http.urlopen', fake):
             await orgs_factory(CONFIG).get('team/with slash')
         assert fake.requests[0].full_url.endswith('/api/orgs/team%2Fwith%20slash')
+
+    @pytest.mark.asyncio
+    async def test_get_keeps_a_null_month_meter_null_never_zero(self):
+        """The gateway's month meter is nullable on the wire: no copy held
+        reads None — an unknown is not a zero — and its stamp is None with it;
+        the counts beside it are untouched."""
+        body = dict(self.ORG_DETAIL)
+        body['usage'] = {**self.ORG_DETAIL['usage'], 'month_spend_usd': None, 'month_spend_as_of': None}
+        fake = FakeUrlopen([('/api/orgs/acme', body)])
+        with patch('evolve._http.urlopen', fake):
+            detail = await orgs_factory(CONFIG).get('acme')
+        assert detail.usage.month_spend_usd is None
+        assert detail.usage.month_spend_as_of is None
+        assert detail.usage.queued_trials == 40
 
     def test_detail_requires_member_count_quota_and_usage_by_keyword(self):
         """The depth ``OrganizationDetail`` adds over the row — ``member_count``,

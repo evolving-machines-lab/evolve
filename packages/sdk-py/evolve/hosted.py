@@ -96,6 +96,20 @@ RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS = 3
 RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC = 60
 META_TIMEOUT_SEC = 30
 SSE_SOCKET_TIMEOUT_SEC = 60
+# The ceiling every job-side watch backs off to: the event stream's reconnect
+# delay (``JobsClient.watch``) and the analysis poll's interval
+# (``JobsClient.watch_analysis``) both double up to here and no further. The
+# same number as hosted/index.ts MAX_WATCH_DELAY_MS.
+MAX_WATCH_DELAY_SEC = 30.0
+
+
+def _bounded(seconds: float, deadline: Optional[float]) -> float:
+    """Clamp one sleep to the time left before ``deadline`` (a
+    ``time.monotonic()`` instant; ``None`` = unbounded), so a backed-off wait
+    never carries a watch past its ``timeout_s``."""
+    if deadline is None:
+        return seconds
+    return min(seconds, max(0.0, deadline - time.monotonic()))
 
 #: The server states the verified digest of a download here. When it is present
 #: the client re-checks it — a digest nobody verifies is decoration.
@@ -275,6 +289,7 @@ HostedErrorCode = Literal[
     # below, and distinct from rate_limited for the same reason: nothing was
     # rate-counted and there is no Retry-After — the server's disk is busy.
     'too_many_concurrent_job_uploads',
+    'job_import_not_found',
     'import_not_found',
     'import_too_large',
     # The server is already spooling its bound of concurrent corpus uploads
@@ -1021,6 +1036,13 @@ class CapabilityDocument:
     #: Fleet-wide cap on concurrently in-flight trials of GPU-declaring tasks
     #: (platform-paid GPU compute). None on servers predating the field.
     gpu_concurrency_cap: Optional[int] = None
+    #: The trace analyzer's roster and defaults, the wire's own keys:
+    #: ``default_model`` (what an omitted ``analyze['model_name']`` takes),
+    #: ``reasoning_efforts`` (what ``analyze['reasoning_effort']`` accepts —
+    #: the claude harness's, the analyzer IS that harness) and ``models``
+    #: (every roster model with the effort an omitted ``reasoning_effort``
+    #: takes for it). None on servers predating the field.
+    analyze: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -1454,29 +1476,62 @@ class Rubric(TypedDict):
 
 class AnalyzeConfigInput(TypedDict, total=False):
     """Trace-analysis configuration INPUT — Harbor's ``harbor analyze``
-    vocabulary (their cli/analyze.py: ``--model``, ``--rubric``), the spec's
-    ``AnalyzeConfigInput`` schema.
+    vocabulary (their cli/analyze.py: ``--model``, ``--rubric``,
+    ``--prompt``), the spec's ``AnalyzeConfigInput`` schema.
 
     PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
     it arms the embedded trigger (each trial is analyzed server-side right
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
-    means "all defaults" — glm-5.3-flash over Harbor's default rubric
-    (reward_hacking, task_specification). The analyzer always runs the
+    means "all defaults" — deepseek-v4-flash-vision at its per-model
+    effort (high) over Harbor's default rubric (reward_hacking,
+    task_specification). The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
     names none; its spend is capped per analysis and metered as its own
     line, never blended into the trial's own bill.
     """
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
-    #: glm-5.3-flash on this platform's claude roster (a recorded deviation
-    #: from Harbor's claude-haiku-4-5 default — analysis is input-dominated,
-    #: and flash is the input-price frontier; name glm-5.3 to escalate).
+    #: deepseek-v4-flash-vision on this platform's claude roster (DeepSeek
+    #: V4 Flash Vision served by Fireworks; a recorded deviation from
+    #: Harbor's claude-haiku-4-5 default — analysis is input-dominated, and
+    #: this is the roster's intelligence-per-input-dollar frontier;
+    #: glm-5.3-flash and haiku stay as alternatives, glm-5.3 to escalate).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
     #: Off-roster models are refused typed (``invalid_input``).
     model_name: str
     rubric: Rubric
+    #: The analyzer's prompt template — the TEXT of Harbor's ``-p/--prompt
+    #: <file>`` (their cli/analyze.py:94-99). It REPLACES the built-in
+    #: template (their analyze/prompts/analyze.txt) as the body of the
+    #: analyzer's instruction and is rendered with the same three tokens
+    #: (``{trial_path}``, ``{task_section}``, ``{criteria_guidance}``): the
+    #: three tokens are substituted, an unknown ``{token}`` renders empty,
+    #: ``{{`` and ``}}`` write a literal brace, and any other brace text is
+    #: left as written (Harbor's Python renderer would render it empty,
+    #: convert it or raise there — ``{ x }`` empty, ``{x!r}`` quoted,
+    #: ``{"a": 1}`` an error); the output contract (write ``analysis.json`` matching the
+    #: rubric's schema) is appended after it exactly as Harbor appends it.
+    #: Stored AS GIVEN and FROZEN into each analysis, like the rubric.
+    #: Omitted = the built-in prompt (``None`` on the resolved echo and on
+    #: the analysis). Present, it must be non-empty plain text (no NUL
+    #: character) of at most 32,000 characters — refused ``invalid_input``
+    #: naming ``analyze.prompt`` and the bound. The CLI reads the file for
+    #: you: ``evolve analyze -p prompt.txt``.
+    prompt: str
+    #: Reasoning effort the analyzer runs at — the platform's
+    #: ``agents[].reasoning_effort`` vocabulary applied to the analyzer,
+    #: which IS the claude harness: accepted values are ``meta()``'s
+    #: ``analyze['reasoning_efforts']``, an unknown value is refused
+    #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
+    #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
+    #: high on deepseek-v4-flash-vision, low on glm-5.3-flash — the
+    #: platform's ruling for a model whose thinking Z.ai documents as
+    #: forced, with no levels — the claude harness default elsewhere). Always passed to the analyzer explicitly and
+    #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
+    #: hosted extension: Harbor's analyze has no effort option.
+    reasoning_effort: str
     #: The provider whose sandbox the analyzer boots — the job lineup, the
     #: same vocabulary as ``sandbox_provider`` on ``jobs().start()`` and held
     #: to the same rule: an unknown value is refused ``invalid_input`` naming
@@ -1491,12 +1546,21 @@ class AnalyzeConfig(TypedDict):
     """The RESOLVED trace-analysis policy — the caller's values or the
     defaults of the day, resolved at accept and stored (same law as
     ``JobRetryConfig``). Echoed as ``Job.analyze`` when the job was created
-    with ``analyze``; each analysis additionally carries the exact pair IT
-    ran under (``Trial.analysis['model_name']`` / ``['rubric']``), which a
-    later manual re-analysis may have changed.
+    with ``analyze``; each analysis additionally carries the exact policy
+    IT ran under (``Trial.analysis['model_name']`` / ``['rubric']`` /
+    ``['prompt']``), which a later manual re-analysis may have changed.
     """
     model_name: str
     rubric: Rubric
+    #: The caller's prompt template as stored; None = Harbor's built-in
+    #: analyze.txt.
+    prompt: Optional[str]
+    #: The effort this policy's analyses run at. Named at create it is
+    #: served as stored; when the create named none, this echoes the
+    #: per-model default of the day for ``model_name`` — the value the next
+    #: enqueue under this policy stamps (the same nuance as
+    #: ``sandbox_provider`` below).
+    reasoning_effort: str
     #: The provider this policy's analyses run on. Named at create it is
     #: served as stored, forever. When the create named none, this echoes the
     #: platform's analysis default OF THE DAY — the value the next enqueue
@@ -1536,8 +1600,8 @@ class TrialAnalysis(TypedDict):
     The result half is Harbor's AnalyzeResult verbatim (their
     analyze/models.py: ``summary``, ``checks`` keyed by criterion,
     ``estimated_cost_usd``; the enclosing trial is Harbor's ``trial_name``);
-    the rest is provenance — which model and rubric THIS analysis ran under,
-    its lifecycle status, and its typed failure when it failed.
+    the rest is provenance — which model, rubric and prompt THIS analysis
+    ran under, its lifecycle status, and its typed failure when it failed.
 
     ``estimated_cost_usd`` is the analyzer agent's OWN metered spend — its
     own line, never part of the trial's ``agent_result.cost_usd`` or the
@@ -1562,7 +1626,14 @@ class TrialAnalysis(TypedDict):
     #: death mid-run is reaped to a typed ``failed``.
     status: str
     model_name: str
+    #: The reasoning effort THIS analysis ran at — passed to the analyzer
+    #: explicitly, so it is what the model was asked for. None only on
+    #: analyses recorded before the effort was stamped.
+    reasoning_effort: Optional[str]
     rubric: Rubric
+    #: The prompt template THIS analysis ran under, frozen at enqueue
+    #: (``AnalyzeConfigInput['prompt']``); None = Harbor's built-in analyze.txt.
+    prompt: Optional[str]
     #: 3–5 sentence overview of the trial (Harbor's summary contract). None
     #: until completed.
     summary: Optional[str]
@@ -2576,7 +2647,8 @@ class OrgQuota:
     #: Managed-agent sessions open at once (recorded and read back; not yet
     #: enforced by the box-create doors).
     max_concurrent_sessions: int
-    #: Model spend allowed this calendar month, USD; None = no monthly budget.
+    #: Model spend allowed this UTC calendar month (the gateway's window, reset
+    #: on the 1st), USD; None = no monthly budget.
     monthly_budget_usd: Optional[float]
     #: Sandboxes of this organization in flight on e2b at once — trials, trace
     #: analyses, regrade verifiers and managed sessions together; work beyond
@@ -2600,8 +2672,15 @@ class OrgUsage:
     #: Sessions not yet ended; always 0 on a shared org (sessions carry no
     #: organization).
     active_sessions: int
-    #: Recorded model spend since the first of the current calendar month (UTC).
-    month_spend_usd: float
+    #: The gateway's own month-to-date meter for the organization — the number
+    #: ``monthly_budget_usd`` is enforced against (UTC calendar month, reset on
+    #: the 1st) — as the platform last copied it. None = no copy the platform
+    #: may serve (never copied, or the month rolled and the gateway has not
+    #: reset yet); never 0 for "unknown".
+    month_spend_usd: Optional[float]
+    #: When the gateway answered the copy above (ISO 8601); None exactly when
+    #: ``month_spend_usd`` is.
+    month_spend_as_of: Optional[str]
 
 
 @dataclass
@@ -2661,6 +2740,87 @@ class DatasetPage:
 @dataclass
 class DatasetImportPage:
     items: List[DatasetImport]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class JobImportSource:
+    """Where a job import's archive came from (spec ``JobImportSource``):
+    ``type`` is ``"archive"`` (the uploaded bytes, identified by ``sha256``),
+    ``"archive_url"`` (the public https ``url`` the worker downloads), or —
+    RESERVED, Harbor's own hub job source — ``"hub"`` with ``job_id``; no
+    door accepts the hub arm yet."""
+    type: str
+    sha256: Optional[str] = None
+    url: Optional[str] = None
+    job_id: Optional[str] = None
+
+
+@dataclass
+class JobImportPhaseProgress:
+    """One phase of a job import's timeline (fetching, extracting,
+    validating, ingesting). ``completed_at`` is None while the phase runs —
+    and forever, on the phase a FAILED import died in."""
+    name: str
+    started_at: str
+    completed_at: Optional[str] = None
+
+
+@dataclass
+class JobImportProgress:
+    """The worker's own statement of where a job ingest stands, written at
+    phase boundaries only (spec ``JobImportProgress``)."""
+    phase: str
+    started_at: str
+    phases: List[JobImportPhaseProgress] = field(default_factory=list)
+
+
+@dataclass
+class JobImportFailure:
+    """Why a job import FAILED (spec ``JobImportFailure``). The codes are the
+    ones the upload door once answered synchronously — ``invalid_archive``,
+    ``upload_too_large``, ``not_a_job_dir``, ``job_already_uploaded``
+    (``details['existing_job_id']``), the dataset-hint codes,
+    ``job_too_large``, ``invalid_trial`` (``details['trial']``) — plus the
+    platform's own ``import_failed`` and ``import_lease_expired``."""
+    code: str
+    message: str
+    details: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class JobImport:
+    """An accepted job upload, from the 202 to a COMPLETED Job or a typed
+    FAILED — what :meth:`JobsClient.upload` returns and
+    :meth:`JobsClient.get_import` / :meth:`JobsClient.watch_import` read.
+    Same four status words a dataset import speaks.
+    """
+    id: str
+    #: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED"
+    status: str
+    #: Register-first: True exactly while the archive is still arriving
+    #: through its resumable session (QUEUED, not yet claimable).
+    receiving: bool = False
+    #: None while a session is still receiving (nothing is stored yet).
+    source: Optional[JobImportSource] = None
+    #: The ``dataset`` hint as given ("name" or "name@version"), or None.
+    dataset: Optional[str] = None
+    #: The ingested Job, from COMPLETED on — read it with :meth:`JobsClient.get`.
+    #: None again if that job was deleted (delete-then-reupload).
+    job_id: Optional[str] = None
+    #: Trials the ingested job carries, from COMPLETED on (Harbor's own spelling).
+    n_trials_uploaded: Optional[int] = None
+    failure: Optional[JobImportFailure] = None
+    #: None until the worker's first report (a QUEUED import).
+    progress: Optional[JobImportProgress] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+@dataclass
+class JobImportPage:
+    items: List[JobImport]
     next_cursor: Optional[str]
     has_more: bool
 
@@ -2833,6 +2993,7 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
         ],
         platform_constraints=raw.get('platform_constraints', []),
         network_modes=raw.get('network_modes', []),
+        analyze=raw.get('analyze') if isinstance(raw.get('analyze'), dict) else None,
         statuses={
             key: StatusVocabulary(
                 values=value.get('values', []),
@@ -3365,11 +3526,18 @@ def _map_organization_detail(data: Dict[str, Any]) -> OrganizationDetail:
             in_flight_imports=count(usage, 'in_flight_imports'),
             in_flight_analyses=count(usage, 'in_flight_analyses'),
             active_sessions=count(usage, 'active_sessions'),
+            # The gateway's meter as copied: nullable on the wire, None stays
+            # None (never coerced to 0.0 — an unknown is not a zero).
             month_spend_usd=(
                 float(usage.get('month_spend_usd'))
                 if isinstance(usage.get('month_spend_usd'), (int, float))
                 and not isinstance(usage.get('month_spend_usd'), bool)
-                else 0.0
+                else None
+            ),
+            month_spend_as_of=(
+                usage.get('month_spend_as_of')
+                if isinstance(usage.get('month_spend_as_of'), str)
+                else None
             ),
         ),
     )
@@ -3832,6 +4000,74 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     if isinstance(data.get('updated_at'), str):
         dataset_import.updated_at = data['updated_at']
     return dataset_import
+
+
+_JOB_IMPORT_PHASES = ('fetching', 'extracting', 'validating', 'ingesting')
+
+
+def _map_job_import_progress(raw: Any) -> Optional[JobImportProgress]:
+    """Map the wire ``progress`` blob of a job import; None for absent/None
+    and for anything short of the shape."""
+    if not isinstance(raw, dict):
+        return None
+    phase = raw.get('phase')
+    started_at = raw.get('started_at')
+    if phase not in _JOB_IMPORT_PHASES or not isinstance(started_at, str):
+        return None
+    phases: List[JobImportPhaseProgress] = []
+    for entry in raw.get('phases') or []:
+        if not isinstance(entry, dict):
+            return None
+        name = entry.get('name')
+        entry_started = entry.get('started_at')
+        if name not in _JOB_IMPORT_PHASES or not isinstance(entry_started, str):
+            return None
+        completed = entry.get('completed_at')
+        phases.append(JobImportPhaseProgress(
+            name=name,
+            started_at=entry_started,
+            completed_at=completed if isinstance(completed, str) else None,
+        ))
+    return JobImportProgress(phase=phase, started_at=started_at, phases=phases)
+
+
+def _map_job_import(data: Dict[str, Any]) -> JobImport:
+    """The job-import shape (spec ``JobImport``), every required member read
+    as the contract states it."""
+    source_raw = data.get('source')
+    source: Optional[JobImportSource] = None
+    if isinstance(source_raw, dict) and isinstance(source_raw.get('type'), str):
+        source = JobImportSource(
+            type=source_raw['type'],
+            sha256=source_raw.get('sha256') if isinstance(source_raw.get('sha256'), str) else None,
+            url=source_raw.get('url') if isinstance(source_raw.get('url'), str) else None,
+            job_id=source_raw.get('job_id') if isinstance(source_raw.get('job_id'), str) else None,
+        )
+    failure_raw = data.get('failure')
+    failure: Optional[JobImportFailure] = None
+    if isinstance(failure_raw, dict) and isinstance(failure_raw.get('message'), str):
+        details = failure_raw.get('details')
+        failure = JobImportFailure(
+            code=failure_raw.get('code', 'import_failed'),
+            message=failure_raw['message'],
+            details=details if isinstance(details, dict) else None,
+        )
+    return JobImport(
+        id=data.get('id', ''),
+        status=data.get('status', ''),
+        receiving=data.get('receiving') is True,
+        source=source,
+        dataset=data.get('dataset') if isinstance(data.get('dataset'), str) else None,
+        job_id=data.get('job_id') if isinstance(data.get('job_id'), str) else None,
+        n_trials_uploaded=(
+            data.get('n_trials_uploaded')
+            if isinstance(data.get('n_trials_uploaded'), int) else None
+        ),
+        failure=failure,
+        progress=_map_job_import_progress(data.get('progress')),
+        created_at=data.get('created_at') if isinstance(data.get('created_at'), str) else None,
+        updated_at=data.get('updated_at') if isinstance(data.get('updated_at'), str) else None,
+    )
 
 
 def _map_dataset_preflight(data: Dict[str, Any]) -> DatasetPreflight:
@@ -4433,6 +4669,7 @@ def _upload_resumable_sync(
     fields: Dict[str, Optional[str]],
     on_bytes: Optional[Callable[[int, int], None]] = None,
     on_registered: Optional[Callable[[str], None]] = None,
+    sessions_path: str = '/api/datasets/publish/uploads',
 ) -> Dict[str, Any]:
     """The chunked transfer loop, on a worker thread — Harbor's resumable
     client re-expressed against the platform's upload sessions
@@ -4462,7 +4699,10 @@ def _upload_resumable_sync(
     """
     size = os.path.getsize(archive_path)
     sha256 = _file_sha256(archive_path)
-    base = f'{http.base_url()}/api/datasets/publish/uploads'
+    # The session door: the dataset publish door by default, or the job
+    # upload door — the same protocol on both (the twin of resumable.ts
+    # sessionsPath), so the loop is spelled once.
+    base = f'{http.base_url()}{sessions_path}'
     auth = {'Authorization': f'Bearer {http.api_key()}', 'Accept': 'application/json'}
 
     def request(url: str, method: str, headers: Dict[str, str], data: Optional[bytes] = None):
@@ -4588,13 +4828,45 @@ async def _upload_archive_resumable(
     fields: Dict[str, Optional[str]],
     on_bytes: Optional[Callable[[int, int], None]] = None,
     on_registered: Optional[Callable[[str], None]] = None,
+    sessions_path: str = '/api/datasets/publish/uploads',
 ) -> Dict[str, Any]:
     """Chunked-resumable counterpart of :func:`_upload_archive_file` for the
-    dataset publish surface. The loop is consumed on a worker thread, never
-    the event loop — the ``_upload_sync`` convention.
+    dataset publish surface and the job upload surface (``sessions_path``).
+    The loop is consumed on a worker thread, never the event loop — the
+    ``_upload_sync`` convention.
     """
     return await asyncio.to_thread(
-        _upload_resumable_sync, http, archive_path, fields, on_bytes, on_registered
+        _upload_resumable_sync, http, archive_path, fields, on_bytes, on_registered,
+        sessions_path,
+    )
+
+
+async def _upload_archive(
+    http: '_HostedHttp',
+    path: str,
+    fields: Dict[str, Optional[str]],
+    archive_path: str,
+    filename: str,
+    method: str = 'POST',
+    resumable_over: Optional[int] = None,
+    resumable_path: str = '/api/datasets/publish/uploads',
+    on_bytes: Optional[Callable[[int, int], None]] = None,
+    on_registered: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Upload ONE on-disk archive: over ``resumable_over`` (when the caller
+    has a session door) through the chunked sessions at ``resumable_path``,
+    else one streamed multipart POST. The archive is read from disk in both
+    arms — never held in memory."""
+    if resumable_over is not None and os.path.getsize(archive_path) > resumable_over:
+        # Big archives ride the resumable chunked door automatically — a
+        # dropped link resumes from the last acknowledged chunk. Same
+        # answer either way; the switch is invisible to callers, exactly as
+        # Harbor's uploader switches transports (upload/storage.py:55-67).
+        return await _upload_archive_resumable(
+            http, archive_path, fields, on_bytes, on_registered, resumable_path
+        )
+    return await _upload_archive_file(
+        http, path, fields, archive_path, filename, method, on_bytes
     )
 
 
@@ -4608,29 +4880,21 @@ async def _upload_directory_archive(
     resumable_over: Optional[int] = None,
     on_bytes: Optional[Callable[[int, int], None]] = None,
     on_registered: Optional[Callable[[str], None]] = None,
+    resumable_path: str = '/api/datasets/publish/uploads',
 ) -> Dict[str, Any]:
-    """Tar + gzip ``directory`` into a temp file and stream it to ``path`` —
+    """Tar + gzip ``directory`` into a TEMP FILE and stream it to ``path`` —
     the one flow every publish-a-directory surface (datasets, agents, skills,
-    jobs) shares. The archive only ever exists on disk; the temp dir is
-    removed however the upload ends.
+    jobs) shares. The archive only ever exists on disk (never in memory: a
+    4.41 GB job folder packed into one in-memory archive died client-side on
+    2026-09-01); the temp dir is removed however the upload ends.
     """
     tmp = tempfile.mkdtemp(prefix='evolve-upload-')
     try:
         archive_path = os.path.join(tmp, filename)
         await asyncio.to_thread(_tar_gzip_directory_to_file, directory, archive_path)
-        if (
-            resumable_over is not None
-            and os.path.getsize(archive_path) > resumable_over
-        ):
-            # Big corpora ride the resumable chunked door automatically — a
-            # dropped link resumes from the last acknowledged chunk. Same 202
-            # either way; the switch is invisible to callers, exactly as
-            # Harbor's uploader switches transports (upload/storage.py:55-67).
-            return await _upload_archive_resumable(
-                http, archive_path, fields, on_bytes, on_registered
-            )
-        return await _upload_archive_file(
-            http, path, fields, archive_path, filename, method, on_bytes
+        return await _upload_archive(
+            http, path, fields, archive_path, filename, method,
+            resumable_over, resumable_path, on_bytes, on_registered,
         )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -6122,8 +6386,9 @@ class JobsClient:
         trigger (Harbor's ``harbor analyze`` vocabulary, the spec's
         AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
         server-side right after it settles (CANCELLED trials are skipped),
-        ``{}`` means "all defaults" (glm-5.3-flash, Harbor's default
-        rubric), and the response echoes the RESOLVED policy as
+        ``{}`` means "all defaults" (deepseek-v4-flash-vision at its
+        per-model effort, Harbor's default rubric), and the response
+        echoes the RESOLVED policy as
         ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
         analysis runs and :meth:`analyze` remains the manual door. The five
         ``*timeout_multiplier`` arguments are
@@ -6418,7 +6683,7 @@ class JobsClient:
         *,
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
-        max_reconnect_delay_s: float = 30.0,
+        max_reconnect_delay_s: float = MAX_WATCH_DELAY_SEC,
     ) -> AsyncIterator[JobEvent]:
         """The one SSE loop both watch() forms drive.
 
@@ -6529,7 +6794,7 @@ class JobsClient:
         on_event: Optional[Callable[[JobEvent], None]] = None,
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
-        max_reconnect_delay_s: float = 30.0,
+        max_reconnect_delay_s: float = MAX_WATCH_DELAY_SEC,
     ) -> _JobWatch:
         """Watch the job's event stream. Dual-use: await it, or iterate it.
 
@@ -6570,7 +6835,7 @@ class JobsClient:
         on_event: Optional[Callable[[JobEvent], None]] = None,
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
-        max_reconnect_delay_s: float = 30.0,
+        max_reconnect_delay_s: float = MAX_WATCH_DELAY_SEC,
     ) -> AsyncIterator[JobEvent]:
         """The one stream both watch() forms drive; fires on_event as it goes."""
         async for event in self._iter_events(
@@ -6694,7 +6959,9 @@ class JobsClient:
         *,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
+        prompt: Optional[str] = None,
         sandbox_provider: Optional[EvalSandboxProvider] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Job:
         """Analyze a terminal job's trial traces (rubric-driven, Harbor's
         ``harbor analyze``), server-side.
@@ -6703,22 +6970,35 @@ class JobsClient:
         plus its original task and rules every rubric criterion, storing the
         result on the trial (``Trial.analysis``) and the aggregate on the job
         (``stats['analysis']``). THE RESPONSE IS THE JOB, its analyses
-        enqueued — analyses are not a separate resource; follow them with
-        :meth:`watch_analysis`, or poll the job's trials. This is also the
-        RE-analysis path: calling again (same job, different rubric or
-        model) runs a fresh wave once the previous one has settled.
+        enqueued, and it returns AT ONCE — ``stats['analysis']['n_pending']``
+        counts the queued batch; analyses are not a separate resource.
+        Follow them with :meth:`watch_analysis`, or poll the job's trials.
+        This is also the RE-analysis path: calling again (same job,
+        different rubric or model) runs a fresh wave once the previous one
+        has settled.
+        ``prompt`` is the TEXT of Harbor's ``-p/--prompt`` file — it
+        replaces the built-in analyzer prompt as the instruction template
+        (read the file yourself: ``prompt=Path('prompt.txt').read_text()``);
+        omitted, the built-in prompt applies.
         ``sandbox_provider`` picks the provider whose sandbox the analyzer
         boots — the job lineup; omitted, the platform's analysis default
-        applies (daytona unless the operator retuned the fleet). Every
-        argument omitted means the defaults: glm-5.3-flash over Harbor's
-        default rubric (reward_hacking, task_specification), on the
-        platform's analysis default provider. CANCELLED trials are never
-        analyzed.
+        applies (daytona unless the operator retuned the fleet).
+        ``reasoning_effort`` is the arms' effort vocabulary applied to the
+        analyzer (``meta().analyze['reasoning_efforts']``); omitted, the
+        per-model default applies (high on deepseek-v4-flash-vision, low
+        on glm-5.3-flash, the claude harness default elsewhere) — the
+        effort is always passed explicitly and recorded on each analysis.
+        Every argument omitted means the defaults: deepseek-v4-flash-vision
+        at high over Harbor's default rubric (reward_hacking,
+        task_specification), on the platform's analysis default provider.
+        CANCELLED trials are never analyzed.
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
         or duplicate criteria, bounds), ``invalid_input`` (off-roster model,
-        or a provider outside the lineup — the message names the roster),
+        an empty or oversize prompt, an effort outside the vocabulary, or a
+        provider outside the lineup — the message names the roster, the
+        bound or the legal values),
         ``analysis_already_running`` (one wave at a time),
         ``no_analyzable_trials`` (every trial CANCELLED).
         """
@@ -6727,8 +7007,12 @@ class JobsClient:
             body['model_name'] = model_name
         if rubric is not None:
             body['rubric'] = rubric
+        if prompt is not None:
+            body['prompt'] = prompt
         if sandbox_provider is not None:
             body['sandbox_provider'] = sandbox_provider
+        if reasoning_effort is not None:
+            body['reasoning_effort'] = reasoning_effort
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}/analyze', method='POST', body=body
         )
@@ -6748,26 +7032,33 @@ class JobsClient:
         job's trials to watch them settle — so this polls :meth:`get` until
         ``stats['analysis']`` reports nothing pending, and returns the final
         job; the per-trial results then ride the job's trials
-        (``Trial.analysis``). ``on_stats`` fires on every observed change of
+        (``Trial.analysis``). The poll has :meth:`watch`'s backoff shape:
+        the interval starts at ``poll_interval_s``, doubles while the tally
+        stands still up to the 30-s ceiling the event stream's reconnect
+        uses, and snaps back to ``poll_interval_s`` on every change — a
+        long wave costs the server one read per half-minute, a moving one
+        is followed closely. ``on_stats`` fires on every observed change of
         the analysis tally (including the first non-None one seen), with the
         job body the observation came from. A still-None tally is the
         enqueue race after an accepted :meth:`analyze` and is watched
         through, never misread as "never analyzed" — so on a job that was
         NEVER analyzed this polls indefinitely (until ``timeout_s``): call
-        it after :meth:`analyze`, as the CLI always does. It is the MANUAL
-        wave's companion, not the embedded trigger's: on a still-RUNNING job
-        created with ``analyze``, ``n_pending`` can touch 0 between trial
-        settles, so the watch can return before every trial has been
-        analyzed.
+        it after :meth:`analyze`, as ``evolve analyze --watch`` does. It is
+        the MANUAL wave's companion, not the embedded trigger's: on a
+        still-RUNNING job created with ``analyze``, ``n_pending`` can touch
+        0 between trial settles, so the watch can return before every trial
+        has been analyzed.
 
         ``timeout_s`` bounds the whole watch and raises
-        :class:`TimeoutError`. A rate limit or transient outage mid-watch is
-        a delay, not an outcome: a 429/503 sleeps the server's
-        ``retry_after_sec`` and keeps watching.
+        :class:`TimeoutError` at the deadline — the last sleep is clamped to
+        the time left, never a full backoff step past it. A rate limit or
+        transient outage mid-watch is a delay, not an outcome: a 429/503
+        sleeps the server's ``retry_after_sec`` and keeps watching.
         """
         if poll_interval_s <= 0:
             raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
+        delay = poll_interval_s
         last_tally: Optional['tuple[int, int, int]'] = None
         while True:
             try:
@@ -6780,25 +7071,31 @@ class JobsClient:
                         f'watch_analysis({id!r}) timed out after {timeout_s}s'
                     ) from error
                 await asyncio.sleep(
-                    max(error.retry_after_sec or 0.0, poll_interval_s)
+                    _bounded(max(error.retry_after_sec or 0.0, delay), deadline)
                 )
+                delay = min(delay * 2, MAX_WATCH_DELAY_SEC)
                 continue
             analysis = job.stats.get('analysis')
-            if isinstance(analysis, dict):
-                tally = (
+            tally: Optional['tuple[int, int, int]'] = (
+                (
                     int(analysis.get('n_completed', 0)),
                     int(analysis.get('n_failed', 0)),
                     int(analysis.get('n_pending', 0)),
                 )
-                if tally != last_tally:
-                    last_tally = tally
-                    if on_stats is not None:
-                        on_stats(job)
-                if tally[2] == 0:
-                    return job
+                if isinstance(analysis, dict)
+                else None
+            )
+            changed = tally is not None and tally != last_tally
+            if changed:
+                last_tally = tally
+                if on_stats is not None:
+                    on_stats(job)
+            if tally is not None and tally[2] == 0:
+                return job
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_analysis({id!r}) timed out after {timeout_s}s')
-            await asyncio.sleep(poll_interval_s)
+            delay = poll_interval_s if changed else min(delay * 2, MAX_WATCH_DELAY_SEC)
+            await asyncio.sleep(_bounded(delay, deadline))
 
     async def download(
         self,
@@ -6849,64 +7146,173 @@ class JobsClient:
 
     async def upload(
         self,
-        dir_or_archive: str,
+        dir_or_archive: Optional[str] = None,
         *,
+        archive_url: Optional[str] = None,
         dataset: Optional[str] = None,
-    ) -> Job:
-        """Upload a Harbor job directory as a first-class TERMINAL job —
-        Harbor's ``harbor upload`` in reverse, taking their CLI's own input
-        (a ``job_dir`` with result.json + config.json at its root, one
+        on_upload_progress: Optional[Callable[[int, int], None]] = None,
+        on_registered: Optional[Callable[[str], None]] = None,
+    ) -> JobImport:
+        """Upload a Harbor job directory for ingest as a first-class TERMINAL
+        job — Harbor's ``harbor upload`` in reverse, taking their CLI's own
+        input (a ``job_dir`` with result.json + config.json at its root, one
         subdirectory per trial; the same gate applies here, client-side,
         with their refusal sentences).
 
-        ``dir_or_archive`` is that directory — packed into a gzipped tar with
-        the same deterministic packer every upload route here uses — or a
-        ready-packed ``.tar.gz`` of one, uploaded byte-for-byte: the
-        platform's own :meth:`download` produces exactly this format, so a
-        downloaded job re-uploads as-is, and any real ``harbor run`` job dir
-        works the same way.
+        ``dir_or_archive`` is that directory — packed to a TEMPORARY FILE on
+        disk with the same deterministic packer every upload route here
+        uses, never into memory — or a ready-packed ``.tar.gz`` of one,
+        streamed byte-for-byte (the platform's own :meth:`download` produces
+        exactly this format); or pass ``archive_url=`` instead, a public
+        https URL of the archive the server fetches itself (no bytes ride
+        the request). Archives over 256 MiB ride the resumable session door
+        automatically, exactly as :meth:`DatasetsClient.publish` does.
 
-        Trial facts land verbatim: rewards are never re-scored, a trial
-        without a verdict lands INDETERMINATE, exceptions are carried, and
-        the trajectory / raw streams / verifier log / reward.txt are stored
-        byte-for-byte in the native trial slots. THE RESPONSE IS THE JOB —
-        COMPLETED on creation, with ``upload`` carrying the provenance echo.
-        It is a record, not a run: resume, retry and regrade refuse it
-        (``job_uploaded``); :meth:`analyze` works on it unchanged.
-        ``dataset`` (``"name"`` or ``"name@version"``) links the uploaded
-        trials to a published dataset version by task name. The caps live on
-        ``GET /api/meta`` under ``limits['uploads']`` (``job_archive_bytes``,
-        ``job_trials``, ``job_trial_file_bytes``, ``job_trial_session_bytes``).
+        THE RESPONSE IS THE JOB IMPORT, not the job: the door only moves the
+        archive into storage and answers 202; a worker ingests it off the
+        request path and settles the import COMPLETED (``job_id`` names the
+        created Job — COMPLETED on creation, a record not a run: resume,
+        retry and regrade refuse it ``job_uploaded``; :meth:`analyze` works
+        on it unchanged) or FAILED with a typed ``failure`` (the same codes
+        the door once answered synchronously — ``not_a_job_dir``,
+        ``invalid_trial``, ``job_already_uploaded`` naming the existing job,
+        ...). Follow it with :meth:`watch_import`. ``dataset`` ("name" or
+        "name@version") links the uploaded trials to a published dataset
+        version by task name. ``on_upload_progress`` is the client-side
+        transfer reading ``(sent_bytes, total_bytes)``; ``on_registered``
+        receives the import id BEFORE the first byte moves when the archive
+        rides the resumable door, so a watcher can attach mid-transfer. The
+        caps live on ``GET /api/meta`` under ``limits['uploads']``
+        (``job_archive_bytes`` — 8 GiB — ``job_trials``,
+        ``job_trial_file_bytes``, ``job_trial_session_bytes``).
         """
+        if (dir_or_archive is None) == (archive_url is None):
+            raise ValueError(
+                'jobs().upload() takes EXACTLY ONE source: a job directory (or '
+                '.tar.gz archive) path, or archive_url=...'
+            )
+        fields: Dict[str, Optional[str]] = {}
+        if dataset is not None:
+            fields['dataset'] = dataset
+        if archive_url is not None:
+            if not isinstance(archive_url, str) or not archive_url.strip():
+                raise ValueError('jobs().upload() with a URL source requires archive_url="https://…"')
+            body, content_type = _multipart_body({**fields, 'archive_url': archive_url})
+            raw = await self._http.request_upload(
+                '/api/jobs/upload', body, {'Content-Type': content_type}
+            )
+            return _map_job_import(raw)
         if not isinstance(dir_or_archive, str) or not dir_or_archive.strip():
             raise ValueError(
                 'jobs().upload() requires a job directory (or .tar.gz archive) path'
             )
         path = os.path.abspath(dir_or_archive)
-        fields: Dict[str, Optional[str]] = {}
-        if dataset is not None:
-            fields['dataset'] = dataset
         if os.path.isfile(path):
             # A ready-packed archive streams from where it lies — never read
-            # into memory, never re-packed, byte-for-byte on the wire.
-            raw = await _upload_archive_file(
-                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz'
+            # into memory, never re-packed, byte-for-byte on the wire (the
+            # resumable door over the switch).
+            raw = await _upload_archive(
+                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz',
+                resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+                resumable_path='/api/jobs/upload/uploads',
+                on_bytes=on_upload_progress,
+                on_registered=on_registered,
             )
-            return _map_job(raw)
-        else:
-            # Harbor's own gate (their cli/upload.py checks result.json, then
-            # config.json), applied client-side with their sentences — the
-            # cheap refusal that saves tarring and shipping a tree the server
-            # would refuse the same way (``not_a_job_dir``). A nonexistent
-            # path lands here too and reads as the first refusal, exactly as
-            # their CLI does.
-            for required in ('result.json', 'config.json'):
-                if not os.path.exists(os.path.join(path, required)):
-                    raise ValueError(f'{path} does not contain {required}')
-            raw = await _upload_directory_archive(
-                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz'
+            return _map_job_import(raw)
+        # Harbor's own gate (their cli/upload.py checks result.json, then
+        # config.json), applied client-side with their sentences — the
+        # cheap refusal that saves tarring and shipping a tree the server
+        # would refuse the same way (``not_a_job_dir``). A nonexistent
+        # path lands here too and reads as the first refusal, exactly as
+        # their CLI does.
+        for required in ('result.json', 'config.json'):
+            if not os.path.exists(os.path.join(path, required)):
+                raise ValueError(f'{path} does not contain {required}')
+        raw = await _upload_directory_archive(
+            self._http, '/api/jobs/upload', fields, path, 'job.tar.gz',
+            resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+            on_bytes=on_upload_progress,
+            on_registered=on_registered,
+            resumable_path='/api/jobs/upload/uploads',
+        )
+        return _map_job_import(raw)
+
+    async def get_import(self, id: str) -> JobImport:
+        """One job import by id — owner-only (``job_import_not_found``, 404,
+        for anyone else's)."""
+        raw = await self._http.request_json(f'/api/jobs/imports/{urllib.parse.quote(id)}')
+        return _map_job_import(raw)
+
+    async def watch_import(
+        self,
+        id: str,
+        *,
+        on_status: Optional[Callable[[JobImport], None]] = None,
+        on_progress: Optional[Callable[[JobImportProgress, JobImport], None]] = None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ) -> JobImport:
+        """Watch a job import to its terminal state — COMPLETED (read the Job
+        at ``job_id``) or FAILED (``failure`` says why). Polls
+        :meth:`get_import` every ``poll_interval_s``; a 429/503 mid-watch is a
+        delay, not an outcome. ``on_status`` fires on every observed status
+        change (the receiving flip included); ``on_progress`` on every
+        observed change of the worker's phase record. ``timeout_s`` bounds
+        the whole watch and raises :class:`TimeoutError`.
+        """
+        if poll_interval_s <= 0:
+            raise ValueError('poll_interval_s must be positive')
+        deadline = time.monotonic() + timeout_s if timeout_s is not None else None
+        last_status: Optional[str] = None
+        last_progress: Optional[JobImportProgress] = None
+        while True:
+            try:
+                job_import = await self.get_import(id)
+            except EvolveAPIError as error:
+                if error.status not in (429, 503):
+                    raise
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s') from error
+                await asyncio.sleep(max(error.retry_after_sec or 0.0, poll_interval_s))
+                continue
+            status_key = job_import.status + (':receiving' if job_import.receiving else '')
+            if status_key != last_status:
+                last_status = status_key
+                if on_status is not None:
+                    on_status(job_import)
+            if job_import.progress is not None and job_import.progress != last_progress:
+                last_progress = job_import.progress
+                if on_progress is not None:
+                    on_progress(job_import.progress, job_import)
+            if job_import.status in ('COMPLETED', 'FAILED'):
+                return job_import
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
+            await asyncio.sleep(poll_interval_s)
+
+    def list_imports(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """List your own job imports, newest first (cursor-paged): ``await``
+        for one page, or ``async for`` to walk them all. ``status`` filters
+        on the import vocabulary ("QUEUED" | "RUNNING" | "COMPLETED" |
+        "FAILED"). This is how an import id is found again after the one
+        :meth:`upload` returned was lost."""
+        async def fetch_page(page_limit, page_cursor) -> JobImportPage:
+            query = _page_query(page_limit, page_cursor, status=status)
+            raw = await self._http.request_json(f'/api/jobs/imports{query}')
+            items, next_cursor, has_more = _page_parts(raw)
+            return JobImportPage(
+                items=[_map_job_import(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
             )
-            return _map_job(raw)
+
+        return _PaginatedList(fetch_page, lambda page: page.items, limit=limit, cursor=cursor)
 
     async def delete(self, id: str) -> JobDeleteResult:
         """Permanently delete one of your jobs — trials, trace events,

@@ -482,12 +482,13 @@ export interface Rubric {
 
 /**
  * Trace-analysis configuration — Harbor's `harbor analyze` vocabulary (their
- * cli/analyze.py: `--model`, `--rubric`). PRESENCE of this object is the
+ * cli/analyze.py: `--model`, `--rubric`, `--prompt`). PRESENCE of this object is the
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
- * wave. `{}` is legal and means "all defaults": glm-5.3-flash over
- * Harbor's default rubric (reward_hacking, task_specification — their
+ * wave. `{}` is legal and means "all defaults": deepseek-v4-flash-vision
+ * at its per-model effort (high) over Harbor's default rubric
+ * (reward_hacking, task_specification — their
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
  * The analyzer always runs the claude-code harness (Harbor's default analyze
@@ -499,20 +500,57 @@ export interface Rubric {
 export interface AnalyzeConfigInput {
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * glm-5.3-flash on this platform's claude roster — a recorded deviation
-   * from Harbor's default analyze model (their cli/analyze.py
-   * `claude-haiku-4-5`): analysis is input-dominated, and flash is the
-   * input-price frontier; name `glm-5.3` (or any roster member) to
-   * escalate. The value speaks the same vocabulary as
-   * `agents[].model_name`: either advertised spelling is accepted and
-   * stored AS GIVEN (the default is the roster alias), the wire id is
-   * resolved only when the analyzer runs, and every stored analysis serves
-   * the spelling it was created under. Must be on the claude roster
-   * (`GET /api/meta`, `harnesses[].models`); anything else is refused at
-   * accept (`invalid_input`, roster in the message).
+   * deepseek-v4-flash-vision on this platform's claude roster (DeepSeek V4
+   * Flash Vision served by Fireworks) — a recorded deviation from Harbor's
+   * default analyze model (their cli/analyze.py `claude-haiku-4-5`):
+   * analysis is input-dominated, and this is the roster's intelligence-per-
+   * input-dollar frontier at ~135 tok/s; `glm-5.3-flash` and `haiku` stay
+   * on the roster as alternatives, `glm-5.3` to escalate. The value speaks
+   * the same vocabulary as `agents[].model_name`: either advertised
+   * spelling is accepted and stored AS GIVEN (the default is the roster
+   * alias), the wire id is resolved only when the analyzer runs, and every
+   * stored analysis serves the spelling it was created under. Must be on
+   * the claude roster (`GET /api/meta`, `agents[].models`); anything else
+   * is refused at accept (`invalid_input`, roster in the message).
    */
   model_name?: string;
   rubric?: Rubric;
+  /**
+   * The analyzer's prompt template — the TEXT of Harbor's `-p/--prompt <file>`
+   * ("Prompt file for the evaluator agent. Uses built-in default if not
+   * specified.", their cli/analyze.py:94-99). It REPLACES the built-in
+   * template (their analyze/prompts/analyze.txt) as the body of the analyzer's
+   * instruction and is rendered with the same three tokens (`{trial_path}`,
+   * `{task_section}`, `{criteria_guidance}`): the three tokens are
+   * substituted, an unknown `{token}` renders empty, `{{` and `}}` write a
+   * literal brace, and any other brace text is left as written (Harbor's
+   * Python renderer would render it empty, convert it or raise there —
+   * `{ x }` empty, `{x!r}` quoted, `{"a": 1}` an error); the output contract (write
+   * `analysis.json` matching the rubric's schema) is appended after it exactly
+   * as Harbor appends it, so a custom prompt can never opt out of the
+   * deliverable. Stored AS GIVEN and FROZEN into each analysis the config
+   * enqueues, like the rubric. Omitted = the built-in prompt (`null` on the
+   * resolved echo and on the analysis). Present, it must be non-empty plain
+   * text (no NUL character) of at most 32,000 characters — refused
+   * `invalid_input` naming `analyze.prompt` and the bound, never truncated. The CLI reads the file
+   * for you: `evolve analyze -p prompt.txt`.
+   */
+  prompt?: string;
+  /**
+   * Reasoning effort the analyzer runs at — the platform's `agents[].
+   * reasoning_effort` vocabulary applied to the analyzer, which IS the
+   * claude harness: the accepted values are `GET /api/meta`'s
+   * `analyze.reasoning_efforts`, an unknown value is refused
+   * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
+   * applies (`analyze.models[].default_reasoning_effort`: high on
+   * deepseek-v4-flash-vision, low on glm-5.3-flash — the platform's ruling
+   * for a model whose thinking Z.ai documents as forced, with no levels —
+   * the claude harness default elsewhere). The effort is always passed to the analyzer explicitly and
+   * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
+   * extension: Harbor's analyze has no effort option; this is the run
+   * door's existing platform vocabulary applied to analyze.
+   */
+  reasoning_effort?: string;
   /**
    * The provider whose sandbox the analyzer boots — the job lineup, the same
    * vocabulary as `JobCreate.sandbox_provider` and held to the same rule: an
@@ -531,12 +569,21 @@ export interface AnalyzeConfigInput {
  * the day, resolved at accept and stored, so the record always states the
  * policy it executes (same law as RetryConfig). Echoed on the job body when
  * the job was created with `analyze`; each analysis additionally carries the
- * exact pair IT ran under (`Trial.analysis.model_name` / `.rubric`), which a
- * later manual re-analysis may have changed.
+ * exact policy IT ran under (`Trial.analysis.model_name` / `.rubric` /
+ * `.prompt`), which a later manual re-analysis may have changed.
  */
 export interface AnalyzeConfig {
   model_name: string;
   rubric: Rubric;
+  /** The caller's prompt template as stored; null = Harbor's built-in analyze.txt. */
+  prompt: string | null;
+  /**
+   * The effort this policy's analyses run at. Named at create it is served
+   * as stored; when the create named none, this echoes the per-model
+   * default of the day for `model_name` — the value the next enqueue under
+   * this policy stamps (the same nuance as `sandbox_provider` below).
+   */
+  reasoning_effort: string;
   /**
    * The provider this policy's analyses run on. Named at create it is served
    * as stored, forever. When the create named none, this echoes the
@@ -1289,7 +1336,18 @@ export interface TrialAnalysis {
    */
   status: AnalysisStatus;
   model_name: string;
+  /**
+   * The reasoning effort THIS analysis ran at — passed to the analyzer
+   * explicitly, so it is what the model was asked for. Null only on
+   * analyses recorded before the effort was stamped.
+   */
+  reasoning_effort: string | null;
   rubric: Rubric;
+  /**
+   * The prompt template THIS analysis ran under, frozen at enqueue
+   * (`AnalyzeConfigInput.prompt`); null = Harbor's built-in analyze.txt.
+   */
+  prompt: string | null;
   /**
    * 3–5 sentence overview of what happened during the trial (Harbor's
    * summary contract, analyze/prompts/analyze.txt). Null until completed.
@@ -3024,7 +3082,11 @@ export interface WatchAnalysisOptions {
   onStats?: (job: Job) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
-  /** Poll interval between polls (default: 2000ms) */
+  /**
+   * Initial poll interval (default: 2000ms). Doubles while the tally stands
+   * still, up to the 30-s ceiling the job watch's reconnect uses, and
+   * returns to this value on every tally change.
+   */
   pollIntervalMs?: number;
 }
 
@@ -3064,9 +3126,140 @@ export interface UploadJobOptions {
    * active version). Matched trials analyze against the real task content;
    * unmatched or unhinted trials analyze through the task-not-available
    * branch, exactly Harbor's fallback for a trial without a local task
-   * directory.
+   * directory. Resolved at ingest: a hint the caller cannot use fails the
+   * import typed (the job-create vocabulary).
    */
   dataset?: string;
+  /**
+   * Client-side upload progress: `(sentBytes, totalBytes)` over the
+   * archive's bytes as the stream flushes them — the same reading
+   * datasets().publish() hands out (PublishDatasetOptions.onUploadProgress).
+   * Not called for an `archive_url` source (no bytes ride the request).
+   */
+  onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
+  /**
+   * Register-first: called once with the import id BEFORE the first byte
+   * moves when the archive rides the resumable session door (over the
+   * 256 MiB switch), so a watcher may attach — `jobs().watchImport(id)`,
+   * `evolve job import <id> --watch` — while the transfer runs. The SAME id
+   * upload() resolves with. Not called on the single-POST path, where the
+   * id exists only once the 202 lands.
+   */
+  onRegistered?: (importId: string) => void;
+}
+
+/**
+ * Where a job import's archive came from (spec JobImportSource): the
+ * uploaded bytes by their sha256, or the public https URL the worker
+ * downloads. `hub` — Harbor's own hub job source (`SourceJobConfig(type=
+ * "hub", job_id=...)`) — is RESERVED: the union carries the word so the arm
+ * is additive when it lands; no door accepts it yet.
+ */
+export type JobImportSource =
+  | { type: "archive"; sha256: string }
+  | { type: "archive_url"; url: string }
+  | { type: "hub"; job_id: string };
+
+/**
+ * The four phases of a job ingest, in the order the worker runs them:
+ * fetching (the archive from the store, or the URL download), extracting,
+ * validating (every gate before any row), ingesting (the rows and the
+ * trace-artifact stores).
+ */
+export type JobImportPhaseName = "fetching" | "extracting" | "validating" | "ingesting";
+
+/** One phase of a job import's timeline (spec JobImportProgress.phases[]). */
+export interface JobImportPhaseProgress {
+  name: JobImportPhaseName;
+  started_at: string;
+  /** Absent while the phase runs — and forever, on the phase a FAILED import died in. */
+  completed_at?: string;
+}
+
+/**
+ * The worker's own statement of where a job ingest stands (spec
+ * JobImportProgress), written at phase boundaries only. On a terminal
+ * import it is the settled record.
+ */
+export interface JobImportProgress {
+  phase: JobImportPhaseName;
+  started_at: string;
+  phases: JobImportPhaseProgress[];
+}
+
+/**
+ * Why a job import FAILED (spec JobImportFailure). The codes are the ones
+ * the upload door once answered synchronously — `invalid_archive`,
+ * `upload_too_large`, `not_a_job_dir`, `job_already_uploaded` (details name
+ * `existing_job_id`), the dataset-hint codes, `job_too_large`,
+ * `invalid_trial` (details name the `trial`) — plus the platform's own
+ * `import_failed` and `import_lease_expired`.
+ */
+export interface JobImportFailure {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * An accepted job upload, from the 202 to a COMPLETED Job or a typed FAILED
+ * — what jobs().upload() resolves with and jobs().getImport()/watchImport()
+ * read. Same four status words a dataset import speaks.
+ */
+export interface JobImport {
+  id: string;
+  status: DatasetImportStatus;
+  /**
+   * Register-first: true exactly while the archive is still arriving
+   * through its resumable session (QUEUED, not yet claimable), false from
+   * the 202 on.
+   */
+  receiving: boolean;
+  /** Null while a session is still receiving (nothing is stored yet). */
+  source: JobImportSource | null;
+  /** The `dataset` hint as given (`name` or `name@version`), or null. */
+  dataset: string | null;
+  /**
+   * The ingested Job, from COMPLETED on — read it with jobs().get(). Null
+   * again if that job was deleted (delete-then-reupload): the import stays
+   * COMPLETED and honest.
+   */
+  job_id: string | null;
+  /** Trials the ingested job carries, from COMPLETED on (Harbor's own spelling). */
+  n_trials_uploaded: number | null;
+  failure: JobImportFailure | null;
+  /** Null until the worker's first report (a QUEUED import). */
+  progress: JobImportProgress | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Cursor page of job imports */
+export type JobImportPage = Page<JobImport>;
+
+/** Dual-use handle from jobs().listImports(): await one page, or iterate them all */
+export interface JobImportList extends Awaitable<JobImportPage>, AsyncIterable<JobImport> {}
+
+/** Options for jobs().listImports() */
+export interface ListJobImportsOptions extends PageOptions {
+  /** Only imports in this status */
+  status?: DatasetImportStatus;
+}
+
+/** Options for jobs().watchImport() */
+export interface WatchJobImportOptions {
+  /** Called on every observed import status change (including the first status seen, and the receiving flip). */
+  onStatus?: (jobImport: JobImport) => void;
+  /**
+   * Called on every observed change of the import's live `progress` — a
+   * phase boundary; the server writes at that cadence. Never called while
+   * `progress` is null.
+   */
+  onProgress?: (progress: JobImportProgress, jobImport: JobImport) => void;
+  /** Poll interval in ms (default 2000) */
+  pollIntervalMs?: number;
+  /** Abort the watch (throws AbortError-shaped Error) */
+  signal?: AbortSignal;
 }
 
 // =============================================================================
@@ -3359,23 +3552,27 @@ export interface JobsClient {
    * trial's Harbor-shape tree plus its original task and rules every rubric
    * criterion, storing the result on the trial (`Trial.analysis`) and the
    * aggregate on the job (`stats.analysis`). THE RESPONSE IS THE JOB, its
-   * analyses enqueued — analyses are not a separate resource; follow them
-   * with watchAnalysis(), or poll the job's trials. This is also the
+   * analyses enqueued, and it returns AT ONCE — `stats.analysis.n_pending`
+   * counts the queued batch; analyses are not a separate resource. Follow
+   * them with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
-   * (or `{}`) means the defaults: glm-5.3-flash over Harbor's default
-   * rubric. CANCELLED trials are never analyzed.
+   * (or `{}`) means the defaults: deepseek-v4-flash-vision at its
+   * per-model effort over Harbor's default rubric. CANCELLED trials are
+   * never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
   /**
    * Follow a job's analysis wave to its settled end: polls the job until
    * `stats.analysis` reports nothing pending, and resolves with the final
-   * Job. `onStats` fires on every observed change of the analysis tally
+   * Job — the interval doubling from `pollIntervalMs` while the tally
+   * stands still (30-s ceiling, the job watch's own) and resetting on every
+   * change. `onStats` fires on every observed change of the analysis tally
    * (including the first one seen). Per-trial results then ride the job's
    * trials (`Trial.analysis`). A null tally is tolerated and watched
    * through — it is the enqueue race right after an accepted analyze() —
    * so on a job that was NEVER analyzed this polls indefinitely: call it
-   * after analyze(), as the CLI always does. It is the MANUAL wave's
+   * after analyze(), as `evolve analyze --watch` does. It is the MANUAL wave's
    * companion, not the embedded trigger's: on a still-RUNNING job created
    * with `analyze`, `n_pending` can touch 0 between trial settles, so the
    * watch can return before every trial has been analyzed.
@@ -3411,28 +3608,51 @@ export interface JobsClient {
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
   /**
-   * Upload a Harbor job directory as a first-class TERMINAL job — Harbor's
-   * `harbor upload` in reverse, taking their CLI's own input (a `job_dir`
-   * with result.json + config.json at its root, one subdirectory per trial;
-   * the same gate applies here, client-side, with their refusal sentences).
-   * `dirOrArchive` is that directory — packed into a gzipped tar with the
-   * same deterministic packer every upload route here uses — or a
-   * ready-packed `.tar.gz` of one, uploaded byte-for-byte: the platform's own
-   * download() produces exactly this format, so a downloaded job re-uploads
-   * as-is, and any real `harbor run` job dir works the same way.
+   * Upload a Harbor job directory for ingest as a first-class TERMINAL job
+   * — Harbor's `harbor upload` in reverse, taking their CLI's own input (a
+   * `job_dir` with result.json + config.json at its root, one subdirectory
+   * per trial; the same gate applies here, client-side, with their refusal
+   * sentences). `source` is that directory — packed to a TEMPORARY FILE on
+   * disk with the same deterministic packer every upload route here uses,
+   * never into memory — or a ready-packed `.tar.gz` of one, streamed
+   * byte-for-byte (the platform's own download() produces exactly this
+   * format); or `{ archive_url }`, a public https URL of the archive the
+   * server fetches itself (no bytes ride the request). Archives over
+   * 256 MiB ride the resumable session door automatically (a dropped link
+   * resumes from the last acknowledged chunk), exactly as datasets().publish()
+   * does; the switch is invisible.
    *
-   * Trial facts land verbatim: rewards are never re-scored, a trial without a
-   * verdict lands INDETERMINATE, exceptions are carried, and the trajectory /
-   * raw streams / verifier log / reward.txt are stored byte-for-byte in the
-   * native trial slots. THE RESPONSE IS THE JOB — COMPLETED on creation, with
-   * `upload` carrying the provenance echo. It is a record, not a run: resume,
-   * retry and regrade refuse it (`job_uploaded`); analyze() works on it
-   * unchanged. `{ dataset }` links the uploaded trials to a published dataset
-   * version by task name. The caps live on `GET /api/meta` under
-   * `limits.uploads` (`job_archive_bytes`, `job_trials`,
-   * `job_trial_file_bytes`, `job_trial_session_bytes`).
+   * THE RESPONSE IS THE JOB IMPORT, not the job: the door only moves the
+   * archive into storage and answers 202; a worker ingests it off the
+   * request path and settles the import COMPLETED (`job_id` names the
+   * created Job — COMPLETED on creation, a record not a run: resume, retry
+   * and regrade refuse it `job_uploaded`; analyze() works on it unchanged)
+   * or FAILED with a typed `failure` (the same codes the door once answered
+   * synchronously — `not_a_job_dir`, `invalid_trial`, `job_already_uploaded`
+   * naming the existing job, ...). Follow it with watchImport(). `dataset`
+   * links the uploaded trials to a published dataset version by task name.
+   * The caps live on `GET /api/meta` under `limits.uploads`
+   * (`job_archive_bytes` — 8 GiB — `job_trials`, `job_trial_file_bytes`,
+   * `job_trial_session_bytes`).
    */
-  upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job>;
+  upload(source: string | { archive_url: string }, options?: UploadJobOptions): Promise<JobImport>;
+  /** One job import by id — owner-only (`job_import_not_found`, 404, for anyone else's). */
+  getImport(id: string): Promise<JobImport>;
+  /**
+   * Watch a job import to its terminal state — COMPLETED (read the Job at
+   * `job_id`) or FAILED (`failure` says why). Polls getImport() at
+   * `pollIntervalMs` (default 2 s); a 429/503 mid-watch is a delay, not an
+   * outcome. `onStatus` fires on every observed status change (the
+   * receiving flip included); `onProgress` on every observed change of the
+   * worker's phase record.
+   */
+  watchImport(id: string, options?: WatchJobImportOptions): Promise<JobImport>;
+  /**
+   * List your own job imports, newest first (cursor-paged): await one page,
+   * or for-await to walk them all. This is how an import id is found again
+   * after the one upload() returned was lost.
+   */
+  listImports(options?: ListJobImportsOptions): JobImportList;
   /**
    * Permanently delete one of your jobs — trials, trace events, analyses and
    * every stored trace object included (Harbor's `harbor hub job delete`:
@@ -3757,7 +3977,7 @@ export interface OrgQuota {
   max_concurrent_analyses: number;
   /** Managed-agent sessions open at once (recorded and read back; not yet enforced by the box-create doors). */
   max_concurrent_sessions: number;
-  /** Model spend allowed this calendar month, USD; null = no monthly budget. */
+  /** Model spend allowed this UTC calendar month (the gateway's window, reset on the 1st), USD; null = no monthly budget. */
   monthly_budget_usd: number | null;
   /** Sandboxes of this organization in flight on e2b at once — trials, trace analyses, regrade verifiers and managed sessions together; work beyond it waits; 0 pauses the organization on that provider; fleet default = the platform's own e2b ceiling. */
   max_concurrent_sandboxes_e2b: number;
@@ -3775,8 +3995,16 @@ export interface OrgUsage {
   in_flight_analyses: number;
   /** Sessions not yet ended; always 0 on a shared org (sessions carry no organization). */
   active_sessions: number;
-  /** Recorded model spend since the first of the current calendar month (UTC). */
-  month_spend_usd: number;
+  /**
+   * The gateway's own month-to-date meter for the organization — the number
+   * `monthly_budget_usd` is enforced against (UTC calendar month, reset on the
+   * 1st) — as the platform last copied it. null = no copy the platform may
+   * serve (never copied, or the month rolled and the gateway has not reset
+   * yet); never 0 for "unknown".
+   */
+  month_spend_usd: number | null;
+  /** When the gateway answered the copy above (ISO 8601); null exactly when `month_spend_usd` is. */
+  month_spend_as_of: string | null;
 }
 
 /** One organization in depth (`GET /api/orgs/{org}`): the row, the member count, its quota and usage. */
@@ -3960,6 +4188,7 @@ export const HOSTED_ERROR_CODES = [
   // below, and distinct from rate_limited for the same reason: nothing was
   // rate-counted and there is no Retry-After — the server's disk is busy.
   "too_many_concurrent_job_uploads",
+  "job_import_not_found",
   "import_not_found",
   "import_too_large",
   // The server is already spooling its bound of concurrent corpus uploads
@@ -4188,6 +4417,18 @@ export interface CapabilityDocument {
     trial: StatusVocabulary;
     import: StatusVocabulary;
     dataset_version: StatusVocabulary;
+  };
+  /**
+   * The trace analyzer's roster and defaults: the model an omitted
+   * `analyze.model_name` takes, the efforts `analyze.reasoning_effort`
+   * accepts (the claude harness's — the analyzer IS that harness), and
+   * every roster model with the effort an omitted `reasoning_effort` takes
+   * for it. Absent on servers predating the field.
+   */
+  analyze?: {
+    default_model: string;
+    reasoning_efforts: string[];
+    models: { alias: string; model_id: string; default_reasoning_effort: string }[];
   };
   limits: {
     job: {

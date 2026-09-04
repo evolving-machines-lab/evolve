@@ -136,6 +136,16 @@ import type {
   TrialStatus,
   TrialsClient,
   UploadJobOptions,
+  JobImport,
+  JobImportFailure,
+  JobImportList,
+  JobImportPage,
+  JobImportPhaseName,
+  JobImportPhaseProgress,
+  JobImportProgress,
+  JobImportSource,
+  ListJobImportsOptions,
+  WatchJobImportOptions,
   UpstreamStatus,
   UsageReading,
   VerifierEnvironmentMode,
@@ -327,6 +337,16 @@ export type {
   TrialUploadProvenance,
   TrialsClient,
   UploadJobOptions,
+  JobImport,
+  JobImportFailure,
+  JobImportList,
+  JobImportPage,
+  JobImportPhaseName,
+  JobImportPhaseProgress,
+  JobImportProgress,
+  JobImportSource,
+  ListJobImportsOptions,
+  WatchJobImportOptions,
   UploadProvenance,
   UpstreamStatus,
   UsageReading,
@@ -563,7 +583,12 @@ export class ImportSettleError extends Error {
 }
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
-const MAX_RECONNECT_DELAY_MS = 30_000;
+/**
+ * The ceiling every job-side watch backs off to: the event stream's
+ * reconnect delay (jobs().watch()) and the analysis poll's interval
+ * (jobs().watchAnalysis()) both double up to here and no further.
+ */
+const MAX_WATCH_DELAY_MS = 30_000;
 
 const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "COMPLETED",
@@ -1232,6 +1257,24 @@ function mapDatasetImport(raw: Record<string, unknown>): DatasetImport {
   return datasetImport;
 }
 
+/** The job-import shape (spec JobImport), every required member read as the contract states it. */
+function mapJobImport(raw: Record<string, unknown>): JobImport {
+  const jobImport: JobImport = {
+    id: raw.id as string,
+    status: raw.status as DatasetImportStatus,
+    receiving: raw.receiving === true,
+    source: (raw.source as JobImportSource | null) ?? null,
+    dataset: (raw.dataset as string | null) ?? null,
+    job_id: (raw.job_id as string | null) ?? null,
+    n_trials_uploaded: (raw.n_trials_uploaded as number | null) ?? null,
+    failure: (raw.failure as JobImportFailure | null) ?? null,
+    progress: (raw.progress as JobImportProgress | null) ?? null,
+  };
+  if (typeof raw.created_at === "string") jobImport.created_at = raw.created_at;
+  if (typeof raw.updated_at === "string") jobImport.updated_at = raw.updated_at;
+  return jobImport;
+}
+
 function mapCoverage(raw: unknown): CompareCoverage {
   const coverage = (raw ?? {}) as Record<string, unknown>;
   return {
@@ -1556,72 +1599,93 @@ async function requestUpload(
   return res;
 }
 
+/** The transfer options every archive upload shares (one file, one wire). */
+type ArchiveUploadOptions = {
+  method?: "POST" | "PUT";
+  fields: Record<string, string | undefined>;
+  filename: string;
+  /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
+  onBytes?: (sentBytes: number, totalBytes: number) => void;
+  /**
+   * Register-first (resumable door only): the pre-created import id from
+   * the session open, forwarded to resumable.ts — see
+   * PublishDatasetOptions.onRegistered / UploadJobOptions.onRegistered.
+   */
+  onRegistered?: (importId: string) => void;
+  /**
+   * When set, an archive OVER this many bytes rides the resumable chunked
+   * door instead of one single-request POST (hosted/resumable.ts — a
+   * dropped link then resumes from the last acknowledged chunk instead of
+   * restarting a multi-GB transfer from zero). The dataset publish surface
+   * and the job upload surface have that door; the callers without one
+   * leave this unset. The switch is automatic, exactly as Harbor's uploader
+   * switches (REFERENCES/Harbor src/harbor/upload/storage.py:55-67) — never
+   * a caller-facing flag.
+   */
+  resumableThreshold?: number;
+  /** The session door the resumable path opens (resumable.ts sessionsPath); the dataset door when unset. */
+  resumablePath?: string;
+};
+
 /**
- * Tar + gzip `directory` into a temp file and upload it via requestUpload —
+ * Upload ONE on-disk archive: over the resumable threshold (when the
+ * caller has a session door) through the chunked sessions, else one
+ * streamed multipart POST (requestUpload). The archive is read from disk in
+ * both arms — never held in memory (the F1 law, hosted-upload-memory.test.ts).
+ */
+async function uploadArchive(
+  cfg: ResolvedConfig,
+  path: string,
+  archive: string,
+  opts: ArchiveUploadOptions
+): Promise<Response> {
+  if (opts.resumableThreshold !== undefined) {
+    const { stat } = await import("node:fs/promises");
+    const { size } = await stat(archive);
+    if (size > opts.resumableThreshold) {
+      const { uploadArchiveResumable } = await import("./resumable");
+      const res = await uploadArchiveResumable({
+        baseUrl: cfg.baseUrl,
+        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+        file: { path: archive },
+        fields: opts.fields,
+        ...(opts.resumablePath !== undefined ? { sessionsPath: opts.resumablePath } : {}),
+        ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
+        ...(opts.onRegistered !== undefined ? { onRegistered: opts.onRegistered } : {}),
+      });
+      if (!res.ok) await throwApiError(res);
+      return res;
+    }
+  }
+  return await requestUpload(cfg, path, {
+    method: opts.method,
+    fields: opts.fields,
+    file: { path: archive, filename: opts.filename },
+    ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
+  });
+}
+
+/**
+ * Tar + gzip `directory` into a TEMP FILE and upload it via uploadArchive —
  * the one flow every publish-a-directory surface (datasets, agents, skills,
- * jobs) shares. The archive only ever exists on disk; the temp dir is
- * removed however the upload ends.
+ * jobs) shares. The archive only ever exists on disk (never in memory: a
+ * 4.41 GB job folder packed into one in-memory archive died client-side on
+ * 2026-09-01); the temp dir is removed however the upload ends.
  */
 async function uploadDirectory(
   cfg: ResolvedConfig,
   path: string,
-  opts: {
-    method?: "POST" | "PUT";
-    fields: Record<string, string | undefined>;
-    directory: string;
-    filename: string;
-    /** Client-side upload progress, from the stream itself (upload.ts onBytes). */
-    onBytes?: (sentBytes: number, totalBytes: number) => void;
-    /**
-     * Register-first (resumable door only): the pre-created import id from
-     * the session open, forwarded to resumable.ts — see
-     * PublishDatasetOptions.onRegistered.
-     */
-    onRegistered?: (importId: string) => void;
-    /**
-     * When set, an archive OVER this many bytes rides the resumable chunked
-     * door instead of one single-request POST (hosted/resumable.ts — a
-     * dropped link then resumes from the last acknowledged chunk instead of
-     * restarting a multi-GB transfer from zero). Only the dataset publish
-     * surface has that door; the callers without one leave this unset. The
-     * switch is automatic, exactly as Harbor's uploader switches
-     * (REFERENCES/Harbor src/harbor/upload/storage.py:55-67) — never a
-     * caller-facing flag.
-     */
-    resumableThreshold?: number;
-  }
+  opts: ArchiveUploadOptions & { directory: string }
 ): Promise<Response> {
   const { tarGzipDirectoryToFile } = await import("./tar");
   const { mkdtemp, rm } = await import("node:fs/promises");
-  const { stat } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const tmp = await mkdtemp(join(tmpdir(), "evolve-upload-"));
   try {
     const archive = join(tmp, opts.filename);
     await tarGzipDirectoryToFile(opts.directory, archive);
-    if (opts.resumableThreshold !== undefined) {
-      const { size } = await stat(archive);
-      if (size > opts.resumableThreshold) {
-        const { uploadArchiveResumable } = await import("./resumable");
-        const res = await uploadArchiveResumable({
-          baseUrl: cfg.baseUrl,
-          headers: { Authorization: `Bearer ${cfg.apiKey}` },
-          file: { path: archive },
-          fields: opts.fields,
-          ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
-          ...(opts.onRegistered !== undefined ? { onRegistered: opts.onRegistered } : {}),
-        });
-        if (!res.ok) await throwApiError(res);
-        return res;
-      }
-    }
-    return await requestUpload(cfg, path, {
-      method: opts.method,
-      fields: opts.fields,
-      file: { path: archive, filename: opts.filename },
-      ...(opts.onBytes !== undefined ? { onBytes: opts.onBytes } : {}),
-    });
+    return await uploadArchive(cfg, path, archive, opts);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -2681,6 +2745,11 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     return mapJob((await res.json()) as Record<string, unknown>);
   }
 
+  async function getJobImport(id: string): Promise<JobImport> {
+    const res = await request(cfg, `/api/jobs/imports/${encodeURIComponent(id)}`);
+    return mapJobImport((await res.json()) as Record<string, unknown>);
+  }
+
   async function listPage(options?: ListJobsOptions): Promise<JobPage> {
     const res = await request(
       cfg,
@@ -2727,7 +2796,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   ): AsyncGenerator<JobEvent, Job> {
     const { onEvent, signal } = options ?? {};
     const initialDelayMs = options?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
-    const maxDelayMs = options?.maxReconnectDelayMs ?? MAX_RECONNECT_DELAY_MS;
+    const maxDelayMs = options?.maxReconnectDelayMs ?? MAX_WATCH_DELAY_MS;
 
     let lastSeq: number | null = null;
     let terminal = false;
@@ -2992,12 +3061,18 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     async watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job> {
       // Analyses have no event stream — the contract says "poll the job's
-      // trials to watch them settle" — so this is the poll, in one home,
-      // watchImport's posture: a 429/503 mid-watch is a delay, not an
-      // outcome. Settled means stats.analysis reports nothing pending; a
-      // still-null tally is the enqueue race after an accepted POST, watched
-      // through rather than misread as "never analyzed".
-      const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      // trials to watch them settle" — so this is the poll, in one home, with
+      // watch()'s backoff shape: the interval doubles while the tally stands
+      // still, up to the same 30-s ceiling the event stream's reconnect
+      // uses, and snaps back to the initial interval on every change — a
+      // long wave costs the server one read per half-minute, a moving one
+      // is followed closely. watchImport's posture on a 429/503 mid-watch:
+      // a delay, not an outcome. Settled means stats.analysis reports
+      // nothing pending; a still-null tally is the enqueue race after an
+      // accepted POST, watched through rather than misread as "never
+      // analyzed".
+      const initialDelayMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      let delayMs = initialDelayMs;
       let lastTally: string | null = null;
       for (;;) {
         throwIfAborted(options?.signal);
@@ -3010,27 +3085,26 @@ export function jobs(config?: HostedClientConfig): JobsClient {
             (error.status === 429 || error.status === 503)
           ) {
             await sleep(
-              Math.max((error.retryAfterSec ?? 0) * 1000, pollIntervalMs),
+              Math.max((error.retryAfterSec ?? 0) * 1000, delayMs),
               options?.signal
             );
+            delayMs = Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
             continue;
           }
           throw error;
         }
         const analysis = current.stats.analysis ?? null;
-        if (analysis) {
-          const tally = JSON.stringify([
-            analysis.n_completed,
-            analysis.n_failed,
-            analysis.n_pending,
-          ]);
-          if (tally !== lastTally) {
-            lastTally = tally;
-            options?.onStats?.(current);
-          }
-          if (analysis.n_pending === 0) return current;
+        const tally = analysis
+          ? JSON.stringify([analysis.n_completed, analysis.n_failed, analysis.n_pending])
+          : null;
+        const changed = tally !== null && tally !== lastTally;
+        if (changed) {
+          lastTally = tally;
+          options?.onStats?.(current);
         }
-        await sleep(pollIntervalMs, options?.signal);
+        if (analysis?.n_pending === 0) return current;
+        delayMs = changed ? initialDelayMs : Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
+        await sleep(delayMs, options?.signal);
       }
     },
 
@@ -3055,24 +3129,50 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       return bytes;
     }) as JobsClient["download"],
 
-    async upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job> {
-      // download()'s inverse: a Harbor job directory in, the ordinary Job
-      // shape out. A path to a regular file is a ready-packed .tar.gz (our
-      // own download() output, or Harbor's) and rides the wire byte-for-byte;
-      // anything else is treated as the job directory Harbor's CLI takes.
-      if (typeof dirOrArchive !== "string" || !dirOrArchive.trim()) {
-        throw new Error("jobs().upload() requires a job directory (or .tar.gz archive) path");
+    async upload(
+      source: string | { archive_url: string },
+      options?: UploadJobOptions
+    ): Promise<JobImport> {
+      // download()'s inverse: a Harbor job directory in, the JOB IMPORT out
+      // (the door moves the archive into storage and answers 202; a worker
+      // ingests it — follow with watchImport()). Three sources: a path to a
+      // regular file is a ready-packed .tar.gz (our own download() output,
+      // or Harbor's) and rides the wire byte-for-byte; any other path is
+      // the job directory Harbor's CLI takes; { archive_url } is a public
+      // https URL the server fetches itself.
+      const fields = { dataset: options?.dataset };
+      if (typeof source === "object" && source !== null) {
+        if (typeof source.archive_url !== "string" || !source.archive_url.trim()) {
+          throw new Error("jobs().upload() with a URL source requires { archive_url: 'https://…' }");
+        }
+        const res = await request(cfg, "/api/jobs/upload", {
+          method: "POST",
+          body: uploadForm({ ...fields, archive_url: source.archive_url }),
+        });
+        return mapJobImport((await res.json()) as Record<string, unknown>);
       }
+      if (typeof source !== "string" || !source.trim()) {
+        throw new Error(
+          "jobs().upload() requires a job directory (or .tar.gz archive) path, or { archive_url }"
+        );
+      }
+      const transfer = {
+        fields,
+        filename: "job.tar.gz",
+        // Over the switch the archive rides the job door's resumable
+        // sessions (the dataset door's exact protocol, hosted/resumable.ts).
+        resumableThreshold: RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+        resumablePath: "/api/jobs/upload/uploads",
+        ...(options?.onUploadProgress !== undefined ? { onBytes: options.onUploadProgress } : {}),
+        ...(options?.onRegistered !== undefined ? { onRegistered: options.onRegistered } : {}),
+      };
       const { stat } = await import("node:fs/promises");
-      const target = await stat(dirOrArchive).catch(() => null);
+      const target = await stat(source).catch(() => null);
       if (target?.isFile()) {
         // A ready-packed archive streams from where it lies — never read
         // into memory, never re-packed, byte-for-byte on the wire.
-        const res = await requestUpload(cfg, "/api/jobs/upload", {
-          fields: { dataset: options?.dataset },
-          file: { path: dirOrArchive, filename: "job.tar.gz" },
-        });
-        return mapJob((await res.json()) as Record<string, unknown>);
+        const res = await uploadArchive(cfg, "/api/jobs/upload", source, transfer);
+        return mapJobImport((await res.json()) as Record<string, unknown>);
       }
       // Harbor's own gate (their cli/upload.py checks result.json, then
       // config.json), applied client-side with their sentences — the cheap
@@ -3081,18 +3181,71 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       // here too and reads as the first refusal, exactly as their CLI does.
       const { existsSync } = await import("node:fs");
       const { join, resolve } = await import("node:path");
-      const root = resolve(dirOrArchive);
+      const root = resolve(source);
       for (const required of ["result.json", "config.json"]) {
         if (!existsSync(join(root, required))) {
           throw new Error(`${root} does not contain ${required}`);
         }
       }
-      const res = await uploadDirectory(cfg, "/api/jobs/upload", {
-        fields: { dataset: options?.dataset },
-        directory: root,
-        filename: "job.tar.gz",
-      });
-      return mapJob((await res.json()) as Record<string, unknown>);
+      const res = await uploadDirectory(cfg, "/api/jobs/upload", { ...transfer, directory: root });
+      return mapJobImport((await res.json()) as Record<string, unknown>);
+    },
+
+    getImport: getJobImport,
+
+    async watchImport(id: string, options?: WatchJobImportOptions): Promise<JobImport> {
+      const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      let lastStatus: string | null = null;
+      let lastProgress: string | null = null;
+      for (;;) {
+        throwIfAborted(options?.signal);
+        let current: JobImport;
+        try {
+          current = await getJobImport(id);
+        } catch (error) {
+          // A rate limit or hiccup mid-watch is a delay, not an outcome —
+          // datasets().watchImport()'s law.
+          if (
+            error instanceof EvolveApiError &&
+            (error.status === 429 || error.status === 503)
+          ) {
+            await sleep(
+              Math.max((error.retryAfterSec ?? 0) * 1000, pollIntervalMs),
+              options?.signal
+            );
+            continue;
+          }
+          throw error;
+        }
+        // The receiving flip keeps status QUEUED, so the change key carries
+        // both — a watcher sees "QUEUED (receiving)" become "QUEUED".
+        const statusKey = `${current.status}${current.receiving ? ":receiving" : ""}`;
+        if (statusKey !== lastStatus) {
+          lastStatus = statusKey;
+          options?.onStatus?.(current);
+        }
+        if (current.progress !== null) {
+          const serialized = JSON.stringify(current.progress);
+          if (serialized !== lastProgress) {
+            lastProgress = serialized;
+            options?.onProgress?.(current.progress, current);
+          }
+        }
+        if (current.status === "COMPLETED" || current.status === "FAILED") return current;
+        await sleep(pollIntervalMs, options?.signal);
+      }
+    },
+
+    listImports(options?: ListJobImportsOptions): JobImportList {
+      return makePaginated(async (opts) => {
+        const query = new URLSearchParams();
+        if (opts.limit !== undefined) query.set("limit", String(opts.limit));
+        if (opts.cursor !== undefined) query.set("cursor", opts.cursor);
+        if (options?.status !== undefined) query.set("status", options.status);
+        const suffix = query.toString() ? `?${query}` : "";
+        const res = await request(cfg, `/api/jobs/imports${suffix}`);
+        return mapPage((await res.json()) as Record<string, unknown>, mapJobImport);
+      }, options);
     },
 
     async delete(id: string): Promise<JobDeleteResult> {
@@ -3576,7 +3729,10 @@ function mapOrganizationDetail(raw: Record<string, unknown>): OrganizationDetail
       in_flight_imports: count(usage.in_flight_imports),
       in_flight_analyses: count(usage.in_flight_analyses),
       active_sessions: count(usage.active_sessions),
-      month_spend_usd: count(usage.month_spend_usd),
+      // The gateway's meter as copied: nullable on the wire, null stays null
+      // (never coerced to 0 — an unknown is not a zero).
+      month_spend_usd: typeof usage.month_spend_usd === "number" ? usage.month_spend_usd : null,
+      month_spend_as_of: typeof usage.month_spend_as_of === "string" ? usage.month_spend_as_of : null,
     },
   };
 }
