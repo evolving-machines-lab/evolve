@@ -1493,9 +1493,9 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``analyze['reasoning_efforts']``, an unknown value is refused
     #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
     #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
-    #: high on deepseek-v4-flash-vision, low on glm-5.3-flash — its thinking
-    #: is forced and only a low effort shrinks it — the claude harness
-    #: default elsewhere). Always passed to the analyzer explicitly and
+    #: high on deepseek-v4-flash-vision, low on glm-5.3-flash — the
+    #: platform's ruling for a model whose thinking Z.ai documents as
+    #: forced, with no levels — the claude harness default elsewhere). Always passed to the analyzer explicitly and
     #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
     #: hosted extension: Harbor's analyze has no effort option.
     reasoning_effort: str
