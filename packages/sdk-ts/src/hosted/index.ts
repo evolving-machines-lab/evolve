@@ -583,7 +583,12 @@ export class ImportSettleError extends Error {
 }
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
-const MAX_RECONNECT_DELAY_MS = 30_000;
+/**
+ * The ceiling every job-side watch backs off to: the event stream's
+ * reconnect delay (jobs().watch()) and the analysis poll's interval
+ * (jobs().watchAnalysis()) both double up to here and no further.
+ */
+const MAX_WATCH_DELAY_MS = 30_000;
 
 const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "COMPLETED",
@@ -2791,7 +2796,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
   ): AsyncGenerator<JobEvent, Job> {
     const { onEvent, signal } = options ?? {};
     const initialDelayMs = options?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
-    const maxDelayMs = options?.maxReconnectDelayMs ?? MAX_RECONNECT_DELAY_MS;
+    const maxDelayMs = options?.maxReconnectDelayMs ?? MAX_WATCH_DELAY_MS;
 
     let lastSeq: number | null = null;
     let terminal = false;
@@ -3056,12 +3061,18 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     async watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job> {
       // Analyses have no event stream — the contract says "poll the job's
-      // trials to watch them settle" — so this is the poll, in one home,
-      // watchImport's posture: a 429/503 mid-watch is a delay, not an
-      // outcome. Settled means stats.analysis reports nothing pending; a
-      // still-null tally is the enqueue race after an accepted POST, watched
-      // through rather than misread as "never analyzed".
-      const pollIntervalMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      // trials to watch them settle" — so this is the poll, in one home, with
+      // watch()'s backoff shape: the interval doubles while the tally stands
+      // still, up to the same 30-s ceiling the event stream's reconnect
+      // uses, and snaps back to the initial interval on every change — a
+      // long wave costs the server one read per half-minute, a moving one
+      // is followed closely. watchImport's posture on a 429/503 mid-watch:
+      // a delay, not an outcome. Settled means stats.analysis reports
+      // nothing pending; a still-null tally is the enqueue race after an
+      // accepted POST, watched through rather than misread as "never
+      // analyzed".
+      const initialDelayMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      let delayMs = initialDelayMs;
       let lastTally: string | null = null;
       for (;;) {
         throwIfAborted(options?.signal);
@@ -3074,27 +3085,26 @@ export function jobs(config?: HostedClientConfig): JobsClient {
             (error.status === 429 || error.status === 503)
           ) {
             await sleep(
-              Math.max((error.retryAfterSec ?? 0) * 1000, pollIntervalMs),
+              Math.max((error.retryAfterSec ?? 0) * 1000, delayMs),
               options?.signal
             );
+            delayMs = Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
             continue;
           }
           throw error;
         }
         const analysis = current.stats.analysis ?? null;
-        if (analysis) {
-          const tally = JSON.stringify([
-            analysis.n_completed,
-            analysis.n_failed,
-            analysis.n_pending,
-          ]);
-          if (tally !== lastTally) {
-            lastTally = tally;
-            options?.onStats?.(current);
-          }
-          if (analysis.n_pending === 0) return current;
+        const tally = analysis
+          ? JSON.stringify([analysis.n_completed, analysis.n_failed, analysis.n_pending])
+          : null;
+        const changed = tally !== null && tally !== lastTally;
+        if (changed) {
+          lastTally = tally;
+          options?.onStats?.(current);
         }
-        await sleep(pollIntervalMs, options?.signal);
+        if (analysis?.n_pending === 0) return current;
+        delayMs = changed ? initialDelayMs : Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
+        await sleep(delayMs, options?.signal);
       }
     },
 

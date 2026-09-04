@@ -3054,7 +3054,11 @@ export interface WatchAnalysisOptions {
   onStats?: (job: Job) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
-  /** Poll interval between polls (default: 2000ms) */
+  /**
+   * Initial poll interval (default: 2000ms). Doubles while the tally stands
+   * still, up to the 30-s ceiling the job watch's reconnect uses, and
+   * returns to this value on every tally change.
+   */
   pollIntervalMs?: number;
 }
 
@@ -3520,8 +3524,9 @@ export interface JobsClient {
    * trial's Harbor-shape tree plus its original task and rules every rubric
    * criterion, storing the result on the trial (`Trial.analysis`) and the
    * aggregate on the job (`stats.analysis`). THE RESPONSE IS THE JOB, its
-   * analyses enqueued — analyses are not a separate resource; follow them
-   * with watchAnalysis(), or poll the job's trials. This is also the
+   * analyses enqueued, and it returns AT ONCE — `stats.analysis.n_pending`
+   * counts the queued batch; analyses are not a separate resource. Follow
+   * them with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
    * (or `{}`) means the defaults: deepseek-v4-flash-vision at its
@@ -3532,12 +3537,14 @@ export interface JobsClient {
   /**
    * Follow a job's analysis wave to its settled end: polls the job until
    * `stats.analysis` reports nothing pending, and resolves with the final
-   * Job. `onStats` fires on every observed change of the analysis tally
+   * Job — the interval doubling from `pollIntervalMs` while the tally
+   * stands still (30-s ceiling, the job watch's own) and resetting on every
+   * change. `onStats` fires on every observed change of the analysis tally
    * (including the first one seen). Per-trial results then ride the job's
    * trials (`Trial.analysis`). A null tally is tolerated and watched
    * through — it is the enqueue race right after an accepted analyze() —
    * so on a job that was NEVER analyzed this polls indefinitely: call it
-   * after analyze(), as the CLI always does. It is the MANUAL wave's
+   * after analyze(), as `evolve analyze --watch` does. It is the MANUAL wave's
    * companion, not the embedded trigger's: on a still-RUNNING job created
    * with `analyze`, `n_pending` can touch 0 between trial settles, so the
    * watch can return before every trial has been analyzed.

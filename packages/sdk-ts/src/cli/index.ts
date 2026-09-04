@@ -18,8 +18,8 @@
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
  * ids-only lists. Exit codes: 0 success (watch: job COMPLETED / publish
- * COMPLETED), 1 runtime/API failure (watch: FAILED or CANCELLED), 2 usage
- * error.
+ * COMPLETED / every analysis completed), 1 runtime/API failure (watch:
+ * FAILED or CANCELLED / any analysis failed), 2 usage error.
  */
 
 import { existsSync, readFileSync, realpathSync } from "fs";
@@ -1083,7 +1083,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // server-side.
   analyze: {
     summary:
-      "Analyze a terminal job's trial traces against a rubric (server-side; follows the wave to its settled end)",
+      "Analyze a terminal job's trial traces against a rubric (server-side; add --watch to follow the wave)",
     flags: {
       model: {
         kind: "string",
@@ -1121,16 +1121,21 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
           "Sandbox provider the analyzer runs on (Harbor's -e/--env; the job lineup, " +
           "GET /api/meta; default: the platform's analysis default)",
       },
+      watch: {
+        kind: "boolean",
+        help:
+          "Poll until every analysis settles (2 s between reads, backing off to 30 s while nothing changes)",
+      },
       quiet: {
         kind: "boolean",
         short: "q",
-        help: "Suppress the progress lines; print the final block only",
+        help: "With --watch: suppress the progress lines, print the final block only",
       },
     },
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
-    example: "evolve analyze cme12ab34 -r rubric.toml",
+    example: "evolve analyze cme12ab34 -r rubric.toml --watch",
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
   // cli/main.py); ours is a deliberate subset — no --public/--share-org/
@@ -4345,6 +4350,7 @@ export function analysisResultLines(runs: Trial[]): string[] {
 
 async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
+  const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   const client = jobs(clientConfig(inv));
   const id = await resolveJobId(inv, inv.positionals[0]);
@@ -4363,7 +4369,24 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   // --effort rides verbatim too (the run verb's own flag applied to the
   // analyzer): the server's effort vocabulary is the one copy.
   if (inv.flags.effort !== undefined) req.reasoning_effort = String(inv.flags.effort);
+  // The 202 IS the queued batch — the job body, `stats.analysis` counting
+  // the enqueued rows as pending — and the verb returns with it, the shape
+  // of `job start` / `run`: Harbor's hosted launch prints the accepted job
+  // and returns (their cli/hosted_jobs.py run_hosted_launch), and the wait
+  // is a separate poll (their hub.py status_cmd: "polling this command is
+  // the point of --json"). --watch is that poll, opted in.
   const accepted = await client.analyze(id, req);
+  if (!watch) {
+    if (json) {
+      io.out(JSON.stringify(accepted));
+    } else {
+      for (const line of jobLines(accepted)) io.out(line);
+      io.out("");
+      io.out(`Follow it with: evolve job show ${accepted.id}`);
+    }
+    return 0;
+  }
+
   if (json) {
     io.out(JSON.stringify({ kind: "analysis.accepted", job: accepted }));
   } else if (!quiet) {
