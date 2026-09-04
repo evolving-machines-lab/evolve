@@ -482,7 +482,7 @@ export interface Rubric {
 
 /**
  * Trace-analysis configuration — Harbor's `harbor analyze` vocabulary (their
- * cli/analyze.py: `--model`, `--rubric`). PRESENCE of this object is the
+ * cli/analyze.py: `--model`, `--rubric`, `--prompt`). PRESENCE of this object is the
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
@@ -516,6 +516,26 @@ export interface AnalyzeConfigInput {
   model_name?: string;
   rubric?: Rubric;
   /**
+   * The analyzer's prompt template — the TEXT of Harbor's `-p/--prompt <file>`
+   * ("Prompt file for the evaluator agent. Uses built-in default if not
+   * specified.", their cli/analyze.py:94-99). It REPLACES the built-in
+   * template (their analyze/prompts/analyze.txt) as the body of the analyzer's
+   * instruction and is rendered with the same three tokens (`{trial_path}`,
+   * `{task_section}`, `{criteria_guidance}`): the three tokens are
+   * substituted, an unknown `{token}` renders empty, `{{` and `}}` write a
+   * literal brace, and any other brace text is left as written (Harbor's
+   * Python renderer would render it empty, convert it or raise there —
+   * `{ x }` empty, `{x!r}` quoted, `{"a": 1}` an error); the output contract (write
+   * `analysis.json` matching the rubric's schema) is appended after it exactly
+   * as Harbor appends it, so a custom prompt can never opt out of the
+   * deliverable. Stored AS GIVEN and FROZEN into each analysis the config
+   * enqueues, like the rubric. Omitted = the built-in prompt (`null` on the
+   * resolved echo and on the analysis). Present, it must be non-empty plain
+   * text (no NUL character) of at most 32,000 characters — refused
+   * `invalid_input` naming `analyze.prompt` and the bound, never truncated. The CLI reads the file
+   * for you: `evolve analyze -p prompt.txt`.
+   */
+  prompt?: string;
    * Reasoning effort the analyzer runs at — the platform's `agents[].
    * reasoning_effort` vocabulary applied to the analyzer, which IS the
    * claude harness: the accepted values are `GET /api/meta`'s
@@ -548,12 +568,14 @@ export interface AnalyzeConfigInput {
  * the day, resolved at accept and stored, so the record always states the
  * policy it executes (same law as RetryConfig). Echoed on the job body when
  * the job was created with `analyze`; each analysis additionally carries the
- * exact pair IT ran under (`Trial.analysis.model_name` / `.rubric`), which a
- * later manual re-analysis may have changed.
+ * exact policy IT ran under (`Trial.analysis.model_name` / `.rubric` /
+ * `.prompt`), which a later manual re-analysis may have changed.
  */
 export interface AnalyzeConfig {
   model_name: string;
   rubric: Rubric;
+  /** The caller's prompt template as stored; null = Harbor's built-in analyze.txt. */
+  prompt: string | null;
   /**
    * The effort this policy's analyses run at. Named at create it is served
    * as stored; when the create named none, this echoes the per-model
@@ -1320,6 +1342,11 @@ export interface TrialAnalysis {
    */
   reasoning_effort: string | null;
   rubric: Rubric;
+  /**
+   * The prompt template THIS analysis ran under, frozen at enqueue
+   * (`AnalyzeConfigInput.prompt`); null = Harbor's built-in analyze.txt.
+   */
+  prompt: string | null;
   /**
    * 3–5 sentence overview of what happened during the trial (Harbor's
    * summary contract, analyze/prompts/analyze.txt). Null until completed.
