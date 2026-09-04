@@ -3963,7 +3963,25 @@ async function testDownloadJobTerminalRequired() {
 // UPLOAD (POST /api/jobs/upload) TESTS
 // =============================================================================
 
-/** A minimal wire job body for the upload 201, with the provenance echo. */
+/** A minimal wire JobImport body for the upload 202 (the door's accept). */
+function jobImportBody(overrides?: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: "imp-1",
+    status: "QUEUED",
+    receiving: false,
+    source: { type: "archive", sha256: "ab".repeat(32) },
+    dataset: null,
+    job_id: null,
+    n_trials_uploaded: null,
+    failure: null,
+    progress: null,
+    created_at: "2026-09-04T10:00:00.000Z",
+    updated_at: "2026-09-04T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** A minimal wire job body for the ingested job, with the provenance echo. */
 function uploadedJobBody(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
     id: "eval-up1",
@@ -4011,14 +4029,15 @@ async function writeJobDirFixture(dir: string): Promise<void> {
 }
 
 async function testUploadJobDirectory() {
-  console.log("\n--- upload() packs a job directory and STREAMS it as the archive part ---");
-  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
+  console.log("\n--- upload() packs a job directory to a temp FILE, STREAMS it as the archive part, and resolves the 202 JobImport ---");
+  const server = await startCaptureServer({ status: 202, body: jobImportBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-"));
   try {
     await writeJobDirFixture(dir);
 
     const e = jobs({ apiKey: "test-key", baseUrl: server.base });
-    const created = await e.upload(dir);
+    const progress: [number, number][] = [];
+    const imported = await e.upload(dir, { onUploadProgress: (sent, total) => progress.push([sent, total]) });
 
     const call = server.calls[server.calls.length - 1];
     assertEqual(call.url, "/api/jobs/upload", "the URL carries nothing");
@@ -4030,25 +4049,16 @@ async function testUploadJobDirectory() {
     const tarText = gunzipSync(body).toString("latin1");
     assert(tarText.includes("result.json"), "the tar carries the job's result.json");
     assert(tarText.includes("trial-1/result.json"), "the tar carries the trial directory");
+    assert(progress.length > 0 && progress[progress.length - 1][0] === progress[progress.length - 1][1], "the transfer reading reaches sent == total");
 
-    assertEqual(created.id, "eval-up1", "201 maps to the ordinary Job shape");
-    assertEqual(created.status, "COMPLETED", "an uploaded job is terminal on arrival");
-    assertEqual(
-      created.upload,
-      {
-        original_job_id: "orig-123",
-        original_job_name: "2026-08-27__12-00-00",
-        uploaded_at: "2026-08-28T10:00:00.000Z",
-        reported_totals: {
-          cost_usd: 2.5,
-          n_input_tokens: 2400,
-          n_cache_tokens: 600,
-          n_output_tokens: 1600,
-          n_trials_reporting: 2,
-        },
-      },
-      "the provenance echo rides Job.upload, aggregated REPORTED totals included"
-    );
+    // THE ANSWER IS THE IMPORT, not the job: the door moved the bytes and
+    // a worker ingests them — job_id is null until it settles.
+    assertEqual(imported.id, "imp-1", "202 maps to the JobImport shape");
+    assertEqual(imported.status, "QUEUED", "accepted, nothing started yet");
+    assertEqual(imported.receiving, false, "the classic door's import is never receiving");
+    assertEqual(imported.source, { type: "archive", sha256: "ab".repeat(32) }, "the source is the archive's digest");
+    assertEqual(imported.job_id, null, "no job yet");
+    assertEqual(imported.failure, null, "no failure");
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
@@ -4057,22 +4067,55 @@ async function testUploadJobDirectory() {
 
 async function testUploadJobDatasetHint() {
   console.log("\n--- upload() sends the dataset hint as a named part BEFORE the archive ---");
-  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
+  const server = await startCaptureServer({ status: 202, body: jobImportBody({ dataset: "deep-swe@1.1" }) });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-hint-"));
   try {
     await writeJobDirFixture(dir);
 
     const e = jobs({ apiKey: "test-key", baseUrl: server.base });
-    await e.upload(dir, { dataset: "deep-swe@1.1" });
+    const imported = await e.upload(dir, { dataset: "deep-swe@1.1" });
 
     const parts = multipartParts(server.calls[server.calls.length - 1]);
     assertEqual(partData(parts, "dataset")?.toString(), "deep-swe@1.1", "dataset hint is a named part");
     // Metadata first, so the server can refuse a bad hint before receiving the
     // upload — the same order every multipart route here keeps.
     assertEqual(parts.map((p) => p.name), ["dataset", "archive"], "the hint precedes the archive part");
+    assertEqual(imported.dataset, "deep-swe@1.1", "the import echoes the hint as given");
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testUploadJobArchiveUrl() {
+  console.log("\n--- upload({ archive_url }) hands the server a public url — no bytes ride the request ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/upload", {
+      status: 202,
+      body: jobImportBody({ id: "imp-url", source: { type: "archive_url", url: "https://archives.example.com/job.tar.gz" } }),
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const imported = await e.upload({ archive_url: "https://archives.example.com/job.tar.gz" }, { dataset: "deep-swe" });
+    assertEqual(imported.id, "imp-url", "the import comes back");
+    assertEqual(imported.source, { type: "archive_url", url: "https://archives.example.com/job.tar.gz" }, "the source is the url");
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/jobs/upload"), "POSTs the upload door");
+    const form = call.init?.body as FormData;
+    assertEqual(form.get("archive_url"), "https://archives.example.com/job.tar.gz", "archive_url rides as a part");
+    assertEqual(form.get("dataset"), "deep-swe", "the hint rides beside it");
+    assertEqual(form.get("archive"), null, "no archive part");
+
+    let threw = false;
+    try {
+      await e.upload({ archive_url: "" });
+    } catch (err: any) {
+      threw = true;
+      assert(err.message.includes("archive_url"), "an empty url refuses client-side, naming the field");
+    }
+    assert(threw, "an empty url refuses");
+  } finally {
+    restoreFetch();
   }
 }
 
@@ -4125,7 +4168,7 @@ async function testUploadJobDirGate() {
 
 async function testUploadJobArchivePassthrough() {
   console.log("\n--- upload() streams an already-packed .tar.gz byte-for-byte, never re-packing ---");
-  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
+  const server = await startCaptureServer({ status: 202, body: jobImportBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-tgz-"));
   try {
     // Any gzip stream stands in for a downloaded job archive; the point is
@@ -4147,9 +4190,133 @@ async function testUploadJobArchivePassthrough() {
   }
 }
 
+async function testUploadJobResumableSwitch() {
+  console.log("\n--- upload() over the switch rides the JOB session door (open -> chunks -> complete), register-first id handed over ---");
+  // The dataset publish's own switch, on the job door's path: lowered
+  // through the same seam the publish suites use, so a KB fixture rides it.
+  const { createServer } = await import("node:http");
+  const seen: { method: string; url: string }[] = [];
+  let received = 0;
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      seen.push({ method: req.method ?? "", url: req.url ?? "" });
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST" && req.url === "/api/jobs/upload/uploads") {
+        res.statusCode = 201;
+        res.end(JSON.stringify({ id: "up-1", state: "RECEIVING", offset: 0, size: 0, import_id: "imp-9", chunk_min_bytes: 1, chunk_max_bytes: 33554432 }));
+      } else if (req.method === "PATCH") {
+        received += Buffer.concat(chunks).length;
+        res.statusCode = 204;
+        res.setHeader("Upload-Offset", String(received));
+        res.end();
+      } else if (req.method === "POST" && req.url === "/api/jobs/upload/uploads/up-1/complete") {
+        res.statusCode = 202;
+        res.end(JSON.stringify(jobImportBody({ id: "imp-9" })));
+      } else {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: { code: "internal_error", message: `unexpected ${req.method} ${req.url}` } }));
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-resumable-"));
+  const previous = RESUMABLE_UPLOAD_THRESHOLD_BYTES;
+  try {
+    await writeJobDirFixture(dir);
+    setResumableUploadThresholdBytes(16);
+    const registered: string[] = [];
+    const e = jobs({ apiKey: "test-key", baseUrl: `http://127.0.0.1:${port}` });
+    const imported = await e.upload(dir, { onRegistered: (id) => registered.push(id) });
+    assertEqual(seen[0], { method: "POST", url: "/api/jobs/upload/uploads" }, "the session opens on the JOB door");
+    assert(seen.some((s) => s.method === "PATCH" && s.url === "/api/jobs/upload/uploads/up-1"), "chunks PATCH the job session");
+    assertEqual(seen[seen.length - 1], { method: "POST", url: "/api/jobs/upload/uploads/up-1/complete" }, "the complete lands last");
+    assert(!seen.some((s) => s.url === "/api/jobs/upload"), "the classic door is never used over the switch");
+    assertEqual(registered, ["imp-9"], "the register-first import id is handed over before the first chunk");
+    assertEqual(imported.id, "imp-9", "the complete's 202 is the same import");
+  } finally {
+    setResumableUploadThresholdBytes(previous);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testJobImportReads() {
+  console.log("\n--- getImport / listImports / watchImport: the import verbs, terminal at COMPLETED or FAILED ---");
+  installMockFetch();
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    setMockResponse("/api/jobs/imports/imp-1", {
+      status: 200,
+      body: jobImportBody({
+        status: "RUNNING",
+        progress: {
+          phase: "extracting",
+          started_at: "2026-09-04T10:00:00.000Z",
+          phases: [
+            { name: "fetching", started_at: "2026-09-04T10:00:00.000Z", completed_at: "2026-09-04T10:00:01.000Z" },
+            { name: "extracting", started_at: "2026-09-04T10:00:01.000Z" },
+          ],
+        },
+      }),
+    });
+    const one = await e.getImport("imp-1");
+    assertEqual(one.status, "RUNNING", "getImport maps the status");
+    assertEqual(one.progress?.phase, "extracting", "and the worker's phase record");
+
+    setMockResponse("/api/jobs/imports?", {
+      status: 200,
+      body: { items: [jobImportBody({ id: "imp-2", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 2 })], nextCursor: null, hasMore: false },
+    });
+    const page = await e.listImports({ status: "COMPLETED" });
+    assertEqual(page.items[0].job_id, "eval-up1", "listImports maps the page");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("status=COMPLETED"), "the status filter rides the query");
+
+    // The watch: RUNNING -> COMPLETED; onStatus fires per change, onProgress
+    // per phase record change, and the settle is the COMPLETED import.
+    let polls = 0;
+    const sequence = [
+      jobImportBody({ status: "RUNNING", progress: { phase: "ingesting", started_at: "2026-09-04T10:00:00.000Z", phases: [] } }),
+      jobImportBody({ status: "RUNNING", progress: { phase: "ingesting", started_at: "2026-09-04T10:00:00.000Z", phases: [] } }),
+      jobImportBody({ status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 2 }),
+    ];
+    const originalMock = globalThis.fetch;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      if (url.toString().includes("/api/jobs/imports/imp-w")) {
+        const body = sequence[Math.min(polls, sequence.length - 1)];
+        polls += 1;
+        return { ok: true, status: 200, headers: new Headers(), json: async () => body } as unknown as Response;
+      }
+      return originalMock(url, init);
+    };
+    const statuses: string[] = [];
+    const phases: string[] = [];
+    const final = await e.watchImport("imp-w", {
+      pollIntervalMs: 1,
+      onStatus: (i) => statuses.push(i.status),
+      onProgress: (p) => phases.push(p.phase),
+    });
+    assertEqual(final.status, "COMPLETED", "the watch settles at COMPLETED");
+    assertEqual(final.job_id, "eval-up1", "with the job id");
+    assertEqual(statuses, ["RUNNING", "COMPLETED"], "onStatus fires once per change");
+    assertEqual(phases, ["ingesting"], "onProgress fires once per phase-record change");
+
+    // FAILED settles too — with the typed failure, never a throw.
+    (globalThis as any).fetch = async () =>
+      ({ ok: true, status: 200, headers: new Headers(), json: async () => jobImportBody({ status: "FAILED", failure: { code: "invalid_trial", message: 'trial "t1": bad', details: { trial: "t1" } } }) }) as unknown as Response;
+    const failed = await e.watchImport("imp-f", { pollIntervalMs: 1 });
+    assertEqual(failed.status, "FAILED", "the watch settles at FAILED");
+    assertEqual(failed.failure?.code, "invalid_trial", "with the typed code");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testUploadJobDeterministicPack() {
   console.log("\n--- upload() packs the same directory to the same bytes ---");
-  const server = await startCaptureServer({ status: 201, body: uploadedJobBody() });
+  const server = await startCaptureServer({ status: 202, body: jobImportBody() });
   const dir = await mkdtemp(join(tmpdir(), "evolve-job-upload-det-"));
   try {
     await writeJobDirFixture(dir);
@@ -4398,13 +4565,17 @@ async function testUploadJobTypedErrors() {
     }
 
     {
+      // The engine's deep refusals (invalid_trial, not_a_job_dir, ...) no
+      // longer answer the POST — they land on the import's failure — but the
+      // DOOR's own refusals still do, typed: a second source beside the
+      // archive is invalid_input naming the part.
       const server = await startCaptureServer({
-        status: 422,
+        status: 400,
         body: {
           error: {
-            code: "invalid_trial",
-            message: 'Trial "trial-1": result.json fails the TrialResult shape',
-            details: { trial: "trial-1" },
+            code: "invalid_input",
+            message: "exactly one source is allowed: an archive part, or archive_url",
+            param: "archive",
           },
         },
       });
@@ -4414,44 +4585,17 @@ async function testUploadJobTypedErrors() {
         await e.upload(dir);
       } catch (err: any) {
         threw = true;
-        assertEqual(err.code, "invalid_trial", "invalid_trial surfaces with its code");
-        assertEqual((err.details as Record<string, unknown>)?.trial, "trial-1", "details name the trial");
+        assert(err instanceof EvolveApiError, "throws the typed EvolveApiError");
+        assertEqual(err.status, 400, "carries the HTTP status");
+        assertEqual(err.code, "invalid_input", "carries the stable error code");
       } finally {
         await server.close();
       }
-      assert(threw, "throws on 422");
+      assert(threw, "throws on 400");
     }
-
-    // The duplicate refusal: re-uploading an archive whose job this caller
-    // already uploaded — details name the existing job to open instead.
-    {
-      const server = await startCaptureServer({
-        status: 409,
-        body: {
-          error: {
-            code: "job_already_uploaded",
-            message: "You already uploaded this job",
-            details: { existing_job_id: "eval-up1" },
-          },
-        },
-      });
-      const e = jobs({ apiKey: "test-key", baseUrl: server.base });
-      let threw = false;
-      try {
-        await e.upload(dir);
-      } catch (err: any) {
-        threw = true;
-        assertEqual(err.code, "job_already_uploaded", "the duplicate refusal surfaces with its code");
-        assertEqual(
-          (err.details as Record<string, unknown>)?.existing_job_id,
-          "eval-up1",
-          "details name the existing job"
-        );
-      } finally {
-        await server.close();
-      }
-      assert(threw, "throws on the duplicate 409");
-    }
+    // The duplicate refusal (job_already_uploaded) no longer answers the
+    // POST: it lands on the import's failure — jobs().watchImport() settles
+    // FAILED with that code (testJobImportReads).
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -6838,8 +6982,11 @@ async function main() {
   await testDownloadJobTerminalRequired();
   await testUploadJobDirectory();
   await testUploadJobDatasetHint();
+  await testUploadJobArchiveUrl();
   await testUploadJobDirGate();
   await testUploadJobArchivePassthrough();
+  await testUploadJobResumableSwitch();
+  await testJobImportReads();
   await testUploadJobDeterministicPack();
   await testUploadProvenanceMappingEdges();
   await testUploadExecutionHonesty();

@@ -1,7 +1,8 @@
 /**
  * Resumable archive upload — the client half of the chunked publish door.
  *
- * Above RESUMABLE_UPLOAD_THRESHOLD_BYTES a dataset corpus stops riding one
+ * Above RESUMABLE_UPLOAD_THRESHOLD_BYTES a dataset corpus — or a job
+ * archive, the same protocol on the job upload door — stops riding one
  * multipart POST (where a link that drops at GiB 7 of 8 restarts from byte
  * zero) and rides the platform's upload sessions instead: open a session
  * declaring the archive's exact size and whole-archive sha256, PATCH
@@ -103,6 +104,14 @@ const REQUEST_TIMEOUT_MS = 600_000;
 export interface ResumableUploadPost {
   /** Absolute base URL — the transport knows nothing of config policy. */
   baseUrl: string;
+  /**
+   * The session door's path: the dataset publish door by default
+   * (`/api/datasets/publish/uploads`), or the job upload door
+   * (`/api/jobs/upload/uploads`) — the same protocol on both (swarm_dashboard
+   * lib/evaluations/import/upload-session-verbs.ts binds one verbs module
+   * under each door), so the loop below is spelled once.
+   */
+  sessionsPath?: string;
   /** Extra headers (Authorization). Content headers are computed here. */
   headers: Record<string, string>;
   /** The archive to chunk from disk. */
@@ -273,7 +282,7 @@ export async function uploadArchiveResumable(post: ResumableUploadPost): Promise
   const { size } = await stat(post.file.path);
   const sha256 = await fileSha256(post.file.path);
 
-  const sessionsUrl = `${post.baseUrl}/api/datasets/publish/uploads`;
+  const sessionsUrl = `${post.baseUrl}${post.sessionsPath ?? "/api/datasets/publish/uploads"}`;
   const jsonHeaders = { ...post.headers, "Content-Type": "application/json" };
 
   // 1. Open the session. A refusal here (bad name, name taken, over the cap)

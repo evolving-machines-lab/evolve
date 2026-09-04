@@ -3064,9 +3064,140 @@ export interface UploadJobOptions {
    * active version). Matched trials analyze against the real task content;
    * unmatched or unhinted trials analyze through the task-not-available
    * branch, exactly Harbor's fallback for a trial without a local task
-   * directory.
+   * directory. Resolved at ingest: a hint the caller cannot use fails the
+   * import typed (the job-create vocabulary).
    */
   dataset?: string;
+  /**
+   * Client-side upload progress: `(sentBytes, totalBytes)` over the
+   * archive's bytes as the stream flushes them — the same reading
+   * datasets().publish() hands out (PublishDatasetOptions.onUploadProgress).
+   * Not called for an `archive_url` source (no bytes ride the request).
+   */
+  onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
+  /**
+   * Register-first: called once with the import id BEFORE the first byte
+   * moves when the archive rides the resumable session door (over the
+   * 256 MiB switch), so a watcher may attach — `jobs().watchImport(id)`,
+   * `evolve job import <id> --watch` — while the transfer runs. The SAME id
+   * upload() resolves with. Not called on the single-POST path, where the
+   * id exists only once the 202 lands.
+   */
+  onRegistered?: (importId: string) => void;
+}
+
+/**
+ * Where a job import's archive came from (spec JobImportSource): the
+ * uploaded bytes by their sha256, or the public https URL the worker
+ * downloads. `hub` — Harbor's own hub job source (`SourceJobConfig(type=
+ * "hub", job_id=...)`) — is RESERVED: the union carries the word so the arm
+ * is additive when it lands; no door accepts it yet.
+ */
+export type JobImportSource =
+  | { type: "archive"; sha256: string }
+  | { type: "archive_url"; url: string }
+  | { type: "hub"; job_id: string };
+
+/**
+ * The four phases of a job ingest, in the order the worker runs them:
+ * fetching (the archive from the store, or the URL download), extracting,
+ * validating (every gate before any row), ingesting (the rows and the
+ * trace-artifact stores).
+ */
+export type JobImportPhaseName = "fetching" | "extracting" | "validating" | "ingesting";
+
+/** One phase of a job import's timeline (spec JobImportProgress.phases[]). */
+export interface JobImportPhaseProgress {
+  name: JobImportPhaseName;
+  started_at: string;
+  /** Absent while the phase runs — and forever, on the phase a FAILED import died in. */
+  completed_at?: string;
+}
+
+/**
+ * The worker's own statement of where a job ingest stands (spec
+ * JobImportProgress), written at phase boundaries only. On a terminal
+ * import it is the settled record.
+ */
+export interface JobImportProgress {
+  phase: JobImportPhaseName;
+  started_at: string;
+  phases: JobImportPhaseProgress[];
+}
+
+/**
+ * Why a job import FAILED (spec JobImportFailure). The codes are the ones
+ * the upload door once answered synchronously — `invalid_archive`,
+ * `upload_too_large`, `not_a_job_dir`, `job_already_uploaded` (details name
+ * `existing_job_id`), the dataset-hint codes, `job_too_large`,
+ * `invalid_trial` (details name the `trial`) — plus the platform's own
+ * `import_failed` and `import_lease_expired`.
+ */
+export interface JobImportFailure {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * An accepted job upload, from the 202 to a COMPLETED Job or a typed FAILED
+ * — what jobs().upload() resolves with and jobs().getImport()/watchImport()
+ * read. Same four status words a dataset import speaks.
+ */
+export interface JobImport {
+  id: string;
+  status: DatasetImportStatus;
+  /**
+   * Register-first: true exactly while the archive is still arriving
+   * through its resumable session (QUEUED, not yet claimable), false from
+   * the 202 on.
+   */
+  receiving: boolean;
+  /** Null while a session is still receiving (nothing is stored yet). */
+  source: JobImportSource | null;
+  /** The `dataset` hint as given (`name` or `name@version`), or null. */
+  dataset: string | null;
+  /**
+   * The ingested Job, from COMPLETED on — read it with jobs().get(). Null
+   * again if that job was deleted (delete-then-reupload): the import stays
+   * COMPLETED and honest.
+   */
+  job_id: string | null;
+  /** Trials the ingested job carries, from COMPLETED on (Harbor's own spelling). */
+  n_trials_uploaded: number | null;
+  failure: JobImportFailure | null;
+  /** Null until the worker's first report (a QUEUED import). */
+  progress: JobImportProgress | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Cursor page of job imports */
+export type JobImportPage = Page<JobImport>;
+
+/** Dual-use handle from jobs().listImports(): await one page, or iterate them all */
+export interface JobImportList extends Awaitable<JobImportPage>, AsyncIterable<JobImport> {}
+
+/** Options for jobs().listImports() */
+export interface ListJobImportsOptions extends PageOptions {
+  /** Only imports in this status */
+  status?: DatasetImportStatus;
+}
+
+/** Options for jobs().watchImport() */
+export interface WatchJobImportOptions {
+  /** Called on every observed import status change (including the first status seen, and the receiving flip). */
+  onStatus?: (jobImport: JobImport) => void;
+  /**
+   * Called on every observed change of the import's live `progress` — a
+   * phase boundary; the server writes at that cadence. Never called while
+   * `progress` is null.
+   */
+  onProgress?: (progress: JobImportProgress, jobImport: JobImport) => void;
+  /** Poll interval in ms (default 2000) */
+  pollIntervalMs?: number;
+  /** Abort the watch (throws AbortError-shaped Error) */
+  signal?: AbortSignal;
 }
 
 // =============================================================================
@@ -3411,28 +3542,51 @@ export interface JobsClient {
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
   /**
-   * Upload a Harbor job directory as a first-class TERMINAL job — Harbor's
-   * `harbor upload` in reverse, taking their CLI's own input (a `job_dir`
-   * with result.json + config.json at its root, one subdirectory per trial;
-   * the same gate applies here, client-side, with their refusal sentences).
-   * `dirOrArchive` is that directory — packed into a gzipped tar with the
-   * same deterministic packer every upload route here uses — or a
-   * ready-packed `.tar.gz` of one, uploaded byte-for-byte: the platform's own
-   * download() produces exactly this format, so a downloaded job re-uploads
-   * as-is, and any real `harbor run` job dir works the same way.
+   * Upload a Harbor job directory for ingest as a first-class TERMINAL job
+   * — Harbor's `harbor upload` in reverse, taking their CLI's own input (a
+   * `job_dir` with result.json + config.json at its root, one subdirectory
+   * per trial; the same gate applies here, client-side, with their refusal
+   * sentences). `source` is that directory — packed to a TEMPORARY FILE on
+   * disk with the same deterministic packer every upload route here uses,
+   * never into memory — or a ready-packed `.tar.gz` of one, streamed
+   * byte-for-byte (the platform's own download() produces exactly this
+   * format); or `{ archive_url }`, a public https URL of the archive the
+   * server fetches itself (no bytes ride the request). Archives over
+   * 256 MiB ride the resumable session door automatically (a dropped link
+   * resumes from the last acknowledged chunk), exactly as datasets().publish()
+   * does; the switch is invisible.
    *
-   * Trial facts land verbatim: rewards are never re-scored, a trial without a
-   * verdict lands INDETERMINATE, exceptions are carried, and the trajectory /
-   * raw streams / verifier log / reward.txt are stored byte-for-byte in the
-   * native trial slots. THE RESPONSE IS THE JOB — COMPLETED on creation, with
-   * `upload` carrying the provenance echo. It is a record, not a run: resume,
-   * retry and regrade refuse it (`job_uploaded`); analyze() works on it
-   * unchanged. `{ dataset }` links the uploaded trials to a published dataset
-   * version by task name. The caps live on `GET /api/meta` under
-   * `limits.uploads` (`job_archive_bytes`, `job_trials`,
-   * `job_trial_file_bytes`, `job_trial_session_bytes`).
+   * THE RESPONSE IS THE JOB IMPORT, not the job: the door only moves the
+   * archive into storage and answers 202; a worker ingests it off the
+   * request path and settles the import COMPLETED (`job_id` names the
+   * created Job — COMPLETED on creation, a record not a run: resume, retry
+   * and regrade refuse it `job_uploaded`; analyze() works on it unchanged)
+   * or FAILED with a typed `failure` (the same codes the door once answered
+   * synchronously — `not_a_job_dir`, `invalid_trial`, `job_already_uploaded`
+   * naming the existing job, ...). Follow it with watchImport(). `dataset`
+   * links the uploaded trials to a published dataset version by task name.
+   * The caps live on `GET /api/meta` under `limits.uploads`
+   * (`job_archive_bytes` — 8 GiB — `job_trials`, `job_trial_file_bytes`,
+   * `job_trial_session_bytes`).
    */
-  upload(dirOrArchive: string, options?: UploadJobOptions): Promise<Job>;
+  upload(source: string | { archive_url: string }, options?: UploadJobOptions): Promise<JobImport>;
+  /** One job import by id — owner-only (`job_import_not_found`, 404, for anyone else's). */
+  getImport(id: string): Promise<JobImport>;
+  /**
+   * Watch a job import to its terminal state — COMPLETED (read the Job at
+   * `job_id`) or FAILED (`failure` says why). Polls getImport() at
+   * `pollIntervalMs` (default 2 s); a 429/503 mid-watch is a delay, not an
+   * outcome. `onStatus` fires on every observed status change (the
+   * receiving flip included); `onProgress` on every observed change of the
+   * worker's phase record.
+   */
+  watchImport(id: string, options?: WatchJobImportOptions): Promise<JobImport>;
+  /**
+   * List your own job imports, newest first (cursor-paged): await one page,
+   * or for-await to walk them all. This is how an import id is found again
+   * after the one upload() returned was lost.
+   */
+  listImports(options?: ListJobImportsOptions): JobImportList;
   /**
    * Permanently delete one of your jobs — trials, trace events, analyses and
    * every stored trace object included (Harbor's `harbor hub job delete`:
@@ -3960,6 +4114,7 @@ export const HOSTED_ERROR_CODES = [
   // below, and distinct from rate_limited for the same reason: nothing was
   // rate-counted and there is no Retry-After — the server's disk is busy.
   "too_many_concurrent_job_uploads",
+  "job_import_not_found",
   "import_not_found",
   "import_too_large",
   // The server is already spooling its bound of concurrent corpus uploads

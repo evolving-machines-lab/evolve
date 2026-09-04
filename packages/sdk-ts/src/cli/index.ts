@@ -69,6 +69,8 @@ import type {
   Dataset,
   DatasetFailedTask,
   DatasetImport,
+  JobImport,
+  JobImportProgress,
   DatasetImportProgress,
   DatasetPreflight,
   DatasetSelector,
@@ -518,6 +520,26 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<id>",
         example: "evolve job regrade cme12ab34 --task tricky-task",
+      },
+      imports: {
+        summary: "List your job imports (uploads) newest first — how an import id is found again",
+        flags: {
+          ...LIST_FLAGS,
+          status: { kind: "string", value: "<QUEUED|RUNNING|COMPLETED|FAILED>", help: "Filter by import status" },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve job imports --status RUNNING",
+      },
+      import: {
+        summary: "Show one job import (an upload's record); --watch follows it to the job or its typed failure",
+        flags: {
+          watch: { kind: "boolean", help: "Poll until the import settles: COMPLETED (the job is printed) or FAILED" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<import-id>",
+        example: "evolve job import 4f1c… --watch",
       },
       download: {
         summary:
@@ -1099,7 +1121,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // nothing real to do).
   upload: {
     summary:
-      "Upload a Harbor job directory (or its .tar.gz) as a terminal job — Harbor's upload, in reverse",
+      "Upload a Harbor job directory (or its .tar.gz, or a public url of one) as a terminal job — Harbor's upload, in reverse; follows the import to the job",
     flags: {
       dataset: {
         kind: "string",
@@ -1107,8 +1129,17 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<name[@version]>",
         help: "Link the uploaded trials to a published dataset version by task name",
       },
+      from: {
+        kind: "string",
+        value: "<url>",
+        help: "A public https url of the job archive (.tar.gz) the SERVER fetches itself — no local bytes (instead of <job_dir>)",
+      },
+      "no-wait": {
+        kind: "boolean",
+        help: "Return after the 202 with the import id instead of following the ingest to the job (re-attach with: evolve job import <id> --watch)",
+      },
     },
-    minPositionals: 1,
+    minPositionals: 0,
     maxPositionals: 1,
     positionalUsage: "<job_dir>",
     example: "evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1",
@@ -4450,25 +4481,197 @@ async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   }
 }
 
+/** The import id with its status, receiving marked — the job-import twin of statusWithReceiving. */
+function jobImportStatus(imported: JobImport): string {
+  return imported.receiving ? `${imported.status} (receiving)` : imported.status;
+}
+
+/** The detail rows of one job import (`job import <id>`, and the follow's settled record). */
+function jobImportLines(imported: JobImport): string[] {
+  const rows: string[][] = [
+    ["id", imported.id],
+    ["status", jobImportStatus(imported)],
+  ];
+  if (imported.source !== null) {
+    rows.push([
+      "source",
+      imported.source.type === "archive"
+        ? `archive (sha256:${imported.source.sha256.slice(0, 12)}…)`
+        : imported.source.type === "archive_url"
+          ? `url ${imported.source.url}`
+          : `hub job ${imported.source.job_id}`,
+    ]);
+  }
+  if (imported.dataset !== null) rows.push(["dataset", imported.dataset]);
+  if (imported.job_id !== null) rows.push(["job", imported.job_id]);
+  if (imported.n_trials_uploaded !== null) rows.push(["trials", String(imported.n_trials_uploaded)]);
+  if (imported.progress !== null) rows.push(["phase", imported.progress.phase]);
+  if (imported.failure !== null) rows.push(["failure", `${imported.failure.code}: ${imported.failure.message}`]);
+  return table(rows);
+}
+
+/** One line per observed status change of a job import under --watch. */
+function jobImportStatusLine(imported: JobImport): string {
+  const detail =
+    imported.failure !== null ? truncate(`${imported.failure.code}: ${imported.failure.message}`, 140) : "";
+  return `status ${jobImportStatus(imported).padEnd(20)} ${detail}`.trimEnd();
+}
+
+/** One line per observed phase change of a job import under --watch. */
+function jobImportProgressLine(progress: JobImportProgress, nowMs = Date.now()): string {
+  const elapsed = fmtDurationMs(nowMs - Date.parse(progress.started_at));
+  return `phase  ${progress.phase.padEnd(20)} ${elapsed} elapsed`;
+}
+
 /**
- * `evolve upload <job_dir>` — Harbor's top-level upload verb, in reverse: the
- * SDK validates the directory gate (their sentences), packs, and POSTs; this
- * handler only renders the created record. The next step for an uploaded job
- * is analysis — it is already terminal, so there is nothing to watch.
+ * Follow a job import to its settle and render the outcome: COMPLETED
+ * prints the ingested JOB (the record `evolve upload` printed before the
+ * door became asynchronous) and the analyze hint; FAILED prints the typed
+ * failure and exits 1 — the same exit and the same code a synchronous
+ * refusal once produced, one hop later. In --json mode the follow is silent
+ * and ONE document is printed at the end: the Job on success, the failure
+ * envelope on FAILED — exactly the shapes scripts branched on before.
+ */
+async function followJobImport(
+  inv: Invocation,
+  imported: JobImport,
+  io: CliIO,
+  opening: "accepted" | "attached"
+): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const json = inv.flags.json === true;
+  if (!json) {
+    io.out(
+      opening === "accepted"
+        ? `Upload accepted: import ${imported.id} ${jobImportStatus(imported)} — watching…`
+        : `Import ${imported.id} ${jobImportStatus(imported)} — watching…`
+    );
+  }
+  const final = await client.watchImport(imported.id, {
+    onStatus: (current) => {
+      if (!json) io.out(jobImportStatusLine(current));
+    },
+    onProgress: (progress) => {
+      if (!json) io.out(jobImportProgressLine(progress));
+    },
+  });
+  if (final.status === "FAILED" || final.job_id === null) {
+    const failure = final.failure ?? {
+      code: "import_failed",
+      message: "the import settled without a job and without a recorded failure",
+    };
+    if (json) io.out(JSON.stringify({ error: failure }));
+    io.err(`Error: ${failure.message}`);
+    return 1;
+  }
+  const job = await client.get(final.job_id);
+  if (json) {
+    io.out(JSON.stringify(job));
+    return 0;
+  }
+  io.out("");
+  for (const line of jobLines(job)) io.out(line);
+  io.out("");
+  io.out(`Analyze it with: evolve analyze ${job.id}`);
+  return 0;
+}
+
+/**
+ * `evolve upload <job_dir>` — Harbor's top-level upload verb, in reverse:
+ * the SDK validates the directory gate (their sentences), packs to a temp
+ * file, and streams; the door answers 202 with the job import, and this
+ * handler FOLLOWS it to the ingested job by default (the record the verb
+ * always printed), or prints the import with `--no-wait`. `--from <url>`
+ * hands the server a public archive url instead of local bytes (the
+ * dataset publish verb's own flag). Transfer progress prints once per 10 %
+ * in human mode; a resumable session's import id prints as soon as it is
+ * registered so a watcher can re-attach from anywhere.
  */
 async function cmdUpload(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
+  const json = inv.flags.json === true;
   const dataset = inv.flags.dataset as string | undefined;
-  const created = await client.upload(inv.positionals[0], {
+  const from = inv.flags.from as string | undefined;
+  const positional = inv.positionals[0];
+  if (from !== undefined && positional !== undefined) {
+    throw new CliUsageError('"upload" takes EXACTLY ONE source: <job_dir>, or --from <url>');
+  }
+  if (from === undefined && positional === undefined) {
+    throw new CliUsageError('"upload" needs a source: <job_dir> (or its .tar.gz), or --from <url>');
+  }
+  if (from !== undefined && !from.trim().startsWith("https://")) {
+    throw new CliUsageError(`"--from" takes a public https url of a job archive (got "${from}")`);
+  }
+  let lastTenth = -1;
+  const imported = await client.upload(from !== undefined ? { archive_url: from.trim() } : positional, {
     ...(dataset !== undefined ? { dataset } : {}),
+    onUploadProgress: (sent, total) => {
+      if (json) return;
+      const tenth = total > 0 ? Math.floor((sent / total) * 10) : 10;
+      if (tenth === lastTenth) return;
+      lastTenth = tenth;
+      io.out(`upload ${sent}/${total} (${Math.min(100, tenth * 10)}%)`);
+    },
+    onRegistered: (importId) => {
+      if (json) return;
+      io.out(`Registered import ${importId} — re-attach anytime with: evolve job import ${importId} --watch`);
+    },
   });
-  if (inv.flags.json === true) {
-    io.out(JSON.stringify(created));
+  if (inv.flags["no-wait"] === true) {
+    if (json) {
+      io.out(JSON.stringify(imported));
+      return 0;
+    }
+    for (const line of jobImportLines(imported)) io.out(line);
+    io.out("");
+    io.out(`Follow it with: evolve job import ${imported.id} --watch`);
     return 0;
   }
-  for (const line of jobLines(created)) io.out(line);
-  io.out("");
-  io.out(`Analyze it with: evolve analyze ${created.id}`);
+  return followJobImport(inv, imported, io, "accepted");
+}
+
+/** `evolve job imports` — the caller's job imports, newest first. */
+async function cmdJobImports(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const status = inv.flags.status as string | undefined;
+  if (status !== undefined && !["QUEUED", "RUNNING", "COMPLETED", "FAILED"].includes(status)) {
+    throw new CliUsageError(`"--status" must be one of QUEUED, RUNNING, COMPLETED, FAILED (got "${status}")`);
+  }
+  const page = await client.listImports({
+    ...pageOptions(inv),
+    ...(status !== undefined ? { status: status as JobImport["status"] } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (inv.flags.quiet === true) {
+    for (const imported of page.items) io.out(imported.id);
+    return 0;
+  }
+  const rows = page.items.map((imported) => [
+    imported.id,
+    jobImportStatus(imported),
+    imported.job_id ?? "-",
+    imported.n_trials_uploaded === null ? "-" : String(imported.n_trials_uploaded),
+    imported.dataset ?? "-",
+    imported.created_at ?? "",
+  ]);
+  for (const line of table([["ID", "STATUS", "JOB", "TRIALS", "DATASET", "CREATED"], ...rows])) io.out(line);
+  if (page.hasMore && page.nextCursor) io.out(`\nnext: --cursor ${page.nextCursor}`);
+  return 0;
+}
+
+/** `evolve job import <id>` — one job import; `--watch` follows it to the job or its typed failure. */
+async function cmdJobImport(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const imported = await client.getImport(inv.positionals[0]);
+  if (inv.flags.watch === true) return followJobImport(inv, imported, io, "attached");
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(imported));
+    return 0;
+  }
+  for (const line of jobImportLines(imported)) io.out(line);
   return 0;
 }
 
@@ -6123,6 +6326,8 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job retry": cmdJobRetry,
   "job regrade": cmdJobRegrade,
   "job download": cmdJobDownload,
+  "job imports": cmdJobImports,
+  "job import": cmdJobImport,
   "job grep": cmdJobGrep,
   "trial show": cmdTrialShow,
   "trial trace": cmdTrialTrace,

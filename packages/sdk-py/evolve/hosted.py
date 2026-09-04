@@ -275,6 +275,7 @@ HostedErrorCode = Literal[
     # below, and distinct from rate_limited for the same reason: nothing was
     # rate-counted and there is no Retry-After — the server's disk is busy.
     'too_many_concurrent_job_uploads',
+    'job_import_not_found',
     'import_not_found',
     'import_too_large',
     # The server is already spooling its bound of concurrent corpus uploads
@@ -2666,6 +2667,87 @@ class DatasetImportPage:
 
 
 @dataclass
+class JobImportSource:
+    """Where a job import's archive came from (spec ``JobImportSource``):
+    ``type`` is ``"archive"`` (the uploaded bytes, identified by ``sha256``),
+    ``"archive_url"`` (the public https ``url`` the worker downloads), or —
+    RESERVED, Harbor's own hub job source — ``"hub"`` with ``job_id``; no
+    door accepts the hub arm yet."""
+    type: str
+    sha256: Optional[str] = None
+    url: Optional[str] = None
+    job_id: Optional[str] = None
+
+
+@dataclass
+class JobImportPhaseProgress:
+    """One phase of a job import's timeline (fetching, extracting,
+    validating, ingesting). ``completed_at`` is None while the phase runs —
+    and forever, on the phase a FAILED import died in."""
+    name: str
+    started_at: str
+    completed_at: Optional[str] = None
+
+
+@dataclass
+class JobImportProgress:
+    """The worker's own statement of where a job ingest stands, written at
+    phase boundaries only (spec ``JobImportProgress``)."""
+    phase: str
+    started_at: str
+    phases: List[JobImportPhaseProgress] = field(default_factory=list)
+
+
+@dataclass
+class JobImportFailure:
+    """Why a job import FAILED (spec ``JobImportFailure``). The codes are the
+    ones the upload door once answered synchronously — ``invalid_archive``,
+    ``upload_too_large``, ``not_a_job_dir``, ``job_already_uploaded``
+    (``details['existing_job_id']``), the dataset-hint codes,
+    ``job_too_large``, ``invalid_trial`` (``details['trial']``) — plus the
+    platform's own ``import_failed`` and ``import_lease_expired``."""
+    code: str
+    message: str
+    details: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class JobImport:
+    """An accepted job upload, from the 202 to a COMPLETED Job or a typed
+    FAILED — what :meth:`JobsClient.upload` returns and
+    :meth:`JobsClient.get_import` / :meth:`JobsClient.watch_import` read.
+    Same four status words a dataset import speaks.
+    """
+    id: str
+    #: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED"
+    status: str
+    #: Register-first: True exactly while the archive is still arriving
+    #: through its resumable session (QUEUED, not yet claimable).
+    receiving: bool = False
+    #: None while a session is still receiving (nothing is stored yet).
+    source: Optional[JobImportSource] = None
+    #: The ``dataset`` hint as given ("name" or "name@version"), or None.
+    dataset: Optional[str] = None
+    #: The ingested Job, from COMPLETED on — read it with :meth:`JobsClient.get`.
+    #: None again if that job was deleted (delete-then-reupload).
+    job_id: Optional[str] = None
+    #: Trials the ingested job carries, from COMPLETED on (Harbor's own spelling).
+    n_trials_uploaded: Optional[int] = None
+    failure: Optional[JobImportFailure] = None
+    #: None until the worker's first report (a QUEUED import).
+    progress: Optional[JobImportProgress] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+@dataclass
+class JobImportPage:
+    items: List[JobImport]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
 class AgentPage:
     items: List[Agent]
     next_cursor: Optional[str]
@@ -3834,6 +3916,74 @@ def _map_dataset_import(data: Dict[str, Any]) -> DatasetImport:
     return dataset_import
 
 
+_JOB_IMPORT_PHASES = ('fetching', 'extracting', 'validating', 'ingesting')
+
+
+def _map_job_import_progress(raw: Any) -> Optional[JobImportProgress]:
+    """Map the wire ``progress`` blob of a job import; None for absent/None
+    and for anything short of the shape."""
+    if not isinstance(raw, dict):
+        return None
+    phase = raw.get('phase')
+    started_at = raw.get('started_at')
+    if phase not in _JOB_IMPORT_PHASES or not isinstance(started_at, str):
+        return None
+    phases: List[JobImportPhaseProgress] = []
+    for entry in raw.get('phases') or []:
+        if not isinstance(entry, dict):
+            return None
+        name = entry.get('name')
+        entry_started = entry.get('started_at')
+        if name not in _JOB_IMPORT_PHASES or not isinstance(entry_started, str):
+            return None
+        completed = entry.get('completed_at')
+        phases.append(JobImportPhaseProgress(
+            name=name,
+            started_at=entry_started,
+            completed_at=completed if isinstance(completed, str) else None,
+        ))
+    return JobImportProgress(phase=phase, started_at=started_at, phases=phases)
+
+
+def _map_job_import(data: Dict[str, Any]) -> JobImport:
+    """The job-import shape (spec ``JobImport``), every required member read
+    as the contract states it."""
+    source_raw = data.get('source')
+    source: Optional[JobImportSource] = None
+    if isinstance(source_raw, dict) and isinstance(source_raw.get('type'), str):
+        source = JobImportSource(
+            type=source_raw['type'],
+            sha256=source_raw.get('sha256') if isinstance(source_raw.get('sha256'), str) else None,
+            url=source_raw.get('url') if isinstance(source_raw.get('url'), str) else None,
+            job_id=source_raw.get('job_id') if isinstance(source_raw.get('job_id'), str) else None,
+        )
+    failure_raw = data.get('failure')
+    failure: Optional[JobImportFailure] = None
+    if isinstance(failure_raw, dict) and isinstance(failure_raw.get('message'), str):
+        details = failure_raw.get('details')
+        failure = JobImportFailure(
+            code=failure_raw.get('code', 'import_failed'),
+            message=failure_raw['message'],
+            details=details if isinstance(details, dict) else None,
+        )
+    return JobImport(
+        id=data.get('id', ''),
+        status=data.get('status', ''),
+        receiving=data.get('receiving') is True,
+        source=source,
+        dataset=data.get('dataset') if isinstance(data.get('dataset'), str) else None,
+        job_id=data.get('job_id') if isinstance(data.get('job_id'), str) else None,
+        n_trials_uploaded=(
+            data.get('n_trials_uploaded')
+            if isinstance(data.get('n_trials_uploaded'), int) else None
+        ),
+        failure=failure,
+        progress=_map_job_import_progress(data.get('progress')),
+        created_at=data.get('created_at') if isinstance(data.get('created_at'), str) else None,
+        updated_at=data.get('updated_at') if isinstance(data.get('updated_at'), str) else None,
+    )
+
+
 def _map_dataset_preflight(data: Dict[str, Any]) -> DatasetPreflight:
     manifest_raw = data.get('manifest')
     return DatasetPreflight(
@@ -4433,6 +4583,7 @@ def _upload_resumable_sync(
     fields: Dict[str, Optional[str]],
     on_bytes: Optional[Callable[[int, int], None]] = None,
     on_registered: Optional[Callable[[str], None]] = None,
+    sessions_path: str = '/api/datasets/publish/uploads',
 ) -> Dict[str, Any]:
     """The chunked transfer loop, on a worker thread — Harbor's resumable
     client re-expressed against the platform's upload sessions
@@ -4462,7 +4613,10 @@ def _upload_resumable_sync(
     """
     size = os.path.getsize(archive_path)
     sha256 = _file_sha256(archive_path)
-    base = f'{http.base_url()}/api/datasets/publish/uploads'
+    # The session door: the dataset publish door by default, or the job
+    # upload door — the same protocol on both (the twin of resumable.ts
+    # sessionsPath), so the loop is spelled once.
+    base = f'{http.base_url()}{sessions_path}'
     auth = {'Authorization': f'Bearer {http.api_key()}', 'Accept': 'application/json'}
 
     def request(url: str, method: str, headers: Dict[str, str], data: Optional[bytes] = None):
@@ -4588,13 +4742,45 @@ async def _upload_archive_resumable(
     fields: Dict[str, Optional[str]],
     on_bytes: Optional[Callable[[int, int], None]] = None,
     on_registered: Optional[Callable[[str], None]] = None,
+    sessions_path: str = '/api/datasets/publish/uploads',
 ) -> Dict[str, Any]:
     """Chunked-resumable counterpart of :func:`_upload_archive_file` for the
-    dataset publish surface. The loop is consumed on a worker thread, never
-    the event loop — the ``_upload_sync`` convention.
+    dataset publish surface and the job upload surface (``sessions_path``).
+    The loop is consumed on a worker thread, never the event loop — the
+    ``_upload_sync`` convention.
     """
     return await asyncio.to_thread(
-        _upload_resumable_sync, http, archive_path, fields, on_bytes, on_registered
+        _upload_resumable_sync, http, archive_path, fields, on_bytes, on_registered,
+        sessions_path,
+    )
+
+
+async def _upload_archive(
+    http: '_HostedHttp',
+    path: str,
+    fields: Dict[str, Optional[str]],
+    archive_path: str,
+    filename: str,
+    method: str = 'POST',
+    resumable_over: Optional[int] = None,
+    resumable_path: str = '/api/datasets/publish/uploads',
+    on_bytes: Optional[Callable[[int, int], None]] = None,
+    on_registered: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Upload ONE on-disk archive: over ``resumable_over`` (when the caller
+    has a session door) through the chunked sessions at ``resumable_path``,
+    else one streamed multipart POST. The archive is read from disk in both
+    arms — never held in memory."""
+    if resumable_over is not None and os.path.getsize(archive_path) > resumable_over:
+        # Big archives ride the resumable chunked door automatically — a
+        # dropped link resumes from the last acknowledged chunk. Same
+        # answer either way; the switch is invisible to callers, exactly as
+        # Harbor's uploader switches transports (upload/storage.py:55-67).
+        return await _upload_archive_resumable(
+            http, archive_path, fields, on_bytes, on_registered, resumable_path
+        )
+    return await _upload_archive_file(
+        http, path, fields, archive_path, filename, method, on_bytes
     )
 
 
@@ -4608,29 +4794,21 @@ async def _upload_directory_archive(
     resumable_over: Optional[int] = None,
     on_bytes: Optional[Callable[[int, int], None]] = None,
     on_registered: Optional[Callable[[str], None]] = None,
+    resumable_path: str = '/api/datasets/publish/uploads',
 ) -> Dict[str, Any]:
-    """Tar + gzip ``directory`` into a temp file and stream it to ``path`` —
+    """Tar + gzip ``directory`` into a TEMP FILE and stream it to ``path`` —
     the one flow every publish-a-directory surface (datasets, agents, skills,
-    jobs) shares. The archive only ever exists on disk; the temp dir is
-    removed however the upload ends.
+    jobs) shares. The archive only ever exists on disk (never in memory: a
+    4.41 GB job folder packed into one in-memory archive died client-side on
+    2026-09-01); the temp dir is removed however the upload ends.
     """
     tmp = tempfile.mkdtemp(prefix='evolve-upload-')
     try:
         archive_path = os.path.join(tmp, filename)
         await asyncio.to_thread(_tar_gzip_directory_to_file, directory, archive_path)
-        if (
-            resumable_over is not None
-            and os.path.getsize(archive_path) > resumable_over
-        ):
-            # Big corpora ride the resumable chunked door automatically — a
-            # dropped link resumes from the last acknowledged chunk. Same 202
-            # either way; the switch is invisible to callers, exactly as
-            # Harbor's uploader switches transports (upload/storage.py:55-67).
-            return await _upload_archive_resumable(
-                http, archive_path, fields, on_bytes, on_registered
-            )
-        return await _upload_archive_file(
-            http, path, fields, archive_path, filename, method, on_bytes
+        return await _upload_archive(
+            http, path, fields, archive_path, filename, method,
+            resumable_over, resumable_path, on_bytes, on_registered,
         )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -6849,64 +7027,173 @@ class JobsClient:
 
     async def upload(
         self,
-        dir_or_archive: str,
+        dir_or_archive: Optional[str] = None,
         *,
+        archive_url: Optional[str] = None,
         dataset: Optional[str] = None,
-    ) -> Job:
-        """Upload a Harbor job directory as a first-class TERMINAL job —
-        Harbor's ``harbor upload`` in reverse, taking their CLI's own input
-        (a ``job_dir`` with result.json + config.json at its root, one
+        on_upload_progress: Optional[Callable[[int, int], None]] = None,
+        on_registered: Optional[Callable[[str], None]] = None,
+    ) -> JobImport:
+        """Upload a Harbor job directory for ingest as a first-class TERMINAL
+        job — Harbor's ``harbor upload`` in reverse, taking their CLI's own
+        input (a ``job_dir`` with result.json + config.json at its root, one
         subdirectory per trial; the same gate applies here, client-side,
         with their refusal sentences).
 
-        ``dir_or_archive`` is that directory — packed into a gzipped tar with
-        the same deterministic packer every upload route here uses — or a
-        ready-packed ``.tar.gz`` of one, uploaded byte-for-byte: the
-        platform's own :meth:`download` produces exactly this format, so a
-        downloaded job re-uploads as-is, and any real ``harbor run`` job dir
-        works the same way.
+        ``dir_or_archive`` is that directory — packed to a TEMPORARY FILE on
+        disk with the same deterministic packer every upload route here
+        uses, never into memory — or a ready-packed ``.tar.gz`` of one,
+        streamed byte-for-byte (the platform's own :meth:`download` produces
+        exactly this format); or pass ``archive_url=`` instead, a public
+        https URL of the archive the server fetches itself (no bytes ride
+        the request). Archives over 256 MiB ride the resumable session door
+        automatically, exactly as :meth:`DatasetsClient.publish` does.
 
-        Trial facts land verbatim: rewards are never re-scored, a trial
-        without a verdict lands INDETERMINATE, exceptions are carried, and
-        the trajectory / raw streams / verifier log / reward.txt are stored
-        byte-for-byte in the native trial slots. THE RESPONSE IS THE JOB —
-        COMPLETED on creation, with ``upload`` carrying the provenance echo.
-        It is a record, not a run: resume, retry and regrade refuse it
-        (``job_uploaded``); :meth:`analyze` works on it unchanged.
-        ``dataset`` (``"name"`` or ``"name@version"``) links the uploaded
-        trials to a published dataset version by task name. The caps live on
-        ``GET /api/meta`` under ``limits['uploads']`` (``job_archive_bytes``,
-        ``job_trials``, ``job_trial_file_bytes``, ``job_trial_session_bytes``).
+        THE RESPONSE IS THE JOB IMPORT, not the job: the door only moves the
+        archive into storage and answers 202; a worker ingests it off the
+        request path and settles the import COMPLETED (``job_id`` names the
+        created Job — COMPLETED on creation, a record not a run: resume,
+        retry and regrade refuse it ``job_uploaded``; :meth:`analyze` works
+        on it unchanged) or FAILED with a typed ``failure`` (the same codes
+        the door once answered synchronously — ``not_a_job_dir``,
+        ``invalid_trial``, ``job_already_uploaded`` naming the existing job,
+        ...). Follow it with :meth:`watch_import`. ``dataset`` ("name" or
+        "name@version") links the uploaded trials to a published dataset
+        version by task name. ``on_upload_progress`` is the client-side
+        transfer reading ``(sent_bytes, total_bytes)``; ``on_registered``
+        receives the import id BEFORE the first byte moves when the archive
+        rides the resumable door, so a watcher can attach mid-transfer. The
+        caps live on ``GET /api/meta`` under ``limits['uploads']``
+        (``job_archive_bytes`` — 8 GiB — ``job_trials``,
+        ``job_trial_file_bytes``, ``job_trial_session_bytes``).
         """
+        if (dir_or_archive is None) == (archive_url is None):
+            raise ValueError(
+                'jobs().upload() takes EXACTLY ONE source: a job directory (or '
+                '.tar.gz archive) path, or archive_url=...'
+            )
+        fields: Dict[str, Optional[str]] = {}
+        if dataset is not None:
+            fields['dataset'] = dataset
+        if archive_url is not None:
+            if not isinstance(archive_url, str) or not archive_url.strip():
+                raise ValueError('jobs().upload() with a URL source requires archive_url="https://…"')
+            body, content_type = _multipart_body({**fields, 'archive_url': archive_url})
+            raw = await self._http.request_upload(
+                '/api/jobs/upload', body, {'Content-Type': content_type}
+            )
+            return _map_job_import(raw)
         if not isinstance(dir_or_archive, str) or not dir_or_archive.strip():
             raise ValueError(
                 'jobs().upload() requires a job directory (or .tar.gz archive) path'
             )
         path = os.path.abspath(dir_or_archive)
-        fields: Dict[str, Optional[str]] = {}
-        if dataset is not None:
-            fields['dataset'] = dataset
         if os.path.isfile(path):
             # A ready-packed archive streams from where it lies — never read
-            # into memory, never re-packed, byte-for-byte on the wire.
-            raw = await _upload_archive_file(
-                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz'
+            # into memory, never re-packed, byte-for-byte on the wire (the
+            # resumable door over the switch).
+            raw = await _upload_archive(
+                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz',
+                resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+                resumable_path='/api/jobs/upload/uploads',
+                on_bytes=on_upload_progress,
+                on_registered=on_registered,
             )
-            return _map_job(raw)
-        else:
-            # Harbor's own gate (their cli/upload.py checks result.json, then
-            # config.json), applied client-side with their sentences — the
-            # cheap refusal that saves tarring and shipping a tree the server
-            # would refuse the same way (``not_a_job_dir``). A nonexistent
-            # path lands here too and reads as the first refusal, exactly as
-            # their CLI does.
-            for required in ('result.json', 'config.json'):
-                if not os.path.exists(os.path.join(path, required)):
-                    raise ValueError(f'{path} does not contain {required}')
-            raw = await _upload_directory_archive(
-                self._http, '/api/jobs/upload', fields, path, 'job.tar.gz'
+            return _map_job_import(raw)
+        # Harbor's own gate (their cli/upload.py checks result.json, then
+        # config.json), applied client-side with their sentences — the
+        # cheap refusal that saves tarring and shipping a tree the server
+        # would refuse the same way (``not_a_job_dir``). A nonexistent
+        # path lands here too and reads as the first refusal, exactly as
+        # their CLI does.
+        for required in ('result.json', 'config.json'):
+            if not os.path.exists(os.path.join(path, required)):
+                raise ValueError(f'{path} does not contain {required}')
+        raw = await _upload_directory_archive(
+            self._http, '/api/jobs/upload', fields, path, 'job.tar.gz',
+            resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+            on_bytes=on_upload_progress,
+            on_registered=on_registered,
+            resumable_path='/api/jobs/upload/uploads',
+        )
+        return _map_job_import(raw)
+
+    async def get_import(self, id: str) -> JobImport:
+        """One job import by id — owner-only (``job_import_not_found``, 404,
+        for anyone else's)."""
+        raw = await self._http.request_json(f'/api/jobs/imports/{urllib.parse.quote(id)}')
+        return _map_job_import(raw)
+
+    async def watch_import(
+        self,
+        id: str,
+        *,
+        on_status: Optional[Callable[[JobImport], None]] = None,
+        on_progress: Optional[Callable[[JobImportProgress, JobImport], None]] = None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ) -> JobImport:
+        """Watch a job import to its terminal state — COMPLETED (read the Job
+        at ``job_id``) or FAILED (``failure`` says why). Polls
+        :meth:`get_import` every ``poll_interval_s``; a 429/503 mid-watch is a
+        delay, not an outcome. ``on_status`` fires on every observed status
+        change (the receiving flip included); ``on_progress`` on every
+        observed change of the worker's phase record. ``timeout_s`` bounds
+        the whole watch and raises :class:`TimeoutError`.
+        """
+        if poll_interval_s <= 0:
+            raise ValueError('poll_interval_s must be positive')
+        deadline = time.monotonic() + timeout_s if timeout_s is not None else None
+        last_status: Optional[str] = None
+        last_progress: Optional[JobImportProgress] = None
+        while True:
+            try:
+                job_import = await self.get_import(id)
+            except EvolveAPIError as error:
+                if error.status not in (429, 503):
+                    raise
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s') from error
+                await asyncio.sleep(max(error.retry_after_sec or 0.0, poll_interval_s))
+                continue
+            status_key = job_import.status + (':receiving' if job_import.receiving else '')
+            if status_key != last_status:
+                last_status = status_key
+                if on_status is not None:
+                    on_status(job_import)
+            if job_import.progress is not None and job_import.progress != last_progress:
+                last_progress = job_import.progress
+                if on_progress is not None:
+                    on_progress(job_import.progress, job_import)
+            if job_import.status in ('COMPLETED', 'FAILED'):
+                return job_import
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f'watch_import({id!r}) timed out after {timeout_s}s')
+            await asyncio.sleep(poll_interval_s)
+
+    def list_imports(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """List your own job imports, newest first (cursor-paged): ``await``
+        for one page, or ``async for`` to walk them all. ``status`` filters
+        on the import vocabulary ("QUEUED" | "RUNNING" | "COMPLETED" |
+        "FAILED"). This is how an import id is found again after the one
+        :meth:`upload` returned was lost."""
+        async def fetch_page(page_limit, page_cursor) -> JobImportPage:
+            query = _page_query(page_limit, page_cursor, status=status)
+            raw = await self._http.request_json(f'/api/jobs/imports{query}')
+            items, next_cursor, has_more = _page_parts(raw)
+            return JobImportPage(
+                items=[_map_job_import(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
             )
-            return _map_job(raw)
+
+        return _PaginatedList(fetch_page, lambda page: page.items, limit=limit, cursor=cursor)
 
     async def delete(self, id: str) -> JobDeleteResult:
         """Permanently delete one of your jobs — trials, trace events,

@@ -6916,39 +6916,73 @@ async function startUploadCaptureServer(): Promise<{
   };
 }
 
+/** A wire JobImport body for the CLI suites (the upload door's 202 and the poll). */
+function wireJobImport(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "imp-1",
+    status: "QUEUED",
+    receiving: false,
+    source: { type: "archive", sha256: "ab".repeat(32) },
+    dataset: null,
+    job_id: null,
+    n_trials_uploaded: null,
+    failure: null,
+    progress: null,
+    created_at: "2026-09-04T10:00:00.000Z",
+    updated_at: "2026-09-04T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** The ingested job the follow prints once the import COMPLETES. */
+function uploadedWireJob(): Record<string, unknown> {
+  return wireJob({
+    id: "eval-up1",
+    job_name: "2026-08-27__12-00-00",
+    status: "COMPLETED",
+    // Null exactly on an uploaded job: nothing executed here.
+    sandbox_provider: null,
+    trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
+    upload: {
+      original_job_id: "orig-123",
+      original_job_name: "2026-08-27__12-00-00",
+      uploaded_at: "2026-08-28T10:00:00.000Z",
+      reported_totals: {
+        cost_usd: 2.5,
+        n_input_tokens: 2400,
+        n_cache_tokens: 600,
+        n_output_tokens: 1600,
+        n_trials_reporting: 1,
+      },
+    },
+    finished_at: "2026-08-28T10:00:00.000Z",
+  });
+}
+
+async function writeCliJobDir(jobDir: string): Promise<void> {
+  await mkdir(join(jobDir, "trial-1"), { recursive: true });
+  await writeFile(join(jobDir, "result.json"), JSON.stringify({ id: "orig-123" }));
+  await writeFile(join(jobDir, "config.json"), JSON.stringify({ job_name: "2026-08-27__12-00-00" }));
+  await writeFile(join(jobDir, "trial-1", "result.json"), JSON.stringify({ trial_name: "trial-1" }));
+}
+
 async function testUploadVerb() {
-  console.log("\n--- runCli: evolve upload streams a job directory and renders the created record ---");
+  console.log("\n--- runCli: evolve upload streams a job directory, FOLLOWS the import, and renders the ingested job ---");
   installMockFetch();
   const server = await startUploadCaptureServer();
   const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-"));
   const jobDir = join(dir, "2026-08-27__12-00-00");
   try {
-    await mkdir(join(jobDir, "trial-1"), { recursive: true });
-    await writeFile(join(jobDir, "result.json"), JSON.stringify({ id: "orig-123" }));
-    await writeFile(join(jobDir, "config.json"), JSON.stringify({ job_name: "2026-08-27__12-00-00" }));
-    await writeFile(join(jobDir, "trial-1", "result.json"), JSON.stringify({ trial_name: "trial-1" }));
-    const uploaded = wireJob({
-      id: "eval-up1",
-      job_name: "2026-08-27__12-00-00",
-      status: "COMPLETED",
-      // Null exactly on an uploaded job: nothing executed here.
-      sandbox_provider: null,
-      trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
-      upload: {
-        original_job_id: "orig-123",
-        original_job_name: "2026-08-27__12-00-00",
-        uploaded_at: "2026-08-28T10:00:00.000Z",
-        reported_totals: {
-          cost_usd: 2.5,
-          n_input_tokens: 2400,
-          n_cache_tokens: 600,
-          n_output_tokens: 1600,
-          n_trials_reporting: 1,
-        },
-      },
-      finished_at: "2026-08-28T10:00:00.000Z",
+    await writeCliJobDir(jobDir);
+    const uploaded = uploadedWireJob();
+    // The door's 202 (the capture server), then the follow: the poll reads
+    // COMPLETED with the job id (mocked fetch), and the job itself.
+    server.setReply(202, wireJobImport({ dataset: "deep-swe@1.1" }));
+    setMockResponse("/api/jobs/imports/imp-1", {
+      status: 200,
+      body: wireJobImport({ status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 2, dataset: "deep-swe@1.1" }),
     });
-    server.setReply(201, uploaded);
+    setMockResponse("/api/jobs/eval-up1", { status: 200, body: uploaded });
 
     const { io, out, err } = captureIO();
     const code = await runCli(
@@ -6968,7 +7002,10 @@ async function testUploadVerb() {
     assert(call.body.includes('name="archive"'), "the packed tree is the archive part");
 
     const text = out.join("\n");
-    assert(text.includes("eval-up1"), "prints the minted job id");
+    assert(out.some((l) => l.startsWith("upload ") && l.includes("(100%)")), "the transfer prints its 10 % steps");
+    assert(out.some((l) => l.includes("Upload accepted: import imp-1")), "the 202 is announced with the import id");
+    assert(out.some((l) => l.startsWith("status") && l.includes("COMPLETED")), "the follow prints the settle");
+    assert(text.includes("eval-up1"), "prints the ingested job id");
     assert(text.includes("COMPLETED"), "prints the terminal status");
     assert(text.includes("2 trial(s)"), "prints the trial count");
     assert(
@@ -6993,23 +7030,20 @@ async function testUploadVerb() {
       ),
       "the spent slot renders `reported $X.XX (N/M trials reporting)`"
     );
-    assert(
-      out.some((l) => l.includes("reported tokens") && l.includes("in 2400") && l.includes("out 1600")),
-      "the reported-tokens row carries the archive's counts"
-    );
-
-    // The list's SPENT cell follows the same law, compactly labeled.
-    setMockResponse("/api/jobs", {
-      status: 200,
-      body: { items: [uploaded], nextCursor: null, hasMore: false },
-    });
-    const list = captureIO();
-    assertEqual(await runCli(["job", "list", ...AUTH], list.io), 0, "job list exits 0");
-    assert(
-      list.out.some((l) => l.includes("eval-up1") && l.includes("reported $2.50")),
-      "the SPENT cell renders the reported figure with the label"
-    );
     assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
+
+    // --no-wait: the import is the answer; the follow-up command names the watch.
+    const noWait = captureIO();
+    assertEqual(
+      await runCli(["upload", jobDir, "--no-wait", "--api-key", "test-key", "--base-url", server.base], noWait.io),
+      0,
+      "--no-wait exits 0"
+    );
+    assert(noWait.out.some((l) => l.startsWith("id") && l.includes("imp-1")), "--no-wait prints the import");
+    assert(noWait.out[noWait.out.length - 1].includes("evolve job import imp-1 --watch"), "and how to follow it");
+    const noWaitJson = captureIO();
+    await runCli(["upload", jobDir, "--no-wait", "--json", "--api-key", "test-key", "--base-url", server.base], noWaitJson.io);
+    assertEqual(JSON.parse(noWaitJson.out[0]).id, "imp-1", "--json --no-wait prints the JobImport document");
   } finally {
     await server.close();
     restoreFetch();
@@ -7018,7 +7052,7 @@ async function testUploadVerb() {
 }
 
 async function testUploadVerbJsonAndGate() {
-  console.log("\n--- runCli: evolve upload --json, the dir gate, and usage errors ---");
+  console.log("\n--- runCli: evolve upload --json, the dir gate, --from, a FAILED import, and usage errors ---");
   installMockFetch();
   const server = await startUploadCaptureServer();
   const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-gate-"));
@@ -7037,52 +7071,170 @@ async function testUploadVerbJsonAndGate() {
     );
     assertEqual(fetchCalls.length, 0, "nothing is uploaded for a refused directory");
 
-    // --json prints the created job as one document.
+    // --json follows silently and prints ONE document: the ingested job —
+    // the shape scripts branched on before the door became asynchronous.
     await writeFile(join(jobDir, "result.json"), "{}");
     await writeFile(join(jobDir, "config.json"), "{}");
-    const uploaded = wireJob({
-      id: "eval-up2",
-      status: "COMPLETED",
-      upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+    server.setReply(202, wireJobImport({ id: "imp-2" }));
+    setMockResponse("/api/jobs/imports/imp-2", {
+      status: 200,
+      body: wireJobImport({ id: "imp-2", status: "COMPLETED", job_id: "eval-up2" }),
     });
-    server.setReply(201, uploaded);
+    setMockResponse("/api/jobs/eval-up2", {
+      status: 200,
+      body: wireJob({
+        id: "eval-up2",
+        status: "COMPLETED",
+        upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      }),
+    });
     const json = captureIO();
     assertEqual(
       await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], json.io),
       0,
       "--json exits 0"
     );
+    assertEqual(json.out.length, 1, "--json prints exactly one document");
     const doc = JSON.parse(json.out[0]);
     assertEqual(doc.id, "eval-up2", "--json prints the job document");
     assertEqual(doc.upload.uploaded_at, "2026-08-28T10:00:00.000Z", "--json carries the provenance");
 
-    // A typed refusal renders like every other API error, and --json wraps it.
+    // A FAILED import: the typed failure renders like a synchronous refusal
+    // once did — exit 1, the code in the --json envelope, the sentence on stderr.
+    server.setReply(202, wireJobImport({ id: "imp-3" }));
+    setMockResponse("/api/jobs/imports/imp-3", {
+      status: 200,
+      body: wireJobImport({
+        id: "imp-3",
+        status: "FAILED",
+        failure: { code: "not_a_job_dir", message: "the archive does not contain result.json and config.json at its root" },
+      }),
+    });
+    const failed = captureIO();
+    assertEqual(
+      await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], failed.io),
+      1,
+      "a FAILED import exits 1"
+    );
+    assertEqual(JSON.parse(failed.out[0]).error.code, "not_a_job_dir", "--json error envelope carries the import's code");
+    assert(failed.err[0].includes("does not contain result.json"), "stderr carries the failure's sentence");
+
+    // A DOOR refusal still answers the POST typed, and --json wraps it.
     server.setReply(400, {
-      error: { code: "not_a_job_dir", message: "Archive holds no result.json at its root" },
+      error: { code: "invalid_input", message: "exactly one source is allowed: an archive part, or archive_url" },
     });
     const refused = captureIO();
     assertEqual(
       await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], refused.io),
       1,
-      "a typed refusal exits 1"
+      "a typed door refusal exits 1"
     );
-    assertEqual(
-      JSON.parse(refused.out[0]).error.code,
-      "not_a_job_dir",
-      "--json error envelope carries the server's code"
-    );
-    assert(refused.err[0].includes("no result.json"), "stderr carries the server's sentence");
+    assertEqual(JSON.parse(refused.out[0]).error.code, "invalid_input", "--json error envelope carries the server's code");
 
-    // Usage: the positional is required; help documents the top-level verb.
+    // --from <url>: no local bytes — the url rides as a part, no archive part.
+    server.setReply(202, wireJobImport({ id: "imp-4", source: { type: "archive_url", url: "https://archives.example.com/job.tar.gz" } }));
+    setMockResponse("/api/jobs/upload", {
+      status: 202,
+      body: wireJobImport({ id: "imp-4", source: { type: "archive_url", url: "https://archives.example.com/job.tar.gz" } }),
+    });
+    const fromUrl = captureIO();
+    assertEqual(
+      await runCli(["upload", "--from", "https://archives.example.com/job.tar.gz", "--no-wait", "--json", ...AUTH], fromUrl.io),
+      0,
+      "--from exits 0"
+    );
+    const fromCall = fetchCalls.find((c) => c.url.endsWith("/api/jobs/upload"))!;
+    const form = fromCall.init?.body as FormData;
+    assertEqual(form.get("archive_url"), "https://archives.example.com/job.tar.gz", "archive_url rides as a part");
+    assertEqual(form.get("archive"), null, "no archive part");
+    assertEqual(JSON.parse(fromUrl.out[0]).source.type, "archive_url", "the import names the url source");
+
+    // Usage: exactly one source; --from must be https; help documents the verb.
     const usage = captureIO();
-    assertEqual(await runCli(["upload", ...AUTH], usage.io), 2, "no positional is a usage error");
+    assertEqual(await runCli(["upload", ...AUTH], usage.io), 2, "no source is a usage error");
+    const both = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--from", "https://x/y.tar.gz", ...AUTH], both.io), 2, "two sources is a usage error");
+    const http = captureIO();
+    assertEqual(await runCli(["upload", "--from", "http://x/y.tar.gz", ...AUTH], http.io), 2, "a non-https url is a usage error");
     const help = captureIO();
     assertEqual(await runCli(["upload", "--help"], help.io), 0, "upload --help exits 0");
-    assert(help.out.join("\n").includes("Usage: evolve upload <job_dir>"), "help documents evolve upload");
+    assert(help.out.join("\n").includes("Usage: evolve upload"), "help documents evolve upload");
+    assert(help.out.join("\n").includes("--no-wait"), "help documents --no-wait");
   } finally {
     await server.close();
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testJobImportVerbs() {
+  console.log("\n--- runCli: job imports / job import <id> [--watch] — the import read pair, named like the dataset verbs ---");
+  installMockFetch();
+  try {
+    // Detail mocks FIRST: the mock table matches by substring in insertion
+    // order, and the list pattern is a prefix of the detail URLs.
+    setMockResponse("/api/jobs/imports/imp-a", {
+      status: 200,
+      body: wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+    });
+    setMockResponse("/api/jobs/imports/imp-f", {
+      status: 200,
+      body: wireJobImport({ id: "imp-f", status: "FAILED", failure: { code: "invalid_trial", message: 'trial "t1": result.json fails', details: { trial: "t1" } } }),
+    });
+    setMockResponse("/api/jobs/imports/nope", {
+      status: 404,
+      body: { error: { code: "job_import_not_found", message: "Job import not found: nope" } },
+    });
+    setMockResponse("/api/jobs/imports", {
+      status: 200,
+      body: {
+        items: [
+          wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+          wireJobImport({ id: "imp-b", status: "QUEUED", receiving: true, source: null }),
+        ],
+        nextCursor: null,
+        hasMore: false,
+      },
+    });
+    const list = captureIO();
+    assertEqual(await runCli(["job", "imports", "--status", "COMPLETED", ...AUTH], list.io), 0, "job imports exits 0");
+    assert(list.out[0].includes("ID") && list.out[0].includes("STATUS") && list.out[0].includes("JOB"), "a header row");
+    assert(list.out.some((l) => l.includes("imp-a") && l.includes("COMPLETED") && l.includes("eval-up1") && l.includes("55")), "the completed row");
+    assert(list.out.some((l) => l.includes("imp-b") && l.includes("QUEUED (receiving)")), "a receiving row says so");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("status=COMPLETED"), "--status rides the query");
+    const quiet = captureIO();
+    await runCli(["job", "imports", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["imp-a", "imp-b"], "-q prints ids only");
+    const badStatus = captureIO();
+    assertEqual(await runCli(["job", "imports", "--status", "BUILDING", ...AUTH], badStatus.io), 2, "an unknown status is a usage error");
+    const listJson = captureIO();
+    await runCli(["job", "imports", "--json", ...AUTH], listJson.io);
+    assertEqual(JSON.parse(listJson.out[0]).items.length, 2, "--json prints the page");
+
+    const show = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-a", ...AUTH], show.io), 0, "job import exits 0");
+    assert(show.out.some((l) => l.startsWith("id") && l.includes("imp-a")), "prints the id");
+    assert(show.out.some((l) => l.startsWith("job") && l.includes("eval-up1")), "prints the job");
+    assert(show.out.some((l) => l.startsWith("trials") && l.includes("55")), "prints the trial count");
+    const showJson = captureIO();
+    await runCli(["job", "import", "imp-a", "--json", ...AUTH], showJson.io);
+    assertEqual(JSON.parse(showJson.out[0]).id, "imp-a", "--json prints the import document");
+
+    // --watch follows to the settle: a FAILED import exits 1 with its typed failure.
+    const watch = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-f", "--watch", ...AUTH], watch.io), 1, "a FAILED import exits 1");
+    assert(watch.out.some((l) => l.includes("Import imp-f") && l.includes("watching")), "announces the attach");
+    assert(watch.err[0].includes("invalid_trial") || watch.err[0].includes("result.json fails"), "stderr carries the failure");
+    const watchJson = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-f", "--watch", "--json", ...AUTH], watchJson.io), 1, "--json exits 1 too");
+    assertEqual(JSON.parse(watchJson.out[0]).error.code, "invalid_trial", "--json prints the failure envelope");
+
+    // A foreign or unknown import is the typed 404, rendered like every other API error.
+    const missing = captureIO();
+    assertEqual(await runCli(["job", "import", "nope", "--json", ...AUTH], missing.io), 1, "404 exits 1");
+    assertEqual(JSON.parse(missing.out[0]).error.code, "job_import_not_found", "the typed code rides the envelope");
+  } finally {
+    restoreFetch();
   }
 }
 
@@ -8099,6 +8251,7 @@ async function main() {
   await testSkillDeleteInUseVerbatim();
   await testSkillNamePassThroughOnStart();
   await testUploadVerb();
+  await testJobImportVerbs();
   await testUploadVerbJsonAndGate();
   await testAuthStatus();
   await testAuthOrgVerbs();

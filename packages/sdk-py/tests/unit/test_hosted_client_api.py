@@ -68,6 +68,9 @@ from evolve import (
     OrgUsage,
     JobCounts,
     JobDeleteResult,
+    JobImport,
+    JobImportFailure,
+    JobImportSource,
     JobFailure,
     NoActiveVersionError,
     SourceJob,
@@ -174,6 +177,21 @@ class FakeUrlopen:
 
 
 CONFIG = HostedClientConfig(api_key='test-key', base_url='http://localhost:3000')
+
+
+JOB_IMPORT_ACCEPTED = {
+    'id': 'imp-1',
+    'status': 'QUEUED',
+    'receiving': False,
+    'source': {'type': 'archive', 'sha256': 'ab' * 32},
+    'dataset': None,
+    'job_id': None,
+    'n_trials_uploaded': None,
+    'failure': None,
+    'progress': None,
+    'created_at': '2026-09-04T10:00:00.000Z',
+    'updated_at': '2026-09-04T10:00:00.000Z',
+}
 
 
 def _settle_detail_body(*, name='my-set', version='1.2', state, active=False):
@@ -3279,20 +3297,12 @@ class TestJobs:
 
         job_dir = tmp_path / 'job'
         self._write_job_dir(job_dir)
-        uploaded_body = {
-            **JOB_SUMMARY,
-            'id': 'job-up1',
-            'status': 'COMPLETED',
-            'upload': {
-                'original_job_id': 'orig-123',
-                'original_job_name': '2026-08-27__12-00-00',
-                'uploaded_at': '2026-08-28T10:00:00.000Z',
-            },
-            'finished_at': '2026-08-28T10:00:00.000Z',
-        }
-        fake = FakeUrlopen([('/api/jobs/upload', uploaded_body)])
+        fake = FakeUrlopen([('/api/jobs/upload', JOB_IMPORT_ACCEPTED, {}, 202)])
+        progress = []
         with patch('evolve._http.urlopen', fake):
-            job = await jobs_factory(CONFIG).upload(str(job_dir))
+            imported = await jobs_factory(CONFIG).upload(
+                str(job_dir), on_upload_progress=lambda sent, total: progress.append((sent, total)),
+            )
 
         request = fake.requests[0]
         assert request.full_url.endswith('/api/jobs/upload')
@@ -3305,29 +3315,51 @@ class TestJobs:
         reference = tmp_path / 'reference.tar.gz'
         _tar_gzip_directory_to_file(str(job_dir), str(reference))
         assert parts['archive'] == reference.read_bytes()
+        assert progress and progress[-1][0] == progress[-1][1]
 
-        assert job.id == 'job-up1'
-        assert job.status == 'COMPLETED'
-        assert job.upload == UploadProvenance(
-            original_job_id='orig-123',
-            original_job_name='2026-08-27__12-00-00',
-            uploaded_at='2026-08-28T10:00:00.000Z',
-            reported_totals=None,
-        )
+        # THE ANSWER IS THE IMPORT, not the job: the door moved the bytes
+        # and a worker ingests them — job_id is None until it settles.
+        assert isinstance(imported, JobImport)
+        assert imported.id == 'imp-1'
+        assert imported.status == 'QUEUED'
+        assert imported.receiving is False
+        assert imported.source == JobImportSource(type='archive', sha256='ab' * 32)
+        assert imported.job_id is None
+        assert imported.failure is None
 
     @pytest.mark.asyncio
     async def test_upload_sends_the_dataset_hint_before_the_archive(self, tmp_path):
         job_dir = tmp_path / 'job'
         self._write_job_dir(job_dir)
-        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_SUMMARY, 'id': 'job-up1'})])
+        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_IMPORT_ACCEPTED, 'dataset': 'deep-swe@1.1'}, {}, 202)])
         with patch('evolve._http.urlopen', fake):
-            await jobs_factory(CONFIG).upload(str(job_dir), dataset='deep-swe@1.1')
+            imported = await jobs_factory(CONFIG).upload(str(job_dir), dataset='deep-swe@1.1')
 
         parts = _multipart_parts(fake.requests[0])
         # Metadata first, so the server can refuse a bad hint before receiving
         # the upload — the same order every multipart route here keeps.
         assert list(parts) == ['dataset', 'archive']
         assert parts['dataset'] == b'deep-swe@1.1'
+        assert imported.dataset == 'deep-swe@1.1'
+
+    @pytest.mark.asyncio
+    async def test_upload_archive_url_hands_the_server_a_url_and_no_bytes(self):
+        body = {**JOB_IMPORT_ACCEPTED, 'id': 'imp-url',
+                'source': {'type': 'archive_url', 'url': 'https://archives.example.com/job.tar.gz'}}
+        fake = FakeUrlopen([('/api/jobs/upload', body, {}, 202)])
+        with patch('evolve._http.urlopen', fake):
+            imported = await jobs_factory(CONFIG).upload(
+                archive_url='https://archives.example.com/job.tar.gz', dataset='deep-swe',
+            )
+        parts = _multipart_parts(fake.requests[0])
+        assert list(parts) == ['dataset', 'archive_url']
+        assert parts['archive_url'] == b'https://archives.example.com/job.tar.gz'
+        assert imported.source == JobImportSource(type='archive_url', url='https://archives.example.com/job.tar.gz')
+
+        with pytest.raises(ValueError):
+            await jobs_factory(CONFIG).upload()  # no source
+        with pytest.raises(ValueError):
+            await jobs_factory(CONFIG).upload('dir', archive_url='https://x')  # two sources
 
     @pytest.mark.asyncio
     async def test_upload_refuses_a_non_job_directory_with_harbors_sentences(self, tmp_path):
@@ -3362,12 +3394,125 @@ class TestJobs:
         packed = gzip.compress(b'the archive the server built')
         archive_path = tmp_path / 'job-job-1-results.tar.gz'
         archive_path.write_bytes(packed)
-        fake = FakeUrlopen([('/api/jobs/upload', {**JOB_SUMMARY, 'id': 'job-up2'})])
+        fake = FakeUrlopen([('/api/jobs/upload', JOB_IMPORT_ACCEPTED, {}, 202)])
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).upload(str(archive_path))
 
         parts = _multipart_parts(fake.requests[0])
         assert parts['archive'] == packed  # byte-for-byte, never re-packed
+
+    @pytest.mark.asyncio
+    async def test_upload_over_the_switch_rides_the_job_session_door(self, tmp_path, monkeypatch):
+        """The dataset publish's own switch, on the job door's path: a KB
+        fixture rides the resumable sessions when the threshold is lowered,
+        opening on /api/jobs/upload/uploads (never the classic door), and the
+        register-first import id is handed over before the first chunk."""
+        import sys
+
+        hosted = sys.modules['evolve.hosted']
+        job_dir = tmp_path / 'job'
+        self._write_job_dir(job_dir)
+        monkeypatch.setattr(hosted, 'RESUMABLE_UPLOAD_THRESHOLD_BYTES', 16)
+        seen = []
+        received = {'bytes': 0}
+
+        class SessionResponse:
+            def __init__(self, status, body, headers=None):
+                self.status = status
+                self._body = json.dumps(body).encode('utf-8') if body is not None else b''
+                self.headers = headers or {}
+
+            def read(self):
+                return self._body
+
+            def getheader(self, name, default=None):
+                return self.headers.get(name, default)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            url = request.full_url
+            method = request.get_method()
+            seen.append((method, url))
+            if method == 'POST' and url.endswith('/api/jobs/upload/uploads'):
+                return SessionResponse(201, {
+                    'id': 'up-1', 'state': 'RECEIVING', 'offset': 0, 'size': 0,
+                    'import_id': 'imp-9', 'chunk_min_bytes': 1, 'chunk_max_bytes': 33554432,
+                })
+            if method == 'PATCH':
+                received['bytes'] += len(request.data)
+                return SessionResponse(204, None, {'Upload-Offset': str(received['bytes'])})
+            if method == 'POST' and url.endswith('/api/jobs/upload/uploads/up-1/complete'):
+                return SessionResponse(202, {**JOB_IMPORT_ACCEPTED, 'id': 'imp-9'})
+            raise AssertionError(f'unexpected {method} {url}')
+
+        registered = []
+        with patch('evolve._http.urlopen', fake_urlopen):
+            imported = await jobs_factory(CONFIG).upload(
+                str(job_dir), on_registered=registered.append,
+            )
+        assert seen[0][0] == 'POST' and seen[0][1].endswith('/api/jobs/upload/uploads')
+        assert any(m == 'PATCH' and u.endswith('/api/jobs/upload/uploads/up-1') for m, u in seen)
+        assert seen[-1][1].endswith('/api/jobs/upload/uploads/up-1/complete')
+        assert not any(u.endswith('/api/jobs/upload') for _, u in seen)
+        assert registered == ['imp-9']
+        assert imported.id == 'imp-9'
+
+    @pytest.mark.asyncio
+    async def test_get_list_and_watch_import(self):
+        running = {**JOB_IMPORT_ACCEPTED, 'status': 'RUNNING', 'progress': {
+            'phase': 'extracting', 'started_at': '2026-09-04T10:00:00.000Z',
+            'phases': [{'name': 'fetching', 'started_at': '2026-09-04T10:00:00.000Z',
+                        'completed_at': '2026-09-04T10:00:01.000Z'},
+                       {'name': 'extracting', 'started_at': '2026-09-04T10:00:01.000Z'}],
+        }}
+        completed = {**JOB_IMPORT_ACCEPTED, 'status': 'COMPLETED', 'job_id': 'job-up1', 'n_trials_uploaded': 2}
+        fake = FakeUrlopen([
+            ('/api/jobs/imports/imp-1', running),
+            ('/api/jobs/imports?', {'items': [completed], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = jobs_factory(CONFIG)
+            one = await client.get_import('imp-1')
+            assert one.status == 'RUNNING'
+            assert one.progress.phase == 'extracting'
+            assert one.progress.phases[0].completed_at == '2026-09-04T10:00:01.000Z'
+            page = await client.list_imports(status='COMPLETED')
+            assert page.items[0].job_id == 'job-up1'
+            assert 'status=COMPLETED' in fake.requests[-1].full_url
+
+        # The watch: RUNNING -> COMPLETED, on_status per change, on_progress
+        # per phase-record change, the settle is the COMPLETED import.
+        sequence = [running, running, completed]
+        calls = {'n': 0}
+
+        class Seq:
+            def __call__(self, request, timeout=None):
+                body = sequence[min(calls['n'], len(sequence) - 1)]
+                calls['n'] += 1
+                return FakeResponse(body, {}, 200)
+
+        statuses, phases = [], []
+        with patch('evolve._http.urlopen', Seq()):
+            final = await jobs_factory(CONFIG).watch_import(
+                'imp-w', poll_interval_s=0.001,
+                on_status=lambda i: statuses.append(i.status),
+                on_progress=lambda p, i: phases.append(p.phase),
+            )
+        assert final.status == 'COMPLETED' and final.job_id == 'job-up1'
+        assert statuses == ['RUNNING', 'COMPLETED']
+        assert phases == ['extracting']
+
+        failed = {**JOB_IMPORT_ACCEPTED, 'status': 'FAILED',
+                  'failure': {'code': 'invalid_trial', 'message': 'trial "t1": bad', 'details': {'trial': 't1'}}}
+        with patch('evolve._http.urlopen', FakeUrlopen([('/api/jobs/imports/imp-f', failed)])):
+            settled = await jobs_factory(CONFIG).watch_import('imp-f', poll_interval_s=0.001)
+        assert settled.status == 'FAILED'
+        assert settled.failure == JobImportFailure(code='invalid_trial', message='trial "t1": bad', details={'trial': 't1'})
 
     @pytest.mark.asyncio
     async def test_upload_surfaces_typed_refusals(self, tmp_path):
