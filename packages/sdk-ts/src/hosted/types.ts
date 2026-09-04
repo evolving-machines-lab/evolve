@@ -519,15 +519,17 @@ export interface AnalyzeConfigInput {
    * specified.", their cli/analyze.py:94-99). It REPLACES the built-in
    * template (their analyze/prompts/analyze.txt) as the body of the analyzer's
    * instruction and is rendered with the same three tokens (`{trial_path}`,
-   * `{task_section}`, `{criteria_guidance}` — Python `str.format_map`
-   * semantics, an unknown token renders empty); the output contract (write
+   * `{task_section}`, `{criteria_guidance}`): the three tokens are
+   * substituted, an unknown `{token}` renders empty, `{{` and `}}` write a
+   * literal brace, and any other brace text is left as written (Harbor's
+   * Python renderer would convert or raise there); the output contract (write
    * `analysis.json` matching the rubric's schema) is appended after it exactly
    * as Harbor appends it, so a custom prompt can never opt out of the
    * deliverable. Stored AS GIVEN and FROZEN into each analysis the config
    * enqueues, like the rubric. Omitted = the built-in prompt (`null` on the
-   * resolved echo and on the analysis). Present, it must be a non-empty
-   * string of at most 32,000 characters — refused `invalid_input` naming
-   * `analyze.prompt` and the bound, never truncated. The CLI reads the file
+   * resolved echo and on the analysis). Present, it must be non-empty plain
+   * text (no NUL character) of at most 32,000 characters — refused
+   * `invalid_input` naming `analyze.prompt` and the bound, never truncated. The CLI reads the file
    * for you: `evolve analyze -p prompt.txt`.
    */
   prompt?: string;

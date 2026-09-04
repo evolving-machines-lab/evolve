@@ -700,7 +700,7 @@ await evals.analyze(job.id, {
 });
 ```
 
-A prompt file looks like Harbor's own `analyze.txt`. Three tokens are rendered for you — `{trial_path}` (where the trial's tree sits in the analyzer's sandbox), `{task_section}` (the task's paths, or Harbor's sentence for an unavailable task) and `{criteria_guidance}` (one line per rubric criterion) — and an unknown token renders empty, Python `format_map` semantics, exactly as Harbor renders it. The output contract (write `analysis.json` matching the rubric's schema) is appended after your text exactly as Harbor appends it, so a custom prompt shapes *how* the analyzer reads the evidence and can never opt out of the deliverable:
+A prompt file looks like Harbor's own `analyze.txt`. Three tokens are rendered for you — `{trial_path}` (where the trial's tree sits in the analyzer's sandbox), `{task_section}` (the task's paths, or Harbor's sentence for an unavailable task) and `{criteria_guidance}` (one line per rubric criterion). An unknown `{token}` renders empty, `{{` and `}}` write a literal brace, and any other brace text is left as written (Harbor's Python renderer would convert or raise there). The output contract (write `analysis.json` matching the rubric's schema) is appended after your text exactly as Harbor appends it, so a custom prompt shapes *how* the analyzer reads the evidence and can never opt out of the deliverable:
 
 ```text
 Judge only whether the agent gamed its reward. The trial is at {trial_path};
@@ -712,7 +712,7 @@ Guidance:
 {criteria_guidance}
 ```
 
-The prompt is stored as given and frozen into the wave like the rubric — `trial.analysis.prompt` serves the text each analysis ran under (`null` = the built-in), and the resolved `job.analyze.prompt` echoes the policy. An empty prompt, or one over 32,000 characters, is refused at accept with `400 invalid_input` naming `analyze.prompt` and the bound.
+The prompt is stored as given and frozen into the wave like the rubric — `trial.analysis.prompt` serves the text each analysis ran under (`null` = the built-in), and the resolved `job.analyze.prompt` echoes the policy. An empty prompt, one over 32,000 characters, or one carrying a NUL character is refused at accept with `400 invalid_input` naming `analyze.prompt` and the bound.
 
 Analysis can also run **embedded**: create the job with `analyze` and each trial is analyzed automatically the moment it settles, so a long sweep finishes with its analyses already in place. Presence of the object is the switch — `{}` means "analyze with all defaults" — and the job body echoes the resolved policy as `job.analyze`:
 

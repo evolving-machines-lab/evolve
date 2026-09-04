@@ -1481,15 +1481,18 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: <file>`` (their cli/analyze.py:94-99). It REPLACES the built-in
     #: template (their analyze/prompts/analyze.txt) as the body of the
     #: analyzer's instruction and is rendered with the same three tokens
-    #: (``{trial_path}``, ``{task_section}``, ``{criteria_guidance}`` —
-    #: ``str.format_map`` semantics, an unknown token renders empty); the
-    #: output contract (write ``analysis.json`` matching the rubric's schema)
-    #: is appended after it exactly as Harbor appends it. Stored AS GIVEN and
-    #: FROZEN into each analysis, like the rubric. Omitted = the built-in
-    #: prompt (``None`` on the resolved echo and on the analysis). Present,
-    #: it must be a non-empty string of at most 32,000 characters — refused
-    #: ``invalid_input`` naming ``analyze.prompt`` and the bound. The CLI
-    #: reads the file for you: ``evolve analyze -p prompt.txt``.
+    #: (``{trial_path}``, ``{task_section}``, ``{criteria_guidance}``): the
+    #: three tokens are substituted, an unknown ``{token}`` renders empty,
+    #: ``{{`` and ``}}`` write a literal brace, and any other brace text is
+    #: left as written (Harbor's Python renderer would convert or raise
+    #: there); the output contract (write ``analysis.json`` matching the
+    #: rubric's schema) is appended after it exactly as Harbor appends it.
+    #: Stored AS GIVEN and FROZEN into each analysis, like the rubric.
+    #: Omitted = the built-in prompt (``None`` on the resolved echo and on
+    #: the analysis). Present, it must be non-empty plain text (no NUL
+    #: character) of at most 32,000 characters — refused ``invalid_input``
+    #: naming ``analyze.prompt`` and the bound. The CLI reads the file for
+    #: you: ``evolve analyze -p prompt.txt``.
     prompt: str
     #: The provider whose sandbox the analyzer boots — the job lineup, the
     #: same vocabulary as ``sandbox_provider`` on ``jobs().start()`` and held
