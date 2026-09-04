@@ -536,6 +536,7 @@ export interface AnalyzeConfigInput {
    * for you: `evolve analyze -p prompt.txt`.
    */
   prompt?: string;
+  /**
    * Reasoning effort the analyzer runs at — the platform's `agents[].
    * reasoning_effort` vocabulary applied to the analyzer, which IS the
    * claude harness: the accepted values are `GET /api/meta`'s
