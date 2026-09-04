@@ -102,6 +102,15 @@ SSE_SOCKET_TIMEOUT_SEC = 60
 # same number as hosted/index.ts MAX_WATCH_DELAY_MS.
 MAX_WATCH_DELAY_SEC = 30.0
 
+
+def _bounded(seconds: float, deadline: Optional[float]) -> float:
+    """Clamp one sleep to the time left before ``deadline`` (a
+    ``time.monotonic()`` instant; ``None`` = unbounded), so a backed-off wait
+    never carries a watch past its ``timeout_s``."""
+    if deadline is None:
+        return seconds
+    return min(seconds, max(0.0, deadline - time.monotonic()))
+
 #: The server states the verified digest of a download here. When it is present
 #: the client re-checks it — a digest nobody verifies is decoration.
 PACKAGE_DIGEST_HEADER = 'x-package-sha256'
@@ -6773,9 +6782,10 @@ class JobsClient:
         has been analyzed.
 
         ``timeout_s`` bounds the whole watch and raises
-        :class:`TimeoutError`. A rate limit or transient outage mid-watch is
-        a delay, not an outcome: a 429/503 sleeps the server's
-        ``retry_after_sec`` and keeps watching.
+        :class:`TimeoutError` at the deadline — the last sleep is clamped to
+        the time left, never a full backoff step past it. A rate limit or
+        transient outage mid-watch is a delay, not an outcome: a 429/503
+        sleeps the server's ``retry_after_sec`` and keeps watching.
         """
         if poll_interval_s <= 0:
             raise ValueError('poll_interval_s must be positive')
@@ -6792,7 +6802,9 @@ class JobsClient:
                     raise TimeoutError(
                         f'watch_analysis({id!r}) timed out after {timeout_s}s'
                     ) from error
-                await asyncio.sleep(max(error.retry_after_sec or 0.0, delay))
+                await asyncio.sleep(
+                    _bounded(max(error.retry_after_sec or 0.0, delay), deadline)
+                )
                 delay = min(delay * 2, MAX_WATCH_DELAY_SEC)
                 continue
             analysis = job.stats.get('analysis')
@@ -6815,7 +6827,7 @@ class JobsClient:
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_analysis({id!r}) timed out after {timeout_s}s')
             delay = poll_interval_s if changed else min(delay * 2, MAX_WATCH_DELAY_SEC)
-            await asyncio.sleep(delay)
+            await asyncio.sleep(_bounded(delay, deadline))
 
     async def download(
         self,

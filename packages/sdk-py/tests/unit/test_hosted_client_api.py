@@ -3280,6 +3280,48 @@ class TestJobs:
         assert slept == [2.0, 4.0, 8.0, 16.0, 30.0, 2.0, 4.0]
 
     @pytest.mark.asyncio
+    async def test_watch_analysis_timeout_is_bounded_under_backoff(self):
+        """``timeout_s`` bounds the whole watch: the last sleep before the
+        deadline is clamped to the time left, so the TimeoutError lands ON
+        the deadline, never one backoff step (up to 30 s) after it. The
+        doubling state itself is not clamped."""
+        body = {
+            **ANALYZED_JOB,
+            'stats': {
+                **ANALYZED_JOB['stats'],
+                'analysis': {
+                    'n_completed': 0,
+                    'n_failed': 0,
+                    'n_pending': 3,
+                    'cost_usd': None,
+                    'checks': {},
+                },
+            },
+        }
+        clock = {'t': 0.0}
+        slept = []
+
+        def fake(request, timeout=None):
+            return FakeResponse(body, {}, 200)
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+            clock['t'] += seconds
+
+        with patch('evolve._http.urlopen', fake), patch(
+            'evolve.hosted.asyncio.sleep', fake_sleep
+        ), patch('evolve.hosted.time.monotonic', lambda: clock['t']):
+            with pytest.raises(TimeoutError):
+                await jobs_factory(CONFIG).watch_analysis(
+                    'job-1', poll_interval_s=2.0, timeout_s=45.0
+                )
+
+        assert clock['t'] == 45.0
+        # 2 + 4 + 8 + 16 = 30 s elapsed; the next step would be 30 s but only
+        # 15 s remain, so the sleep is 15 s and the deadline read raises.
+        assert slept == [2.0, 4.0, 8.0, 16.0, 15.0]
+
+    @pytest.mark.asyncio
     async def test_download_bytes_and_streamed_file(self, tmp_path):
         archive = gzip.compress(json.dumps({'job': {'id': 'job-1'}}).encode('utf-8'))
         headers = {
