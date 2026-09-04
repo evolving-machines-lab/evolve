@@ -3799,8 +3799,77 @@ function testBuildJobInputAnalyze() {
   );
 }
 
-async function testAnalyzeVerbEndToEnd() {
-  console.log("\n--- runCli: analyze POSTs, follows the wave, renders the settled table ---");
+async function testAnalyzeVerbReturnsAtOnce() {
+  console.log("\n--- runCli: analyze POSTs and returns at once — the accepted job, no follow ---");
+  installMockFetch();
+  try {
+    // The 202 body IS the queued batch: stats.analysis counts the enqueued
+    // rows as pending. Without --watch the verb prints it and returns, the
+    // shape of `job start` / `run` — never a job read, never a trials read.
+    const pendingJob = analyzedWireJob({
+      n_completed: 0,
+      n_failed: 0,
+      n_pending: 3,
+      cost_usd: null,
+      checks: {},
+    });
+    setMockResponse("/api/jobs/eval-1/analyze", { status: 202, body: pendingJob });
+    const { io, out } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "-m", "glm-5.3", ...AUTH], io);
+    assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
+    const post = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/analyze"));
+    assert(post !== undefined, "POSTs the per-job analyze route");
+    assertEqual(
+      JSON.parse(post?.init?.body as string),
+      { model_name: "glm-5.3" },
+      "-m rides the body as model_name; no rubric/provider key when none given"
+    );
+    assertEqual(
+      fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
+      0,
+      "no job read: the verb does not follow the wave"
+    );
+    assert(
+      !fetchCalls.some((c) => c.url.includes("/api/jobs/eval-1/trials")),
+      "no trials read: the per-trial table is --watch's, not the return's"
+    );
+    assert(
+      out.some((l) => l.includes("analysis") && l.includes("3 pending")),
+      "the job block carries the queued tally"
+    );
+    assertEqual(
+      out[out.length - 1],
+      "Follow it with: evolve job show eval-1",
+      "ends with the re-attach hint, like job start"
+    );
+
+    // --json alone: ONE line, the accepted job body verbatim — the same shape
+    // `job start --json` prints; the NDJSON envelopes are --watch's.
+    fetchCalls.length = 0;
+    const machine = captureIO();
+    const jsonCode = await runCli(["analyze", "eval-1", "--json", ...AUTH], machine.io);
+    assertEqual(jsonCode, 0, "--json exits 0 on the 202");
+    assertEqual(machine.out.length, 1, "--json prints exactly one line");
+    const body = JSON.parse(machine.out[0]) as {
+      kind?: string;
+      id: string;
+      stats: { analysis: { n_pending: number } };
+    };
+    assertEqual(body.id, "eval-1", "the line is the job body");
+    assert(!("kind" in body), "no envelope: the bare job, like job start --json");
+    assertEqual(body.stats.analysis.n_pending, 3, "the queued batch rides stats.analysis");
+    assertEqual(
+      fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
+      0,
+      "--json alone reads the job zero times"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalyzeVerbWatchFollows() {
+  console.log("\n--- runCli: analyze --watch follows the wave, renders the settled table ---");
   installMockFetch();
   const baseFetch = globalThis.fetch;
   // The wave settles between the first and second job read, so the follow is
@@ -3840,7 +3909,7 @@ async function testAnalyzeVerbEndToEnd() {
     });
     const { io, out } = captureIO();
     const code = await runCli(
-      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", ...AUTH],
+      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--watch", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0 when every analysis completed");
@@ -3871,7 +3940,7 @@ async function testAnalyzeVerbEndToEnd() {
 }
 
 async function testAnalyzeVerbJsonAndFailure() {
-  console.log("\n--- runCli: analyze --json envelopes; a failed analysis is exit 1, shown typed ---");
+  console.log("\n--- runCli: analyze --watch --json envelopes; a failed analysis is exit 1, shown typed ---");
   installMockFetch();
   try {
     // Settled on the FIRST read: no polling delay in this half.
@@ -3902,7 +3971,7 @@ async function testAnalyzeVerbJsonAndFailure() {
     });
     setMockResponse("/api/jobs/eval-1", { status: 200, body: analyzedWireJob(failedTally) });
     const { io, out } = captureIO();
-    const code = await runCli(["analyze", "eval-1", "--json", ...AUTH], io);
+    const code = await runCli(["analyze", "eval-1", "--watch", "--json", ...AUTH], io);
     assertEqual(code, 1, "a wave with failed analyses exits 1 (Harbor's own law)");
     const kinds = out.map((line) => (JSON.parse(line) as { kind?: string }).kind);
     assert(kinds.includes("analysis.accepted"), "--json emits the accepted envelope");
@@ -3921,7 +3990,7 @@ async function testAnalyzeVerbJsonAndFailure() {
 
     // The human render shows the same failure typed, never a silent absence.
     const human = captureIO();
-    const humanCode = await runCli(["analyze", "eval-1", ...AUTH], human.io);
+    const humanCode = await runCli(["analyze", "eval-1", "--watch", ...AUTH], human.io);
     assertEqual(humanCode, 1, "human mode exits 1 the same");
     assert(
       human.out.some((l) => l.includes("invalid_result") && l.includes("checks missing criterion")),
@@ -8056,7 +8125,8 @@ async function main() {
   await testTrialRegrade();
   testLoadRubricFile();
   testBuildJobInputAnalyze();
-  await testAnalyzeVerbEndToEnd();
+  await testAnalyzeVerbReturnsAtOnce();
+  await testAnalyzeVerbWatchFollows();
   await testAnalyzeVerbJsonAndFailure();
   await testAnalyzeRefusalSurfacesVerbatim();
   await testJobShowAnalysisRows();

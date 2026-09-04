@@ -3222,6 +3222,64 @@ class TestJobs:
         assert final.stats['analysis']['n_pending'] == 0
 
     @pytest.mark.asyncio
+    async def test_watch_analysis_backs_off_while_unchanged(self):
+        """The poll interval doubles while the tally stands still — up to the
+        30-s ceiling the job watch's reconnect uses — and snaps back to the
+        initial interval on every tally change; no new parameter."""
+
+        def tally_of(n_completed, n_pending):
+            return {
+                **ANALYZED_JOB,
+                'stats': {
+                    **ANALYZED_JOB['stats'],
+                    'analysis': {
+                        'n_completed': n_completed,
+                        'n_failed': 0,
+                        'n_pending': n_pending,
+                        'cost_usd': None,
+                        'checks': {},
+                    },
+                },
+            }
+
+        sequence = [
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(0, 2),
+            tally_of(1, 1),
+            tally_of(1, 1),
+            tally_of(2, 0),
+        ]
+        reads = {'n': 0}
+
+        def fake(request, timeout=None):
+            body = sequence[min(reads['n'], len(sequence) - 1)]
+            reads['n'] += 1
+            return FakeResponse(body, {}, 200)
+
+        slept = []
+
+        async def fake_sleep(seconds):
+            slept.append(seconds)
+
+        changes = []
+        with patch('evolve._http.urlopen', fake), patch('evolve.hosted.asyncio.sleep', fake_sleep):
+            final = await jobs_factory(CONFIG).watch_analysis(
+                'job-1',
+                on_stats=lambda job: changes.append(job.stats['analysis']['n_pending']),
+                poll_interval_s=2.0,
+            )
+
+        assert reads['n'] == 8
+        assert changes == [2, 1, 0]
+        assert final.stats['analysis']['n_pending'] == 0
+        # 2 · 4 · 8 · 16 · 30 (the ceiling) — the change at read 6 resets to
+        # 2 — 4, then the settled read ends the watch without a sleep.
+        assert slept == [2.0, 4.0, 8.0, 16.0, 30.0, 2.0, 4.0]
+
+    @pytest.mark.asyncio
     async def test_download_bytes_and_streamed_file(self, tmp_path):
         archive = gzip.compress(json.dumps({'job': {'id': 'job-1'}}).encode('utf-8'))
         headers = {

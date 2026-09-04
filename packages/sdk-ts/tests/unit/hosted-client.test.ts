@@ -3691,6 +3691,65 @@ async function testWatchAnalysisPollsToSettled() {
   }
 }
 
+async function testWatchAnalysisBacksOffWhileUnchanged() {
+  console.log(
+    "\n--- jobs().watchAnalysis() backs off while the tally stands still, snaps back on a change ---",
+  );
+  installMockFetch();
+  const baseFetch = globalThis.fetch;
+  // Seven reads: four with the same tally, one change, one repeat, settled.
+  // Measured wall-clock gaps between reads prove the poll's shape — the
+  // interval doubles while nothing moves (jobs().watch()'s reconnect law)
+  // and returns to the initial interval the moment the tally changes.
+  const tallyOf = (n_completed: number, n_pending: number) => ({
+    ...ANALYZED_JOB_BODY,
+    stats: {
+      ...ANALYZED_JOB_BODY.stats,
+      analysis: { n_completed, n_failed: 0, n_pending, cost_usd: null, checks: {} },
+    },
+  });
+  const sequence = [
+    tallyOf(0, 2),
+    tallyOf(0, 2),
+    tallyOf(0, 2),
+    tallyOf(0, 2),
+    tallyOf(1, 1),
+    tallyOf(1, 1),
+    tallyOf(2, 0),
+  ];
+  const readAt: number[] = [];
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    const urlStr = url.toString();
+    if (urlStr === `${BASE}/api/jobs/eval-1`) {
+      readAt.push(Date.now());
+      const body = sequence[Math.min(readAt.length - 1, sequence.length - 1)];
+      return buildMockResponse({ status: 200, body });
+    }
+    return baseFetch(url as any, init);
+  };
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const changes: number[] = [];
+    const final = await e.watchAnalysis("eval-1", {
+      pollIntervalMs: 30,
+      onStats: (job) => changes.push(job.stats.analysis!.n_pending),
+    });
+    assertEqual(readAt.length, 7, "reads until nothing is pending");
+    assertEqual(changes, [2, 1, 0], "onStats fires once per tally change, never per read");
+    assertEqual(final.stats.analysis?.n_pending, 0, "resolves with the settled job");
+    const gaps = readAt.slice(1).map((t, i) => t - readAt[i]);
+    // Nominal gaps: 30 · 60 · 120 · 240 · 30 · 60 — a doubling run, a reset
+    // on the change at read 5, and a doubling run again.
+    assert(gaps[1] >= gaps[0] * 1.5, `2nd wait doubles the 1st (${gaps.join(" · ")})`);
+    assert(gaps[2] >= gaps[1] * 1.5, `3rd wait doubles the 2nd (${gaps.join(" · ")})`);
+    assert(gaps[3] >= gaps[2] * 1.5, `4th wait doubles the 3rd (${gaps.join(" · ")})`);
+    assert(gaps[4] <= gaps[3] / 3, `the change snaps the wait back (${gaps.join(" · ")})`);
+    assert(gaps[5] >= gaps[4] * 1.5, `then it doubles again (${gaps.join(" · ")})`);
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testTrialAnalysisMapsVerbatim() {
   console.log(
     "\n--- trials().get() maps Trial.analysis verbatim beside its one normalized key ---",
@@ -6830,6 +6889,7 @@ async function main() {
   await testAnalyzeAbsentFieldsMapNull();
   await testAnalyzeTypedRefusals();
   await testWatchAnalysisPollsToSettled();
+  await testWatchAnalysisBacksOffWhileUnchanged();
   await testTrialAnalysisMapsVerbatim();
   await testDownloadJobBuffer();
   await testDownloadJobToFile();

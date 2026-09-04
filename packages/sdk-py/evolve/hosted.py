@@ -96,6 +96,11 @@ RESUMABLE_UPLOAD_MAX_RATE_LIMIT_WAITS = 3
 RESUMABLE_UPLOAD_MAX_RETRY_AFTER_SEC = 60
 META_TIMEOUT_SEC = 30
 SSE_SOCKET_TIMEOUT_SEC = 60
+# The ceiling every job-side watch backs off to: the event stream's reconnect
+# delay (``JobsClient.watch``) and the analysis poll's interval
+# (``JobsClient.watch_analysis``) both double up to here and no further. The
+# same number as hosted/index.ts MAX_WATCH_DELAY_MS.
+MAX_WATCH_DELAY_SEC = 30.0
 
 #: The server states the verified digest of a download here. When it is present
 #: the client re-checks it — a digest nobody verifies is decoration.
@@ -6418,7 +6423,7 @@ class JobsClient:
         *,
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
-        max_reconnect_delay_s: float = 30.0,
+        max_reconnect_delay_s: float = MAX_WATCH_DELAY_SEC,
     ) -> AsyncIterator[JobEvent]:
         """The one SSE loop both watch() forms drive.
 
@@ -6529,7 +6534,7 @@ class JobsClient:
         on_event: Optional[Callable[[JobEvent], None]] = None,
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
-        max_reconnect_delay_s: float = 30.0,
+        max_reconnect_delay_s: float = MAX_WATCH_DELAY_SEC,
     ) -> _JobWatch:
         """Watch the job's event stream. Dual-use: await it, or iterate it.
 
@@ -6570,7 +6575,7 @@ class JobsClient:
         on_event: Optional[Callable[[JobEvent], None]] = None,
         timeout_s: Optional[float] = None,
         reconnect_delay_s: float = 1.0,
-        max_reconnect_delay_s: float = 30.0,
+        max_reconnect_delay_s: float = MAX_WATCH_DELAY_SEC,
     ) -> AsyncIterator[JobEvent]:
         """The one stream both watch() forms drive; fires on_event as it goes."""
         async for event in self._iter_events(
@@ -6703,10 +6708,12 @@ class JobsClient:
         plus its original task and rules every rubric criterion, storing the
         result on the trial (``Trial.analysis``) and the aggregate on the job
         (``stats['analysis']``). THE RESPONSE IS THE JOB, its analyses
-        enqueued — analyses are not a separate resource; follow them with
-        :meth:`watch_analysis`, or poll the job's trials. This is also the
-        RE-analysis path: calling again (same job, different rubric or
-        model) runs a fresh wave once the previous one has settled.
+        enqueued, and it returns AT ONCE — ``stats['analysis']['n_pending']``
+        counts the queued batch; analyses are not a separate resource.
+        Follow them with :meth:`watch_analysis`, or poll the job's trials.
+        This is also the RE-analysis path: calling again (same job,
+        different rubric or model) runs a fresh wave once the previous one
+        has settled.
         ``sandbox_provider`` picks the provider whose sandbox the analyzer
         boots — the job lineup; omitted, the platform's analysis default
         applies (daytona unless the operator retuned the fleet). Every
@@ -6748,17 +6755,22 @@ class JobsClient:
         job's trials to watch them settle — so this polls :meth:`get` until
         ``stats['analysis']`` reports nothing pending, and returns the final
         job; the per-trial results then ride the job's trials
-        (``Trial.analysis``). ``on_stats`` fires on every observed change of
+        (``Trial.analysis``). The poll has :meth:`watch`'s backoff shape:
+        the interval starts at ``poll_interval_s``, doubles while the tally
+        stands still up to the 30-s ceiling the event stream's reconnect
+        uses, and snaps back to ``poll_interval_s`` on every change — a
+        long wave costs the server one read per half-minute, a moving one
+        is followed closely. ``on_stats`` fires on every observed change of
         the analysis tally (including the first non-None one seen), with the
         job body the observation came from. A still-None tally is the
         enqueue race after an accepted :meth:`analyze` and is watched
         through, never misread as "never analyzed" — so on a job that was
         NEVER analyzed this polls indefinitely (until ``timeout_s``): call
-        it after :meth:`analyze`, as the CLI always does. It is the MANUAL
-        wave's companion, not the embedded trigger's: on a still-RUNNING job
-        created with ``analyze``, ``n_pending`` can touch 0 between trial
-        settles, so the watch can return before every trial has been
-        analyzed.
+        it after :meth:`analyze`, as ``evolve analyze --watch`` does. It is
+        the MANUAL wave's companion, not the embedded trigger's: on a
+        still-RUNNING job created with ``analyze``, ``n_pending`` can touch
+        0 between trial settles, so the watch can return before every trial
+        has been analyzed.
 
         ``timeout_s`` bounds the whole watch and raises
         :class:`TimeoutError`. A rate limit or transient outage mid-watch is
@@ -6768,6 +6780,7 @@ class JobsClient:
         if poll_interval_s <= 0:
             raise ValueError('poll_interval_s must be positive')
         deadline = time.monotonic() + timeout_s if timeout_s is not None else None
+        delay = poll_interval_s
         last_tally: Optional['tuple[int, int, int]'] = None
         while True:
             try:
@@ -6779,26 +6792,30 @@ class JobsClient:
                     raise TimeoutError(
                         f'watch_analysis({id!r}) timed out after {timeout_s}s'
                     ) from error
-                await asyncio.sleep(
-                    max(error.retry_after_sec or 0.0, poll_interval_s)
-                )
+                await asyncio.sleep(max(error.retry_after_sec or 0.0, delay))
+                delay = min(delay * 2, MAX_WATCH_DELAY_SEC)
                 continue
             analysis = job.stats.get('analysis')
-            if isinstance(analysis, dict):
-                tally = (
+            tally: Optional['tuple[int, int, int]'] = (
+                (
                     int(analysis.get('n_completed', 0)),
                     int(analysis.get('n_failed', 0)),
                     int(analysis.get('n_pending', 0)),
                 )
-                if tally != last_tally:
-                    last_tally = tally
-                    if on_stats is not None:
-                        on_stats(job)
-                if tally[2] == 0:
-                    return job
+                if isinstance(analysis, dict)
+                else None
+            )
+            changed = tally is not None and tally != last_tally
+            if changed:
+                last_tally = tally
+                if on_stats is not None:
+                    on_stats(job)
+            if tally is not None and tally[2] == 0:
+                return job
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_analysis({id!r}) timed out after {timeout_s}s')
-            await asyncio.sleep(poll_interval_s)
+            delay = poll_interval_s if changed else min(delay * 2, MAX_WATCH_DELAY_SEC)
+            await asyncio.sleep(delay)
 
     async def download(
         self,
