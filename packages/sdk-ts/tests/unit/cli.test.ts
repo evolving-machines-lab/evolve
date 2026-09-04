@@ -7296,6 +7296,7 @@ const ORG_DETAIL = {
     in_flight_analyses: 1,
     active_sessions: 0,
     month_spend_usd: 12.5,
+    month_spend_as_of: "2026-08-15T11:58:00.000Z",
   },
 };
 
@@ -7447,15 +7448,38 @@ async function testAuthOrgVerbs() {
       ["e2b sandbox ceiling", "100"],
       ["daytona sandbox ceiling", "200"],
       ["modal sandbox ceiling", "0"],
-      ["month spend", "$12.50 / no budget"],
+      ["month spend", "$12.50 / no budget (as of 2026-08-15T11:58:00.000Z)"],
     ]) {
-      const line = new RegExp(`^${label.replace(/ /g, "\\s")}\\s+${value.replace(/[$/.]/g, "\\$&")}$`, "m");
+      const line = new RegExp(`^${label.replace(/ /g, "\\s")}\\s+${value.replace(/[$/.()]/g, "\\$&")}$`, "m");
       assert(line.test(text), `show prints "${label}  ${value}"`);
     }
     const budgeted = captureIO();
     await runCli(["auth", "org", "show", "widgets-inc", ...AUTH], budgeted.io);
     const budgetedText = budgeted.out.join("\n");
-    assert(/^month spend\s+\$12\.50 \/ \$100\.00$/m.test(budgetedText), "spend against a budget prints both figures");
+    assert(/^month spend\s+\$12\.50 \/ \$100\.00 \(as of 2026-08-15T11:58:00\.000Z\)$/m.test(budgetedText), "spend against a budget prints both figures — one meter, the gateway's — and how old the copy is");
+    // No copy of the meter held: the wire says null, the row says
+    // `unavailable` — never $0.00, never a fabricated fraction. (The mock
+    // matches by substring in insertion order, so the list's "/api/orgs"
+    // entry is re-added after this one.)
+    const orgList = mockResponses.get("/api/orgs")!;
+    mockResponses.delete("/api/orgs");
+    setMockResponse("/api/orgs/nometer", {
+      status: 200,
+      body: {
+        ...ORG_DETAIL,
+        org_id: "org-3",
+        slug: "nometer",
+        quota: { ...ORG_DETAIL.quota, monthly_budget_usd: 100 },
+        usage: { ...ORG_DETAIL.usage, month_spend_usd: null, month_spend_as_of: null },
+      },
+    });
+    setMockResponse("/api/orgs", orgList);
+    const unmetered = captureIO();
+    assertEqual(await runCli(["auth", "org", "show", "nometer", ...AUTH], unmetered.io), 0, "a null meter is not an error");
+    assert(/^month spend\s+unavailable \/ \$100\.00$/m.test(unmetered.out.join("\n")), "a null meter prints unavailable beside the budget, with no stamp");
+    const unmeteredJson = captureIO();
+    await runCli(["auth", "org", "show", "nometer", "--json", ...AUTH], unmeteredJson.io);
+    assertEqual(JSON.parse(unmeteredJson.out[0]).usage.month_spend_usd, null, "--json carries the null, never 0");
     assert(/^personal\s+yes$/m.test(budgetedText), "a personal org says so");
     assert(/^role\s+-$/m.test(budgetedText), "no role on the wire prints -");
     assert(/^members\s+1$/m.test(budgetedText), "member count");

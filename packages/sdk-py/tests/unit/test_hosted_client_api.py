@@ -4876,6 +4876,7 @@ class TestOrgs:
             'in_flight_analyses': 1,
             'active_sessions': 0,
             'month_spend_usd': 12.5,
+            'month_spend_as_of': '2026-08-15T11:58:00.000Z',
         },
     }
 
@@ -4939,6 +4940,7 @@ class TestOrgs:
             'in_flight_analyses': 1,
             'active_sessions': 5,
             'month_spend_usd': 12.5,
+            'month_spend_as_of': '2026-08-15T11:58:00.000Z',
         }
         fake = FakeUrlopen([('/api/orgs/widgets-inc', {
             'org_id': 'org-2', 'slug': 'widgets-inc', 'display_name': 'Widgets',
@@ -4973,11 +4975,26 @@ class TestOrgs:
                 detail.quota.max_concurrent_sandboxes_modal) == (200, 60)
         assert detail.usage.queued_trials == 40
         assert detail.usage.month_spend_usd == 12.5
+        assert detail.usage.month_spend_as_of == '2026-08-15T11:58:00.000Z'
 
         fake = FakeUrlopen([('/api/orgs/team%2Fwith%20slash', self.ORG_DETAIL)])
         with patch('evolve._http.urlopen', fake):
             await orgs_factory(CONFIG).get('team/with slash')
         assert fake.requests[0].full_url.endswith('/api/orgs/team%2Fwith%20slash')
+
+    @pytest.mark.asyncio
+    async def test_get_keeps_a_null_month_meter_null_never_zero(self):
+        """The gateway's month meter is nullable on the wire: no copy held
+        reads None — an unknown is not a zero — and its stamp is None with it;
+        the counts beside it are untouched."""
+        body = dict(self.ORG_DETAIL)
+        body['usage'] = {**self.ORG_DETAIL['usage'], 'month_spend_usd': None, 'month_spend_as_of': None}
+        fake = FakeUrlopen([('/api/orgs/acme', body)])
+        with patch('evolve._http.urlopen', fake):
+            detail = await orgs_factory(CONFIG).get('acme')
+        assert detail.usage.month_spend_usd is None
+        assert detail.usage.month_spend_as_of is None
+        assert detail.usage.queued_trials == 40
 
     def test_detail_requires_member_count_quota_and_usage_by_keyword(self):
         """The depth ``OrganizationDetail`` adds over the row — ``member_count``,

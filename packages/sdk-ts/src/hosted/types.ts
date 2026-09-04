@@ -3911,7 +3911,7 @@ export interface OrgQuota {
   max_concurrent_analyses: number;
   /** Managed-agent sessions open at once (recorded and read back; not yet enforced by the box-create doors). */
   max_concurrent_sessions: number;
-  /** Model spend allowed this calendar month, USD; null = no monthly budget. */
+  /** Model spend allowed this UTC calendar month (the gateway's window, reset on the 1st), USD; null = no monthly budget. */
   monthly_budget_usd: number | null;
   /** Sandboxes of this organization in flight on e2b at once — trials, trace analyses, regrade verifiers and managed sessions together; work beyond it waits; 0 pauses the organization on that provider; fleet default = the platform's own e2b ceiling. */
   max_concurrent_sandboxes_e2b: number;
@@ -3929,8 +3929,16 @@ export interface OrgUsage {
   in_flight_analyses: number;
   /** Sessions not yet ended; always 0 on a shared org (sessions carry no organization). */
   active_sessions: number;
-  /** Recorded model spend since the first of the current calendar month (UTC). */
-  month_spend_usd: number;
+  /**
+   * The gateway's own month-to-date meter for the organization — the number
+   * `monthly_budget_usd` is enforced against (UTC calendar month, reset on the
+   * 1st) — as the platform last copied it. null = no copy the platform may
+   * serve (never copied, or the month rolled and the gateway has not reset
+   * yet); never 0 for "unknown".
+   */
+  month_spend_usd: number | null;
+  /** When the gateway answered the copy above (ISO 8601); null exactly when `month_spend_usd` is. */
+  month_spend_as_of: string | null;
 }
 
 /** One organization in depth (`GET /api/orgs/{org}`): the row, the member count, its quota and usage. */

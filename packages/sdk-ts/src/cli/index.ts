@@ -6142,10 +6142,15 @@ async function cmdAuthOrgList(inv: Invocation, io: CliIO): Promise<number> {
  */
 function orgDetailLines(org: OrganizationDetail): string[] {
   const { quota, usage } = org;
+  // Spend and budget are ONE meter — the gateway's, on the UTC calendar
+  // month — so the fraction is honest; a spend the platform holds no copy
+  // of prints `unavailable`, never $0.00, and a held copy says how old it is.
+  const spend = usage.month_spend_usd === null ? "unavailable" : fmtUsd(usage.month_spend_usd);
+  const asOf = usage.month_spend_as_of === null ? "" : ` (as of ${usage.month_spend_as_of})`;
   const budget =
     quota.monthly_budget_usd === null
-      ? `${fmtUsd(usage.month_spend_usd)} / no budget`
-      : `${fmtUsd(usage.month_spend_usd)} / ${fmtUsd(quota.monthly_budget_usd)}`;
+      ? `${spend} / no budget${asOf}`
+      : `${spend} / ${fmtUsd(quota.monthly_budget_usd)}${asOf}`;
   const rows: string[][] = [
     ["slug", org.slug],
     ["display name", org.display_name],
