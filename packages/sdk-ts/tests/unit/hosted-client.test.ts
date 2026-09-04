@@ -6600,6 +6600,7 @@ async function testOrgs() {
           in_flight_analyses: 1,
           active_sessions: 0,
           month_spend_usd: 12.5,
+          month_spend_as_of: "2026-08-15T11:58:00.000Z",
         },
       },
     });
@@ -6622,6 +6623,7 @@ async function testOrgs() {
       in_flight_analyses: 1,
       active_sessions: 5,
       month_spend_usd: 12.5,
+      month_spend_as_of: "2026-08-15T11:58:00.000Z",
     };
     setMockResponse("/api/orgs/widgets-inc", {
       status: 200,
@@ -6698,6 +6700,32 @@ async function testOrgs() {
     assertEqual(detail.quota.max_queued_trials, 10000, "the queued ceiling");
     assertEqual(detail.usage.queued_trials, 40, "usage.queued_trials");
     assertEqual(detail.usage.month_spend_usd, 12.5, "usage.month_spend_usd");
+    assertEqual(detail.usage.month_spend_as_of, "2026-08-15T11:58:00.000Z", "usage.month_spend_as_of — when the gateway answered the copy");
+
+    // The gateway's meter is nullable on the wire: no copy held reads null,
+    // never 0 (an unknown is not a zero); the stamp is null with it. (The
+    // mock matches by substring in insertion order, so the list's "/api/orgs"
+    // entry is re-added after this one.)
+    const orgList = mockResponses.get("/api/orgs")!;
+    mockResponses.delete("/api/orgs");
+    setMockResponse("/api/orgs/nometer", {
+      status: 200,
+      body: {
+        org_id: "org-3",
+        slug: "nometer",
+        display_name: "No meter",
+        personal: false,
+        created_at: "2026-08-20T00:00:00.000Z",
+        member_count: 1,
+        quota: WIDGETS_QUOTA,
+        usage: { ...WIDGETS_USAGE, month_spend_usd: null, month_spend_as_of: null },
+      },
+    });
+    setMockResponse("/api/orgs", orgList);
+    const unmetered = await client.get("nometer");
+    assertEqual(unmetered.usage.month_spend_usd, null, "a null meter stays null, never 0");
+    assertEqual(unmetered.usage.month_spend_as_of, null, "and its stamp is null with it");
+    assertEqual(unmetered.usage.queued_trials, 40, "the counts beside it are untouched");
 
     const widgets = await client.get("widgets-inc");
     assertEqual(widgets.quota, WIDGETS_QUOTA, "every quota field maps to its own key; a number budget stays a number");

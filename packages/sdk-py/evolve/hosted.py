@@ -2576,7 +2576,8 @@ class OrgQuota:
     #: Managed-agent sessions open at once (recorded and read back; not yet
     #: enforced by the box-create doors).
     max_concurrent_sessions: int
-    #: Model spend allowed this calendar month, USD; None = no monthly budget.
+    #: Model spend allowed this UTC calendar month (the gateway's window, reset
+    #: on the 1st), USD; None = no monthly budget.
     monthly_budget_usd: Optional[float]
     #: Sandboxes of this organization in flight on e2b at once — trials, trace
     #: analyses, regrade verifiers and managed sessions together; work beyond
@@ -2600,8 +2601,15 @@ class OrgUsage:
     #: Sessions not yet ended; always 0 on a shared org (sessions carry no
     #: organization).
     active_sessions: int
-    #: Recorded model spend since the first of the current calendar month (UTC).
-    month_spend_usd: float
+    #: The gateway's own month-to-date meter for the organization — the number
+    #: ``monthly_budget_usd`` is enforced against (UTC calendar month, reset on
+    #: the 1st) — as the platform last copied it. None = no copy the platform
+    #: may serve (never copied, or the month rolled and the gateway has not
+    #: reset yet); never 0 for "unknown".
+    month_spend_usd: Optional[float]
+    #: When the gateway answered the copy above (ISO 8601); None exactly when
+    #: ``month_spend_usd`` is.
+    month_spend_as_of: Optional[str]
 
 
 @dataclass
@@ -3365,11 +3373,18 @@ def _map_organization_detail(data: Dict[str, Any]) -> OrganizationDetail:
             in_flight_imports=count(usage, 'in_flight_imports'),
             in_flight_analyses=count(usage, 'in_flight_analyses'),
             active_sessions=count(usage, 'active_sessions'),
+            # The gateway's meter as copied: nullable on the wire, None stays
+            # None (never coerced to 0.0 — an unknown is not a zero).
             month_spend_usd=(
                 float(usage.get('month_spend_usd'))
                 if isinstance(usage.get('month_spend_usd'), (int, float))
                 and not isinstance(usage.get('month_spend_usd'), bool)
-                else 0.0
+                else None
+            ),
+            month_spend_as_of=(
+                usage.get('month_spend_as_of')
+                if isinstance(usage.get('month_spend_as_of'), str)
+                else None
             ),
         ),
     )

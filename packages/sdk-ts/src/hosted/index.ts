@@ -3576,7 +3576,10 @@ function mapOrganizationDetail(raw: Record<string, unknown>): OrganizationDetail
       in_flight_imports: count(usage.in_flight_imports),
       in_flight_analyses: count(usage.in_flight_analyses),
       active_sessions: count(usage.active_sessions),
-      month_spend_usd: count(usage.month_spend_usd),
+      // The gateway's meter as copied: nullable on the wire, null stays null
+      // (never coerced to 0 — an unknown is not a zero).
+      month_spend_usd: typeof usage.month_spend_usd === "number" ? usage.month_spend_usd : null,
+      month_spend_as_of: typeof usage.month_spend_as_of === "string" ? usage.month_spend_as_of : null,
     },
   };
 }
