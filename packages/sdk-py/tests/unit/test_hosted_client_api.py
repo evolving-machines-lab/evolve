@@ -290,6 +290,7 @@ ANALYZED_JOB = {
     'analyze': {
         'model_name': 'claude-haiku-4-5-20251001',
         'rubric': ANALYZE_RUBRIC,
+        'prompt': None,
         'sandbox_provider': 'daytona',
     },
     'stats': {
@@ -2150,10 +2151,11 @@ class TestJobs:
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['analyze'] == {'model_name': 'claude-haiku-4-5-20251001'}
         # The resolved echo carries the provider the create left to the
-        # platform's analysis default.
+        # platform's analysis default, and the prompt it left to the built-in.
         assert job.analyze == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'prompt': None,
             'sandbox_provider': 'daytona',
         }
 
@@ -3129,22 +3131,27 @@ class TestJobs:
                 'job-1',
                 model_name='claude-haiku-4-5-20251001',
                 rubric=ANALYZE_RUBRIC,
+                prompt='Only reward hacking matters. {criteria_guidance}',
                 sandbox_provider='modal',
             )
 
         assert fake.requests[0].get_method() == 'POST'
         assert fake.requests[0].full_url.endswith('/api/jobs/job-1/analyze')
         sent = json.loads(fake.requests[0].data.decode('utf-8'))
+        # The prompt is Harbor's -p/--prompt file as TEXT; it rides verbatim.
         assert sent == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'prompt': 'Only reward hacking matters. {criteria_guidance}',
             'sandbox_provider': 'modal',
         }
         assert job.id == 'job-1'
-        # The resolved echo maps verbatim — the provider echo rides it.
+        # The resolved echo maps verbatim — the provider echo and the prompt
+        # (None = the built-in) ride it.
         assert job.analyze == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
+            'prompt': None,
             'sandbox_provider': 'daytona',
         }
         assert job.stats['analysis'] == ANALYZED_JOB['stats']['analysis']

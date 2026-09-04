@@ -330,6 +330,13 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<path>",
     help: "Rubric file for the analyzer (TOML/YAML/JSON, Harbor's {criteria} shape; implies --analyze)",
   },
+  "analyze-prompt": {
+    kind: "string",
+    value: "<path>",
+    help:
+      "Prompt file for the analyzer agent (Harbor's -p/--prompt; replaces the built-in prompt; " +
+      "implies --analyze)",
+  },
   "analyze-provider": {
     kind: "string",
     value: "<provider>",
@@ -1072,6 +1079,15 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
           "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} " +
           "shape; default: Harbor's default rubric — reward_hacking, task_specification)",
       },
+      prompt: {
+        kind: "string",
+        short: "p",
+        value: "<path>",
+        help:
+          "Prompt file for the evaluator agent (Harbor's -p/--prompt; its text replaces the " +
+          "built-in prompt, {trial_path}/{task_section}/{criteria_guidance} rendered). " +
+          "Uses the built-in default if not specified",
+      },
       env: {
         kind: "string",
         short: "e",
@@ -1089,7 +1105,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
-    example: "evolve analyze cme12ab34 -r rubric.toml",
+    example: "evolve analyze cme12ab34 -r rubric.toml -p prompt.txt",
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
   // cli/main.py); ours is a deliberate subset — no --public/--share-org/
@@ -2126,6 +2142,34 @@ function loadAgentConfigFile(
 }
 
 /**
+ * Read a local prompt file for `analyze -p` / `run --analyze-prompt` — Harbor's
+ * `-p/--prompt` (their cli/analyze.py:94-99), whose TEXT replaces the built-in
+ * analyze.txt as the analyzer's instruction template (analyzer.py:130-134
+ * `prompt_path.read_text()`). Read verbatim, no parsing: the tokens
+ * (`{trial_path}`, `{task_section}`, `{criteria_guidance}`) are rendered
+ * server-side. Ruled here: the file must be readable and non-empty; the
+ * server owns the bound (32,000 characters) and refuses it typed
+ * (`invalid_input` naming `analyze.prompt`).
+ */
+export function loadPromptFile(
+  path: string,
+  read: (path: string) => string = (p) => readFileSync(p, "utf-8")
+): string {
+  let text: string;
+  try {
+    text = read(path);
+  } catch (error) {
+    throw new CliUsageError(`--prompt: cannot read ${path}: ${(error as Error).message}`);
+  }
+  if (text.trim().length === 0) {
+    throw new CliUsageError(
+      `--prompt: ${path} is empty — the analyzer's prompt file must carry the instruction text`
+    );
+  }
+  return text;
+}
+
+/**
  * Read and parse a local rubric file for `analyze -r` / `run --analyze-rubric`
  * into the spec's Rubric shape — Harbor's own loader law (their
  * cli/quality_checker/models.py load_rubric): TOML, YAML, or JSON by
@@ -2444,19 +2488,23 @@ export function buildJobInput(
   if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
 
   // Embedded analysis: PRESENCE of the object is the switch (the spec's
-  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the four
+  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the five
   // flags arms it — --analyze bare means "all defaults" — and the sub-flags
   // override the file's fields one by one, the same merge rule as retry.
   const analyzeArmed =
     f.analyze === true ||
     f["analyze-model"] !== undefined ||
     f["analyze-rubric"] !== undefined ||
+    f["analyze-prompt"] !== undefined ||
     f["analyze-provider"] !== undefined ||
     base.analyze !== undefined;
   const analyze: AnalyzeConfigInput = { ...(base.analyze ?? {}) };
   if (f["analyze-model"] !== undefined) analyze.model_name = String(f["analyze-model"]);
   if (f["analyze-rubric"] !== undefined) {
     analyze.rubric = loadRubricFile(String(f["analyze-rubric"]), read);
+  }
+  if (f["analyze-prompt"] !== undefined) {
+    analyze.prompt = loadPromptFile(String(f["analyze-prompt"]), read);
   }
   // Unlike -e/--env, the value rides verbatim: the analyzer's provider lineup
   // is the server's roster (GET /api/meta), and its refusal (`invalid_input`,
@@ -4300,6 +4348,9 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const req: AnalyzeConfigInput = {};
   if (inv.flags.model !== undefined) req.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) req.rubric = loadRubricFile(String(inv.flags.rubric));
+  // -p rides as the file's TEXT (Harbor's -p/--prompt read_text()); the
+  // server owns the bound and the rendering.
+  if (inv.flags.prompt !== undefined) req.prompt = loadPromptFile(String(inv.flags.prompt));
   // -e rides verbatim, like --analyze-provider on run: the analyzer's
   // provider lineup is the server's roster, and its `invalid_input` refusal
   // names it — no client-side copy to drift.

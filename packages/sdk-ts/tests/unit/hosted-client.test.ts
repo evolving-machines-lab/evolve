@@ -3528,6 +3528,7 @@ const ANALYZED_JOB_BODY = {
   analyze: {
     model_name: "claude-haiku-4-5-20251001",
     rubric: ANALYZE_RUBRIC,
+    prompt: null,
     sandbox_provider: "daytona",
   },
   stats: {
@@ -3552,6 +3553,7 @@ async function testAnalyzeJob() {
     const job = await e.analyze("eval-1", {
       model_name: "claude-haiku-4-5-20251001",
       rubric: ANALYZE_RUBRIC,
+      prompt: "Only reward hacking matters. {criteria_guidance}",
       sandbox_provider: "modal",
     });
     const call = fetchCalls[fetchCalls.length - 1];
@@ -3562,9 +3564,10 @@ async function testAnalyzeJob() {
       {
         model_name: "claude-haiku-4-5-20251001",
         rubric: ANALYZE_RUBRIC,
+        prompt: "Only reward hacking matters. {criteria_guidance}",
         sandbox_provider: "modal",
       },
-      "the config rides the body verbatim — sandbox_provider included"
+      "the config rides the body verbatim — prompt (Harbor's -p file as TEXT) and sandbox_provider included"
     );
     // THE RESPONSE IS THE JOB — analyses are not a separate resource.
     assertEqual(job.id, "eval-1", "returns the job body");
@@ -3573,9 +3576,10 @@ async function testAnalyzeJob() {
       {
         model_name: "claude-haiku-4-5-20251001",
         rubric: ANALYZE_RUBRIC,
+        prompt: null,
         sandbox_provider: "daytona",
       },
-      "the resolved embedded policy maps verbatim — the provider echo rides it"
+      "the resolved embedded policy maps verbatim — the provider echo and the prompt (null = built-in) ride it"
     );
     assertEqual(
       job.stats.analysis,

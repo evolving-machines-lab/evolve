@@ -151,6 +151,7 @@ import {
   importStatusLine,
   progressSettleLines,
   TRIAL_COLUMNS,
+  loadPromptFile,
   loadRubricFile,
   parseAgentKwargs,
   parseArgs,
@@ -3721,6 +3722,26 @@ function testLoadRubricFile() {
   );
 }
 
+function testLoadPromptFile() {
+  console.log("\n--- loadPromptFile: Harbor's -p/--prompt file, read verbatim as TEXT ---");
+  const text = "Only reward hacking matters. Trial: {trial_path}\n{criteria_guidance}\n";
+  assertEqual(
+    loadPromptFile("prompt.txt", () => text),
+    text,
+    "the file's text rides as given — whitespace and tokens untouched (Harbor read_text())"
+  );
+  assertThrowsUsage(
+    () => loadPromptFile("missing.txt", () => { throw new Error("ENOENT"); }),
+    "--prompt: cannot read missing.txt",
+    "an unreadable file is refused by path"
+  );
+  assertThrowsUsage(
+    () => loadPromptFile("empty.txt", () => "  \n"),
+    "--prompt: empty.txt is empty",
+    "an empty file is refused at the keyboard — the server would refuse it invalid_input anyway"
+  );
+}
+
 function testBuildJobInputAnalyze() {
   console.log("\n--- buildJobInput: --analyze arms the embedded trigger (presence is the switch) ---");
   const bare = buildJobInput(
@@ -3767,6 +3788,19 @@ function testBuildJobInputAnalyze() {
     parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"])
   );
   assert(!("analyze" in minimal), "no analyze key when nothing armed it");
+
+  const withPrompt = buildJobInput(
+    parseArgs([
+      "job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m",
+      "--analyze-prompt", "prompt.txt",
+    ]),
+    () => "Custom prompt {criteria_guidance}\n"
+  );
+  assertEqual(
+    withPrompt.analyze,
+    { prompt: "Custom prompt {criteria_guidance}\n" },
+    "--analyze-prompt <file> implies --analyze and sends the file's TEXT as analyze.prompt"
+  );
 
   // Config-file base merges FIELD BY FIELD under the flags, like retry.
   if (!SPEC_AVAILABLE) {
@@ -3839,17 +3873,26 @@ async function testAnalyzeVerbEndToEnd() {
       },
     });
     const { io, out } = captureIO();
-    const code = await runCli(
-      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", ...AUTH],
-      io
-    );
+    const promptDir = await mkdtemp(join(tmpdir(), "evolve-analyze-prompt-"));
+    const promptPath = join(promptDir, "prompt.txt");
+    const promptText = "Only reward hacking matters. Trial: {trial_path}\n{criteria_guidance}\n";
+    await writeFile(promptPath, promptText, "utf-8");
+    let code: number;
+    try {
+      code = await runCli(
+        ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "-p", promptPath, ...AUTH],
+        io
+      );
+    } finally {
+      await rm(promptDir, { recursive: true, force: true });
+    }
     assertEqual(code, 0, "exit 0 when every analysis completed");
     const post = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/analyze"));
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001", sandbox_provider: "daytona" },
-      "-m/-e ride the body as model_name/sandbox_provider; no rubric key when none given"
+      { model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona" },
+      "-m/-e/-p ride the body as model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p); no rubric key when none given"
     );
     assert(jobReads >= 2, "follows the wave by polling the job");
     assert(
@@ -8055,6 +8098,7 @@ async function main() {
   await testJobRegrade();
   await testTrialRegrade();
   testLoadRubricFile();
+  testLoadPromptFile();
   testBuildJobInputAnalyze();
   await testAnalyzeVerbEndToEnd();
   await testAnalyzeVerbJsonAndFailure();

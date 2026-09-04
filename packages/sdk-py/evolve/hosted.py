@@ -1454,8 +1454,8 @@ class Rubric(TypedDict):
 
 class AnalyzeConfigInput(TypedDict, total=False):
     """Trace-analysis configuration INPUT — Harbor's ``harbor analyze``
-    vocabulary (their cli/analyze.py: ``--model``, ``--rubric``), the spec's
-    ``AnalyzeConfigInput`` schema.
+    vocabulary (their cli/analyze.py: ``--model``, ``--rubric``,
+    ``--prompt``), the spec's ``AnalyzeConfigInput`` schema.
 
     PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
     it arms the embedded trigger (each trial is analyzed server-side right
@@ -1477,6 +1477,20 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: Off-roster models are refused typed (``invalid_input``).
     model_name: str
     rubric: Rubric
+    #: The analyzer's prompt template — the TEXT of Harbor's ``-p/--prompt
+    #: <file>`` (their cli/analyze.py:94-99). It REPLACES the built-in
+    #: template (their analyze/prompts/analyze.txt) as the body of the
+    #: analyzer's instruction and is rendered with the same three tokens
+    #: (``{trial_path}``, ``{task_section}``, ``{criteria_guidance}`` —
+    #: ``str.format_map`` semantics, an unknown token renders empty); the
+    #: output contract (write ``analysis.json`` matching the rubric's schema)
+    #: is appended after it exactly as Harbor appends it. Stored AS GIVEN and
+    #: FROZEN into each analysis, like the rubric. Omitted = the built-in
+    #: prompt (``None`` on the resolved echo and on the analysis). Present,
+    #: it must be a non-empty string of at most 32,000 characters — refused
+    #: ``invalid_input`` naming ``analyze.prompt`` and the bound. The CLI
+    #: reads the file for you: ``evolve analyze -p prompt.txt``.
+    prompt: str
     #: The provider whose sandbox the analyzer boots — the job lineup, the
     #: same vocabulary as ``sandbox_provider`` on ``jobs().start()`` and held
     #: to the same rule: an unknown value is refused ``invalid_input`` naming
@@ -1491,12 +1505,15 @@ class AnalyzeConfig(TypedDict):
     """The RESOLVED trace-analysis policy — the caller's values or the
     defaults of the day, resolved at accept and stored (same law as
     ``JobRetryConfig``). Echoed as ``Job.analyze`` when the job was created
-    with ``analyze``; each analysis additionally carries the exact pair IT
-    ran under (``Trial.analysis['model_name']`` / ``['rubric']``), which a
-    later manual re-analysis may have changed.
+    with ``analyze``; each analysis additionally carries the exact policy
+    IT ran under (``Trial.analysis['model_name']`` / ``['rubric']`` /
+    ``['prompt']``), which a later manual re-analysis may have changed.
     """
     model_name: str
     rubric: Rubric
+    #: The caller's prompt template as stored; None = Harbor's built-in
+    #: analyze.txt.
+    prompt: Optional[str]
     #: The provider this policy's analyses run on. Named at create it is
     #: served as stored, forever. When the create named none, this echoes the
     #: platform's analysis default OF THE DAY — the value the next enqueue
@@ -1536,8 +1553,8 @@ class TrialAnalysis(TypedDict):
     The result half is Harbor's AnalyzeResult verbatim (their
     analyze/models.py: ``summary``, ``checks`` keyed by criterion,
     ``estimated_cost_usd``; the enclosing trial is Harbor's ``trial_name``);
-    the rest is provenance — which model and rubric THIS analysis ran under,
-    its lifecycle status, and its typed failure when it failed.
+    the rest is provenance — which model, rubric and prompt THIS analysis
+    ran under, its lifecycle status, and its typed failure when it failed.
 
     ``estimated_cost_usd`` is the analyzer agent's OWN metered spend — its
     own line, never part of the trial's ``agent_result.cost_usd`` or the
@@ -1563,6 +1580,9 @@ class TrialAnalysis(TypedDict):
     status: str
     model_name: str
     rubric: Rubric
+    #: The prompt template THIS analysis ran under, frozen at enqueue
+    #: (``AnalyzeConfigInput['prompt']``); None = Harbor's built-in analyze.txt.
+    prompt: Optional[str]
     #: 3–5 sentence overview of the trial (Harbor's summary contract). None
     #: until completed.
     summary: Optional[str]
@@ -6694,6 +6714,7 @@ class JobsClient:
         *,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
+        prompt: Optional[str] = None,
         sandbox_provider: Optional[EvalSandboxProvider] = None,
     ) -> Job:
         """Analyze a terminal job's trial traces (rubric-driven, Harbor's
@@ -6707,6 +6728,10 @@ class JobsClient:
         :meth:`watch_analysis`, or poll the job's trials. This is also the
         RE-analysis path: calling again (same job, different rubric or
         model) runs a fresh wave once the previous one has settled.
+        ``prompt`` is the TEXT of Harbor's ``-p/--prompt`` file — it
+        replaces the built-in analyzer prompt as the instruction template
+        (read the file yourself: ``prompt=Path('prompt.txt').read_text()``);
+        omitted, the built-in prompt applies.
         ``sandbox_provider`` picks the provider whose sandbox the analyzer
         boots — the job lineup; omitted, the platform's analysis default
         applies (daytona unless the operator retuned the fleet). Every
@@ -6718,7 +6743,8 @@ class JobsClient:
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
         or duplicate criteria, bounds), ``invalid_input`` (off-roster model,
-        or a provider outside the lineup — the message names the roster),
+        an empty or oversize prompt, or a provider outside the lineup — the
+        message names the roster or the bound),
         ``analysis_already_running`` (one wave at a time),
         ``no_analyzable_trials`` (every trial CANCELLED).
         """
@@ -6727,6 +6753,8 @@ class JobsClient:
             body['model_name'] = model_name
         if rubric is not None:
             body['rubric'] = rubric
+        if prompt is not None:
+            body['prompt'] = prompt
         if sandbox_provider is not None:
             body['sandbox_provider'] = sandbox_provider
         raw = await self._http.request_json(
