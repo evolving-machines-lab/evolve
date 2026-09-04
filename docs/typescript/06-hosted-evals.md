@@ -2345,12 +2345,14 @@ interface Rubric { criteria: RubricCriterion[] }
 interface AnalyzeConfigInput {           // jobs().analyze() body, and JobCreate.analyze
     model_name?: string;                 // Harbor's --model; default deepseek-v4-flash-vision
     rubric?: Rubric;                     // Harbor's --rubric; default reward_hacking + task_specification
+    prompt?: string;                     // Harbor's -p/--prompt file text; default: the built-in analyze.txt
     reasoning_effort?: string;           // the arms' effort vocabulary (GET /api/meta analyze.reasoning_efforts); default per model
     sandbox_provider?: EvalSandboxProvider; // where the analyzer box runs; default: the platform's analysis default (daytona)
 }
 interface AnalyzeConfig {                // the RESOLVED policy, echoed as Job.analyze
     model_name: string;
     rubric: Rubric;
+    prompt: string | null;               // the prompt template as stored; null = the built-in
     reasoning_effort: string;            // as stored when the create named one; else the model's default of the day
     sandbox_provider: EvalSandboxProvider; // as stored when the create named one; else the default of the day
 }
@@ -2366,6 +2368,7 @@ interface TrialAnalysis {                // Trial.analysis — Harbor's AnalyzeR
     model_name: string;                  // the pair THIS analysis ran under
     reasoning_effort: string | null; // what the analyzer was asked for; null only on rows from before it was stamped
     rubric: Rubric;
+    prompt: string | null;               // the template THIS analysis ran under, frozen at enqueue; null = the built-in
     summary: string | null;              // 3–5 sentences; null until completed
     checks: Record<string, AnalysisCheck> | null;   // keys exactly the rubric's criterion names
     estimated_cost_usd: number | null;   // the analyzer's OWN spend — never in the trial's bill
@@ -2482,6 +2485,37 @@ interface DatasetImport {
     failure: DatasetImportFailure | null;    // never `error` on a 200 body
     warnings: ImportWarning[];           // e.g. no_solutions_archived → no reference-solution record
     task_count?: number;
+    created_at?: string;
+    updated_at?: string;
+}
+
+type JobImportSource =                   // where an upload's archive came from
+    | { type: "archive"; sha256: string }        // the uploaded bytes
+    | { type: "archive_url"; url: string }       // the public https url the worker downloads
+    | { type: "hub"; job_id: string };           // RESERVED — Harbor's hub job source; no door accepts it yet
+
+interface JobImportProgress {            // the worker's own statement, written at phase boundaries only
+    phase: "fetching" | "extracting" | "validating" | "ingesting";
+    started_at: string;
+    phases: { name: string; started_at: string; completed_at?: string }[];  // completed_at absent while a phase runs — and forever on the phase a FAILED import died in
+}
+
+interface JobImportFailure {             // the upload codes (not_a_job_dir, invalid_archive, invalid_trial, …) plus import_failed / import_lease_expired
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;   // e.g. existing_job_id on job_already_uploaded, trial on invalid_trial
+}
+
+interface JobImport {                    // jobs().upload() resolves with it; getImport() / watchImport() / listImports() read it
+    id: string;
+    status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";   // the same four words a dataset import speaks
+    receiving: boolean;                  // true exactly while the archive is still arriving through its resumable session
+    source: JobImportSource | null;      // null while a session is still receiving
+    dataset: string | null;              // the dataset hint as given (name or name@version)
+    job_id: string | null;               // the ingested Job, from COMPLETED on; null again if that job was deleted
+    n_trials_uploaded: number | null;    // from COMPLETED on (Harbor's own spelling)
+    failure: JobImportFailure | null;    // non-null exactly when FAILED
+    progress: JobImportProgress | null;  // null until the worker's first report
     created_at?: string;
     updated_at?: string;
 }

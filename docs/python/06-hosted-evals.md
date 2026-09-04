@@ -2281,12 +2281,14 @@ class Rubric(TypedDict):
 class AnalyzeConfigInput(TypedDict, total=False):  # analyze() kwargs, and start(analyze=...)
     model_name: str                 # Harbor's --model; default deepseek-v4-flash-vision
     rubric: Rubric                  # Harbor's --rubric; default reward_hacking + task_specification
+    prompt: str                     # Harbor's -p/--prompt file text; default: the built-in analyze.txt
     reasoning_effort: str           # the arms' effort vocabulary (meta().analyze['reasoning_efforts']); default per model
     sandbox_provider: EvalSandboxProvider  # where the analyzer box runs; default: the platform's analysis default (daytona)
 
 class AnalyzeConfig(TypedDict):     # the RESOLVED policy, echoed as Job.analyze
     model_name: str
     rubric: Rubric
+    prompt: Optional[str]           # the prompt template as stored; None = the built-in
     reasoning_effort: str           # as stored when the create named one; else the model's default of the day
     sandbox_provider: EvalSandboxProvider  # as stored when the create named one; else the default of the day
 
@@ -2300,6 +2302,7 @@ class TrialAnalysis(TypedDict):     # Trial.analysis — Harbor's AnalyzeResult 
     model_name: str                 # the pair THIS analysis ran under
     reasoning_effort: Optional[str]  # what the analyzer was asked for; None only on rows from before it was stamped
     rubric: Rubric
+    prompt: Optional[str]           # the template THIS analysis ran under, frozen at enqueue; None = the built-in
     summary: Optional[str]          # 3–5 sentences; None until completed
     checks: Optional[Dict[str, AnalysisCheck]]   # keys exactly the rubric's criterion names
     estimated_cost_usd: Optional[float]  # the analyzer's OWN spend — never in the trial's bill
@@ -2400,6 +2403,39 @@ class DatasetImport:
     failure: Optional[DatasetImportFailure]    # never `error` on a 200 body
     warnings: List[ImportWarning]   # e.g. no_solutions_archived → no reference-solution record
     task_count: Optional[int]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+@dataclass
+class JobImportSource:              # where an upload's archive came from
+    type: str                       # "archive" (the uploaded bytes, sha256) | "archive_url" (the public https url the worker downloads) | "hub" (RESERVED — Harbor's hub job source; no door accepts it yet)
+    sha256: Optional[str]
+    url: Optional[str]
+    job_id: Optional[str]
+
+@dataclass
+class JobImportProgress:            # the worker's own statement, written at phase boundaries only
+    phase: str                      # "fetching" | "extracting" | "validating" | "ingesting"
+    started_at: str
+    phases: List[JobImportPhaseProgress]  # name, started_at, completed_at — None while a phase runs, and forever on the phase a FAILED import died in
+
+@dataclass
+class JobImportFailure:             # the upload codes (not_a_job_dir, invalid_archive, invalid_trial, …) plus import_failed / import_lease_expired
+    code: str
+    message: str
+    details: Optional[Dict[str, Any]]  # e.g. existing_job_id on job_already_uploaded, trial on invalid_trial
+
+@dataclass
+class JobImport:                    # upload() returns it; get_import() / watch_import() / list_imports() read it
+    id: str
+    status: str                     # QUEUED | RUNNING | COMPLETED | FAILED — the same four words a dataset import speaks
+    receiving: bool                 # True exactly while the archive is still arriving through its resumable session
+    source: Optional[JobImportSource]   # None while a session is still receiving
+    dataset: Optional[str]          # the dataset hint as given (name or name@version)
+    job_id: Optional[str]           # the ingested Job, from COMPLETED on; None again if that job was deleted
+    n_trials_uploaded: Optional[int]    # from COMPLETED on (Harbor's own spelling)
+    failure: Optional[JobImportFailure]  # non-None exactly when FAILED
+    progress: Optional[JobImportProgress]  # None until the worker's first report
     created_at: Optional[str]
     updated_at: Optional[str]
 
