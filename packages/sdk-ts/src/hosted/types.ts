@@ -82,7 +82,14 @@ export type JobStatus =
  * Trial status law: a valid reward (including 0) = SCORED; verifier crash or
  * out-of-domain reward = SCORING_ERROR (never a fabricated zero);
  * INFRASTRUCTURE_ERROR: the trial was lost before a result was recorded;
- * INDETERMINATE: the platform cannot tell whether the trial completed.
+ * BUDGET: a budget above the trial's own cap refused it — the account's
+ * credits, the organization's monthly budget, or the platform's global stop
+ * — at the platform's pre-boot wallet check (nothing was started) or mid-run;
+ * `exception_info.exception_type` is `ApiUsageLimitError`, the message
+ * starts with the subject (`user:`, `team:`, `other:`); never retried
+ * automatically, resume once the budget is raised (a hosted extension —
+ * Harbor has no wallet); INDETERMINATE: the platform cannot tell whether the
+ * trial completed.
  *
  * A runtime value (not only a type), like TRIAL_ARTIFACT_STREAMS, so the CLI
  * can validate a `--status` filter against this list instead of a second copy.
@@ -94,6 +101,7 @@ export const TRIAL_STATUSES = [
   "SCORED",
   "SCORING_ERROR",
   "INFRASTRUCTURE_ERROR",
+  "BUDGET",
   "INDETERMINATE",
   "CANCELLED",
 ] as const;
@@ -754,14 +762,14 @@ export interface RetryRequest {
   /**
    * Exactly these trials of the source job, all-or-nothing: an unknown id
    * refuses the whole request (`trial_not_found`). Each named trial must be
-   * settled — SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE,
-   * or CANCELLED (`trial_not_settled` otherwise) — but the JOB may still be
+   * settled — SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR, BUDGET,
+   * INDETERMINATE, or CANCELLED (`trial_not_settled` otherwise) — but the JOB may still be
    * running: a settled trial's facts are final. Duplicates are deduplicated.
    */
   trial_ids?: string[];
   /**
    * Select the source's failed trials only (SCORING_ERROR,
-   * INFRASTRUCTURE_ERROR, INDETERMINATE). Stopped (CANCELLED) and scored
+   * INFRASTRUCTURE_ERROR, BUDGET, INDETERMINATE). Stopped (CANCELLED) and scored
    * trials are not failures — name them in `trial_ids`, or use resume for
    * stopped work.
    */

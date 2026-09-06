@@ -246,6 +246,7 @@ ZERO_TRIAL_STATUSES = {
     'SCORED': 0,
     'SCORING_ERROR': 0,
     'INFRASTRUCTURE_ERROR': 0,
+    'BUDGET': 0,
     'INDETERMINATE': 0,
     'CANCELLED': 0,
 }
@@ -2415,7 +2416,7 @@ class TestJobs:
         assert job.trials.total == 5
         assert job.trials.by_status['SCORED'] == 3
         assert job.trials.by_status['CANCELLED'] == 0
-        assert len(job.trials.by_status) == 8
+        assert len(job.trials.by_status) == 9
         # stats is the wire's own dict — read by key, never constructed.
         assert job.stats['cost_usd'] == 2.79
         assert job.failure is None
