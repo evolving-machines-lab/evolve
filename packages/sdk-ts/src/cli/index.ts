@@ -507,7 +507,7 @@ const GROUPS: Record<string, GroupSpec> = {
           "failed-only": {
             kind: "boolean",
             help:
-              "Only retry failed trials (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE); " +
+              "Only retry failed trials (SCORING_ERROR, INFRASTRUCTURE_ERROR, BUDGET, INDETERMINATE); " +
               "stopped and scored trials are not failures",
           },
           trial: {

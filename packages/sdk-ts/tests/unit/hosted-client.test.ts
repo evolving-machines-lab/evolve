@@ -2531,6 +2531,7 @@ function zeroTrialStatuses(counts: Record<string, number> = {}): Record<string, 
     SCORED: 0,
     SCORING_ERROR: 0,
     INFRASTRUCTURE_ERROR: 0,
+    BUDGET: 0,
     INDETERMINATE: 0,
     CANCELLED: 0,
     ...counts,
@@ -2891,7 +2892,7 @@ async function testGetJobDetail() {
     assertEqual(job.trials.byStatus.SCORED, 4, "maps the status histogram");
     // Every status is named, zeros included, so a UI never hardcodes the enum.
     assertEqual(job.trials.byStatus.CANCELLED, 0, "a status with no trials is 0, not absent");
-    assertEqual(Object.keys(job.trials.byStatus).length, 8, "all 8 statuses present");
+    assertEqual(Object.keys(job.trials.byStatus).length, 9, "all 9 statuses present");
     assertEqual(
       job.counts,
       { agents: 1, tasks: 10 },

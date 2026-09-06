@@ -504,9 +504,22 @@ class ImportSettleError(Exception):
 JobStatus = Literal[
     'QUEUED', 'RUNNING', 'CANCELLING', 'COMPLETED', 'CANCELLED', 'FAILED'
 ]
+#: Trial status law: a valid reward (including 0) = SCORED; verifier crash
+#: or out-of-domain reward = SCORING_ERROR (never a fabricated zero);
+#: INFRASTRUCTURE_ERROR = the trial was lost before a result was recorded;
+#: BUDGET = a budget above the trial's own cap refused it — the account's
+#: credits, the organization's monthly budget, or the platform's global stop
+#: — at the platform's pre-boot wallet check (nothing was started) or
+#: mid-run; ``exception_info.exception_type`` is ``ApiUsageLimitError`` and
+#: the message carries the subject (``user:``, ``team:``, ``other:``) right
+#: after the ``[agent-phase:budget_exhausted]`` stage prefix every
+#: agent-phase failure detail carries;
+#: never retried automatically, resume once the budget is raised (a hosted
+#: extension — Harbor has no wallet); INDETERMINATE = the platform cannot
+#: tell whether the trial completed.
 TrialStatus = Literal[
     'QUEUED', 'RUNNING', 'SCORING', 'SCORED',
-    'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED',
+    'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'BUDGET', 'INDETERMINATE', 'CANCELLED',
 ]
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 
@@ -1984,9 +1997,10 @@ class ExceptionInfo:
     """Why a trial failed, when it did.
 
     ``exception_type`` is one of the platform's stable failure names
-    (``ScoringError``, ``InfrastructureError``, ``CancelledError``,
-    ``IncompleteTrialError``) — but filter with ``Trial.status``, which is the
-    primary key for failure classes; this is the detail.
+    (``ScoringError``, ``InfrastructureError``, ``ApiUsageLimitError``,
+    ``CancelledError``, ``IncompleteTrialError``) — but filter with
+    ``Trial.status``, which is the primary key for failure classes; this is
+    the detail.
     """
     exception_type: str
     #: Truncated to 2000 chars on list rows; full on the detail route.
@@ -6871,7 +6885,8 @@ class JobsClient:
         is never mutated. ``filter_error_types`` selects which failures to
         resume by their ``exception_info.exception_type``; omitted, the server
         default set applies (ScoringError, InfrastructureError,
-        IncompleteTrialError, plus stopped trials — settled CANCELLED,
+        ApiUsageLimitError, IncompleteTrialError, plus stopped trials —
+        settled CANCELLED,
         exception type CancelledError — and still-QUEUED trials of a
         cancelled source). Supports Idempotency-Key.
         """
@@ -6902,8 +6917,8 @@ class JobsClient:
         is never mutated. The selection is ``trial_ids`` XOR ``failed_only``
         (both together is refused): omitted, every trial of the (terminal)
         source retries; ``failed_only=True`` narrows a terminal source to its
-        failures (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE —
-        stopped and scored trials are not failures); ``trial_ids`` names
+        failures (SCORING_ERROR, INFRASTRUCTURE_ERROR, BUDGET, INDETERMINATE
+        — stopped and scored trials are not failures); ``trial_ids`` names
         exact trials all-or-nothing, each must be SETTLED (the job itself may
         still be running — a settled trial's facts are final).
 
