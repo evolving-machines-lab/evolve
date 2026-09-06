@@ -174,8 +174,18 @@ class UsageReading:
         spent_usd: Metered model spend so far, USD. None = the money was
             never measured (a trial's ``spend_source`` lane ``assumed_cap``;
             the token fields beside it may still carry real readings).
-        input_tokens: Prompt tokens so far, INCLUDING the cached share.
-        cached_input_tokens: The cached share of ``input_tokens``.
+        input_tokens: Prompt tokens so far, INCLUDING the cached share and
+            the cache-write share.
+        cached_input_tokens: The cached share of ``input_tokens`` (read from
+            the provider's prompt cache).
+        cache_write_tokens: The share of ``input_tokens`` WRITTEN to the
+            provider's prompt cache. Anthropic bills it at a premium above the
+            plain input price, so it is the fourth count ``spent_usd`` needs
+            to be reproducible from the tokens; providers without a
+            cache-write price report 0. None when the meter never answered —
+            and on a run settled before the platform recorded this share (an
+            older server omits the key), where the three counts beside it stay
+            real: None is never a fabricated 0.
         output_tokens: Completion tokens so far.
         as_of: When this reading was taken — show its age, never the figure
             alone.
@@ -184,6 +194,7 @@ class UsageReading:
     spent_usd: Optional[float]
     input_tokens: Optional[int]
     cached_input_tokens: Optional[int]
+    cache_write_tokens: Optional[int]
     output_tokens: Optional[int]
     as_of: Optional[str]
 
@@ -214,6 +225,7 @@ def _usage_reading_from_data(data: Any) -> Optional[UsageReading]:
         spent_usd=_num(data.get('spent_usd')),
         input_tokens=_num(data.get('input_tokens')),
         cached_input_tokens=_num(data.get('cached_input_tokens')),
+        cache_write_tokens=_num(data.get('cache_write_tokens')),
         output_tokens=_num(data.get('output_tokens')),
         as_of=as_of if isinstance(as_of, str) else None,
     )

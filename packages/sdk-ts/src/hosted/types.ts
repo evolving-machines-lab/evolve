@@ -172,10 +172,20 @@ export interface UsageReading {
    * fields beside it may still carry real readings).
    */
   spent_usd: number | null;
-  /** Prompt tokens so far, INCLUDING the cached share. */
+  /** Prompt tokens so far, INCLUDING the cached share and the cache-write share. */
   input_tokens: number | null;
-  /** The cached share of `input_tokens`. */
+  /** The cached share of `input_tokens` (read from the provider's prompt cache). */
   cached_input_tokens: number | null;
+  /**
+   * The share of `input_tokens` WRITTEN to the provider's prompt cache.
+   * Anthropic bills it at a premium above the plain input price, so it is
+   * the fourth count `spent_usd` needs to be reproducible from the tokens;
+   * providers without a cache-write price report 0. Null when the meter
+   * never answered — and on a run settled before the platform recorded this
+   * share (an older server omits the key), where the three counts beside it
+   * stay real: null is never a fabricated 0.
+   */
+  cache_write_tokens: number | null;
   /** Completion tokens so far. */
   output_tokens: number | null;
   /** When this reading was taken — show its age, never the figure alone. */
@@ -202,6 +212,7 @@ export function mapUsageReading(raw: unknown): UsageReading | null {
     spent_usd: numOrNull(record.spent_usd),
     input_tokens: numOrNull(record.input_tokens),
     cached_input_tokens: numOrNull(record.cached_input_tokens),
+    cache_write_tokens: numOrNull(record.cache_write_tokens),
     output_tokens: numOrNull(record.output_tokens),
     as_of: typeof record.as_of === "string" ? record.as_of : null,
   };

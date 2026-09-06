@@ -276,11 +276,11 @@ The pair above answers the money half; `trial.usage` answers the whole question 
 
 ```python
 print(trial.usage)
-# UsageReading(provisional=True, spent_usd=3.41, input_tokens=2181733,
-#              cached_input_tokens=1965214, output_tokens=8177, as_of='2026-07-31T18:22:05.113Z')
+# UsageReading(provisional=True, spent_usd=3.41, input_tokens=2181733, cached_input_tokens=1965214,
+#              cache_write_tokens=41207, output_tokens=8177, as_of='2026-07-31T18:22:05.113Z')
 ```
 
-While the trial runs the reading is `provisional: true` and ticks as the ledger batches in; at settle the settled figures replace the live ones under the same keys, and `provisional` flips to `false` once the lane is confirmed (`spend_source` `"measured"`). `None` means the meter never answered — never a fabricated zero. The object's keys are identical on the managed-agents session surfaces (`sessions()` `SessionInfo.usage`), so one renderer covers a trial and a session unchanged. The CLI reads it too: `evolve trial show` prints a `tokens` row and the trial list's `SPENT` column states a running trial's floor as `at least $X`.
+`input_tokens` includes both cache shares: `cached_input_tokens` were read back from the provider's prompt cache, `cache_write_tokens` were written into it. The write share is there because Anthropic prices it above plain input — with it, the four counts and the model's list prices reproduce `spent_usd`; without it they cannot. Providers with no cache-write price report `0`, and a trial settled before the platform recorded this share serves `None` for it while the other counts stay real. While the trial runs the reading is `provisional: true` and ticks as the ledger batches in; at settle the settled figures replace the live ones under the same keys, and `provisional` flips to `false` once the lane is confirmed (`spend_source` `"measured"`). `None` means the meter never answered — never a fabricated zero. The object's keys are identical on the managed-agents session surfaces (`sessions()` `SessionInfo.usage`), so one renderer covers a trial and a session unchanged. The CLI reads it too: `evolve trial show` prints a `tokens` row and the trial list's `SPENT` column states a running trial's floor as `at least $X`.
 
 ---
 
@@ -2028,8 +2028,9 @@ SpendSource = Literal['measured', 'measured_provisional', 'assumed_cap']
 class UsageReading:                               # the one-home usage reading — same keys on session surfaces
     provisional: bool                             # True while every number can still grow
     spent_usd: Optional[float]                    # None = the money was never measured
-    input_tokens: Optional[int]                   # INCLUDES the cached share
-    cached_input_tokens: Optional[int]
+    input_tokens: Optional[int]                   # INCLUDES both cache shares
+    cached_input_tokens: Optional[int]            # read from the prompt cache
+    cache_write_tokens: Optional[int]             # written to the prompt cache (priced apart by Anthropic)
     output_tokens: Optional[int]
     as_of: Optional[str]                          # when the reading was taken
 VerifierEnvironmentMode = Literal['shared', 'separate']

@@ -2843,8 +2843,14 @@ function reportedSpent(e: Job, withCount: boolean): string | null {
 function fmtUsageTokens(usage: UsageReading): string | null {
   if (usage.input_tokens === null && usage.output_tokens === null) return null;
   const count = (n: number | null) => (n === null ? "-" : n.toLocaleString("en-US"));
-  const cached =
-    usage.cached_input_tokens !== null ? ` (${count(usage.cached_input_tokens)} cached)` : "";
+  // Both cache shares sit inside the input count. Each is printed only when
+  // the reading carries it: an older server serves no cache-write share at
+  // all (null), and a null must never print as "0 written to cache".
+  const shares = [
+    usage.cached_input_tokens !== null ? `${count(usage.cached_input_tokens)} cached` : null,
+    usage.cache_write_tokens !== null ? `${count(usage.cache_write_tokens)} written to cache` : null,
+  ].filter((part): part is string => part !== null);
+  const cached = shares.length > 0 ? ` (${shares.join(", ")})` : "";
   return (
     `in ${count(usage.input_tokens)}${cached} · out ${count(usage.output_tokens)}` +
     (usage.provisional ? " — provisional" : "")
@@ -6129,6 +6135,7 @@ function sessionDetailLines(s: SessionInfo): string[] {
     rows.push([
       "tokens",
       `${s.usage.input_tokens ?? "-"} in / ${s.usage.cached_input_tokens ?? "-"} cached / ` +
+        (s.usage.cache_write_tokens !== null ? `${s.usage.cache_write_tokens} written to cache / ` : "") +
         `${s.usage.output_tokens ?? "-"} out` +
         (s.usage.provisional ? " (provisional)" : ""),
     ]);

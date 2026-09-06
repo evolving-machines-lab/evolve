@@ -2967,6 +2967,7 @@ class TestJobs:
                     'spent_usd': 0.0421,
                     'input_tokens': 12345,
                     'cached_input_tokens': 4102,
+                    'cache_write_tokens': 1500,
                     'output_tokens': 2210,
                     'as_of': '2026-07-22T00:02:00.000Z',
                 },
@@ -2985,6 +2986,7 @@ class TestJobs:
         assert live.usage.spent_usd == 0.0421
         assert live.usage.input_tokens == 12345
         assert live.usage.cached_input_tokens == 4102
+        assert live.usage.cache_write_tokens == 1500
         assert live.usage.output_tokens == 2210
         assert live.usage.as_of == '2026-07-22T00:02:00.000Z'
         assert absent.usage is None
@@ -4364,6 +4366,7 @@ ANALYSIS_ROW = {
         'spent_usd': 0.0366,
         'input_tokens': 960596,
         'cached_input_tokens': 912640,
+        'cache_write_tokens': 3120,
         'output_tokens': 77018,
         'as_of': '2026-08-30T22:24:22.619Z',
     },
@@ -4985,13 +4988,28 @@ def test_usage_reading_refuses_non_finite_floats():
 
     reading = _usage_reading_from_data(
         {"provisional": True, "spent_usd": float("nan"), "input_tokens": float("inf"),
-         "cached_input_tokens": 5, "output_tokens": 2, "as_of": "2026-08-24T00:00:00Z"}
+         "cached_input_tokens": 5, "cache_write_tokens": 3, "output_tokens": 2, "as_of": "2026-08-24T00:00:00Z"}
     )
     assert reading is not None
     assert reading.spent_usd is None
     assert reading.input_tokens is None
     assert reading.cached_input_tokens == 5
+    assert reading.cache_write_tokens == 3
     assert reading.output_tokens == 2
+
+
+def test_usage_reading_without_cache_write_share_reads_none_not_zero():
+    # A server from before the cache-write share existed (B56) serves no key:
+    # the share is None — "unrecorded" — while the counts beside it stay real.
+    from evolve.results import _usage_reading_from_data
+
+    reading = _usage_reading_from_data(
+        {"provisional": False, "spent_usd": 0.0497, "input_tokens": 68967,
+         "cached_input_tokens": 33911, "output_tokens": 251, "as_of": "2026-09-03T00:45:00Z"}
+    )
+    assert reading is not None
+    assert reading.cached_input_tokens == 33911
+    assert reading.cache_write_tokens is None
 
 
 class TestOrgs:
