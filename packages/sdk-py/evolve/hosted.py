@@ -511,7 +511,9 @@ JobStatus = Literal[
 #: credits, the organization's monthly budget, or the platform's global stop
 #: — at the platform's pre-boot wallet check (nothing was started) or
 #: mid-run; ``exception_info.exception_type`` is ``ApiUsageLimitError`` and
-#: the message starts with the subject (``user:``, ``team:``, ``other:``);
+#: the message carries the subject (``user:``, ``team:``, ``other:``) right
+#: after the ``[agent-phase:budget_exhausted]`` stage prefix every
+#: agent-phase failure detail carries;
 #: never retried automatically, resume once the budget is raised (a hosted
 #: extension — Harbor has no wallet); INDETERMINATE = the platform cannot
 #: tell whether the trial completed.
