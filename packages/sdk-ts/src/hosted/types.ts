@@ -3208,9 +3208,11 @@ export interface JobImportFailure {
  * failure-envelope grammar plus the trial directory it names.
  * `trial_too_large` is the one cause — the named `file` is over the
  * per-file cap, or `agent/sessions/` totals over the session-tree cap
- * (`limits.uploads` on the capability document); `details` carry the
- * `bytes` measured and the `max_bytes` bound. The rest of the archive
- * lands; a skipped trial contributes nothing to the job.
+ * (`limits.uploads` on the capability document), or `agent/trajectory.json`
+ * would cost more heap to parse than the per-trial bound (its structure
+ * counted from the bytes, never parsed); `details` carry the `bytes`
+ * measured and the `max_bytes` bound. The rest of the archive lands; a
+ * skipped trial contributes nothing to the job.
  */
 export interface JobImportSkippedTrial {
   trial: string;
