@@ -748,7 +748,8 @@ export interface ResumeRequest {
   /**
    * Which failures to resume, matched against
    * `exception_info.exception_type`. Omitted, the default set is
-   * ["ScoringError", "InfrastructureError", "IncompleteTrialError"] plus
+   * ["ScoringError", "InfrastructureError", "ApiUsageLimitError",
+   * "IncompleteTrialError"] plus
    * stopped trials (settled CANCELLED, exception type "CancelledError")
    * and still-QUEUED trials of a cancelled source.
    */
@@ -1409,9 +1410,9 @@ export interface VerifierResult {
 
 /**
  * Why a trial failed, when it did. `exception_type` is one of the platform's
- * stable failure names (ScoringError, InfrastructureError, CancelledError,
- * IncompleteTrialError) — but filter with `Trial.status`, which is the primary
- * key for failure classes; this is the detail.
+ * stable failure names (ScoringError, InfrastructureError, ApiUsageLimitError,
+ * CancelledError, IncompleteTrialError) — but filter with `Trial.status`,
+ * which is the primary key for failure classes; this is the detail.
  */
 export interface ExceptionInfo {
   exception_type: string;

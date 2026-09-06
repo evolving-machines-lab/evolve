@@ -1997,9 +1997,10 @@ class ExceptionInfo:
     """Why a trial failed, when it did.
 
     ``exception_type`` is one of the platform's stable failure names
-    (``ScoringError``, ``InfrastructureError``, ``CancelledError``,
-    ``IncompleteTrialError``) — but filter with ``Trial.status``, which is the
-    primary key for failure classes; this is the detail.
+    (``ScoringError``, ``InfrastructureError``, ``ApiUsageLimitError``,
+    ``CancelledError``, ``IncompleteTrialError``) — but filter with
+    ``Trial.status``, which is the primary key for failure classes; this is
+    the detail.
     """
     exception_type: str
     #: Truncated to 2000 chars on list rows; full on the detail route.
@@ -6884,7 +6885,8 @@ class JobsClient:
         is never mutated. ``filter_error_types`` selects which failures to
         resume by their ``exception_info.exception_type``; omitted, the server
         default set applies (ScoringError, InfrastructureError,
-        IncompleteTrialError, plus stopped trials — settled CANCELLED,
+        ApiUsageLimitError, IncompleteTrialError, plus stopped trials —
+        settled CANCELLED,
         exception type CancelledError — and still-QUEUED trials of a
         cancelled source). Supports Idempotency-Key.
         """
