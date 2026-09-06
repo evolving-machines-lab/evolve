@@ -535,6 +535,7 @@ export {
   type DatasetImportStatus,
   type DatasetImportFailure,
   type ImportWarning,
+  type InfraFailureSignature,
   type Agent as EvalAgent,
   type AgentInput,
   type AgentUpsertInput,

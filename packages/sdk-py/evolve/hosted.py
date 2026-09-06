@@ -558,6 +558,31 @@ AttemptPhase = Literal[
 #: The caller's role in an organization: owner manages, member reads and
 #: runs (spec ``OrgRole``).
 OrgRole = Literal['owner', 'member']
+#: The job stream's event vocabulary — every ``JobEvent.type`` the platform
+#: emits, in the contract's own order (spec ``JobEvent`` discriminator).
+#: ``job.failed`` is reserved: declared terminal, emitted by no server path
+#: today. A ``trial.settled`` is not final for a trial the retry policy may
+#: still re-run: ``trial.retrying`` follows the settle it retries, and
+#: ``trial.retry_circuit_broken`` follows the settle whose retry the circuit
+#: breaker refused.
+JobEventType = Literal[
+    'job.created', 'job.running', 'job.cancelling', 'job.cancelled',
+    'job.completed', 'job.failed', 'trial.running', 'trial.scoring',
+    'trial.spend', 'trial.settled', 'trial.retrying',
+    'trial.retry_circuit_broken',
+]
+#: The CLASS of infrastructure fault the auto-retry circuit breaker compares
+#: on — resolved from the trial's typed failure phase, never from message text
+#: (spec ``InfraFailureSignature``): ``'sandbox_death'`` the box ceased to
+#: exist while a run still owed it, ``'provider_create_failure'`` the box
+#: never came up, ``'stream_disconnect'`` the run's event stream ended without
+#: the harness ever speaking, ``'exec_chdir_failure'`` the container exec
+#: never started the harness at all (the OCI runtime refused its working
+#: directory).
+InfraFailureSignature = Literal[
+    'sandbox_death', 'provider_create_failure', 'stream_disconnect',
+    'exec_chdir_failure',
+]
 
 
 @dataclass
@@ -2272,11 +2297,23 @@ class JobEvent:
     dict passes them through verbatim where a per-type dataclass would have to
     chase every payload change. TypeScript narrows the same union statically;
     in Python, branch on ``type`` and read ``data`` by key.
+
+    ``type`` is the closed :data:`JobEventType` vocabulary — the contract's
+    own list, held to it by the spec gate — so a type-checker catches a
+    misspelt branch; at runtime the string the server sent is assigned as
+    is, exactly as TS casts, so a newer server's frame still flows through.
+    The retry frames' keys: ``trial.retrying`` carries ``trial_id``,
+    ``task_name``, ``retry`` (1-based), ``max_retries``, ``delay_sec``,
+    ``exception_type``; ``trial.retry_circuit_broken`` carries ``trial_id``,
+    ``task_name``, ``signature`` (:data:`InfraFailureSignature`),
+    ``consecutive``, ``failure_phase``, ``max_retries``, ``retries_unused``
+    and ``exception_message`` (the last failure in its own words; ``None``
+    only on a frame recorded before the words rode it).
     """
     # Monotonic sequence number (SSE id; the Last-Event-ID resume position)
     seq: int
     # Event type, e.g. "job.created", "trial.settled", "job.completed"
-    type: str
+    type: JobEventType
     data: Dict[str, Any]
 
 
