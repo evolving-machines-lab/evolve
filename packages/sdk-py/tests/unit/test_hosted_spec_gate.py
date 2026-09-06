@@ -1,7 +1,7 @@
 """The Python half of the contract drift gate — the mirror of the TypeScript
 SDK's hosted-spec-gate.test.ts, against the same spec/openapi.yaml.
 
-Eight axes, same law as the TypeScript gate:
+Nine axes, same law as the TypeScript gate:
 
 1. OPERATIONS. Every operationId in the spec appears in the explicit map
    below, and every wave-1 operation resolves to a real client method. The
@@ -50,6 +50,13 @@ equality.
    ``Organization`` — equals the contract's ``OrgRole`` enum byte-exactly;
    the TypeScript gate pins its ``OrgRole`` union the same way.
 
+9. EVENT VOCABULARY. The ``JobEventType`` Literal equals the contract's
+   JobEvent discriminator mapping member for member, in order, and the
+   ``InfraFailureSignature`` Literal equals its enum — the axis that was
+   missing while the server streamed ``trial.retry_circuit_broken`` and no
+   union on any side named it; the TypeScript gate reads the same two
+   vocabularies out of its published union.
+
 The spec is parsed line-by-line against its own committed formatting; every
 parse asserts non-vacuity so an empty parse fails loudly instead of passing.
 """
@@ -77,7 +84,7 @@ from evolve import (
     TrialsClient,
     meta,
 )
-from evolve.hosted import EffortSupport
+from evolve.hosted import EffortSupport, InfraFailureSignature, JobEventType
 from tests.unit.conftest import resolve_spec_path
 from tests.unit.spec_lag import (
     ERROR_CODE_LAG_LANES,
@@ -511,3 +518,43 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     statuses = _spec_property_enum('TrialAnalysis', 'status')
     assert len(statuses) >= 4, 'the TrialAnalysis.status parse found too few — spec moved?'
     assert list(typing.get_args(AnalysisStatus)) == statuses
+
+
+def _spec_discriminator_mapping(schema: str) -> 'list[str]':
+    """The keys of a schema's ``discriminator.mapping``, in spec order,
+    scoped to that schema's block — the job stream's ``type`` vocabulary."""
+    in_schema = False
+    in_mapping = False
+    out: 'list[str]' = []
+    for line in _spec_lines():
+        if not in_schema:
+            in_schema = re.match(rf'^ {{4}}{schema}:\s*$', line) is not None
+            continue
+        if re.match(r'^ {4}[A-Z]\w*:\s*$', line):
+            break
+        if re.match(r'^ {8}mapping:\s*$', line):
+            in_mapping = True
+            continue
+        if in_mapping:
+            matched = re.match(r"^ {10}([a-z_.]+): '#/components/schemas/\w+'\s*$", line)
+            if matched:
+                out.append(matched.group(1))
+            else:
+                break  # the mapping block ends at the first non-entry line
+    return out
+
+
+def test_job_event_type_literal_matches_the_spec_discriminator_mapping():
+    """The job stream's ``type`` vocabulary — the axis B38 proved missing: the
+    server emitted ``trial.retry_circuit_broken`` for two waves while the
+    contract's JobEvent union stopped at ``trial.retrying`` and nothing on any
+    side read the union. ``JobEventType`` is held to the contract's
+    discriminator mapping member for member, in order, like every other
+    closed vocabulary; the breaker's ``signature`` enum rides the same axis."""
+    types = _spec_discriminator_mapping('JobEvent')
+    assert len(types) >= 11, 'the JobEvent mapping parse found too few — spec moved?'
+    assert list(typing.get_args(JobEventType)) == types
+
+    signatures = _spec_inline_enum('InfraFailureSignature')
+    assert len(signatures) >= 4, 'the InfraFailureSignature parse found too few — spec moved?'
+    assert list(typing.get_args(InfraFailureSignature)) == signatures

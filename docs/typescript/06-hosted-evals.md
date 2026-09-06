@@ -124,7 +124,7 @@ The include/exclude sets refine *within* the infrastructure class by exception n
 
 A retried trial keeps its receipts. `trial.n_retries` counts the requeues, and `trial.retries` lists each retired attempt with its exception, its spend, and its clocks — so a scored trial that took three attempts is auditable without archaeology, and the job's `stats.n_retries` is the consumed-retry sum across all trials. Each attempt spends against its own full per-trial cap, and every retired attempt's real spend stays in the job total — which is why `worst_case_spend_usd` carries the `(max_retries + 1)` product ([Money](#money)).
 
-The budget can also end early. Two consecutive infrastructure failures with the **same signature** break the circuit: the retry the policy would have scheduled is refused, the trial stays terminal, and whatever remains of `max_retries` goes unspent. A signature is the class of fault, read from the typed failure phase alone and never from message text — `sandbox_death` (the box ceased to exist mid-run), `provider_create_failure` (the box never came up), `stream_disconnect` (the run's event stream ended without the harness ever speaking). The failure's own words stay first on the trial's `exception_info.exception_message` and the verdict — the signature and the count — is appended after them, never in their place; the job stream carries `trial.retry_circuit_broken` with `signature`, `consecutive`, `failure_phase`, `retries_unused` and `exception_message` (the last failure in its own words). The reason is arithmetic: a dead provider-and-region combination answers the same way every time, so it should cost minutes, not a whole retry budget's worth of timeouts. Three guarantees keep it from eating real transients — the **first** failure of any signature always retries, **alternating** signatures never accumulate (the streak resets on any non-matching failure), and the breaker runs strictly after the `max_retries` and include/exclude adjudication, so it can only ever shorten the budget, never extend it.
+The budget can also end early. Two consecutive infrastructure failures with the **same signature** break the circuit: the retry the policy would have scheduled is refused, the trial stays terminal, and whatever remains of `max_retries` goes unspent. A signature is the class of fault, read from the typed failure phase alone and never from message text — `sandbox_death` (the box ceased to exist mid-run), `provider_create_failure` (the box never came up), `stream_disconnect` (the run's event stream ended without the harness ever speaking), `exec_chdir_failure` (the container exec never started the harness at all: the runtime refused its working directory). The failure's own words stay first on the trial's `exception_info.exception_message` and the verdict — the signature and the count — is appended after them, never in their place; the job stream carries `trial.retry_circuit_broken` — in the place the `trial.retrying` would have taken, right after the `trial.settled` of the failure that tripped it — with `signature`, `consecutive`, `failure_phase`, `max_retries`, `retries_unused` and `exception_message` (the last failure in its own words). The reason is arithmetic: a dead provider-and-region combination answers the same way every time, so it should cost minutes, not a whole retry budget's worth of timeouts. Three guarantees keep it from eating real transients — the **first** failure of any signature always retries, **alternating** signatures never accumulate (the streak resets on any non-matching failure), and the breaker runs strictly after the `max_retries` and include/exclude adjudication, so it can only ever shorten the budget, never extend it.
 
 On the stream, a requeue emits `trial.retrying` right after the `trial.settled` that recorded the failure — a failed `trial.settled` carries `exception_message`, the failure in its own words, beside `exception_type`; a cancel (`CancelledError`) carries the type alone. That means **`trial.settled` is not final** for a trial the policy may still re-run: a watcher that treats it as terminal must check for a following `trial.retrying` on the same trial. From the CLI, `-r/--max-retries` and the repeatable `--retry-include`/`--retry-exclude` set the same fields, merging field-by-field over a `--config` file's `retry` object ([CLI](#cli)).
 
@@ -253,7 +253,7 @@ const final = await evals.watch(job.id, {
 
 The stream replays from the beginning, so attaching late loses nothing. The parser honors every line terminator the SSE grammar names — CRLF, LF, and a lone CR — even when one arrives split across network chunks. On disconnect it resumes from the last sequence number with exponential backoff — no gaps, no duplicates. Once the job reaches a terminal status, the handle resolves with the final `Job`.
 
-One caveat for watchers that key off `trial.settled`: it is not final for a trial the [auto-retry policy](#automatic-retries) may still re-run. When an infrastructure failure is retried, a `trial.retrying` event follows the `trial.settled` that recorded it, and the trial runs again — treat a settle as that trial's last word only when no `trial.retrying` follows it.
+One caveat for watchers that key off `trial.settled`: it is not final for a trial the [auto-retry policy](#automatic-retries) may still re-run. When an infrastructure failure is retried, a `trial.retrying` event follows the `trial.settled` that recorded it, and the trial runs again — treat a settle as that trial's last word only when no `trial.retrying` follows it. The one other frame that can follow a settle is `trial.retry_circuit_broken`: the policy's circuit breaker refused the retry, the trial IS terminal, and the frame says why.
 
 ### Live cost and live tokens
 
@@ -2407,7 +2407,8 @@ type JobEvent =
     | { seq: number; type: "trial.spend";    data: { trial_id: string; task_name: string; live_spent_usd: number;
                                                      n_input_tokens?: number; n_cache_tokens?: number; n_output_tokens?: number } }
     | { seq: number; type: "trial.settled";  data: TrialSettledData }
-    | { seq: number; type: "trial.retrying"; data: TrialRetryingData };
+    | { seq: number; type: "trial.retrying"; data: TrialRetryingData }
+    | { seq: number; type: "trial.retry_circuit_broken"; data: TrialRetryCircuitBrokenData };
 
 interface TrialSettledData {
     trial_id: string;
@@ -2430,6 +2431,22 @@ interface TrialRetryingData {
     delay_sec: number;                   // the backoff before it is claimable again
     exception_type: string;              // the failure that triggered the retry
 }
+
+// The circuit breaker refused a retry the policy would have run: follows the
+// trial.settled of the failure that tripped it, in the place a trial.retrying
+// would have taken. The trial IS terminal.
+interface TrialRetryCircuitBrokenData {
+    trial_id: string;
+    task_name: string;
+    signature: InfraFailureSignature;    // the class of fault, see Automatic retries
+    consecutive: number;                 // same-signature failures in a row (trips at 2)
+    failure_phase: string;               // the typed phase the signature came from
+    max_retries: number;                 // the policy's budget
+    retries_unused: number;              // how much of it the break left unspent (≥ 1)
+    exception_message: string | null;    // the last failure in its own words, as settled
+}
+
+type InfraFailureSignature = "sandbox_death" | "provider_create_failure" | "stream_disconnect" | "exec_chdir_failure";
 
 interface Dataset {                      // datasets().list() / get(ref)
     name: string;

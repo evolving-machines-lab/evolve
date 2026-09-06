@@ -5,7 +5,7 @@
  * spec/openapi.yaml calls itself the single source of truth, and until this
  * file existed only its ErrorCode enum was machine-checked — every operation
  * and artifact-selector claim in it could drift from the client silently. This
- * gate holds the SDK to the contract on eight axes:
+ * gate holds the SDK to the contract on nine axes:
  *
  *   1. OPERATIONS. Every operationId in the spec appears in the explicit
  *      map below, and every wave-1 operation resolves to a real client
@@ -55,6 +55,12 @@
  *      role on `Organization` — equals the contract's OrgRole enum
  *      byte-exactly; type-only like `SpendSource`, so read out of the
  *      shipped source the same way.
+ *
+ *   9. EVENT VOCABULARY. The `type` constants of the published `JobEvent`
+ *      union equal the contract's JobEvent discriminator mapping member for
+ *      member, in order, and the `InfraFailureSignature` union equals its
+ *      enum — the axis that was missing while the server streamed
+ *      `trial.retry_circuit_broken` and no union on any side named it.
  *
  * The spec is parsed line-by-line against its own committed formatting. That
  * is a deliberate trade: the file is hand-written, its indentation is part of
@@ -686,6 +692,83 @@ assert(
   JSON.stringify(declaredOrgRoles) === JSON.stringify(specOrgRoles)
     ? `OrgRole is the spec's enum, byte-exactly (${specOrgRoles.join(", ")})`
     : `org roles drifted: SDK [${declaredOrgRoles.join(", ")}] vs spec [${specOrgRoles.join(", ")}]`
+);
+
+// -----------------------------------------------------------------------------
+// 9. EVENT VOCABULARY — the job stream's `type` constants. The axis B38
+// proved missing: the server emitted `trial.retry_circuit_broken` for two
+// waves while the spec's JobEvent union and this SDK's stopped at
+// `trial.retrying`, and nothing read the union on any side. `JobEvent` is a
+// type-only discriminated union, so its `type` constants are read out of the
+// shipped source (the `SpendSource` way) and held to the contract's
+// discriminator mapping member for member, in order; the Python gate pins its
+// `JobEventType` Literal the same way. The breaker's `signature` vocabulary
+// rides the same axis.
+// -----------------------------------------------------------------------------
+
+/** The keys of a schema's `discriminator.mapping`, in spec order, scoped to that schema's block. */
+function discriminatorMapping(schemaName: string): string[] {
+  const out: string[] = [];
+  let inSchema = false;
+  let inMapping = false;
+  for (const line of specLines) {
+    if (!inSchema) {
+      if (new RegExp(`^ {4}${schemaName}:\\s*$`).test(line)) inSchema = true;
+      continue;
+    }
+    if (/^ {4}[A-Z]\w*:\s*$/.test(line)) break;
+    if (/^ {8}mapping:\s*$/.test(line)) {
+      inMapping = true;
+      continue;
+    }
+    if (inMapping) {
+      const m = /^ {10}([a-z_.]+): '#\/components\/schemas\/\w+'\s*$/.exec(line);
+      if (m) out.push(m[1]);
+      else break; // the mapping block ends at the first line that is not an entry
+    }
+  }
+  return out;
+}
+
+/** The `type` constants of the published JobEvent union, in source order — one `| (JobEventBase & { type: "…"; … })` line per member. */
+function declaredEventTypes(): string[] {
+  const lines = TYPES_SOURCE.split("\n");
+  const start = lines.findIndex((line) => /^export type JobEvent =\s*$/.test(line));
+  if (start === -1) return [];
+  const out: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const m = /^\s*\| \(JobEventBase & \{ type: "([a-z_.]+)";/.exec(line);
+    if (!m) break;
+    out.push(m[1]);
+  }
+  return out;
+}
+
+const specEventTypes = discriminatorMapping("JobEvent");
+const publishedEventTypes = declaredEventTypes();
+
+assert(specEventTypes.length >= 11, `the spec's JobEvent discriminator mapping parsed (${specEventTypes.length} types)`);
+assert(publishedEventTypes.length >= 11, `the published JobEvent union parsed from types.ts (${publishedEventTypes.length} types)`);
+assert(
+  JSON.stringify(publishedEventTypes) === JSON.stringify(specEventTypes),
+  JSON.stringify(publishedEventTypes) === JSON.stringify(specEventTypes)
+    ? `JobEvent is the spec's discriminator mapping, byte-exactly (${specEventTypes.length} types)`
+    : `event types drifted: SDK [${publishedEventTypes.join(", ")}] vs spec [${specEventTypes.join(", ")}]`
+);
+
+const declaredSignatures = declaredUnion("InfraFailureSignature");
+const specSignatures = inlineEnum("InfraFailureSignature");
+
+assert(specSignatures.length >= 4, `the spec's InfraFailureSignature enum parsed (${specSignatures.length} signatures)`);
+assert(
+  declaredSignatures.length >= 4,
+  `the published InfraFailureSignature union parsed from types.ts (${declaredSignatures.length} signatures)`
+);
+assert(
+  JSON.stringify(declaredSignatures) === JSON.stringify(specSignatures),
+  JSON.stringify(declaredSignatures) === JSON.stringify(specSignatures)
+    ? `InfraFailureSignature is the spec's enum, byte-exactly (${specSignatures.join(", ")})`
+    : `signatures drifted: SDK [${declaredSignatures.join(", ")}] vs spec [${specSignatures.join(", ")}]`
 );
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

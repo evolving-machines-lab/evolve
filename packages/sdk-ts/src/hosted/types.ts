@@ -1898,6 +1898,54 @@ export interface TrialRetryingData {
 }
 
 /**
+ * The CLASS of infrastructure fault the auto-retry circuit breaker compares
+ * on — resolved from the trial's typed failure phase, never from message
+ * text (spec `InfraFailureSignature`). `sandbox_death`: the box ceased to
+ * exist while a run still owed it. `provider_create_failure`: the box never
+ * came up. `stream_disconnect`: the run's event stream ended without the
+ * harness ever speaking. `exec_chdir_failure`: the container exec never
+ * started the harness at all (the OCI runtime refused its working directory).
+ */
+export type InfraFailureSignature =
+  | "sandbox_death"
+  | "provider_create_failure"
+  | "stream_disconnect"
+  | "exec_chdir_failure";
+
+/**
+ * The auto-retry circuit breaker refused a retry the policy would otherwise
+ * have run: `consecutive` infrastructure failures of the same `signature` in
+ * a row. Follows the `trial.settled` of the failure that tripped it, in the
+ * place a `trial.retrying` would have taken — the trial stays terminal
+ * (INFRASTRUCTURE_ERROR), its own `exception_info.exception_message` gains
+ * the verdict after the failure's words, and `retries_unused` of
+ * `max_retries` are never spent. Every key is present on every frame.
+ */
+export interface TrialRetryCircuitBrokenData {
+  trial_id: string;
+  task_name: string;
+  signature: InfraFailureSignature;
+  /** Same-signature failures in a row; the breaker trips at two. */
+  consecutive: number;
+  /**
+   * The typed failure phase the signature was resolved from (`sandbox_died`,
+   * `sandbox_boot`, `harness_crash`, …) — the archive's `x_evolve.failurePhase`,
+   * not the `attempt_phase` vocabulary.
+   */
+  failure_phase: string;
+  /** The policy's budget. */
+  max_retries: number;
+  /** How much of `max_retries` the break left unspent (at least one). */
+  retries_unused: number;
+  /**
+   * The last failure in its own words, as it was settled — the text its
+   * `trial.settled` frame carried, before the trial's own copy gained the
+   * breaker's verdict. `null` only on a frame recorded before the words rode it.
+   */
+  exception_message: string | null;
+}
+
+/**
  * One server-sent event from jobs().watch(), as a DISCRIMINATED UNION on
  * `type` and ONLY on `type`: several event types carry identically shaped
  * payloads (`job.running` and `job.completed` are both `{job_id}`), so payload
@@ -1920,7 +1968,8 @@ export type JobEvent =
   | (JobEventBase & { type: "trial.scoring"; data: TrialScoringData })
   | (JobEventBase & { type: "trial.spend"; data: TrialSpendData })
   | (JobEventBase & { type: "trial.settled"; data: TrialSettledData })
-  | (JobEventBase & { type: "trial.retrying"; data: TrialRetryingData });
+  | (JobEventBase & { type: "trial.retrying"; data: TrialRetryingData })
+  | (JobEventBase & { type: "trial.retry_circuit_broken"; data: TrialRetryCircuitBrokenData });
 
 /**
  * The handle returned by jobs().watch(). It is both:

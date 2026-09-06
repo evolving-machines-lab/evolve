@@ -1887,6 +1887,29 @@ function testEventLine() {
   assert(spend.includes("trial.spend"), "spend line includes event type");
   assert(spend.includes("run-1"), "spend line includes trial_id");
   assert(spend.includes("live_spent_usd=0.0421"), "spend line carries the live figure");
+
+  // The breaker's refusal: --watch must say WHY a trial stopped retrying —
+  // the signature, the streak, the budget left unspent and the last
+  // failure's own words — with the trial named first like every other frame.
+  const broken = eventLine({
+    seq: 9,
+    type: "trial.retry_circuit_broken",
+    data: {
+      trial_id: "run-1",
+      task_name: "abs-module-cache-flags",
+      signature: "provider_create_failure",
+      consecutive: 2,
+      failure_phase: "sandbox_boot",
+      max_retries: 2,
+      retries_unused: 1,
+      exception_message: "sandbox boot from template failed",
+    },
+  });
+  assert(broken.includes("trial.retry_circuit_broken"), "broken line includes event type");
+  assert(broken.startsWith("#   9 trial.retry_circuit_broken run-1 "), "broken line names the trial first");
+  assert(broken.includes("signature=provider_create_failure"), "broken line carries the signature");
+  assert(broken.includes("consecutive=2"), "broken line carries the streak");
+  assert(broken.includes("retries_unused=1"), "broken line carries the unspent budget");
 }
 
 function trialFixture(overrides: Partial<Trial>): Trial {
