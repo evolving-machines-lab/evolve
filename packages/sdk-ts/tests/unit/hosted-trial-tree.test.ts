@@ -453,6 +453,7 @@ function fixtureAnalysisParts(): AnalysisTreeParts {
         spent_usd: 0.0412,
         input_tokens: 1000,
         cached_input_tokens: 400,
+        cache_write_tokens: 0,
         output_tokens: 200,
         as_of: "2026-08-30T22:24:22.619Z",
       },

@@ -2038,6 +2038,7 @@ function testTrialUsageRendering() {
     spent_usd: 0.0421,
     input_tokens: 12345,
     cached_input_tokens: 4102,
+    cache_write_tokens: 1234,
     output_tokens: 2210,
     as_of: "2026-07-29T00:00:09.000Z",
   };
@@ -2045,7 +2046,7 @@ function testTrialUsageRendering() {
   const running = trialDetailLines(trialFixture({ usage: liveUsage })).join("\n");
   assert(running.includes("tokens"), "a metered trial shows the tokens row");
   assert(
-    running.includes("in 12,345 (4,102 cached) · out 2,210"),
+    running.includes("in 12,345 (4,102 cached, 1,234 written to cache) · out 2,210"),
     "the row carries counts and the cached share",
   );
   assert(running.includes("— provisional"), "a growing count is marked provisional in the cell");
@@ -2059,11 +2060,22 @@ function testTrialUsageRendering() {
       usage: { ...liveUsage, provisional: false, spent_usd: 0.31 },
     }),
   ).join("\n");
-  assert(settled.includes("in 12,345 (4,102 cached) · out 2,210"), "a settled trial keeps its tokens row");
+  assert(settled.includes("in 12,345 (4,102 cached, 1,234 written to cache) · out 2,210"), "a settled trial keeps its tokens row");
   assert(!settled.includes("— provisional"), "a settled count carries no provisional marker");
 
   const noUsage = trialDetailLines(trialFixture({})).join("\n");
   assert(!noUsage.includes("tokens"), "no reading means no tokens row, never a row of zeros");
+
+  // An older server's reading has no cache-write key (null after mapping):
+  // the cell states the cached share alone — no "0 written to cache" is
+  // ever printed for a share nobody recorded.
+  const olderServer = trialDetailLines(
+    trialFixture({ usage: { ...liveUsage, cache_write_tokens: null } }),
+  ).join("\n");
+  assert(
+    olderServer.includes("in 12,345 (4,102 cached) · out 2,210"),
+    "a null cache-write share is omitted from the cell",
+  );
 
   // The list columns: SPENT folds the live floor in; TOKENS is the same cell
   // the detail row prints.
@@ -2082,7 +2094,7 @@ function testTrialUsageRendering() {
   assert(tokensCell !== undefined, "the trial list has a TOKENS column");
   assertEqual(
     tokensCell!.cell(trialFixture({ usage: liveUsage })),
-    "in 12,345 (4,102 cached) · out 2,210 — provisional",
+    "in 12,345 (4,102 cached, 1,234 written to cache) · out 2,210 — provisional",
     "the TOKENS cell carries counts, cached share and the marker",
   );
   assertEqual(tokensCell!.cell(trialFixture({})), "-", "no reading reads as a dash");
@@ -4951,6 +4963,7 @@ function analysisVerdictFixture(overrides: Record<string, unknown> = {}): Record
       spent_usd: 0.0366,
       input_tokens: 960596,
       cached_input_tokens: 912640,
+      cache_write_tokens: 3120,
       output_tokens: 77018,
       as_of: "2026-08-30T22:24:22.619Z",
     },
@@ -8275,6 +8288,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
       spent_usd: 0.42,
       input_tokens: 1200,
       cached_input_tokens: 300,
+      cache_write_tokens: 40,
       output_tokens: 80,
       as_of: "2026-09-01T10:05:00.000Z",
     },
@@ -8352,6 +8366,10 @@ async function testSessionListAndShow() {
     assert(text.includes("qa-round-7"), "renders the tag");
     assert(text.includes("ended"), "renders the state");
     assert(text.includes("$0.42"), "renders the cost");
+    assert(
+      text.includes("1200 in / 300 cached / 40 written to cache / 80 out"),
+      "renders the four token counts of the one-home reading (B56)",
+    );
     assert(text.includes("12"), "renders the step count");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
 
