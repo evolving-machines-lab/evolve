@@ -508,6 +508,7 @@ export {
   type DatasetImportProgress,
   type JobImport,
   type JobImportFailure,
+  type JobImportSkippedTrial,
   type JobImportList,
   type JobImportPage,
   type JobImportPhaseName,

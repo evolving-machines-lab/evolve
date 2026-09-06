@@ -273,6 +273,11 @@ HostedErrorCode = Literal[
     # (409; analyze is deliberately not among the refusers).
     'not_a_job_dir',
     'invalid_trial',
+    # One trial's artifact is over a stated per-trial bound (the per-file
+    # cap, the session-tree cap). Never an HTTP answer and never the import's
+    # failure: the trial is SKIPPED and this code names why, on the import's
+    # skipped_trials entries — the rest of the archive lands.
+    'trial_too_large',
     'upload_too_large',
     'job_uploaded',
     # Re-uploading an archive whose job this caller already uploaded (409),
@@ -2797,7 +2802,27 @@ class JobImportFailure:
     ``upload_too_large``, ``not_a_job_dir``, ``job_already_uploaded``
     (``details['existing_job_id']``), the dataset-hint codes,
     ``job_too_large``, ``invalid_trial`` (``details['trial']``) — plus the
-    platform's own ``import_failed`` and ``import_lease_expired``."""
+    platform's own ``import_failed`` and ``import_lease_expired``. A trial
+    over a per-trial artifact bound is not a failure: it is skipped
+    (:class:`JobImportSkippedTrial`) and the import completes."""
+    code: str
+    message: str
+    details: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class JobImportSkippedTrial:
+    """One trial a job import LEFT OUT, typed (spec ``JobImportSkippedTrial``):
+    the failure-envelope grammar plus the trial directory it names.
+    ``trial_too_large`` is the one cause — the named ``details['file']`` is
+    over the per-file cap, or ``agent/sessions/`` totals over the
+    session-tree cap (``limits['uploads']`` on the capability document), or
+    ``agent/trajectory.json`` would cost more heap to parse than the
+    per-trial bound (its structure counted from the bytes, never parsed);
+    ``details`` carry the ``bytes`` measured and the ``max_bytes`` bound.
+    The rest of the archive lands; a skipped trial contributes nothing to
+    the job."""
+    trial: str
     code: str
     message: str
     details: Optional[Dict[str, Any]] = None
@@ -2825,6 +2850,12 @@ class JobImport:
     job_id: Optional[str] = None
     #: Trials the ingested job carries, from COMPLETED on (Harbor's own spelling).
     n_trials_uploaded: Optional[int] = None
+    #: Trials the ingest left out, typed, from COMPLETED on — 0 when none
+    #: (Harbor's own spelling). None until COMPLETED.
+    n_trials_skipped: Optional[int] = None
+    #: One entry per skipped trial, in archive order, from COMPLETED on
+    #: ([] when none). None until COMPLETED.
+    skipped_trials: Optional[List[JobImportSkippedTrial]] = None
     failure: Optional[JobImportFailure] = None
     #: None until the worker's first report (a QUEUED import).
     progress: Optional[JobImportProgress] = None
@@ -4045,6 +4076,28 @@ def _map_job_import_progress(raw: Any) -> Optional[JobImportProgress]:
     return JobImportProgress(phase=phase, started_at=started_at, phases=phases)
 
 
+def _map_job_import_skipped_trials(raw: Any) -> Optional[List[JobImportSkippedTrial]]:
+    """Map the wire ``skipped_trials`` list of a job import; None for
+    absent/None and for anything short of the shape (one malformed entry
+    nulls the whole list — a shorter list would be a false count beside
+    ``n_trials_skipped``)."""
+    if not isinstance(raw, list):
+        return None
+    out: List[JobImportSkippedTrial] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        trial, code, message = entry.get('trial'), entry.get('code'), entry.get('message')
+        if not (isinstance(trial, str) and isinstance(code, str) and isinstance(message, str)):
+            return None
+        details = entry.get('details')
+        out.append(JobImportSkippedTrial(
+            trial=trial, code=code, message=message,
+            details=details if isinstance(details, dict) else None,
+        ))
+    return out
+
+
 def _map_job_import(data: Dict[str, Any]) -> JobImport:
     """The job-import shape (spec ``JobImport``), every required member read
     as the contract states it."""
@@ -4077,6 +4130,11 @@ def _map_job_import(data: Dict[str, Any]) -> JobImport:
             data.get('n_trials_uploaded')
             if isinstance(data.get('n_trials_uploaded'), int) else None
         ),
+        n_trials_skipped=(
+            data.get('n_trials_skipped')
+            if isinstance(data.get('n_trials_skipped'), int) else None
+        ),
+        skipped_trials=_map_job_import_skipped_trials(data.get('skipped_trials')),
         failure=failure,
         progress=_map_job_import_progress(data.get('progress')),
         created_at=data.get('created_at') if isinstance(data.get('created_at'), str) else None,

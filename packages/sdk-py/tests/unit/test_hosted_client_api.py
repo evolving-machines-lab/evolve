@@ -187,10 +187,20 @@ JOB_IMPORT_ACCEPTED = {
     'dataset': None,
     'job_id': None,
     'n_trials_uploaded': None,
+    'n_trials_skipped': None,
+    'skipped_trials': None,
     'failure': None,
     'progress': None,
     'created_at': '2026-09-04T10:00:00.000Z',
     'updated_at': '2026-09-04T10:00:00.000Z',
+}
+
+# One skipped trial on a COMPLETED import (B73): the wire entry, verbatim.
+SKIPPED_FAT_TRIAL = {
+    'trial': 'layout-config-recreation__2c663109',
+    'code': 'trial_too_large',
+    'message': 'agent/trajectory.json is 300000000 bytes; the per-file cap is 268435456',
+    'details': {'file': 'agent/trajectory.json', 'bytes': 300000000, 'max_bytes': 268435456},
 }
 
 
@@ -3634,6 +3644,23 @@ class TestJobs:
             page = await client.list_imports(status='COMPLETED')
             assert page.items[0].job_id == 'job-up1'
             assert 'status=COMPLETED' in fake.requests[-1].full_url
+            # Before COMPLETED the skip members are None, never 0 / [].
+            assert one.n_trials_skipped is None and one.skipped_trials is None
+
+        # The per-trial skips (B73): count + typed entries, mapped as the
+        # contract states them; a malformed entry nulls the whole list.
+        with_skips = {**JOB_IMPORT_ACCEPTED, 'id': 'imp-s', 'status': 'COMPLETED', 'job_id': 'job-up1',
+                      'n_trials_uploaded': 329, 'n_trials_skipped': 1, 'skipped_trials': [SKIPPED_FAT_TRIAL]}
+        with patch('evolve._http.urlopen', FakeUrlopen([('/api/jobs/imports/imp-s', with_skips)])):
+            skipped = await jobs_factory(CONFIG).get_import('imp-s')
+            assert skipped.n_trials_skipped == 1
+            assert [(s.trial, s.code, s.details['file'], s.details['max_bytes']) for s in skipped.skipped_trials] == [
+                ('layout-config-recreation__2c663109', 'trial_too_large', 'agent/trajectory.json', 268435456),
+            ]
+            assert skipped.skipped_trials[0].message == SKIPPED_FAT_TRIAL['message']
+        malformed = {**with_skips, 'skipped_trials': [{'trial': 'x'}]}
+        with patch('evolve._http.urlopen', FakeUrlopen([('/api/jobs/imports/imp-s', malformed)])):
+            assert (await jobs_factory(CONFIG).get_import('imp-s')).skipped_trials is None
 
         # The watch: RUNNING -> COMPLETED, on_status per change, on_progress
         # per phase-record change, the settle is the COMPLETED import.
