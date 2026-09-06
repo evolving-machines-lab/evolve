@@ -84,6 +84,7 @@
     "no_analyzable_trials",
     "not_a_job_dir",
     "invalid_trial",
+    "trial_too_large",
     "upload_too_large",
     "job_uploaded",
     "job_already_uploaded",

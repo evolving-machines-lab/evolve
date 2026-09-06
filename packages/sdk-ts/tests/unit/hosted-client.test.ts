@@ -4038,6 +4038,8 @@ function jobImportBody(overrides?: Record<string, unknown>): Record<string, unkn
     dataset: null,
     job_id: null,
     n_trials_uploaded: null,
+    n_trials_skipped: null,
+    skipped_trials: null,
     failure: null,
     progress: null,
     created_at: "2026-09-04T10:00:00.000Z",
@@ -4338,6 +4340,26 @@ async function testJobImportReads() {
     const page = await e.listImports({ status: "COMPLETED" });
     assertEqual(page.items[0].job_id, "eval-up1", "listImports maps the page");
     assert(fetchCalls[fetchCalls.length - 1].url.includes("status=COMPLETED"), "the status filter rides the query");
+    // Before COMPLETED the skip members are null, never 0 / [].
+    assertEqual(one.n_trials_skipped, null, "n_trials_skipped is null before COMPLETED");
+    assertEqual(one.skipped_trials, null, "skipped_trials is null before COMPLETED");
+
+    // The per-trial skips (B73): count + typed entries, mapped as the contract states them.
+    const skipped = [
+      {
+        trial: "layout-config-recreation__2c663109",
+        code: "trial_too_large",
+        message: "agent/trajectory.json is 300000000 bytes; the per-file cap is 268435456",
+        details: { file: "agent/trajectory.json", bytes: 300000000, max_bytes: 268435456 },
+      },
+    ];
+    setMockResponse("/api/jobs/imports/imp-s", {
+      status: 200,
+      body: jobImportBody({ id: "imp-s", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 329, n_trials_skipped: 1, skipped_trials: skipped }),
+    });
+    const withSkips = await e.getImport("imp-s");
+    assertEqual(withSkips.n_trials_skipped, 1, "getImport maps n_trials_skipped");
+    assertEqual(withSkips.skipped_trials, skipped, "getImport maps skipped_trials verbatim");
 
     // The watch: RUNNING -> COMPLETED; onStatus fires per change, onProgress
     // per phase record change, and the settle is the COMPLETED import.

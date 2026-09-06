@@ -71,6 +71,7 @@ import type {
   DatasetImport,
   JobImport,
   JobImportProgress,
+  JobImportSkippedTrial,
   DatasetImportProgress,
   DatasetPreflight,
   DatasetSelector,
@@ -4605,9 +4606,20 @@ function jobImportLines(imported: JobImport): string[] {
   if (imported.dataset !== null) rows.push(["dataset", imported.dataset]);
   if (imported.job_id !== null) rows.push(["job", imported.job_id]);
   if (imported.n_trials_uploaded !== null) rows.push(["trials", String(imported.n_trials_uploaded)]);
+  if (imported.n_trials_skipped !== null) rows.push(["skipped", String(imported.n_trials_skipped)]);
   if (imported.progress !== null) rows.push(["phase", imported.progress.phase]);
   if (imported.failure !== null) rows.push(["failure", `${imported.failure.code}: ${imported.failure.message}`]);
-  return table(rows);
+  return [...table(rows), ...skippedTrialLines(imported.skipped_trials)];
+}
+
+/**
+ * One line per trial the import left out, typed — Harbor's own upload CLI
+ * prints one line per trial that did not land (cli/upload.py:220-223).
+ * Nothing when nothing was skipped.
+ */
+function skippedTrialLines(skipped: JobImportSkippedTrial[] | null): string[] {
+  if (skipped === null || skipped.length === 0) return [];
+  return skipped.map((entry) => `  skipped ${entry.trial}: ${entry.code}: ${entry.message}`);
 }
 
 /** One line per observed status change of a job import under --watch. */
@@ -4665,6 +4677,13 @@ async function followJobImport(
     return 1;
   }
   const job = await client.get(final.job_id);
+  // A trial the ingest left out is never silent: named on stderr in both
+  // modes (the --json document stays the Job; the skips live on the import
+  // — `evolve job import <id> --json` carries them).
+  if ((final.n_trials_skipped ?? 0) > 0) {
+    io.err(`Skipped ${final.n_trials_skipped} trial(s) — see: evolve job import ${final.id}`);
+    for (const line of skippedTrialLines(final.skipped_trials)) io.err(line);
+  }
   if (json) {
     io.out(JSON.stringify(job));
     return 0;
@@ -4735,10 +4754,11 @@ const JOB_IMPORT_COLUMNS: ListColumn<JobImport>[] = [
   { key: "status", header: "STATUS", cell: jobImportStatus },
   { key: "job", header: "JOB", cell: (i) => i.job_id ?? "-" },
   { key: "trials", header: "TRIALS", cell: (i) => (i.n_trials_uploaded === null ? "-" : String(i.n_trials_uploaded)) },
+  { key: "skipped", header: "SKIPPED", cell: (i) => (i.n_trials_skipped === null ? "-" : String(i.n_trials_skipped)) },
   { key: "dataset", header: "DATASET", cell: (i) => i.dataset ?? "-" },
   { key: "created", header: "CREATED", cell: (i) => i.created_at ?? "" },
 ];
-const JOB_IMPORT_DEFAULT_COLUMNS = ["id", "status", "job", "trials", "dataset", "created"];
+const JOB_IMPORT_DEFAULT_COLUMNS = ["id", "status", "job", "trials", "skipped", "dataset", "created"];
 
 /** `evolve job imports` — the caller's job imports, newest first. */
 async function cmdJobImports(inv: Invocation, io: CliIO): Promise<number> {

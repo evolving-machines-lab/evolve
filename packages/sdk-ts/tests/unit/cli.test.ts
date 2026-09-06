@@ -7044,6 +7044,8 @@ function wireJobImport(overrides: Record<string, unknown> = {}): Record<string, 
     dataset: null,
     job_id: null,
     n_trials_uploaded: null,
+    n_trials_skipped: null,
+    skipped_trials: null,
     failure: null,
     progress: null,
     created_at: "2026-09-04T10:00:00.000Z",
@@ -7051,6 +7053,14 @@ function wireJobImport(overrides: Record<string, unknown> = {}): Record<string, 
     ...overrides,
   };
 }
+
+/** One skipped trial on a COMPLETED import (B73): the wire entry, verbatim. */
+const SKIPPED_FAT_TRIAL = {
+  trial: "layout-config-recreation__2c663109",
+  code: "trial_too_large",
+  message: "agent/trajectory.json is 300000000 bytes; the per-file cap is 268435456",
+  details: { file: "agent/trajectory.json", bytes: 300000000, max_bytes: 268435456 },
+};
 
 /** The ingested job the follow prints once the import COMPLETES. */
 function uploadedWireJob(): Record<string, unknown> {
@@ -7293,8 +7303,13 @@ async function testJobImportVerbs() {
     // order, and the list pattern is a prefix of the detail URLs.
     setMockResponse("/api/jobs/imports/imp-a", {
       status: 200,
-      body: wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+      body: wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, n_trials_skipped: 0, skipped_trials: [], dataset: "deep-swe@1.1" }),
     });
+    setMockResponse("/api/jobs/imports/imp-s", {
+      status: 200,
+      body: wireJobImport({ id: "imp-s", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 329, n_trials_skipped: 1, skipped_trials: [SKIPPED_FAT_TRIAL] }),
+    });
+    setMockResponse("/api/jobs/eval-up1", { status: 200, body: uploadedWireJob() });
     setMockResponse("/api/jobs/imports/imp-f", {
       status: 200,
       body: wireJobImport({ id: "imp-f", status: "FAILED", failure: { code: "invalid_trial", message: 'trial "t1": result.json fails', details: { trial: "t1" } } }),
@@ -7307,7 +7322,7 @@ async function testJobImportVerbs() {
       status: 200,
       body: {
         items: [
-          wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+          wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, n_trials_skipped: 0, skipped_trials: [], dataset: "deep-swe@1.1" }),
           wireJobImport({ id: "imp-b", status: "QUEUED", receiving: true, source: null }),
         ],
         nextCursor: "cur-imp",
@@ -7327,8 +7342,9 @@ async function testJobImportVerbs() {
     // --columns selects and orders, --columns help answers without a request.
     const piped = captureIO(false);
     await runCli(["job", "imports", ...AUTH], piped.io);
-    assertEqual(piped.out[0], "ID\tSTATUS\tJOB\tTRIALS\tDATASET\tCREATED", "piped output is TSV with the six default headers");
-    assert(piped.out[1].startsWith("imp-a\tCOMPLETED\teval-up1\t55\tdeep-swe@1.1\t"), "piped rows are TSV cells");
+    assertEqual(piped.out[0], "ID\tSTATUS\tJOB\tTRIALS\tSKIPPED\tDATASET\tCREATED", "piped output is TSV with the seven default headers");
+    assert(piped.out[1].startsWith("imp-a\tCOMPLETED\teval-up1\t55\t0\tdeep-swe@1.1\t"), "piped rows are TSV cells, the SKIPPED count among them");
+    assert(piped.out[2].startsWith("imp-b\tQUEUED (receiving)\t-\t-\t-\t"), "a receiving row shows '-' for the counts it cannot know yet");
     assert(!piped.out.some((l) => l.includes("More:")), "no paging hint when piped");
     const noHeaders = captureIO(false);
     await runCli(["job", "imports", "--no-headers", ...AUTH], noHeaders.io);
@@ -7341,7 +7357,7 @@ async function testJobImportVerbs() {
     const before = fetchCalls.length;
     const colsHelp = captureIO();
     assertEqual(await runCli(["job", "imports", "--columns", "help", ...AUTH], colsHelp.io), 0, "--columns help exits 0");
-    assertEqual(colsHelp.out, ["id", "status", "job", "trials", "dataset", "created"], "--columns help lists the six keys");
+    assertEqual(colsHelp.out, ["id", "status", "job", "trials", "skipped", "dataset", "created"], "--columns help lists the seven keys");
     assertEqual(fetchCalls.length, before, "--columns help makes no request");
     const badCol = captureIO();
     assertEqual(await runCli(["job", "imports", "--columns", "frob", ...AUTH], badCol.io), 2, "unknown column exits 2");
@@ -7360,9 +7376,37 @@ async function testJobImportVerbs() {
     assert(show.out.some((l) => l.startsWith("id") && l.includes("imp-a")), "prints the id");
     assert(show.out.some((l) => l.startsWith("job") && l.includes("eval-up1")), "prints the job");
     assert(show.out.some((l) => l.startsWith("trials") && l.includes("55")), "prints the trial count");
+    assert(show.out.some((l) => l.startsWith("skipped") && l.includes("0")), "prints the skipped count, 0 when nothing was skipped");
+    assert(!show.out.some((l) => l.includes("trial_too_large")), "no skipped-trial lines when nothing was skipped");
     const showJson = captureIO();
     await runCli(["job", "import", "imp-a", "--json", ...AUTH], showJson.io);
     assertEqual(JSON.parse(showJson.out[0]).id, "imp-a", "--json prints the import document");
+
+    // The per-trial skips (B73): the count row and one line per skipped
+    // trial, typed — Harbor's upload CLI prints one line per trial that did
+    // not land (cli/upload.py:220-223).
+    const showSkips = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-s", ...AUTH], showSkips.io), 0, "job import with skips exits 0");
+    assert(showSkips.out.some((l) => l.startsWith("trials") && l.includes("329")), "prints the trial count");
+    assert(showSkips.out.some((l) => l.startsWith("skipped") && l.includes("1")), "prints the skipped count");
+    assert(
+      showSkips.out.some((l) => l.includes("skipped layout-config-recreation__2c663109: trial_too_large: agent/trajectory.json is 300000000 bytes")),
+      "one line per skipped trial names the trial, the code and the reason"
+    );
+    const showSkipsJson = captureIO();
+    await runCli(["job", "import", "imp-s", "--json", ...AUTH], showSkipsJson.io);
+    assertEqual(JSON.parse(showSkipsJson.out[0]).skipped_trials, [SKIPPED_FAT_TRIAL], "--json carries skipped_trials verbatim");
+    // --watch on a COMPLETED import with skips: the job prints, the skips are
+    // named on stderr (never silent), exit 0 — the trial was skipped, not failed.
+    const watchSkips = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-s", "--watch", ...AUTH], watchSkips.io), 0, "a COMPLETED import with skips exits 0");
+    assert(watchSkips.err.some((l) => l.includes("Skipped 1 trial(s)") && l.includes("evolve job import imp-s")), "stderr names the skip count and where to read it");
+    assert(watchSkips.err.some((l) => l.includes("skipped layout-config-recreation__2c663109: trial_too_large")), "stderr names each skipped trial");
+    assert(watchSkips.out.some((l) => l.includes("eval-up1")), "the job still prints");
+    const watchSkipsJson = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-s", "--watch", "--json", ...AUTH], watchSkipsJson.io), 0, "--json exits 0");
+    assertEqual(JSON.parse(watchSkipsJson.out[0]).id, "eval-up1", "--json prints the Job document");
+    assert(watchSkipsJson.err.some((l) => l.includes("Skipped 1 trial(s)")), "--json still names the skips on stderr");
 
     // --watch follows to the settle: a FAILED import exits 1 with its typed failure.
     const watch = captureIO();

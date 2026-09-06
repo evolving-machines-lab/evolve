@@ -3193,12 +3193,30 @@ export interface JobImportProgress {
  * `upload_too_large`, `not_a_job_dir`, `job_already_uploaded` (details name
  * `existing_job_id`), the dataset-hint codes, `job_too_large`,
  * `invalid_trial` (details name the `trial`) — plus the platform's own
- * `import_failed` and `import_lease_expired`.
+ * `import_failed` and `import_lease_expired`. A trial over a per-trial
+ * artifact bound is not a failure: it is skipped (JobImportSkippedTrial)
+ * and the import completes.
  */
 export interface JobImportFailure {
   code: string;
   message: string;
   details?: Record<string, unknown>;
+}
+
+/**
+ * One trial a job import LEFT OUT, typed (spec JobImportSkippedTrial): the
+ * failure-envelope grammar plus the trial directory it names.
+ * `trial_too_large` is the one cause — the named `file` is over the
+ * per-file cap, or `agent/sessions/` totals over the session-tree cap
+ * (`limits.uploads` on the capability document); `details` carry the
+ * `bytes` measured and the `max_bytes` bound. The rest of the archive
+ * lands; a skipped trial contributes nothing to the job.
+ */
+export interface JobImportSkippedTrial {
+  trial: string;
+  code: "trial_too_large";
+  message: string;
+  details?: { file: string; bytes: number; max_bytes: number };
 }
 
 /**
@@ -3227,6 +3245,13 @@ export interface JobImport {
   job_id: string | null;
   /** Trials the ingested job carries, from COMPLETED on (Harbor's own spelling). */
   n_trials_uploaded: number | null;
+  /**
+   * Trials the ingest left out, typed, from COMPLETED on — 0 when none
+   * (Harbor's own spelling). Null until COMPLETED.
+   */
+  n_trials_skipped: number | null;
+  /** One entry per skipped trial, in archive order, from COMPLETED on ([] when none). Null until COMPLETED. */
+  skipped_trials: JobImportSkippedTrial[] | null;
   failure: JobImportFailure | null;
   /** Null until the worker's first report (a QUEUED import). */
   progress: JobImportProgress | null;
@@ -4173,6 +4198,11 @@ export const HOSTED_ERROR_CODES = [
   // (409; analyze is deliberately not among the refusers).
   "not_a_job_dir",
   "invalid_trial",
+  // One trial's artifact is over a stated per-trial bound (the per-file
+  // cap, the session-tree cap). Never an HTTP answer and never the import's
+  // failure: the trial is SKIPPED and this code names why, on the import's
+  // skipped_trials entries — the rest of the archive lands.
+  "trial_too_large",
   "upload_too_large",
   "job_uploaded",
   // Re-uploading an archive whose job this caller already uploaded (409),
@@ -4477,9 +4507,9 @@ export interface CapabilityDocument {
       job_archive_bytes: number;
       /** Most trials one uploaded job archive may carry (`job_too_large` past it). */
       job_trials: number;
-      /** Per-file cap on the trial artifacts an upload stores (`invalid_trial` past it). */
+      /** Per-file cap on the trial artifacts an upload stores (a trial with a file past it is skipped, `trial_too_large` on the import). */
       job_trial_file_bytes: number;
-      /** Total cap on one trial's `agent/sessions/` tree (`invalid_trial` past it). */
+      /** Total cap on one trial's `agent/sessions/` tree (a trial past it is skipped the same way). */
       job_trial_session_bytes: number;
     };
     dataset_names: {
