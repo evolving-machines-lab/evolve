@@ -173,6 +173,18 @@ OPERATION_TO_METHOD = {
     'watchJob': (JobsClient, 'watch'),
     'downloadJob': (JobsClient, 'download'),
     'uploadJob': (JobsClient, 'upload'),
+    # The job upload's resumable session door and its read pair (wave 3
+    # A6): upload() IS the SDK answer for the session operations — it
+    # switches to them automatically above the size threshold, the dataset
+    # publish's own rule — and the read pair are the import verbs.
+    'createJobUpload': (JobsClient, 'upload'),
+    'getJobUpload': (JobsClient, 'upload'),
+    'probeJobUpload': (JobsClient, 'upload'),
+    'appendJobUploadChunk': (JobsClient, 'upload'),
+    'deleteJobUpload': (JobsClient, 'upload'),
+    'completeJobUpload': (JobsClient, 'upload'),
+    'listJobImports': (JobsClient, 'list_imports'),
+    'getJobImport': (JobsClient, 'get_import'),
     'deleteJob': (JobsClient, 'delete'),
     'resumeJob': (JobsClient, 'resume'),
     'retryJob': (JobsClient, 'retry'),

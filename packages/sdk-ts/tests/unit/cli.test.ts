@@ -151,6 +151,7 @@ import {
   importStatusLine,
   progressSettleLines,
   TRIAL_COLUMNS,
+  loadPromptFile,
   loadRubricFile,
   parseAgentKwargs,
   parseArgs,
@@ -3721,6 +3722,26 @@ function testLoadRubricFile() {
   );
 }
 
+function testLoadPromptFile() {
+  console.log("\n--- loadPromptFile: Harbor's -p/--prompt file, read verbatim as TEXT ---");
+  const text = "Only reward hacking matters. Trial: {trial_path}\n{criteria_guidance}\n";
+  assertEqual(
+    loadPromptFile("prompt.txt", () => text),
+    text,
+    "the file's text rides as given — whitespace and tokens untouched (Harbor read_text())"
+  );
+  assertThrowsUsage(
+    () => loadPromptFile("missing.txt", () => { throw new Error("ENOENT"); }),
+    "--prompt: cannot read missing.txt",
+    "an unreadable file is refused by path"
+  );
+  assertThrowsUsage(
+    () => loadPromptFile("empty.txt", () => "  \n"),
+    "--prompt: empty.txt is empty",
+    "an empty file is refused at the keyboard — the server would refuse it invalid_input anyway"
+  );
+}
+
 function testBuildJobInputAnalyze() {
   console.log("\n--- buildJobInput: --analyze arms the embedded trigger (presence is the switch) ---");
   const bare = buildJobInput(
@@ -3737,13 +3758,19 @@ function testBuildJobInputAnalyze() {
       "--analyze-model", "claude-haiku-4-5-20251001",
       "--analyze-rubric", "rubric.json",
       "--analyze-provider", "modal",
+      "--analyze-effort", "low",
     ]),
     () => JSON.stringify(CLI_RUBRIC)
   );
   assertEqual(
     withFields.analyze,
-    { model_name: "claude-haiku-4-5-20251001", rubric: CLI_RUBRIC, sandbox_provider: "modal" },
-    "--analyze-model/--analyze-rubric/--analyze-provider imply --analyze and fill their fields"
+    {
+      model_name: "claude-haiku-4-5-20251001",
+      rubric: CLI_RUBRIC,
+      sandbox_provider: "modal",
+      reasoning_effort: "low",
+    },
+    "--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
   );
 
   // The provider VALUE is the server's to rule (the lineup lives on GET
@@ -3767,6 +3794,19 @@ function testBuildJobInputAnalyze() {
     parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"])
   );
   assert(!("analyze" in minimal), "no analyze key when nothing armed it");
+
+  const withPrompt = buildJobInput(
+    parseArgs([
+      "job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m",
+      "--analyze-prompt", "prompt.txt",
+    ]),
+    () => "Custom prompt {criteria_guidance}\n"
+  );
+  assertEqual(
+    withPrompt.analyze,
+    { prompt: "Custom prompt {criteria_guidance}\n" },
+    "--analyze-prompt <file> implies --analyze and sends the file's TEXT as analyze.prompt"
+  );
 
   // Config-file base merges FIELD BY FIELD under the flags, like retry.
   if (!SPEC_AVAILABLE) {
@@ -3799,8 +3839,77 @@ function testBuildJobInputAnalyze() {
   );
 }
 
-async function testAnalyzeVerbEndToEnd() {
-  console.log("\n--- runCli: analyze POSTs, follows the wave, renders the settled table ---");
+async function testAnalyzeVerbReturnsAtOnce() {
+  console.log("\n--- runCli: analyze POSTs and returns at once — the accepted job, no follow ---");
+  installMockFetch();
+  try {
+    // The 202 body IS the queued batch: stats.analysis counts the enqueued
+    // rows as pending. Without --watch the verb prints it and returns, the
+    // shape of `job start` / `run` — never a job read, never a trials read.
+    const pendingJob = analyzedWireJob({
+      n_completed: 0,
+      n_failed: 0,
+      n_pending: 3,
+      cost_usd: null,
+      checks: {},
+    });
+    setMockResponse("/api/jobs/eval-1/analyze", { status: 202, body: pendingJob });
+    const { io, out } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "-m", "glm-5.3", ...AUTH], io);
+    assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
+    const post = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/analyze"));
+    assert(post !== undefined, "POSTs the per-job analyze route");
+    assertEqual(
+      JSON.parse(post?.init?.body as string),
+      { model_name: "glm-5.3" },
+      "-m rides the body as model_name; no rubric/provider key when none given"
+    );
+    assertEqual(
+      fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
+      0,
+      "no job read: the verb does not follow the wave"
+    );
+    assert(
+      !fetchCalls.some((c) => c.url.includes("/api/jobs/eval-1/trials")),
+      "no trials read: the per-trial table is --watch's, not the return's"
+    );
+    assert(
+      out.some((l) => l.includes("analysis") && l.includes("3 pending")),
+      "the job block carries the queued tally"
+    );
+    assertEqual(
+      out[out.length - 1],
+      "Follow it with: evolve job show eval-1",
+      "ends with the re-attach hint, like job start"
+    );
+
+    // --json alone: ONE line, the accepted job body verbatim — the same shape
+    // `job start --json` prints; the NDJSON envelopes are --watch's.
+    fetchCalls.length = 0;
+    const machine = captureIO();
+    const jsonCode = await runCli(["analyze", "eval-1", "--json", ...AUTH], machine.io);
+    assertEqual(jsonCode, 0, "--json exits 0 on the 202");
+    assertEqual(machine.out.length, 1, "--json prints exactly one line");
+    const body = JSON.parse(machine.out[0]) as {
+      kind?: string;
+      id: string;
+      stats: { analysis: { n_pending: number } };
+    };
+    assertEqual(body.id, "eval-1", "the line is the job body");
+    assert(!("kind" in body), "no envelope: the bare job, like job start --json");
+    assertEqual(body.stats.analysis.n_pending, 3, "the queued batch rides stats.analysis");
+    assertEqual(
+      fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
+      0,
+      "--json alone reads the job zero times"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testAnalyzeVerbWatchFollows() {
+  console.log("\n--- runCli: analyze --watch follows the wave, renders the settled table ---");
   installMockFetch();
   const baseFetch = globalThis.fetch;
   // The wave settles between the first and second job read, so the follow is
@@ -3839,17 +3948,26 @@ async function testAnalyzeVerbEndToEnd() {
       },
     });
     const { io, out } = captureIO();
-    const code = await runCli(
-      ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", ...AUTH],
-      io
-    );
+    const promptDir = await mkdtemp(join(tmpdir(), "evolve-analyze-prompt-"));
+    const promptPath = join(promptDir, "prompt.txt");
+    const promptText = "Only reward hacking matters. Trial: {trial_path}\n{criteria_guidance}\n";
+    await writeFile(promptPath, promptText, "utf-8");
+    let code: number;
+    try {
+      code = await runCli(
+        ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", "-p", promptPath, "--watch", ...AUTH],
+        io
+      );
+    } finally {
+      await rm(promptDir, { recursive: true, force: true });
+    }
     assertEqual(code, 0, "exit 0 when every analysis completed");
     const post = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/analyze"));
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001", sandbox_provider: "daytona" },
-      "-m/-e ride the body as model_name/sandbox_provider; no rubric key when none given"
+      { model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
+      "-m/-e/-p/--effort ride the body as model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
     );
     assert(jobReads >= 2, "follows the wave by polling the job");
     assert(
@@ -3871,7 +3989,7 @@ async function testAnalyzeVerbEndToEnd() {
 }
 
 async function testAnalyzeVerbJsonAndFailure() {
-  console.log("\n--- runCli: analyze --json envelopes; a failed analysis is exit 1, shown typed ---");
+  console.log("\n--- runCli: analyze --watch --json envelopes; a failed analysis is exit 1, shown typed ---");
   installMockFetch();
   try {
     // Settled on the FIRST read: no polling delay in this half.
@@ -3902,7 +4020,7 @@ async function testAnalyzeVerbJsonAndFailure() {
     });
     setMockResponse("/api/jobs/eval-1", { status: 200, body: analyzedWireJob(failedTally) });
     const { io, out } = captureIO();
-    const code = await runCli(["analyze", "eval-1", "--json", ...AUTH], io);
+    const code = await runCli(["analyze", "eval-1", "--watch", "--json", ...AUTH], io);
     assertEqual(code, 1, "a wave with failed analyses exits 1 (Harbor's own law)");
     const kinds = out.map((line) => (JSON.parse(line) as { kind?: string }).kind);
     assert(kinds.includes("analysis.accepted"), "--json emits the accepted envelope");
@@ -3921,7 +4039,7 @@ async function testAnalyzeVerbJsonAndFailure() {
 
     // The human render shows the same failure typed, never a silent absence.
     const human = captureIO();
-    const humanCode = await runCli(["analyze", "eval-1", ...AUTH], human.io);
+    const humanCode = await runCli(["analyze", "eval-1", "--watch", ...AUTH], human.io);
     assertEqual(humanCode, 1, "human mode exits 1 the same");
     assert(
       human.out.some((l) => l.includes("invalid_result") && l.includes("checks missing criterion")),
@@ -6916,39 +7034,73 @@ async function startUploadCaptureServer(): Promise<{
   };
 }
 
+/** A wire JobImport body for the CLI suites (the upload door's 202 and the poll). */
+function wireJobImport(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "imp-1",
+    status: "QUEUED",
+    receiving: false,
+    source: { type: "archive", sha256: "ab".repeat(32) },
+    dataset: null,
+    job_id: null,
+    n_trials_uploaded: null,
+    failure: null,
+    progress: null,
+    created_at: "2026-09-04T10:00:00.000Z",
+    updated_at: "2026-09-04T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** The ingested job the follow prints once the import COMPLETES. */
+function uploadedWireJob(): Record<string, unknown> {
+  return wireJob({
+    id: "eval-up1",
+    job_name: "2026-08-27__12-00-00",
+    status: "COMPLETED",
+    // Null exactly on an uploaded job: nothing executed here.
+    sandbox_provider: null,
+    trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
+    upload: {
+      original_job_id: "orig-123",
+      original_job_name: "2026-08-27__12-00-00",
+      uploaded_at: "2026-08-28T10:00:00.000Z",
+      reported_totals: {
+        cost_usd: 2.5,
+        n_input_tokens: 2400,
+        n_cache_tokens: 600,
+        n_output_tokens: 1600,
+        n_trials_reporting: 1,
+      },
+    },
+    finished_at: "2026-08-28T10:00:00.000Z",
+  });
+}
+
+async function writeCliJobDir(jobDir: string): Promise<void> {
+  await mkdir(join(jobDir, "trial-1"), { recursive: true });
+  await writeFile(join(jobDir, "result.json"), JSON.stringify({ id: "orig-123" }));
+  await writeFile(join(jobDir, "config.json"), JSON.stringify({ job_name: "2026-08-27__12-00-00" }));
+  await writeFile(join(jobDir, "trial-1", "result.json"), JSON.stringify({ trial_name: "trial-1" }));
+}
+
 async function testUploadVerb() {
-  console.log("\n--- runCli: evolve upload streams a job directory and renders the created record ---");
+  console.log("\n--- runCli: evolve upload streams a job directory, FOLLOWS the import, and renders the ingested job ---");
   installMockFetch();
   const server = await startUploadCaptureServer();
   const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-"));
   const jobDir = join(dir, "2026-08-27__12-00-00");
   try {
-    await mkdir(join(jobDir, "trial-1"), { recursive: true });
-    await writeFile(join(jobDir, "result.json"), JSON.stringify({ id: "orig-123" }));
-    await writeFile(join(jobDir, "config.json"), JSON.stringify({ job_name: "2026-08-27__12-00-00" }));
-    await writeFile(join(jobDir, "trial-1", "result.json"), JSON.stringify({ trial_name: "trial-1" }));
-    const uploaded = wireJob({
-      id: "eval-up1",
-      job_name: "2026-08-27__12-00-00",
-      status: "COMPLETED",
-      // Null exactly on an uploaded job: nothing executed here.
-      sandbox_provider: null,
-      trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
-      upload: {
-        original_job_id: "orig-123",
-        original_job_name: "2026-08-27__12-00-00",
-        uploaded_at: "2026-08-28T10:00:00.000Z",
-        reported_totals: {
-          cost_usd: 2.5,
-          n_input_tokens: 2400,
-          n_cache_tokens: 600,
-          n_output_tokens: 1600,
-          n_trials_reporting: 1,
-        },
-      },
-      finished_at: "2026-08-28T10:00:00.000Z",
+    await writeCliJobDir(jobDir);
+    const uploaded = uploadedWireJob();
+    // The door's 202 (the capture server), then the follow: the poll reads
+    // COMPLETED with the job id (mocked fetch), and the job itself.
+    server.setReply(202, wireJobImport({ dataset: "deep-swe@1.1" }));
+    setMockResponse("/api/jobs/imports/imp-1", {
+      status: 200,
+      body: wireJobImport({ status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 2, dataset: "deep-swe@1.1" }),
     });
-    server.setReply(201, uploaded);
+    setMockResponse("/api/jobs/eval-up1", { status: 200, body: uploaded });
 
     const { io, out, err } = captureIO();
     const code = await runCli(
@@ -6968,7 +7120,10 @@ async function testUploadVerb() {
     assert(call.body.includes('name="archive"'), "the packed tree is the archive part");
 
     const text = out.join("\n");
-    assert(text.includes("eval-up1"), "prints the minted job id");
+    assert(out.some((l) => l.startsWith("upload ") && l.includes("(100%)")), "the transfer prints its 10 % steps");
+    assert(out.some((l) => l.includes("Upload accepted: import imp-1")), "the 202 is announced with the import id");
+    assert(out.some((l) => l.startsWith("status") && l.includes("COMPLETED")), "the follow prints the settle");
+    assert(text.includes("eval-up1"), "prints the ingested job id");
     assert(text.includes("COMPLETED"), "prints the terminal status");
     assert(text.includes("2 trial(s)"), "prints the trial count");
     assert(
@@ -6993,23 +7148,20 @@ async function testUploadVerb() {
       ),
       "the spent slot renders `reported $X.XX (N/M trials reporting)`"
     );
-    assert(
-      out.some((l) => l.includes("reported tokens") && l.includes("in 2400") && l.includes("out 1600")),
-      "the reported-tokens row carries the archive's counts"
-    );
-
-    // The list's SPENT cell follows the same law, compactly labeled.
-    setMockResponse("/api/jobs", {
-      status: 200,
-      body: { items: [uploaded], nextCursor: null, hasMore: false },
-    });
-    const list = captureIO();
-    assertEqual(await runCli(["job", "list", ...AUTH], list.io), 0, "job list exits 0");
-    assert(
-      list.out.some((l) => l.includes("eval-up1") && l.includes("reported $2.50")),
-      "the SPENT cell renders the reported figure with the label"
-    );
     assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
+
+    // --no-wait: the import is the answer; the follow-up command names the watch.
+    const noWait = captureIO();
+    assertEqual(
+      await runCli(["upload", jobDir, "--no-wait", "--api-key", "test-key", "--base-url", server.base], noWait.io),
+      0,
+      "--no-wait exits 0"
+    );
+    assert(noWait.out.some((l) => l.startsWith("id") && l.includes("imp-1")), "--no-wait prints the import");
+    assert(noWait.out[noWait.out.length - 1].includes("evolve job import imp-1 --watch"), "and how to follow it");
+    const noWaitJson = captureIO();
+    await runCli(["upload", jobDir, "--no-wait", "--json", "--api-key", "test-key", "--base-url", server.base], noWaitJson.io);
+    assertEqual(JSON.parse(noWaitJson.out[0]).id, "imp-1", "--json --no-wait prints the JobImport document");
   } finally {
     await server.close();
     restoreFetch();
@@ -7018,7 +7170,7 @@ async function testUploadVerb() {
 }
 
 async function testUploadVerbJsonAndGate() {
-  console.log("\n--- runCli: evolve upload --json, the dir gate, and usage errors ---");
+  console.log("\n--- runCli: evolve upload --json, the dir gate, --from, a FAILED import, and usage errors ---");
   installMockFetch();
   const server = await startUploadCaptureServer();
   const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-gate-"));
@@ -7037,52 +7189,196 @@ async function testUploadVerbJsonAndGate() {
     );
     assertEqual(fetchCalls.length, 0, "nothing is uploaded for a refused directory");
 
-    // --json prints the created job as one document.
+    // --json follows silently and prints ONE document: the ingested job —
+    // the shape scripts branched on before the door became asynchronous.
     await writeFile(join(jobDir, "result.json"), "{}");
     await writeFile(join(jobDir, "config.json"), "{}");
-    const uploaded = wireJob({
-      id: "eval-up2",
-      status: "COMPLETED",
-      upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+    server.setReply(202, wireJobImport({ id: "imp-2" }));
+    setMockResponse("/api/jobs/imports/imp-2", {
+      status: 200,
+      body: wireJobImport({ id: "imp-2", status: "COMPLETED", job_id: "eval-up2" }),
     });
-    server.setReply(201, uploaded);
+    setMockResponse("/api/jobs/eval-up2", {
+      status: 200,
+      body: wireJob({
+        id: "eval-up2",
+        status: "COMPLETED",
+        upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-08-28T10:00:00.000Z" },
+      }),
+    });
     const json = captureIO();
     assertEqual(
       await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], json.io),
       0,
       "--json exits 0"
     );
+    assertEqual(json.out.length, 1, "--json prints exactly one document");
     const doc = JSON.parse(json.out[0]);
     assertEqual(doc.id, "eval-up2", "--json prints the job document");
     assertEqual(doc.upload.uploaded_at, "2026-08-28T10:00:00.000Z", "--json carries the provenance");
 
-    // A typed refusal renders like every other API error, and --json wraps it.
+    // A FAILED import: the typed failure renders like a synchronous refusal
+    // once did — exit 1, the code in the --json envelope, the sentence on stderr.
+    server.setReply(202, wireJobImport({ id: "imp-3" }));
+    setMockResponse("/api/jobs/imports/imp-3", {
+      status: 200,
+      body: wireJobImport({
+        id: "imp-3",
+        status: "FAILED",
+        failure: { code: "not_a_job_dir", message: "the archive does not contain result.json and config.json at its root" },
+      }),
+    });
+    const failed = captureIO();
+    assertEqual(
+      await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], failed.io),
+      1,
+      "a FAILED import exits 1"
+    );
+    assertEqual(JSON.parse(failed.out[0]).error.code, "not_a_job_dir", "--json error envelope carries the import's code");
+    assert(failed.err[0].includes("does not contain result.json"), "stderr carries the failure's sentence");
+
+    // A DOOR refusal still answers the POST typed, and --json wraps it.
     server.setReply(400, {
-      error: { code: "not_a_job_dir", message: "Archive holds no result.json at its root" },
+      error: { code: "invalid_input", message: "exactly one source is allowed: an archive part, or archive_url" },
     });
     const refused = captureIO();
     assertEqual(
       await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], refused.io),
       1,
-      "a typed refusal exits 1"
+      "a typed door refusal exits 1"
     );
-    assertEqual(
-      JSON.parse(refused.out[0]).error.code,
-      "not_a_job_dir",
-      "--json error envelope carries the server's code"
-    );
-    assert(refused.err[0].includes("no result.json"), "stderr carries the server's sentence");
+    assertEqual(JSON.parse(refused.out[0]).error.code, "invalid_input", "--json error envelope carries the server's code");
 
-    // Usage: the positional is required; help documents the top-level verb.
+    // --from <url>: no local bytes — the url rides as a part, no archive part.
+    server.setReply(202, wireJobImport({ id: "imp-4", source: { type: "archive_url", url: "https://archives.example.com/job.tar.gz" } }));
+    setMockResponse("/api/jobs/upload", {
+      status: 202,
+      body: wireJobImport({ id: "imp-4", source: { type: "archive_url", url: "https://archives.example.com/job.tar.gz" } }),
+    });
+    const fromUrl = captureIO();
+    assertEqual(
+      await runCli(["upload", "--from", "https://archives.example.com/job.tar.gz", "--no-wait", "--json", ...AUTH], fromUrl.io),
+      0,
+      "--from exits 0"
+    );
+    const fromCall = fetchCalls.find((c) => c.url.endsWith("/api/jobs/upload"))!;
+    const form = fromCall.init?.body as FormData;
+    assertEqual(form.get("archive_url"), "https://archives.example.com/job.tar.gz", "archive_url rides as a part");
+    assertEqual(form.get("archive"), null, "no archive part");
+    assertEqual(JSON.parse(fromUrl.out[0]).source.type, "archive_url", "the import names the url source");
+
+    // Usage: exactly one source; --from must be https; help documents the verb.
     const usage = captureIO();
-    assertEqual(await runCli(["upload", ...AUTH], usage.io), 2, "no positional is a usage error");
+    assertEqual(await runCli(["upload", ...AUTH], usage.io), 2, "no source is a usage error");
+    const both = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--from", "https://x/y.tar.gz", ...AUTH], both.io), 2, "two sources is a usage error");
+    const http = captureIO();
+    assertEqual(await runCli(["upload", "--from", "http://x/y.tar.gz", ...AUTH], http.io), 2, "a non-https url is a usage error");
     const help = captureIO();
     assertEqual(await runCli(["upload", "--help"], help.io), 0, "upload --help exits 0");
-    assert(help.out.join("\n").includes("Usage: evolve upload <job_dir>"), "help documents evolve upload");
+    assert(help.out.join("\n").includes("Usage: evolve upload"), "help documents evolve upload");
+    assert(help.out.join("\n").includes("--no-wait"), "help documents --no-wait");
   } finally {
     await server.close();
     restoreFetch();
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testJobImportVerbs() {
+  console.log("\n--- runCli: job imports / job import <id> [--watch] — the import read pair, named like the dataset verbs ---");
+  installMockFetch();
+  try {
+    // Detail mocks FIRST: the mock table matches by substring in insertion
+    // order, and the list pattern is a prefix of the detail URLs.
+    setMockResponse("/api/jobs/imports/imp-a", {
+      status: 200,
+      body: wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+    });
+    setMockResponse("/api/jobs/imports/imp-f", {
+      status: 200,
+      body: wireJobImport({ id: "imp-f", status: "FAILED", failure: { code: "invalid_trial", message: 'trial "t1": result.json fails', details: { trial: "t1" } } }),
+    });
+    setMockResponse("/api/jobs/imports/nope", {
+      status: 404,
+      body: { error: { code: "job_import_not_found", message: "Job import not found: nope" } },
+    });
+    setMockResponse("/api/jobs/imports", {
+      status: 200,
+      body: {
+        items: [
+          wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+          wireJobImport({ id: "imp-b", status: "QUEUED", receiving: true, source: null }),
+        ],
+        nextCursor: "cur-imp",
+        hasMore: true,
+      },
+    });
+    const list = captureIO(true);
+    assertEqual(await runCli(["job", "imports", "--status", "COMPLETED", ...AUTH], list.io), 0, "job imports exits 0");
+    assert(list.out[0].includes("ID") && list.out[0].includes("STATUS") && list.out[0].includes("JOB"), "a header row");
+    assert(!list.out[0].includes("\t"), "TTY output is an aligned table");
+    assert(list.out.some((l) => l.includes("imp-a") && l.includes("COMPLETED") && l.includes("eval-up1") && l.includes("55")), "the completed row");
+    assert(list.out.some((l) => l.includes("imp-b") && l.includes("QUEUED (receiving)")), "a receiving row says so");
+    assert(list.out.some((l) => l.includes("More: evolve job imports --cursor cur-imp")), "TTY shows the sibling next-page hint");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("status=COMPLETED"), "--status rides the query");
+
+    // The shared list precedence (renderList): piped = TSV, --no-headers,
+    // --columns selects and orders, --columns help answers without a request.
+    const piped = captureIO(false);
+    await runCli(["job", "imports", ...AUTH], piped.io);
+    assertEqual(piped.out[0], "ID\tSTATUS\tJOB\tTRIALS\tDATASET\tCREATED", "piped output is TSV with the six default headers");
+    assert(piped.out[1].startsWith("imp-a\tCOMPLETED\teval-up1\t55\tdeep-swe@1.1\t"), "piped rows are TSV cells");
+    assert(!piped.out.some((l) => l.includes("More:")), "no paging hint when piped");
+    const noHeaders = captureIO(false);
+    await runCli(["job", "imports", "--no-headers", ...AUTH], noHeaders.io);
+    assert(noHeaders.out[0].startsWith("imp-a\t"), "--no-headers drops the header row");
+    const cols = captureIO(false);
+    await runCli(["job", "imports", "--columns", "status,id", ...AUTH], cols.io);
+    assertEqual(cols.out[0], "STATUS\tID", "--columns selects AND orders");
+    assertEqual(cols.out[1], "COMPLETED\timp-a", "cells follow the chosen order");
+    assertEqual(cols.out[2], "QUEUED (receiving)\timp-b", "the status cell is the receiving-aware spelling");
+    const before = fetchCalls.length;
+    const colsHelp = captureIO();
+    assertEqual(await runCli(["job", "imports", "--columns", "help", ...AUTH], colsHelp.io), 0, "--columns help exits 0");
+    assertEqual(colsHelp.out, ["id", "status", "job", "trials", "dataset", "created"], "--columns help lists the six keys");
+    assertEqual(fetchCalls.length, before, "--columns help makes no request");
+    const badCol = captureIO();
+    assertEqual(await runCli(["job", "imports", "--columns", "frob", ...AUTH], badCol.io), 2, "unknown column exits 2");
+    assert(badCol.err[0].includes("available:"), "unknown column names the valid keys");
+    const quiet = captureIO();
+    await runCli(["job", "imports", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["imp-a", "imp-b"], "-q prints ids only");
+    const badStatus = captureIO();
+    assertEqual(await runCli(["job", "imports", "--status", "BUILDING", ...AUTH], badStatus.io), 2, "an unknown status is a usage error");
+    const listJson = captureIO();
+    await runCli(["job", "imports", "--json", ...AUTH], listJson.io);
+    assertEqual(JSON.parse(listJson.out[0]).items.length, 2, "--json prints the page");
+
+    const show = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-a", ...AUTH], show.io), 0, "job import exits 0");
+    assert(show.out.some((l) => l.startsWith("id") && l.includes("imp-a")), "prints the id");
+    assert(show.out.some((l) => l.startsWith("job") && l.includes("eval-up1")), "prints the job");
+    assert(show.out.some((l) => l.startsWith("trials") && l.includes("55")), "prints the trial count");
+    const showJson = captureIO();
+    await runCli(["job", "import", "imp-a", "--json", ...AUTH], showJson.io);
+    assertEqual(JSON.parse(showJson.out[0]).id, "imp-a", "--json prints the import document");
+
+    // --watch follows to the settle: a FAILED import exits 1 with its typed failure.
+    const watch = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-f", "--watch", ...AUTH], watch.io), 1, "a FAILED import exits 1");
+    assert(watch.out.some((l) => l.includes("Import imp-f") && l.includes("watching")), "announces the attach");
+    assert(watch.err[0].includes("invalid_trial") || watch.err[0].includes("result.json fails"), "stderr carries the failure");
+    const watchJson = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-f", "--watch", "--json", ...AUTH], watchJson.io), 1, "--json exits 1 too");
+    assertEqual(JSON.parse(watchJson.out[0]).error.code, "invalid_trial", "--json prints the failure envelope");
+
+    // A foreign or unknown import is the typed 404, rendered like every other API error.
+    const missing = captureIO();
+    assertEqual(await runCli(["job", "import", "nope", "--json", ...AUTH], missing.io), 1, "404 exits 1");
+    assertEqual(JSON.parse(missing.out[0]).error.code, "job_import_not_found", "the typed code rides the envelope");
+  } finally {
+    restoreFetch();
   }
 }
 
@@ -7144,6 +7440,7 @@ const ORG_DETAIL = {
     in_flight_analyses: 1,
     active_sessions: 0,
     month_spend_usd: 12.5,
+    month_spend_as_of: "2026-08-15T11:58:00.000Z",
   },
 };
 
@@ -7295,15 +7592,38 @@ async function testAuthOrgVerbs() {
       ["e2b sandbox ceiling", "100"],
       ["daytona sandbox ceiling", "200"],
       ["modal sandbox ceiling", "0"],
-      ["month spend", "$12.50 / no budget"],
+      ["month spend", "$12.50 / no budget (as of 2026-08-15T11:58:00.000Z)"],
     ]) {
-      const line = new RegExp(`^${label.replace(/ /g, "\\s")}\\s+${value.replace(/[$/.]/g, "\\$&")}$`, "m");
+      const line = new RegExp(`^${label.replace(/ /g, "\\s")}\\s+${value.replace(/[$/.()]/g, "\\$&")}$`, "m");
       assert(line.test(text), `show prints "${label}  ${value}"`);
     }
     const budgeted = captureIO();
     await runCli(["auth", "org", "show", "widgets-inc", ...AUTH], budgeted.io);
     const budgetedText = budgeted.out.join("\n");
-    assert(/^month spend\s+\$12\.50 \/ \$100\.00$/m.test(budgetedText), "spend against a budget prints both figures");
+    assert(/^month spend\s+\$12\.50 \/ \$100\.00 \(as of 2026-08-15T11:58:00\.000Z\)$/m.test(budgetedText), "spend against a budget prints both figures — one meter, the gateway's — and how old the copy is");
+    // No copy of the meter held: the wire says null, the row says
+    // `unavailable` — never $0.00, never a fabricated fraction. (The mock
+    // matches by substring in insertion order, so the list's "/api/orgs"
+    // entry is re-added after this one.)
+    const orgList = mockResponses.get("/api/orgs")!;
+    mockResponses.delete("/api/orgs");
+    setMockResponse("/api/orgs/nometer", {
+      status: 200,
+      body: {
+        ...ORG_DETAIL,
+        org_id: "org-3",
+        slug: "nometer",
+        quota: { ...ORG_DETAIL.quota, monthly_budget_usd: 100 },
+        usage: { ...ORG_DETAIL.usage, month_spend_usd: null, month_spend_as_of: null },
+      },
+    });
+    setMockResponse("/api/orgs", orgList);
+    const unmetered = captureIO();
+    assertEqual(await runCli(["auth", "org", "show", "nometer", ...AUTH], unmetered.io), 0, "a null meter is not an error");
+    assert(/^month spend\s+unavailable \/ \$100\.00$/m.test(unmetered.out.join("\n")), "a null meter prints unavailable beside the budget, with no stamp");
+    const unmeteredJson = captureIO();
+    await runCli(["auth", "org", "show", "nometer", "--json", ...AUTH], unmeteredJson.io);
+    assertEqual(JSON.parse(unmeteredJson.out[0]).usage.month_spend_usd, null, "--json carries the null, never 0");
     assert(/^personal\s+yes$/m.test(budgetedText), "a personal org says so");
     assert(/^role\s+-$/m.test(budgetedText), "no role on the wire prints -");
     assert(/^members\s+1$/m.test(budgetedText), "member count");
@@ -8055,8 +8375,10 @@ async function main() {
   await testJobRegrade();
   await testTrialRegrade();
   testLoadRubricFile();
+  testLoadPromptFile();
   testBuildJobInputAnalyze();
-  await testAnalyzeVerbEndToEnd();
+  await testAnalyzeVerbReturnsAtOnce();
+  await testAnalyzeVerbWatchFollows();
   await testAnalyzeVerbJsonAndFailure();
   await testAnalyzeRefusalSurfacesVerbatim();
   await testJobShowAnalysisRows();
@@ -8099,6 +8421,7 @@ async function main() {
   await testSkillDeleteInUseVerbatim();
   await testSkillNamePassThroughOnStart();
   await testUploadVerb();
+  await testJobImportVerbs();
   await testUploadVerbJsonAndGate();
   await testAuthStatus();
   await testAuthOrgVerbs();
