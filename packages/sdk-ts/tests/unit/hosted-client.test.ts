@@ -2531,6 +2531,7 @@ function zeroTrialStatuses(counts: Record<string, number> = {}): Record<string, 
     SCORED: 0,
     SCORING_ERROR: 0,
     INFRASTRUCTURE_ERROR: 0,
+    BUDGET: 0,
     INDETERMINATE: 0,
     CANCELLED: 0,
     ...counts,
@@ -2891,7 +2892,7 @@ async function testGetJobDetail() {
     assertEqual(job.trials.byStatus.SCORED, 4, "maps the status histogram");
     // Every status is named, zeros included, so a UI never hardcodes the enum.
     assertEqual(job.trials.byStatus.CANCELLED, 0, "a status with no trials is 0, not absent");
-    assertEqual(Object.keys(job.trials.byStatus).length, 8, "all 8 statuses present");
+    assertEqual(Object.keys(job.trials.byStatus).length, 9, "all 9 statuses present");
     assertEqual(
       job.counts,
       { agents: 1, tasks: 10 },
@@ -3783,6 +3784,7 @@ async function testTrialAnalysisMapsVerbatim() {
       spent_usd: 0.0091,
       input_tokens: 48211,
       cached_input_tokens: 31007,
+      cache_write_tokens: 2048,
       output_tokens: 1206,
       as_of: "2026-08-29T00:00:30.000Z",
     };
@@ -4038,6 +4040,8 @@ function jobImportBody(overrides?: Record<string, unknown>): Record<string, unkn
     dataset: null,
     job_id: null,
     n_trials_uploaded: null,
+    n_trials_skipped: null,
+    skipped_trials: null,
     failure: null,
     progress: null,
     created_at: "2026-09-04T10:00:00.000Z",
@@ -4338,6 +4342,26 @@ async function testJobImportReads() {
     const page = await e.listImports({ status: "COMPLETED" });
     assertEqual(page.items[0].job_id, "eval-up1", "listImports maps the page");
     assert(fetchCalls[fetchCalls.length - 1].url.includes("status=COMPLETED"), "the status filter rides the query");
+    // Before COMPLETED the skip members are null, never 0 / [].
+    assertEqual(one.n_trials_skipped, null, "n_trials_skipped is null before COMPLETED");
+    assertEqual(one.skipped_trials, null, "skipped_trials is null before COMPLETED");
+
+    // The per-trial skips (B73): count + typed entries, mapped as the contract states them.
+    const skipped = [
+      {
+        trial: "layout-config-recreation__2c663109",
+        code: "trial_too_large",
+        message: "agent/trajectory.json is 300000000 bytes; the per-file cap is 268435456",
+        details: { file: "agent/trajectory.json", bytes: 300000000, max_bytes: 268435456 },
+      },
+    ];
+    setMockResponse("/api/jobs/imports/imp-s", {
+      status: 200,
+      body: jobImportBody({ id: "imp-s", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 329, n_trials_skipped: 1, skipped_trials: skipped }),
+    });
+    const withSkips = await e.getImport("imp-s");
+    assertEqual(withSkips.n_trials_skipped, 1, "getImport maps n_trials_skipped");
+    assertEqual(withSkips.skipped_trials, skipped, "getImport maps skipped_trials verbatim");
 
     // The watch: RUNNING -> COMPLETED; onStatus fires per change, onProgress
     // per phase record change, and the settle is the COMPLETED import.
@@ -5307,6 +5331,7 @@ async function testTrialUsageReading() {
           spent_usd: 0.0421,
           input_tokens: 12345,
           cached_input_tokens: 4102,
+          cache_write_tokens: 1500,
           output_tokens: 2210,
           as_of: "2026-07-22T00:02:00.000Z",
         },
@@ -5318,6 +5343,7 @@ async function testTrialUsageReading() {
     assertEqual(live.usage?.spent_usd, 0.0421, "money maps");
     assertEqual(live.usage?.input_tokens, 12345, "input tokens map");
     assertEqual(live.usage?.cached_input_tokens, 4102, "the cached share maps");
+    assertEqual(live.usage?.cache_write_tokens, 1500, "the cache-WRITE share maps (B56)");
     assertEqual(live.usage?.output_tokens, 2210, "output tokens map");
     assertEqual(live.usage?.as_of, "2026-07-22T00:02:00.000Z", "the reading carries its age");
 
@@ -5336,6 +5362,28 @@ async function testTrialUsageReading() {
     });
     const malformed = await t.get("run-bad-usage");
     assertEqual(malformed.usage ?? null, null, "a reading without its provisional bool is refused");
+
+    // A server from before the cache-write share existed serves a reading
+    // without the key: it maps to null — "unrecorded", never a fabricated 0
+    // — while the three counts beside it stay real.
+    setMockResponse("/api/trials/run-old-usage", {
+      status: 200,
+      body: wireTrial({
+        id: "run-old-usage",
+        usage: {
+          provisional: false,
+          spent_usd: 0.0497,
+          input_tokens: 68967,
+          cached_input_tokens: 33911,
+          output_tokens: 251,
+          as_of: "2026-09-03T00:45:00.000Z",
+        },
+      }),
+    });
+    const older = await t.get("run-old-usage");
+    assertEqual(older.usage?.cached_input_tokens, 33911, "the older reading keeps its cached share");
+    assert(older.usage !== null && "cache_write_tokens" in older.usage, "the key is always present on a mapped reading");
+    assertEqual(older.usage?.cache_write_tokens, null, "an unrecorded cache-write share is null, not 0");
   } finally {
     restoreFetch();
   }
@@ -5604,6 +5652,7 @@ function fixtureAnalysisVerdict(): Record<string, unknown> {
       spent_usd: 0.0366,
       input_tokens: 960596,
       cached_input_tokens: 912640,
+      cache_write_tokens: 3120,
       output_tokens: 77018,
       as_of: "2026-08-30T22:24:22.619Z",
     },
@@ -5634,6 +5683,7 @@ async function testAnalysisGet() {
         spent_usd: 0.0366,
         input_tokens: 960596,
         cached_input_tokens: 912640,
+        cache_write_tokens: 3120,
         output_tokens: 77018,
         as_of: "2026-08-30T22:24:22.619Z",
       },

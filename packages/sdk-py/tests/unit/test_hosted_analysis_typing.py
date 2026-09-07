@@ -205,6 +205,7 @@ def test_analysis_usage_reads_by_the_one_shared_rule() -> None:
         'spent_usd': 0.0091,
         'input_tokens': 48211,
         'cached_input_tokens': 31007,
+        'cache_write_tokens': 2048,
         'output_tokens': 1206,
         'as_of': '2026-08-29T00:00:30Z',
     }
@@ -214,6 +215,7 @@ def test_analysis_usage_reads_by_the_one_shared_rule() -> None:
         spent_usd=0.0091,
         input_tokens=48211,
         cached_input_tokens=31007,
+        cache_write_tokens=2048,
         output_tokens=1206,
         as_of='2026-08-29T00:00:30Z',
     )

@@ -273,6 +273,11 @@ HostedErrorCode = Literal[
     # (409; analyze is deliberately not among the refusers).
     'not_a_job_dir',
     'invalid_trial',
+    # One trial's artifact is over a stated per-trial bound (the per-file
+    # cap, the session-tree cap). Never an HTTP answer and never the import's
+    # failure: the trial is SKIPPED and this code names why, on the import's
+    # skipped_trials entries — the rest of the archive lands.
+    'trial_too_large',
     'upload_too_large',
     'job_uploaded',
     # Re-uploading an archive whose job this caller already uploaded (409),
@@ -504,9 +509,22 @@ class ImportSettleError(Exception):
 JobStatus = Literal[
     'QUEUED', 'RUNNING', 'CANCELLING', 'COMPLETED', 'CANCELLED', 'FAILED'
 ]
+#: Trial status law: a valid reward (including 0) = SCORED; verifier crash
+#: or out-of-domain reward = SCORING_ERROR (never a fabricated zero);
+#: INFRASTRUCTURE_ERROR = the trial was lost before a result was recorded;
+#: BUDGET = a budget above the trial's own cap refused it — the account's
+#: credits, the organization's monthly budget, or the platform's global stop
+#: — at the platform's pre-boot wallet check (nothing was started) or
+#: mid-run; ``exception_info.exception_type`` is ``ApiUsageLimitError`` and
+#: the message carries the subject (``user:``, ``team:``, ``other:``) right
+#: after the ``[agent-phase:budget_exhausted]`` stage prefix every
+#: agent-phase failure detail carries;
+#: never retried automatically, resume once the budget is raised (a hosted
+#: extension — Harbor has no wallet); INDETERMINATE = the platform cannot
+#: tell whether the trial completed.
 TrialStatus = Literal[
     'QUEUED', 'RUNNING', 'SCORING', 'SCORED',
-    'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'INDETERMINATE', 'CANCELLED',
+    'SCORING_ERROR', 'INFRASTRUCTURE_ERROR', 'BUDGET', 'INDETERMINATE', 'CANCELLED',
 ]
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 
@@ -540,6 +558,31 @@ AttemptPhase = Literal[
 #: The caller's role in an organization: owner manages, member reads and
 #: runs (spec ``OrgRole``).
 OrgRole = Literal['owner', 'member']
+#: The job stream's event vocabulary — every ``JobEvent.type`` the platform
+#: emits, in the contract's own order (spec ``JobEvent`` discriminator).
+#: ``job.failed`` is reserved: declared terminal, emitted by no server path
+#: today. A ``trial.settled`` is not final for a trial the retry policy may
+#: still re-run: ``trial.retrying`` follows the settle it retries, and
+#: ``trial.retry_circuit_broken`` follows the settle whose retry the circuit
+#: breaker refused.
+JobEventType = Literal[
+    'job.created', 'job.running', 'job.cancelling', 'job.cancelled',
+    'job.completed', 'job.failed', 'trial.running', 'trial.scoring',
+    'trial.spend', 'trial.settled', 'trial.retrying',
+    'trial.retry_circuit_broken',
+]
+#: The CLASS of infrastructure fault the auto-retry circuit breaker compares
+#: on — resolved from the trial's typed failure phase, never from message text
+#: (spec ``InfraFailureSignature``): ``'sandbox_death'`` the box ceased to
+#: exist while a run still owed it, ``'provider_create_failure'`` the box
+#: never came up, ``'stream_disconnect'`` the run's event stream ended without
+#: the harness ever speaking, ``'exec_chdir_failure'`` the container exec
+#: never started the harness at all (the OCI runtime refused its working
+#: directory).
+InfraFailureSignature = Literal[
+    'sandbox_death', 'provider_create_failure', 'stream_disconnect',
+    'exec_chdir_failure',
+]
 
 
 @dataclass
@@ -1984,9 +2027,10 @@ class ExceptionInfo:
     """Why a trial failed, when it did.
 
     ``exception_type`` is one of the platform's stable failure names
-    (``ScoringError``, ``InfrastructureError``, ``CancelledError``,
-    ``IncompleteTrialError``) — but filter with ``Trial.status``, which is the
-    primary key for failure classes; this is the detail.
+    (``ScoringError``, ``InfrastructureError``, ``ApiUsageLimitError``,
+    ``CancelledError``, ``IncompleteTrialError``) — but filter with
+    ``Trial.status``, which is the primary key for failure classes; this is
+    the detail.
     """
     exception_type: str
     #: Truncated to 2000 chars on list rows; full on the detail route.
@@ -2253,11 +2297,23 @@ class JobEvent:
     dict passes them through verbatim where a per-type dataclass would have to
     chase every payload change. TypeScript narrows the same union statically;
     in Python, branch on ``type`` and read ``data`` by key.
+
+    ``type`` is the closed :data:`JobEventType` vocabulary — the contract's
+    own list, held to it by the spec gate — so a type-checker catches a
+    misspelt branch; at runtime the string the server sent is assigned as
+    is, exactly as TS casts, so a newer server's frame still flows through.
+    The retry frames' keys: ``trial.retrying`` carries ``trial_id``,
+    ``task_name``, ``retry`` (1-based), ``max_retries``, ``delay_sec``,
+    ``exception_type``; ``trial.retry_circuit_broken`` carries ``trial_id``,
+    ``task_name``, ``signature`` (:data:`InfraFailureSignature`),
+    ``consecutive``, ``failure_phase``, ``max_retries``, ``retries_unused``
+    and ``exception_message`` (the last failure in its own words; ``None``
+    only on a frame recorded before the words rode it).
     """
     # Monotonic sequence number (SSE id; the Last-Event-ID resume position)
     seq: int
     # Event type, e.g. "job.created", "trial.settled", "job.completed"
-    type: str
+    type: JobEventType
     data: Dict[str, Any]
 
 
@@ -2783,7 +2839,27 @@ class JobImportFailure:
     ``upload_too_large``, ``not_a_job_dir``, ``job_already_uploaded``
     (``details['existing_job_id']``), the dataset-hint codes,
     ``job_too_large``, ``invalid_trial`` (``details['trial']``) — plus the
-    platform's own ``import_failed`` and ``import_lease_expired``."""
+    platform's own ``import_failed`` and ``import_lease_expired``. A trial
+    over a per-trial artifact bound is not a failure: it is skipped
+    (:class:`JobImportSkippedTrial`) and the import completes."""
+    code: str
+    message: str
+    details: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class JobImportSkippedTrial:
+    """One trial a job import LEFT OUT, typed (spec ``JobImportSkippedTrial``):
+    the failure-envelope grammar plus the trial directory it names.
+    ``trial_too_large`` is the one cause — the named ``details['file']`` is
+    over the per-file cap, or ``agent/sessions/`` totals over the
+    session-tree cap (``limits['uploads']`` on the capability document), or
+    ``agent/trajectory.json`` would cost more heap to parse than the
+    per-trial bound (its structure counted from the bytes, never parsed);
+    ``details`` carry the ``bytes`` measured and the ``max_bytes`` bound.
+    The rest of the archive lands; a skipped trial contributes nothing to
+    the job."""
+    trial: str
     code: str
     message: str
     details: Optional[Dict[str, Any]] = None
@@ -2811,6 +2887,12 @@ class JobImport:
     job_id: Optional[str] = None
     #: Trials the ingested job carries, from COMPLETED on (Harbor's own spelling).
     n_trials_uploaded: Optional[int] = None
+    #: Trials the ingest left out, typed, from COMPLETED on — 0 when none
+    #: (Harbor's own spelling). None until COMPLETED.
+    n_trials_skipped: Optional[int] = None
+    #: One entry per skipped trial, in archive order, from COMPLETED on
+    #: ([] when none). None until COMPLETED.
+    skipped_trials: Optional[List[JobImportSkippedTrial]] = None
     failure: Optional[JobImportFailure] = None
     #: None until the worker's first report (a QUEUED import).
     progress: Optional[JobImportProgress] = None
@@ -4031,6 +4113,28 @@ def _map_job_import_progress(raw: Any) -> Optional[JobImportProgress]:
     return JobImportProgress(phase=phase, started_at=started_at, phases=phases)
 
 
+def _map_job_import_skipped_trials(raw: Any) -> Optional[List[JobImportSkippedTrial]]:
+    """Map the wire ``skipped_trials`` list of a job import; None for
+    absent/None and for anything short of the shape (one malformed entry
+    nulls the whole list — a shorter list would be a false count beside
+    ``n_trials_skipped``)."""
+    if not isinstance(raw, list):
+        return None
+    out: List[JobImportSkippedTrial] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        trial, code, message = entry.get('trial'), entry.get('code'), entry.get('message')
+        if not (isinstance(trial, str) and isinstance(code, str) and isinstance(message, str)):
+            return None
+        details = entry.get('details')
+        out.append(JobImportSkippedTrial(
+            trial=trial, code=code, message=message,
+            details=details if isinstance(details, dict) else None,
+        ))
+    return out
+
+
 def _map_job_import(data: Dict[str, Any]) -> JobImport:
     """The job-import shape (spec ``JobImport``), every required member read
     as the contract states it."""
@@ -4063,6 +4167,11 @@ def _map_job_import(data: Dict[str, Any]) -> JobImport:
             data.get('n_trials_uploaded')
             if isinstance(data.get('n_trials_uploaded'), int) else None
         ),
+        n_trials_skipped=(
+            data.get('n_trials_skipped')
+            if isinstance(data.get('n_trials_skipped'), int) else None
+        ),
+        skipped_trials=_map_job_import_skipped_trials(data.get('skipped_trials')),
         failure=failure,
         progress=_map_job_import_progress(data.get('progress')),
         created_at=data.get('created_at') if isinstance(data.get('created_at'), str) else None,
@@ -6871,7 +6980,8 @@ class JobsClient:
         is never mutated. ``filter_error_types`` selects which failures to
         resume by their ``exception_info.exception_type``; omitted, the server
         default set applies (ScoringError, InfrastructureError,
-        IncompleteTrialError, plus stopped trials — settled CANCELLED,
+        ApiUsageLimitError, IncompleteTrialError, plus stopped trials —
+        settled CANCELLED,
         exception type CancelledError — and still-QUEUED trials of a
         cancelled source). Supports Idempotency-Key.
         """
@@ -6902,8 +7012,8 @@ class JobsClient:
         is never mutated. The selection is ``trial_ids`` XOR ``failed_only``
         (both together is refused): omitted, every trial of the (terminal)
         source retries; ``failed_only=True`` narrows a terminal source to its
-        failures (SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE —
-        stopped and scored trials are not failures); ``trial_ids`` names
+        failures (SCORING_ERROR, INFRASTRUCTURE_ERROR, BUDGET, INDETERMINATE
+        — stopped and scored trials are not failures); ``trial_ids`` names
         exact trials all-or-nothing, each must be SETTLED (the job itself may
         still be running — a settled trial's facts are final).
 

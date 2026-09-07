@@ -25,6 +25,7 @@ import type {
   AgentInput,
   CapabilityDocument,
   DatasetSource,
+  InfraFailureSignature,
   JobEvent,
 } from "../../src/hosted/types.ts";
 // Root-surface check: the hosted barrel always exported these, the package
@@ -147,6 +148,16 @@ function narrows(event: JobEvent): string {
       const outputTokens: number | undefined = event.data.n_output_tokens;
       return `${lowerBound} ${inputTokens ?? "-"} ${cacheTokens ?? "-"} ${outputTokens ?? "-"}`;
     }
+    case "trial.retry_circuit_broken": {
+      // The breaker refused a retry: the closed signature vocabulary, the
+      // streak, the budget it left unspent, and the last failure's own words —
+      // null only on a frame recorded before the words rode it.
+      const signature: InfraFailureSignature = event.data.signature;
+      const consecutive: number = event.data.consecutive;
+      const unused: number = event.data.retries_unused;
+      const words: string | null = event.data.exception_message;
+      return `${signature} ${consecutive} ${unused} ${words ?? "-"}`;
+    }
     default:
       return event.type;
   }
@@ -160,6 +171,10 @@ function rejectsWrongField(event: JobEvent): void {
   if (event.type === "trial.running") {
     // @ts-expect-error trial.running carries no reward
     const reward: number = event.data.reward;
+  }
+  if (event.type === "trial.retry_circuit_broken") {
+    // @ts-expect-error the breaker schedules nothing — no delay_sec on this frame
+    const delay: number = event.data.delay_sec;
   }
 }
 

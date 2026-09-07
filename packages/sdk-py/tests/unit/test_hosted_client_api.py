@@ -187,10 +187,20 @@ JOB_IMPORT_ACCEPTED = {
     'dataset': None,
     'job_id': None,
     'n_trials_uploaded': None,
+    'n_trials_skipped': None,
+    'skipped_trials': None,
     'failure': None,
     'progress': None,
     'created_at': '2026-09-04T10:00:00.000Z',
     'updated_at': '2026-09-04T10:00:00.000Z',
+}
+
+# One skipped trial on a COMPLETED import (B73): the wire entry, verbatim.
+SKIPPED_FAT_TRIAL = {
+    'trial': 'layout-config-recreation__2c663109',
+    'code': 'trial_too_large',
+    'message': 'agent/trajectory.json is 300000000 bytes; the per-file cap is 268435456',
+    'details': {'file': 'agent/trajectory.json', 'bytes': 300000000, 'max_bytes': 268435456},
 }
 
 
@@ -246,6 +256,7 @@ ZERO_TRIAL_STATUSES = {
     'SCORED': 0,
     'SCORING_ERROR': 0,
     'INFRASTRUCTURE_ERROR': 0,
+    'BUDGET': 0,
     'INDETERMINATE': 0,
     'CANCELLED': 0,
 }
@@ -2415,7 +2426,7 @@ class TestJobs:
         assert job.trials.total == 5
         assert job.trials.by_status['SCORED'] == 3
         assert job.trials.by_status['CANCELLED'] == 0
-        assert len(job.trials.by_status) == 8
+        assert len(job.trials.by_status) == 9
         # stats is the wire's own dict — read by key, never constructed.
         assert job.stats['cost_usd'] == 2.79
         assert job.failure is None
@@ -2967,6 +2978,7 @@ class TestJobs:
                     'spent_usd': 0.0421,
                     'input_tokens': 12345,
                     'cached_input_tokens': 4102,
+                    'cache_write_tokens': 1500,
                     'output_tokens': 2210,
                     'as_of': '2026-07-22T00:02:00.000Z',
                 },
@@ -2985,6 +2997,7 @@ class TestJobs:
         assert live.usage.spent_usd == 0.0421
         assert live.usage.input_tokens == 12345
         assert live.usage.cached_input_tokens == 4102
+        assert live.usage.cache_write_tokens == 1500
         assert live.usage.output_tokens == 2210
         assert live.usage.as_of == '2026-07-22T00:02:00.000Z'
         assert absent.usage is None
@@ -3633,6 +3646,23 @@ class TestJobs:
             page = await client.list_imports(status='COMPLETED')
             assert page.items[0].job_id == 'job-up1'
             assert 'status=COMPLETED' in fake.requests[-1].full_url
+            # Before COMPLETED the skip members are None, never 0 / [].
+            assert one.n_trials_skipped is None and one.skipped_trials is None
+
+        # The per-trial skips (B73): count + typed entries, mapped as the
+        # contract states them; a malformed entry nulls the whole list.
+        with_skips = {**JOB_IMPORT_ACCEPTED, 'id': 'imp-s', 'status': 'COMPLETED', 'job_id': 'job-up1',
+                      'n_trials_uploaded': 329, 'n_trials_skipped': 1, 'skipped_trials': [SKIPPED_FAT_TRIAL]}
+        with patch('evolve._http.urlopen', FakeUrlopen([('/api/jobs/imports/imp-s', with_skips)])):
+            skipped = await jobs_factory(CONFIG).get_import('imp-s')
+            assert skipped.n_trials_skipped == 1
+            assert [(s.trial, s.code, s.details['file'], s.details['max_bytes']) for s in skipped.skipped_trials] == [
+                ('layout-config-recreation__2c663109', 'trial_too_large', 'agent/trajectory.json', 268435456),
+            ]
+            assert skipped.skipped_trials[0].message == SKIPPED_FAT_TRIAL['message']
+        malformed = {**with_skips, 'skipped_trials': [{'trial': 'x'}]}
+        with patch('evolve._http.urlopen', FakeUrlopen([('/api/jobs/imports/imp-s', malformed)])):
+            assert (await jobs_factory(CONFIG).get_import('imp-s')).skipped_trials is None
 
         # The watch: RUNNING -> COMPLETED, on_status per change, on_progress
         # per phase-record change, the settle is the COMPLETED import.
@@ -4364,6 +4394,7 @@ ANALYSIS_ROW = {
         'spent_usd': 0.0366,
         'input_tokens': 960596,
         'cached_input_tokens': 912640,
+        'cache_write_tokens': 3120,
         'output_tokens': 77018,
         'as_of': '2026-08-30T22:24:22.619Z',
     },
@@ -4985,13 +5016,28 @@ def test_usage_reading_refuses_non_finite_floats():
 
     reading = _usage_reading_from_data(
         {"provisional": True, "spent_usd": float("nan"), "input_tokens": float("inf"),
-         "cached_input_tokens": 5, "output_tokens": 2, "as_of": "2026-08-24T00:00:00Z"}
+         "cached_input_tokens": 5, "cache_write_tokens": 3, "output_tokens": 2, "as_of": "2026-08-24T00:00:00Z"}
     )
     assert reading is not None
     assert reading.spent_usd is None
     assert reading.input_tokens is None
     assert reading.cached_input_tokens == 5
+    assert reading.cache_write_tokens == 3
     assert reading.output_tokens == 2
+
+
+def test_usage_reading_without_cache_write_share_reads_none_not_zero():
+    # A server from before the cache-write share existed (B56) serves no key:
+    # the share is None — "unrecorded" — while the counts beside it stay real.
+    from evolve.results import _usage_reading_from_data
+
+    reading = _usage_reading_from_data(
+        {"provisional": False, "spent_usd": 0.0497, "input_tokens": 68967,
+         "cached_input_tokens": 33911, "output_tokens": 251, "as_of": "2026-09-03T00:45:00Z"}
+    )
+    assert reading is not None
+    assert reading.cached_input_tokens == 33911
+    assert reading.cache_write_tokens is None
 
 
 class TestOrgs:

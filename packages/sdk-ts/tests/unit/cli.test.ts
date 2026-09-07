@@ -1887,6 +1887,29 @@ function testEventLine() {
   assert(spend.includes("trial.spend"), "spend line includes event type");
   assert(spend.includes("run-1"), "spend line includes trial_id");
   assert(spend.includes("live_spent_usd=0.0421"), "spend line carries the live figure");
+
+  // The breaker's refusal: --watch must say WHY a trial stopped retrying —
+  // the signature, the streak, the budget left unspent and the last
+  // failure's own words — with the trial named first like every other frame.
+  const broken = eventLine({
+    seq: 9,
+    type: "trial.retry_circuit_broken",
+    data: {
+      trial_id: "run-1",
+      task_name: "abs-module-cache-flags",
+      signature: "provider_create_failure",
+      consecutive: 2,
+      failure_phase: "sandbox_boot",
+      max_retries: 2,
+      retries_unused: 1,
+      exception_message: "sandbox boot from template failed",
+    },
+  });
+  assert(broken.includes("trial.retry_circuit_broken"), "broken line includes event type");
+  assert(broken.startsWith("#   9 trial.retry_circuit_broken run-1 "), "broken line names the trial first");
+  assert(broken.includes("signature=provider_create_failure"), "broken line carries the signature");
+  assert(broken.includes("consecutive=2"), "broken line carries the streak");
+  assert(broken.includes("retries_unused=1"), "broken line carries the unspent budget");
 }
 
 function trialFixture(overrides: Partial<Trial>): Trial {
@@ -2038,6 +2061,7 @@ function testTrialUsageRendering() {
     spent_usd: 0.0421,
     input_tokens: 12345,
     cached_input_tokens: 4102,
+    cache_write_tokens: 1234,
     output_tokens: 2210,
     as_of: "2026-07-29T00:00:09.000Z",
   };
@@ -2045,7 +2069,7 @@ function testTrialUsageRendering() {
   const running = trialDetailLines(trialFixture({ usage: liveUsage })).join("\n");
   assert(running.includes("tokens"), "a metered trial shows the tokens row");
   assert(
-    running.includes("in 12,345 (4,102 cached) · out 2,210"),
+    running.includes("in 12,345 (4,102 cached, 1,234 written to cache) · out 2,210"),
     "the row carries counts and the cached share",
   );
   assert(running.includes("— provisional"), "a growing count is marked provisional in the cell");
@@ -2059,11 +2083,22 @@ function testTrialUsageRendering() {
       usage: { ...liveUsage, provisional: false, spent_usd: 0.31 },
     }),
   ).join("\n");
-  assert(settled.includes("in 12,345 (4,102 cached) · out 2,210"), "a settled trial keeps its tokens row");
+  assert(settled.includes("in 12,345 (4,102 cached, 1,234 written to cache) · out 2,210"), "a settled trial keeps its tokens row");
   assert(!settled.includes("— provisional"), "a settled count carries no provisional marker");
 
   const noUsage = trialDetailLines(trialFixture({})).join("\n");
   assert(!noUsage.includes("tokens"), "no reading means no tokens row, never a row of zeros");
+
+  // An older server's reading has no cache-write key (null after mapping):
+  // the cell states the cached share alone — no "0 written to cache" is
+  // ever printed for a share nobody recorded.
+  const olderServer = trialDetailLines(
+    trialFixture({ usage: { ...liveUsage, cache_write_tokens: null } }),
+  ).join("\n");
+  assert(
+    olderServer.includes("in 12,345 (4,102 cached) · out 2,210"),
+    "a null cache-write share is omitted from the cell",
+  );
 
   // The list columns: SPENT folds the live floor in; TOKENS is the same cell
   // the detail row prints.
@@ -2082,7 +2117,7 @@ function testTrialUsageRendering() {
   assert(tokensCell !== undefined, "the trial list has a TOKENS column");
   assertEqual(
     tokensCell!.cell(trialFixture({ usage: liveUsage })),
-    "in 12,345 (4,102 cached) · out 2,210 — provisional",
+    "in 12,345 (4,102 cached, 1,234 written to cache) · out 2,210 — provisional",
     "the TOKENS cell carries counts, cached share and the marker",
   );
   assertEqual(tokensCell!.cell(trialFixture({})), "-", "no reading reads as a dash");
@@ -2230,6 +2265,7 @@ const ZERO_TRIAL_STATUSES = {
   SCORED: 0,
   SCORING_ERROR: 0,
   INFRASTRUCTURE_ERROR: 0,
+  BUDGET: 0,
   INDETERMINATE: 0,
   CANCELLED: 0,
 };
@@ -4950,6 +4986,7 @@ function analysisVerdictFixture(overrides: Record<string, unknown> = {}): Record
       spent_usd: 0.0366,
       input_tokens: 960596,
       cached_input_tokens: 912640,
+      cache_write_tokens: 3120,
       output_tokens: 77018,
       as_of: "2026-08-30T22:24:22.619Z",
     },
@@ -7044,6 +7081,8 @@ function wireJobImport(overrides: Record<string, unknown> = {}): Record<string, 
     dataset: null,
     job_id: null,
     n_trials_uploaded: null,
+    n_trials_skipped: null,
+    skipped_trials: null,
     failure: null,
     progress: null,
     created_at: "2026-09-04T10:00:00.000Z",
@@ -7051,6 +7090,14 @@ function wireJobImport(overrides: Record<string, unknown> = {}): Record<string, 
     ...overrides,
   };
 }
+
+/** One skipped trial on a COMPLETED import (B73): the wire entry, verbatim. */
+const SKIPPED_FAT_TRIAL = {
+  trial: "layout-config-recreation__2c663109",
+  code: "trial_too_large",
+  message: "agent/trajectory.json is 300000000 bytes; the per-file cap is 268435456",
+  details: { file: "agent/trajectory.json", bytes: 300000000, max_bytes: 268435456 },
+};
 
 /** The ingested job the follow prints once the import COMPLETES. */
 function uploadedWireJob(): Record<string, unknown> {
@@ -7293,8 +7340,13 @@ async function testJobImportVerbs() {
     // order, and the list pattern is a prefix of the detail URLs.
     setMockResponse("/api/jobs/imports/imp-a", {
       status: 200,
-      body: wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+      body: wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, n_trials_skipped: 0, skipped_trials: [], dataset: "deep-swe@1.1" }),
     });
+    setMockResponse("/api/jobs/imports/imp-s", {
+      status: 200,
+      body: wireJobImport({ id: "imp-s", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 329, n_trials_skipped: 1, skipped_trials: [SKIPPED_FAT_TRIAL] }),
+    });
+    setMockResponse("/api/jobs/eval-up1", { status: 200, body: uploadedWireJob() });
     setMockResponse("/api/jobs/imports/imp-f", {
       status: 200,
       body: wireJobImport({ id: "imp-f", status: "FAILED", failure: { code: "invalid_trial", message: 'trial "t1": result.json fails', details: { trial: "t1" } } }),
@@ -7307,7 +7359,7 @@ async function testJobImportVerbs() {
       status: 200,
       body: {
         items: [
-          wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, dataset: "deep-swe@1.1" }),
+          wireJobImport({ id: "imp-a", status: "COMPLETED", job_id: "eval-up1", n_trials_uploaded: 55, n_trials_skipped: 0, skipped_trials: [], dataset: "deep-swe@1.1" }),
           wireJobImport({ id: "imp-b", status: "QUEUED", receiving: true, source: null }),
         ],
         nextCursor: "cur-imp",
@@ -7327,8 +7379,9 @@ async function testJobImportVerbs() {
     // --columns selects and orders, --columns help answers without a request.
     const piped = captureIO(false);
     await runCli(["job", "imports", ...AUTH], piped.io);
-    assertEqual(piped.out[0], "ID\tSTATUS\tJOB\tTRIALS\tDATASET\tCREATED", "piped output is TSV with the six default headers");
-    assert(piped.out[1].startsWith("imp-a\tCOMPLETED\teval-up1\t55\tdeep-swe@1.1\t"), "piped rows are TSV cells");
+    assertEqual(piped.out[0], "ID\tSTATUS\tJOB\tTRIALS\tSKIPPED\tDATASET\tCREATED", "piped output is TSV with the seven default headers");
+    assert(piped.out[1].startsWith("imp-a\tCOMPLETED\teval-up1\t55\t0\tdeep-swe@1.1\t"), "piped rows are TSV cells, the SKIPPED count among them");
+    assert(piped.out[2].startsWith("imp-b\tQUEUED (receiving)\t-\t-\t-\t"), "a receiving row shows '-' for the counts it cannot know yet");
     assert(!piped.out.some((l) => l.includes("More:")), "no paging hint when piped");
     const noHeaders = captureIO(false);
     await runCli(["job", "imports", "--no-headers", ...AUTH], noHeaders.io);
@@ -7341,7 +7394,7 @@ async function testJobImportVerbs() {
     const before = fetchCalls.length;
     const colsHelp = captureIO();
     assertEqual(await runCli(["job", "imports", "--columns", "help", ...AUTH], colsHelp.io), 0, "--columns help exits 0");
-    assertEqual(colsHelp.out, ["id", "status", "job", "trials", "dataset", "created"], "--columns help lists the six keys");
+    assertEqual(colsHelp.out, ["id", "status", "job", "trials", "skipped", "dataset", "created"], "--columns help lists the seven keys");
     assertEqual(fetchCalls.length, before, "--columns help makes no request");
     const badCol = captureIO();
     assertEqual(await runCli(["job", "imports", "--columns", "frob", ...AUTH], badCol.io), 2, "unknown column exits 2");
@@ -7360,9 +7413,37 @@ async function testJobImportVerbs() {
     assert(show.out.some((l) => l.startsWith("id") && l.includes("imp-a")), "prints the id");
     assert(show.out.some((l) => l.startsWith("job") && l.includes("eval-up1")), "prints the job");
     assert(show.out.some((l) => l.startsWith("trials") && l.includes("55")), "prints the trial count");
+    assert(show.out.some((l) => l.startsWith("skipped") && l.includes("0")), "prints the skipped count, 0 when nothing was skipped");
+    assert(!show.out.some((l) => l.includes("trial_too_large")), "no skipped-trial lines when nothing was skipped");
     const showJson = captureIO();
     await runCli(["job", "import", "imp-a", "--json", ...AUTH], showJson.io);
     assertEqual(JSON.parse(showJson.out[0]).id, "imp-a", "--json prints the import document");
+
+    // The per-trial skips (B73): the count row and one line per skipped
+    // trial, typed — Harbor's upload CLI prints one line per trial that did
+    // not land (cli/upload.py:220-223).
+    const showSkips = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-s", ...AUTH], showSkips.io), 0, "job import with skips exits 0");
+    assert(showSkips.out.some((l) => l.startsWith("trials") && l.includes("329")), "prints the trial count");
+    assert(showSkips.out.some((l) => l.startsWith("skipped") && l.includes("1")), "prints the skipped count");
+    assert(
+      showSkips.out.some((l) => l.includes("skipped layout-config-recreation__2c663109: trial_too_large: agent/trajectory.json is 300000000 bytes")),
+      "one line per skipped trial names the trial, the code and the reason"
+    );
+    const showSkipsJson = captureIO();
+    await runCli(["job", "import", "imp-s", "--json", ...AUTH], showSkipsJson.io);
+    assertEqual(JSON.parse(showSkipsJson.out[0]).skipped_trials, [SKIPPED_FAT_TRIAL], "--json carries skipped_trials verbatim");
+    // --watch on a COMPLETED import with skips: the job prints, the skips are
+    // named on stderr (never silent), exit 0 — the trial was skipped, not failed.
+    const watchSkips = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-s", "--watch", ...AUTH], watchSkips.io), 0, "a COMPLETED import with skips exits 0");
+    assert(watchSkips.err.some((l) => l.includes("Skipped 1 trial(s)") && l.includes("evolve job import imp-s")), "stderr names the skip count and where to read it");
+    assert(watchSkips.err.some((l) => l.includes("skipped layout-config-recreation__2c663109: trial_too_large")), "stderr names each skipped trial");
+    assert(watchSkips.out.some((l) => l.includes("eval-up1")), "the job still prints");
+    const watchSkipsJson = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-s", "--watch", "--json", ...AUTH], watchSkipsJson.io), 0, "--json exits 0");
+    assertEqual(JSON.parse(watchSkipsJson.out[0]).id, "eval-up1", "--json prints the Job document");
+    assert(watchSkipsJson.err.some((l) => l.includes("Skipped 1 trial(s)")), "--json still names the skips on stderr");
 
     // --watch follows to the settle: a FAILED import exits 1 with its typed failure.
     const watch = captureIO();
@@ -8230,6 +8311,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
       spent_usd: 0.42,
       input_tokens: 1200,
       cached_input_tokens: 300,
+      cache_write_tokens: 40,
       output_tokens: 80,
       as_of: "2026-09-01T10:05:00.000Z",
     },
@@ -8307,6 +8389,10 @@ async function testSessionListAndShow() {
     assert(text.includes("qa-round-7"), "renders the tag");
     assert(text.includes("ended"), "renders the state");
     assert(text.includes("$0.42"), "renders the cost");
+    assert(
+      text.includes("1200 in / 300 cached / 40 written to cache / 80 out"),
+      "renders the four token counts of the one-home reading (B56)",
+    );
     assert(text.includes("12"), "renders the step count");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
 

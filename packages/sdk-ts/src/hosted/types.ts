@@ -82,7 +82,16 @@ export type JobStatus =
  * Trial status law: a valid reward (including 0) = SCORED; verifier crash or
  * out-of-domain reward = SCORING_ERROR (never a fabricated zero);
  * INFRASTRUCTURE_ERROR: the trial was lost before a result was recorded;
- * INDETERMINATE: the platform cannot tell whether the trial completed.
+ * BUDGET: a budget above the trial's own cap refused it — the account's
+ * credits, the organization's monthly budget, or the platform's global stop
+ * — at the platform's pre-boot wallet check (nothing was started) or mid-run;
+ * `exception_info.exception_type` is `ApiUsageLimitError`, the message
+ * carries the subject (`user:`, `team:`, `other:`) right after the
+ * `[agent-phase:budget_exhausted]` stage prefix every agent-phase failure
+ * detail carries; never retried
+ * automatically, resume once the budget is raised (a hosted extension —
+ * Harbor has no wallet); INDETERMINATE: the platform cannot tell whether the
+ * trial completed.
  *
  * A runtime value (not only a type), like TRIAL_ARTIFACT_STREAMS, so the CLI
  * can validate a `--status` filter against this list instead of a second copy.
@@ -94,6 +103,7 @@ export const TRIAL_STATUSES = [
   "SCORED",
   "SCORING_ERROR",
   "INFRASTRUCTURE_ERROR",
+  "BUDGET",
   "INDETERMINATE",
   "CANCELLED",
 ] as const;
@@ -172,10 +182,20 @@ export interface UsageReading {
    * fields beside it may still carry real readings).
    */
   spent_usd: number | null;
-  /** Prompt tokens so far, INCLUDING the cached share. */
+  /** Prompt tokens so far, INCLUDING the cached share and the cache-write share. */
   input_tokens: number | null;
-  /** The cached share of `input_tokens`. */
+  /** The cached share of `input_tokens` (read from the provider's prompt cache). */
   cached_input_tokens: number | null;
+  /**
+   * The share of `input_tokens` WRITTEN to the provider's prompt cache.
+   * Anthropic bills it at a premium above the plain input price, so it is
+   * the fourth count `spent_usd` needs to be reproducible from the tokens;
+   * providers without a cache-write price report 0. Null when the meter
+   * never answered — and on a run settled before the platform recorded this
+   * share (an older server omits the key), where the three counts beside it
+   * stay real: null is never a fabricated 0.
+   */
+  cache_write_tokens: number | null;
   /** Completion tokens so far. */
   output_tokens: number | null;
   /** When this reading was taken — show its age, never the figure alone. */
@@ -202,6 +222,7 @@ export function mapUsageReading(raw: unknown): UsageReading | null {
     spent_usd: numOrNull(record.spent_usd),
     input_tokens: numOrNull(record.input_tokens),
     cached_input_tokens: numOrNull(record.cached_input_tokens),
+    cache_write_tokens: numOrNull(record.cache_write_tokens),
     output_tokens: numOrNull(record.output_tokens),
     as_of: typeof record.as_of === "string" ? record.as_of : null,
   };
@@ -738,7 +759,8 @@ export interface ResumeRequest {
   /**
    * Which failures to resume, matched against
    * `exception_info.exception_type`. Omitted, the default set is
-   * ["ScoringError", "InfrastructureError", "IncompleteTrialError"] plus
+   * ["ScoringError", "InfrastructureError", "ApiUsageLimitError",
+   * "IncompleteTrialError"] plus
    * stopped trials (settled CANCELLED, exception type "CancelledError")
    * and still-QUEUED trials of a cancelled source.
    */
@@ -754,14 +776,14 @@ export interface RetryRequest {
   /**
    * Exactly these trials of the source job, all-or-nothing: an unknown id
    * refuses the whole request (`trial_not_found`). Each named trial must be
-   * settled — SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR, INDETERMINATE,
-   * or CANCELLED (`trial_not_settled` otherwise) — but the JOB may still be
+   * settled — SCORED, SCORING_ERROR, INFRASTRUCTURE_ERROR, BUDGET,
+   * INDETERMINATE, or CANCELLED (`trial_not_settled` otherwise) — but the JOB may still be
    * running: a settled trial's facts are final. Duplicates are deduplicated.
    */
   trial_ids?: string[];
   /**
    * Select the source's failed trials only (SCORING_ERROR,
-   * INFRASTRUCTURE_ERROR, INDETERMINATE). Stopped (CANCELLED) and scored
+   * INFRASTRUCTURE_ERROR, BUDGET, INDETERMINATE). Stopped (CANCELLED) and scored
    * trials are not failures — name them in `trial_ids`, or use resume for
    * stopped work.
    */
@@ -1399,9 +1421,9 @@ export interface VerifierResult {
 
 /**
  * Why a trial failed, when it did. `exception_type` is one of the platform's
- * stable failure names (ScoringError, InfrastructureError, CancelledError,
- * IncompleteTrialError) — but filter with `Trial.status`, which is the primary
- * key for failure classes; this is the detail.
+ * stable failure names (ScoringError, InfrastructureError, ApiUsageLimitError,
+ * CancelledError, IncompleteTrialError) — but filter with `Trial.status`,
+ * which is the primary key for failure classes; this is the detail.
  */
 export interface ExceptionInfo {
   exception_type: string;
@@ -1898,6 +1920,54 @@ export interface TrialRetryingData {
 }
 
 /**
+ * The CLASS of infrastructure fault the auto-retry circuit breaker compares
+ * on — resolved from the trial's typed failure phase, never from message
+ * text (spec `InfraFailureSignature`). `sandbox_death`: the box ceased to
+ * exist while a run still owed it. `provider_create_failure`: the box never
+ * came up. `stream_disconnect`: the run's event stream ended without the
+ * harness ever speaking. `exec_chdir_failure`: the container exec never
+ * started the harness at all (the OCI runtime refused its working directory).
+ */
+export type InfraFailureSignature =
+  | "sandbox_death"
+  | "provider_create_failure"
+  | "stream_disconnect"
+  | "exec_chdir_failure";
+
+/**
+ * The auto-retry circuit breaker refused a retry the policy would otherwise
+ * have run: `consecutive` infrastructure failures of the same `signature` in
+ * a row. Follows the `trial.settled` of the failure that tripped it, in the
+ * place a `trial.retrying` would have taken — the trial stays terminal
+ * (INFRASTRUCTURE_ERROR), its own `exception_info.exception_message` gains
+ * the verdict after the failure's words, and `retries_unused` of
+ * `max_retries` are never spent. Every key is present on every frame.
+ */
+export interface TrialRetryCircuitBrokenData {
+  trial_id: string;
+  task_name: string;
+  signature: InfraFailureSignature;
+  /** Same-signature failures in a row; the breaker trips at two. */
+  consecutive: number;
+  /**
+   * The typed failure phase the signature was resolved from (`sandbox_died`,
+   * `sandbox_boot`, `harness_crash`, …) — the archive's `x_evolve.failurePhase`,
+   * not the `attempt_phase` vocabulary.
+   */
+  failure_phase: string;
+  /** The policy's budget. */
+  max_retries: number;
+  /** How much of `max_retries` the break left unspent (at least one). */
+  retries_unused: number;
+  /**
+   * The last failure in its own words, as it was settled — the text its
+   * `trial.settled` frame carried, before the trial's own copy gained the
+   * breaker's verdict. `null` only on a frame recorded before the words rode it.
+   */
+  exception_message: string | null;
+}
+
+/**
  * One server-sent event from jobs().watch(), as a DISCRIMINATED UNION on
  * `type` and ONLY on `type`: several event types carry identically shaped
  * payloads (`job.running` and `job.completed` are both `{job_id}`), so payload
@@ -1920,7 +1990,8 @@ export type JobEvent =
   | (JobEventBase & { type: "trial.scoring"; data: TrialScoringData })
   | (JobEventBase & { type: "trial.spend"; data: TrialSpendData })
   | (JobEventBase & { type: "trial.settled"; data: TrialSettledData })
-  | (JobEventBase & { type: "trial.retrying"; data: TrialRetryingData });
+  | (JobEventBase & { type: "trial.retrying"; data: TrialRetryingData })
+  | (JobEventBase & { type: "trial.retry_circuit_broken"; data: TrialRetryCircuitBrokenData });
 
 /**
  * The handle returned by jobs().watch(). It is both:
@@ -3193,12 +3264,32 @@ export interface JobImportProgress {
  * `upload_too_large`, `not_a_job_dir`, `job_already_uploaded` (details name
  * `existing_job_id`), the dataset-hint codes, `job_too_large`,
  * `invalid_trial` (details name the `trial`) — plus the platform's own
- * `import_failed` and `import_lease_expired`.
+ * `import_failed` and `import_lease_expired`. A trial over a per-trial
+ * artifact bound is not a failure: it is skipped (JobImportSkippedTrial)
+ * and the import completes.
  */
 export interface JobImportFailure {
   code: string;
   message: string;
   details?: Record<string, unknown>;
+}
+
+/**
+ * One trial a job import LEFT OUT, typed (spec JobImportSkippedTrial): the
+ * failure-envelope grammar plus the trial directory it names.
+ * `trial_too_large` is the one cause — the named `file` is over the
+ * per-file cap, or `agent/sessions/` totals over the session-tree cap
+ * (`limits.uploads` on the capability document), or `agent/trajectory.json`
+ * would cost more heap to parse than the per-trial bound (its structure
+ * counted from the bytes, never parsed); `details` carry the `bytes`
+ * measured and the `max_bytes` bound. The rest of the archive lands; a
+ * skipped trial contributes nothing to the job.
+ */
+export interface JobImportSkippedTrial {
+  trial: string;
+  code: "trial_too_large";
+  message: string;
+  details?: { file: string; bytes: number; max_bytes: number };
 }
 
 /**
@@ -3227,6 +3318,13 @@ export interface JobImport {
   job_id: string | null;
   /** Trials the ingested job carries, from COMPLETED on (Harbor's own spelling). */
   n_trials_uploaded: number | null;
+  /**
+   * Trials the ingest left out, typed, from COMPLETED on — 0 when none
+   * (Harbor's own spelling). Null until COMPLETED.
+   */
+  n_trials_skipped: number | null;
+  /** One entry per skipped trial, in archive order, from COMPLETED on ([] when none). Null until COMPLETED. */
+  skipped_trials: JobImportSkippedTrial[] | null;
   failure: JobImportFailure | null;
   /** Null until the worker's first report (a QUEUED import). */
   progress: JobImportProgress | null;
@@ -4173,6 +4271,11 @@ export const HOSTED_ERROR_CODES = [
   // (409; analyze is deliberately not among the refusers).
   "not_a_job_dir",
   "invalid_trial",
+  // One trial's artifact is over a stated per-trial bound (the per-file
+  // cap, the session-tree cap). Never an HTTP answer and never the import's
+  // failure: the trial is SKIPPED and this code names why, on the import's
+  // skipped_trials entries — the rest of the archive lands.
+  "trial_too_large",
   "upload_too_large",
   "job_uploaded",
   // Re-uploading an archive whose job this caller already uploaded (409),
@@ -4477,9 +4580,9 @@ export interface CapabilityDocument {
       job_archive_bytes: number;
       /** Most trials one uploaded job archive may carry (`job_too_large` past it). */
       job_trials: number;
-      /** Per-file cap on the trial artifacts an upload stores (`invalid_trial` past it). */
+      /** Per-file cap on the trial artifacts an upload stores (a trial with a file past it is skipped, `trial_too_large` on the import). */
       job_trial_file_bytes: number;
-      /** Total cap on one trial's `agent/sessions/` tree (`invalid_trial` past it). */
+      /** Total cap on one trial's `agent/sessions/` tree (a trial past it is skipped the same way). */
       job_trial_session_bytes: number;
     };
     dataset_names: {
