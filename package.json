@@ -19,6 +19,7 @@
     "build:modal": "npm run build --workspace=@evolvingmachines/modal",
     "build:sdk": "npm run build --workspace=@evolvingmachines/sdk",
     "build:bridge": "npm run build --workspace=evolve-sdk-python-bridge",
+    "type-check": "npm run type-check --workspace=@evolvingmachines/sdk && npm run type-check --workspace=@evolvingmachines/daytona && npm run type-check --workspace=@evolvingmachines/modal && npm run type-check --workspace=@evolvingmachines/e2b",
     "test:ts": "npm run test --workspace=@evolvingmachines/sdk",
     "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/sdk && npm run test:unit --workspace=@evolvingmachines/daytona && npm run test:unit --workspace=@evolvingmachines/modal && npm run test:unit --workspace=@evolvingmachines/e2b",
     "test:ts:integration": "npm run test:integration --workspace=@evolvingmachines/sdk",

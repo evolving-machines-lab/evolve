@@ -7031,6 +7031,128 @@ async function testSkillNamePassThroughOnStart() {
   }
 }
 
+/**
+ * THE JOB CARD'S SKILL-LOCK ROW SPELLS A DIGEST THE WAY EVERY OTHER DIGEST
+ * SURFACE DOES — `sha256:` + 12 hex + `…` (fmtDigestShort), never a bare
+ * cut — while a git lock keeps its commit: 12 bare hex. `--json` carries
+ * the wire's whole digest; only the rendering is shortened.
+ */
+async function testJobShowSkillLocks() {
+  console.log("\n--- runCli: job show renders skill locks — commit as 12 hex, digest in the one short spelling ---");
+  installMockFetch();
+  try {
+    const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({
+        agents: [
+          {
+            name: "codex",
+            model_name: "gpt-5.5",
+            version: null,
+            reasoning_effort: null,
+            skills: ["skills.sh/o/r/frontend-design", CLI_SKILL.ref],
+            skill_locks: [
+              {
+                name: "frontend-design",
+                source: "skills.sh/o/r/frontend-design",
+                digest: "sha256:" + "b".repeat(64),
+                git_url: "https://github.com/o/r",
+                git_commit_id: COMMIT,
+              },
+              {
+                name: CLI_SKILL.name,
+                source: CLI_SKILL.ref,
+                digest: CLI_SKILL.digest,
+                git_url: null,
+                git_commit_id: null,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const shown = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], shown.io), 0, "exit 0");
+    const text = shown.out.join("\n");
+    assert(
+      text.includes(`codex:gpt-5.5: skills.sh/o/r/frontend-design, ${CLI_SKILL.ref}`),
+      "the skills row lists the arm's requested references"
+    );
+    assert(
+      text.includes(`frontend-design @ ${COMMIT.slice(0, 12)}`) && !text.includes(COMMIT),
+      "a git lock prints its commit as 12 bare hex, never the whole commit"
+    );
+    assert(
+      text.includes(`${CLI_SKILL.name} @ sha256:${"a".repeat(12)}…`),
+      "a content lock prints its digest in fmtDigestShort's spelling — sha256: + 12 hex + …"
+    );
+    assert(!text.includes(CLI_SKILL.digest), "never the whole digest on the card");
+
+    const json = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-1", "--json", ...AUTH], json.io), 0, "--json exits 0");
+    assertEqual(
+      JSON.parse(json.out[0]).agents[0].skill_locks[1].digest,
+      CLI_SKILL.digest,
+      "--json carries the wire's whole digest"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * THE LOCAL-SKILL UPLOAD NOTICE ON `job start` NAMES THE DIGEST IN THE SAME
+ * SPELLING (fmtDigestShort) — `sha256:` + 12 hex + `…` — beside the record's
+ * name and its immutable `upload:<id>` handle; the job body then carries the
+ * handle where the caller typed the folder. The archive rides node:http, so
+ * a real local server takes the upload while mock fetch takes the create.
+ */
+async function testLocalSkillUploadNoticeOnStart() {
+  console.log("\n--- runCli: --skill <folder> uploads first and says so — name, upload:<id>, short digest ---");
+  const server = await startUploadCaptureServer();
+  server.setReply(201, { skills: [CLI_SKILL] });
+  const dir = await mkdtemp(join(tmpdir(), "evolve-skill-start-"));
+  const skillDir = join(dir, "my-skill");
+  installMockFetch();
+  try {
+    await mkdir(skillDir);
+    await writeFile(join(skillDir, "SKILL.md"), "# my-skill\n\nDoes one thing well.\n");
+    setMockResponse("/api/jobs", { status: 202, body: wireJob() });
+
+    const { io, err } = captureIO();
+    const code = await runCli(
+      [
+        "job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--skill", skillDir,
+        "--api-key", "test-key", "--base-url", server.base,
+      ],
+      io
+    );
+    assertEqual(code, 0, "exit 0");
+    assertEqual(
+      server.calls.map((c) => `${c.method} ${c.url}`),
+      ["POST /api/skills"],
+      "the folder is uploaded once"
+    );
+    assert(
+      err.includes(`Uploaded skill ${CLI_SKILL.name} (${CLI_SKILL.ref}, sha256:${"a".repeat(12)}…)`),
+      "the notice names the record, its upload:<id> handle and the digest in the one short spelling"
+    );
+    const createCall = fetchCalls.find((c) => c.url.endsWith("/api/jobs"));
+    const body = JSON.parse(createCall?.init?.body as string);
+    assertEqual(
+      body.agents[0].skills,
+      [CLI_SKILL.ref],
+      "the body carries the upload:<id> handle where the folder was typed"
+    );
+  } finally {
+    restoreFetch();
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 // =============================================================================
 // AUTH
 // =============================================================================
@@ -7411,6 +7533,10 @@ async function testJobImportVerbs() {
     const show = captureIO();
     assertEqual(await runCli(["job", "import", "imp-a", ...AUTH], show.io), 0, "job import exits 0");
     assert(show.out.some((l) => l.startsWith("id") && l.includes("imp-a")), "prints the id");
+    assert(
+      show.out.some((l) => l.startsWith("source") && l.includes(`archive (sha256:${"ab".repeat(6)}…)`)),
+      "the source row names the uploaded archive in the one short digest spelling (fmtDigestShort) — sha256: + 12 hex + …"
+    );
     assert(show.out.some((l) => l.startsWith("job") && l.includes("eval-up1")), "prints the job");
     assert(show.out.some((l) => l.startsWith("trials") && l.includes("55")), "prints the trial count");
     assert(show.out.some((l) => l.startsWith("skipped") && l.includes("0")), "prints the skipped count, 0 when nothing was skipped");
@@ -8506,6 +8632,8 @@ async function main() {
   await testSkillListShowDelete();
   await testSkillDeleteInUseVerbatim();
   await testSkillNamePassThroughOnStart();
+  await testJobShowSkillLocks();
+  await testLocalSkillUploadNoticeOnStart();
   await testUploadVerb();
   await testJobImportVerbs();
   await testUploadVerbJsonAndGate();
