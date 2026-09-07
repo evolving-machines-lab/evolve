@@ -24,7 +24,7 @@
  *   npx tsx tests/unit/observability-identity.test.ts
  */
 
-import { mkdtempSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Agent, EvolveConfigError } from "../../dist/index.js";
@@ -141,10 +141,12 @@ function testSwarmMetadataStillPasses(): void {
 async function testLoggerKeepsItsIdentity(): Promise<void> {
   console.log("\n[4] SessionLogger keeps its identity when metadata collides");
 
-  // Keep the logger's local JSONL out of the real home directory.
+  // Keep the logger's local JSONL out of the real home directory: a
+  // throwaway HOME, removed in the teardown.
   const originalHome = process.env.HOME;
   const originalDashboard = process.env.EVOLVE_DASHBOARD_URL;
-  process.env.HOME = mkdtempSync(join(tmpdir(), "evolve-session-logs-"));
+  const tempHome = mkdtempSync(join(tmpdir(), "evolve-session-logs-"));
+  process.env.HOME = tempHome;
   process.env.EVOLVE_DASHBOARD_URL = "http://localhost:3000";
 
   const originalFetch = globalThis.fetch;
@@ -191,6 +193,9 @@ async function testLoggerKeepsItsIdentity(): Promise<void> {
     else process.env.HOME = originalHome;
     if (originalDashboard === undefined) delete process.env.EVOLVE_DASHBOARD_URL;
     else process.env.EVOLVE_DASHBOARD_URL = originalDashboard;
+    // The throwaway HOME goes with the run. flush() awaits the logger's local
+    // write queue before returning, so the JSONL under it is settled.
+    rmSync(tempHome, { recursive: true, force: true });
   }
 }
 
