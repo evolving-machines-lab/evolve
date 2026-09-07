@@ -197,6 +197,8 @@ Git references are **pinned at job creation** — each one resolved once to its 
 
 Every run records what actually mounted: once the arm's first trial resolves its skills, the job's arms carry `skill_locks` — one lock per skill with its name, pinned source, content digest, and for git-backed skills the repo URL and exact commit. The trial detail page shows the same pins. A skill that cannot be fetched at run time is an infrastructure error on the trial, never a score.
 
+From the CLI, `evolve skill upload ./my-skill` stores the folder and prints its `upload:<id>` reference; the folder's name becomes your moving name pointer, so `name:my-skill` on any arm follows the newest upload. `evolve skill list` shows what you have uploaded, `evolve skill show <id | name:my-skill>` prints the record with its `SKILL.md`, and `evolve skill delete <id>` removes the record — past jobs keep their locks, and a skill a running job still references is refused with `skill_in_use` (409). `evolve run --skill ./my-skill` does the upload for you and references the result.
+
 ### Idempotency
 
 Retries are safe — pass an idempotency key and a retry returns the original job instead of creating a duplicate:
