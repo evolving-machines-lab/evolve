@@ -3277,9 +3277,9 @@ const DATASET_DEFAULT_COLUMNS = ["name", "active", "state", "tasks", "title"];
  * "sha256:<hex>" cut to the length every digest surface prints — `sha256:` +
  * the first 12 hex + `…`. The one home for a short digest in this CLI: the
  * skills DIGEST column, the dataset `source:` line and SOURCE cell, the job
- * card's `skill lock` row and the local-skill upload notice all read from
- * here. A commit is the other identity and prints as 12 bare hex, so the
- * two never read as one another.
+ * card's `skill lock` row, the local-skill upload notice and the job-import
+ * card's `source` row all read from here. A commit is the other identity and
+ * prints as 12 bare hex, so the two never read as one another.
  */
 function fmtDigestShort(digest: string): string {
   return digest.length > 19 ? `${digest.slice(0, 19)}…` : digest;
@@ -4604,10 +4604,12 @@ function jobImportLines(imported: JobImport): string[] {
     ["status", jobImportStatus(imported)],
   ];
   if (imported.source !== null) {
+    // An archive's sha256 rides the wire as bare hex (spec JobImportSource);
+    // prefixed here so fmtDigestShort spells it like every other digest.
     rows.push([
       "source",
       imported.source.type === "archive"
-        ? `archive (sha256:${imported.source.sha256.slice(0, 12)}…)`
+        ? `archive (${fmtDigestShort(`sha256:${imported.source.sha256}`)})`
         : imported.source.type === "archive_url"
           ? `url ${imported.source.url}`
           : `hub job ${imported.source.job_id}`,

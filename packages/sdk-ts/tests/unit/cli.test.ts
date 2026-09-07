@@ -7533,6 +7533,10 @@ async function testJobImportVerbs() {
     const show = captureIO();
     assertEqual(await runCli(["job", "import", "imp-a", ...AUTH], show.io), 0, "job import exits 0");
     assert(show.out.some((l) => l.startsWith("id") && l.includes("imp-a")), "prints the id");
+    assert(
+      show.out.some((l) => l.startsWith("source") && l.includes(`archive (sha256:${"ab".repeat(6)}…)`)),
+      "the source row names the uploaded archive in the one short digest spelling (fmtDigestShort) — sha256: + 12 hex + …"
+    );
     assert(show.out.some((l) => l.startsWith("job") && l.includes("eval-up1")), "prints the job");
     assert(show.out.some((l) => l.startsWith("trials") && l.includes("55")), "prints the trial count");
     assert(show.out.some((l) => l.startsWith("skipped") && l.includes("0")), "prints the skipped count, 0 when nothing was skipped");
