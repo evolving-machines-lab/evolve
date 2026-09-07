@@ -30,14 +30,16 @@ jobs:
       - name: Build all packages
         run: npm run build
 
-      # Nothing above checks types under tests/: the build bundles with tsup
-      # and the unit tests run through tsx, both of which strip types instead
-      # of checking them, and every package tsconfig covers src/ only. The
-      # compile-time pins in packages/sdk-ts/tests/unit/hosted-types.test.ts
+      # Nothing above checks types under tests/: the build's tsup dts pass
+      # type-checks only the src/ entry graph of each package, the bridge
+      # builds with plain tsc over its src/ alone, the unit tests run through
+      # tsx, which strips types without checking them, and every package's
+      # main tsconfig covers src/ only. The compile-time pins in
+      # packages/sdk-ts/tests/unit/hosted-types.test.ts
       # (tsconfig.types-test.json) only bite under this script. After the
       # build on purpose: the SDK re-exports the provider packages, so its tsc
       # reads their dist/ declarations.
-      - name: Type-check all packages
+      - name: Type-check the SDK and provider packages
         run: npm run type-check
 
       - name: Run TypeScript unit tests
