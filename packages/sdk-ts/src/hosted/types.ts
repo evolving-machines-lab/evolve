@@ -598,8 +598,8 @@ export interface AnalyzeConfigInput {
    * cli/analyze.py:278-280). Bounded by the organization's
    * `max_concurrent_analyses` at every claim: the job never holds more
    * than the smaller of the two RUNNING fleet-wide. Omitted, the
-   * organization's ceiling alone bounds the wave (its fleet default is 12,
-   * three times Harbor's own default of 4) and the resolved echo reads `null`. An integer in
+   * organization's ceiling alone bounds the wave (its fleet default is 16,
+   * four times Harbor's own default of 4) and the resolved echo reads `null`. An integer in
    * `[1, 150]`; anything else is refused `invalid_input` naming
    * `analyze.n_concurrent`.
    */
