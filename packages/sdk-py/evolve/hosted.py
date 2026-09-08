@@ -1525,8 +1525,8 @@ class AnalyzeConfigInput(TypedDict, total=False):
     PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
     it arms the embedded trigger (each trial is analyzed server-side right
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
-    means "all defaults" — deepseek-v4-flash-vision at its per-model
-    effort (high) over Harbor's default rubric (reward_hacking,
+    means "all defaults" — glm-5.3-flash-fireworks at its per-model
+    effort (max) over Harbor's default rubric (reward_hacking,
     task_specification). The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
@@ -1534,11 +1534,14 @@ class AnalyzeConfigInput(TypedDict, total=False):
     line, never blended into the trial's own bill.
     """
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
-    #: deepseek-v4-flash-vision on this platform's claude roster (DeepSeek
-    #: V4 Flash Vision served by Fireworks; a recorded deviation from
-    #: Harbor's claude-haiku-4-5 default — analysis is input-dominated, and
-    #: this is the roster's intelligence-per-input-dollar frontier;
-    #: glm-5.3-flash and haiku stay as alternatives, glm-5.3 to escalate).
+    #: glm-5.3-flash-fireworks on this platform's claude roster (GLM-5.3-Flash
+    #: served by Fireworks through the gateway route of that name; the
+    #: platform's ruling 2026-09-08: GLM-5.3-Flash on Fireworks at max, the
+    #: effort its published scores use; a recorded deviation from Harbor's
+    #: claude-haiku-4-5 default — analysis is input-dominated, and this is
+    #: the roster's intelligence-per-input-dollar pick at its published
+    #: effort; deepseek-v4-flash-vision, glm-5.3-flash and haiku stay as
+    #: alternatives, glm-5.3 to escalate).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
@@ -1569,9 +1572,11 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``analyze['reasoning_efforts']``, an unknown value is refused
     #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
     #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
-    #: high on deepseek-v4-flash-vision, low on glm-5.3-flash — the
-    #: platform's ruling for a model whose thinking Z.ai documents as
-    #: forced, with no levels — the claude harness default elsewhere). Always passed to the analyzer explicitly and
+    #: max on glm-5.3-flash-fireworks, the default model — the platform's
+    #: ruling 2026-09-08, the effort its published scores use; high on
+    #: deepseek-v4-flash-vision; low on glm-5.3-flash — the platform's
+    #: ruling for a model whose thinking Z.ai documents as forced, with no
+    #: levels — the claude harness default elsewhere). Always passed to the analyzer explicitly and
     #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
     #: hosted extension: Harbor's analyze has no effort option.
     reasoning_effort: str
@@ -6495,7 +6500,7 @@ class JobsClient:
         trigger (Harbor's ``harbor analyze`` vocabulary, the spec's
         AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
         server-side right after it settles (CANCELLED trials are skipped),
-        ``{}`` means "all defaults" (deepseek-v4-flash-vision at its
+        ``{}`` means "all defaults" (glm-5.3-flash-fireworks at its
         per-model effort, Harbor's default rubric), and the response
         echoes the RESOLVED policy as
         ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
@@ -7095,11 +7100,12 @@ class JobsClient:
         applies (daytona unless the operator retuned the fleet).
         ``reasoning_effort`` is the arms' effort vocabulary applied to the
         analyzer (``meta().analyze['reasoning_efforts']``); omitted, the
-        per-model default applies (high on deepseek-v4-flash-vision, low
-        on glm-5.3-flash, the claude harness default elsewhere) — the
-        effort is always passed explicitly and recorded on each analysis.
-        Every argument omitted means the defaults: deepseek-v4-flash-vision
-        at high over Harbor's default rubric (reward_hacking,
+        per-model default applies (max on glm-5.3-flash-fireworks, high on
+        deepseek-v4-flash-vision, low on glm-5.3-flash, the claude harness
+        default elsewhere) — the effort is always passed explicitly and
+        recorded on each analysis.
+        Every argument omitted means the defaults: glm-5.3-flash-fireworks
+        at max over Harbor's default rubric (reward_hacking,
         task_specification), on the platform's analysis default provider.
         CANCELLED trials are never analyzed.
 

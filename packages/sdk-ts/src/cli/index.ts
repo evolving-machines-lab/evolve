@@ -352,7 +352,8 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<value>",
     help:
       "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
-      "default: the per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
+      "default: the per-model default — max on glm-5.3-flash-fireworks, high on deepseek-v4-flash-vision, " +
+      "low on glm-5.3-flash)",
   },
   "timeout-multiplier": {
     kind: "number",
@@ -1098,8 +1099,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help:
-          "Model the analyzer agent runs (default: deepseek-v4-flash-vision; glm-5.3-flash and " +
-          "haiku as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
+          "Model the analyzer agent runs (default: glm-5.3-flash-fireworks; deepseek-v4-flash-vision, " +
+          "glm-5.3-flash and haiku as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
       },
       // The one option beyond Harbor's analyze trio, recorded as the hosted
       // extension it is: `run`'s own --effort (the platform's reasoning_effort
@@ -1111,7 +1112,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<value>",
         help:
           "Reasoning effort the analyzer runs at (values: GET /api/meta analyze; default: the " +
-          "per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
+          "per-model default — max on glm-5.3-flash-fireworks, high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
       },
       rubric: {
         kind: "string",
