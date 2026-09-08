@@ -352,7 +352,8 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<value>",
     help:
       "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
-      "default: the per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
+      "default: the per-model default — max on glm-5.3-flash-fireworks, high on deepseek-v4-flash-vision, " +
+      "low on glm-5.3-flash)",
   },
   "timeout-multiplier": {
     kind: "number",
@@ -1098,8 +1099,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help:
-          "Model the analyzer agent runs (default: deepseek-v4-flash-vision; glm-5.3-flash and " +
-          "haiku as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
+          "Model the analyzer agent runs (default: glm-5.3-flash-fireworks; deepseek-v4-flash-vision, " +
+          "glm-5.3-flash and haiku as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
       },
       // The one option beyond Harbor's analyze trio, recorded as the hosted
       // extension it is: `run`'s own --effort (the platform's reasoning_effort
@@ -1111,7 +1112,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<value>",
         help:
           "Reasoning effort the analyzer runs at (values: GET /api/meta analyze; default: the " +
-          "per-model default — high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
+          "per-model default — max on glm-5.3-flash-fireworks, high on deepseek-v4-flash-vision, low on glm-5.3-flash)",
       },
       rubric: {
         kind: "string",
@@ -1138,6 +1139,30 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
           "Sandbox provider the analyzer runs on (Harbor's -e/--env; the job lineup, " +
           "GET /api/meta; default: the platform's analysis default)",
       },
+      // Harbor's selection and width options, their exact spellings
+      // (cli/analyze.py:278-290): -n/--n-concurrent, --passing, --failing,
+      // -l/--n-trials. Each rides the body verbatim; the server owns the
+      // domains and the both-filters refusal (Harbor's own).
+      "n-concurrent": {
+        kind: "number",
+        short: "n",
+        value: "<n>",
+        help: "Max concurrent trial analyses (beneath the organization's ceiling; default: the ceiling)",
+      },
+      passing: {
+        kind: "boolean",
+        help: "Only analyze passing trials (reward=1.0)",
+      },
+      failing: {
+        kind: "boolean",
+        help: "Only analyze failing trials (reward<1.0 or exception)",
+      },
+      "n-trials": {
+        kind: "number",
+        short: "l",
+        value: "<n>",
+        help: "Max trials to analyze (after --passing/--failing, in the job's trial order)",
+      },
       watch: {
         kind: "boolean",
         help:
@@ -1152,7 +1177,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
-    example: "evolve analyze cme12ab34 -r rubric.toml -p prompt.txt --watch",
+    example: "evolve analyze cme12ab34 -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch",
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
   // cli/main.py); ours is a deliberate subset — no --public/--share-org/
@@ -4431,6 +4456,13 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   // --effort rides verbatim too (the run verb's own flag applied to the
   // analyzer): the server's effort vocabulary is the one copy.
   if (inv.flags.effort !== undefined) req.reasoning_effort = String(inv.flags.effort);
+  // Harbor's selection and width (their cli/analyze.py:278-290) ride as
+  // given — the bounds, and "Cannot use both --passing and --failing", are
+  // the server's typed refusals, never a client-side copy.
+  if (inv.flags["n-concurrent"] !== undefined) req.n_concurrent = inv.flags["n-concurrent"] as number;
+  if (inv.flags.passing === true) req.passing = true;
+  if (inv.flags.failing === true) req.failing = true;
+  if (inv.flags["n-trials"] !== undefined) req.n_trials = inv.flags["n-trials"] as number;
   // The 202 IS the queued batch — the job body, `stats.analysis` counting
   // the enqueued rows as pending — and the verb returns with it, the shape
   // of `job start` / `run`: Harbor's hosted launch prints the accepted job

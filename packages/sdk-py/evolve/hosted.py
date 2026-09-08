@@ -1520,13 +1520,15 @@ class Rubric(TypedDict):
 class AnalyzeConfigInput(TypedDict, total=False):
     """Trace-analysis configuration INPUT — Harbor's ``harbor analyze``
     vocabulary (their cli/analyze.py: ``--model``, ``--rubric``,
-    ``--prompt``), the spec's ``AnalyzeConfigInput`` schema.
+    ``--prompt``, and the selection and width options ``-n/--n-concurrent``,
+    ``--passing`` / ``--failing``, ``-l/--n-trials``), the spec's
+    ``AnalyzeConfigInput`` schema.
 
     PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
     it arms the embedded trigger (each trial is analyzed server-side right
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
-    means "all defaults" — deepseek-v4-flash-vision at its per-model
-    effort (high) over Harbor's default rubric (reward_hacking,
+    means "all defaults" — glm-5.3-flash-fireworks at its per-model
+    effort (max) over Harbor's default rubric (reward_hacking,
     task_specification). The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
@@ -1534,11 +1536,14 @@ class AnalyzeConfigInput(TypedDict, total=False):
     line, never blended into the trial's own bill.
     """
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
-    #: deepseek-v4-flash-vision on this platform's claude roster (DeepSeek
-    #: V4 Flash Vision served by Fireworks; a recorded deviation from
-    #: Harbor's claude-haiku-4-5 default — analysis is input-dominated, and
-    #: this is the roster's intelligence-per-input-dollar frontier;
-    #: glm-5.3-flash and haiku stay as alternatives, glm-5.3 to escalate).
+    #: glm-5.3-flash-fireworks on this platform's claude roster (GLM-5.3-Flash
+    #: served by Fireworks through the gateway route of that name; the
+    #: platform's ruling 2026-09-08: GLM-5.3-Flash on Fireworks at max, the
+    #: effort its published scores use; a recorded deviation from Harbor's
+    #: claude-haiku-4-5 default — analysis is input-dominated, and this is
+    #: the roster's intelligence-per-input-dollar pick at its published
+    #: effort; deepseek-v4-flash-vision, glm-5.3-flash and haiku stay as
+    #: alternatives, glm-5.3 to escalate).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
@@ -1569,9 +1574,11 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``analyze['reasoning_efforts']``, an unknown value is refused
     #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
     #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
-    #: high on deepseek-v4-flash-vision, low on glm-5.3-flash — the
-    #: platform's ruling for a model whose thinking Z.ai documents as
-    #: forced, with no levels — the claude harness default elsewhere). Always passed to the analyzer explicitly and
+    #: max on glm-5.3-flash-fireworks, the default model — the platform's
+    #: ruling 2026-09-08, the effort its published scores use; high on
+    #: deepseek-v4-flash-vision; low on glm-5.3-flash — the platform's
+    #: ruling for a model whose thinking Z.ai documents as forced, with no
+    #: levels — the claude harness default elsewhere). Always passed to the analyzer explicitly and
     #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
     #: hosted extension: Harbor's analyze has no effort option.
     reasoning_effort: str
@@ -1583,6 +1590,36 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: enqueue (daytona unless the operator retuned the fleet) — the value
     #: the resolved ``AnalyzeConfig['sandbox_provider']`` echo reports.
     sandbox_provider: EvalSandboxProvider
+    #: How many of this wave's analyses run at once — Harbor's
+    #: ``-n/--n-concurrent`` ("Max concurrent trial analyses", their
+    #: cli/analyze.py:278-280). Bounded by the organization's
+    #: ``max_concurrent_analyses`` at every claim: the job never holds more
+    #: than the smaller of the two RUNNING fleet-wide. Omitted, the
+    #: organization's ceiling alone bounds the wave (its fleet default is 16,
+    #: four times Harbor's own default of 4) and the resolved echo reads ``None``. An
+    #: integer in ``[1, 150]``; anything else is refused ``invalid_input``
+    #: naming ``analyze.n_concurrent``.
+    n_concurrent: int
+    #: Analyze only the passing trials — Harbor's ``--passing`` ("Only
+    #: analyze passing trials (reward=1.0)", their cli/analyze.py:282-284):
+    #: a trial passes when it is SCORED with a primary reward of exactly 1.
+    #: Mutually exclusive with ``failing``: both true is refused
+    #: ``invalid_input`` — Harbor's own "Cannot use both --passing and
+    #: --failing".
+    passing: bool
+    #: Analyze only the failing trials — Harbor's ``--failing`` ("Only
+    #: analyze failing trials (reward<1.0 or exception)", their
+    #: cli/analyze.py:285-287): every analyzable trial that is not passing —
+    #: a reward below 1 or none, and every error status. CANCELLED trials
+    #: are never analyzed under either filter.
+    failing: bool
+    #: At most this many trials get an analysis — Harbor's ``-l/--n-trials``
+    #: ("Max trials to analyze", their cli/analyze.py:288-290), applied AFTER
+    #: the reward filter: on the manual wave the first ``n_trials`` matching
+    #: trials in the job's trial order; on the embedded trigger the first
+    #: ``n_trials`` matching trials to settle. An integer of at least 1;
+    #: anything else is refused ``invalid_input`` naming ``analyze.n_trials``.
+    n_trials: int
 
 
 class AnalyzeConfig(TypedDict):
@@ -1613,6 +1650,18 @@ class AnalyzeConfig(TypedDict):
     #: resolved-at-accept law above, stated so the echo is never read as
     #: history).
     sandbox_provider: EvalSandboxProvider
+    #: The per-job width this policy's analyses are claimed under
+    #: (``AnalyzeConfigInput['n_concurrent']``, as stored); None = none
+    #: named, the organization's ``max_concurrent_analyses`` alone bounds
+    #: the wave.
+    n_concurrent: Optional[int]
+    #: The reward filter as stored; both ``passing`` and ``failing`` False =
+    #: every analyzable trial.
+    passing: bool
+    failing: bool
+    #: The trial cap as stored (``AnalyzeConfigInput['n_trials']``); None =
+    #: no cap.
+    n_trials: Optional[int]
 
 
 class AnalysisCheck(TypedDict):
@@ -6495,7 +6544,7 @@ class JobsClient:
         trigger (Harbor's ``harbor analyze`` vocabulary, the spec's
         AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
         server-side right after it settles (CANCELLED trials are skipped),
-        ``{}`` means "all defaults" (deepseek-v4-flash-vision at its
+        ``{}`` means "all defaults" (glm-5.3-flash-fireworks at its
         per-model effort, Harbor's default rubric), and the response
         echoes the RESOLVED policy as
         ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
@@ -7072,6 +7121,10 @@ class JobsClient:
         prompt: Optional[str] = None,
         sandbox_provider: Optional[EvalSandboxProvider] = None,
         reasoning_effort: Optional[str] = None,
+        n_concurrent: Optional[int] = None,
+        passing: Optional[bool] = None,
+        failing: Optional[bool] = None,
+        n_trials: Optional[int] = None,
     ) -> Job:
         """Analyze a terminal job's trial traces (rubric-driven, Harbor's
         ``harbor analyze``), server-side.
@@ -7095,13 +7148,26 @@ class JobsClient:
         applies (daytona unless the operator retuned the fleet).
         ``reasoning_effort`` is the arms' effort vocabulary applied to the
         analyzer (``meta().analyze['reasoning_efforts']``); omitted, the
-        per-model default applies (high on deepseek-v4-flash-vision, low
-        on glm-5.3-flash, the claude harness default elsewhere) — the
-        effort is always passed explicitly and recorded on each analysis.
-        Every argument omitted means the defaults: deepseek-v4-flash-vision
-        at high over Harbor's default rubric (reward_hacking,
+        per-model default applies (max on glm-5.3-flash-fireworks, high on
+        deepseek-v4-flash-vision, low on glm-5.3-flash, the claude harness
+        default elsewhere) — the effort is always passed explicitly and
+        recorded on each analysis.
+        Every argument omitted means the defaults: glm-5.3-flash-fireworks
+        at max over Harbor's default rubric (reward_hacking,
         task_specification), on the platform's analysis default provider.
         CANCELLED trials are never analyzed.
+        Which trials, and how wide, are Harbor's own analyze options with
+        their exact names (their cli/analyze.py:278-290): ``passing`` /
+        ``failing`` analyze only the trials on that side of the reward
+        line (passing = SCORED with reward exactly 1; failing = everything
+        else analyzable — reward below 1 or none, and every error status);
+        ``n_trials`` caps the wave at the first N matching trials in the
+        job's trial order, after the filter (Harbor's ``-l/--n-trials``);
+        ``n_concurrent`` is how many of the wave's analyses run at once,
+        beneath the organization's ``max_concurrent_analyses`` (Harbor's
+        ``-n/--n-concurrent``; omitted = the ceiling alone). ``passing`` and
+        ``failing`` together are refused ``invalid_input`` — Harbor's own
+        "Cannot use both --passing and --failing".
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
@@ -7110,7 +7176,8 @@ class JobsClient:
         provider outside the lineup — the message names the roster, the
         bound or the legal values),
         ``analysis_already_running`` (one wave at a time),
-        ``no_analyzable_trials`` (every trial CANCELLED).
+        ``no_analyzable_trials`` (every trial CANCELLED, or no trial on the
+        side of the reward filter).
         """
         body: Dict[str, Any] = {}
         if model_name is not None:
@@ -7123,6 +7190,14 @@ class JobsClient:
             body['sandbox_provider'] = sandbox_provider
         if reasoning_effort is not None:
             body['reasoning_effort'] = reasoning_effort
+        if n_concurrent is not None:
+            body['n_concurrent'] = n_concurrent
+        if passing is not None:
+            body['passing'] = passing
+        if failing is not None:
+            body['failing'] = failing
+        if n_trials is not None:
+            body['n_trials'] = n_trials
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}/analyze', method='POST', body=body
         )

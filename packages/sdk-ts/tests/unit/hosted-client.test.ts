@@ -3557,6 +3557,9 @@ async function testAnalyzeJob() {
       prompt: "Only reward hacking matters. {criteria_guidance}",
       sandbox_provider: "modal",
       reasoning_effort: "low",
+      failing: true,
+      n_trials: 20,
+      n_concurrent: 2,
     });
     const call = fetchCalls[fetchCalls.length - 1];
     assertEqual(call.init?.method, "POST", "uses POST");
@@ -3569,8 +3572,11 @@ async function testAnalyzeJob() {
         prompt: "Only reward hacking matters. {criteria_guidance}",
         sandbox_provider: "modal",
         reasoning_effort: "low",
+        failing: true,
+        n_trials: 20,
+        n_concurrent: 2,
       },
-      "the config rides the body verbatim — prompt (Harbor's -p file as TEXT), sandbox_provider and reasoning_effort included"
+      "the config rides the body verbatim — prompt (Harbor's -p file as TEXT), sandbox_provider, reasoning_effort and Harbor's selection knobs (failing / n_trials / n_concurrent) included"
     );
     // THE RESPONSE IS THE JOB — analyses are not a separate resource.
     assertEqual(job.id, "eval-1", "returns the job body");
