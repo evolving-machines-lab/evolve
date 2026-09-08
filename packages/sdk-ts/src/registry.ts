@@ -419,7 +419,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "glm-5.3-flash-fireworks", modelId: "glm-5.3-flash-fireworks", description: "Zhipu GLM-5.3 Flash on Fireworks via the Evolve gateway" },
       // The hosted analyzer's default model (wave 3): DeepSeek V4 Flash Vision,
       // served by Fireworks behind the gateway's bare name — alias == wire id,
-      // like the GLM pair, so either spelling reaches the same gateway entry.
+      // like the GLM rows above, so either spelling reaches the same gateway entry.
       { alias: "deepseek-v4-flash-vision", modelId: "deepseek-v4-flash-vision", description: "DeepSeek V4 Flash Vision (Fireworks) via the Evolve gateway" },
     ],
     systemPromptFile: "CLAUDE.md",
