@@ -416,7 +416,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "sonnet[1m]", modelId: "sonnet[1m]", description: "Daily coding with 1M context window" },
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
-      { alias: "glm-5.3-flash-fireworks", modelId: "glm-5.3-flash-fireworks", description: "Zhipu GLM-5.3 Flash on Fireworks via the Evolve gateway" },
       // DeepSeek V4 Flash Vision, served by Fireworks behind the gateway's bare
       // name — alias == wire id, like the GLM rows above, so either spelling
       // reaches the same gateway entry. A selectable analyzer model (its default
@@ -750,7 +749,13 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
       { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
       { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
-      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via OpenRouter" },
+      // The OpenRouter spelling is the only one this harness can carry: its
+      // roster speaks OpenRouter ids and buildCommand below prefixes
+      // `openrouter/` onto any bare name (direct mode sends the id to
+      // OpenRouter itself). Through the Evolve gateway the name reaches the
+      // platform's one GLM-5.3-Flash, served from Fireworks (the ruling
+      // 2026-09-08), exactly like the bare `glm-5.3-flash` elsewhere.
+      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -807,7 +812,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "kimi-k3", modelId: "kimi-k3", description: "Factory-managed Droid Core Kimi K3" },
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
-      { alias: "glm-5.3-flash-fireworks", modelId: "glm-5.3-flash-fireworks", description: "Zhipu GLM-5.3 Flash on Fireworks via the Evolve gateway" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -822,8 +826,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     gatewayModelAliases: {
       "kimi-k3": "moonshot/kimi-k3",
       "glm-5.3": "openrouter/z-ai/glm-5.3",
-      "glm-5.3-flash": "openrouter/z-ai/glm-5.3-flash",
-      "glm-5.3-flash-fireworks": "glm-5.3-flash-fireworks",
+      // glm-5.3-flash rides bare: the gateway's plain name is the platform's
+      // one GLM-5.3-Flash (served from Fireworks; the ruling 2026-09-08).
       "qwen3.7-max": "dashscope/qwen3.7-max",
     },
     droidGatewaySettings: {
