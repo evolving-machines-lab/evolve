@@ -22,6 +22,11 @@
  *      wall-clock time: every stdin write is one awaited round trip, so the
  *      64KiB default that the SDK's own copyFromLocal() inherits costs 2880
  *      of them on a 180MiB bundle (311.6s measured, versus 30.1s at 8MiB)
+ *   13. Volumes — the `volumes` create option: offline refusals
+ *      (ModalVolumeError) before any network call, named Volumes resolved
+ *      through client.volumes.fromName and mounted with their read-only
+ *      flag, absent means absent, a missing Volume is a typed refusal, and
+ *      the supportsVolumes capability marker
  *
  * Usage:
  *   npx tsx tests/unit/modal-provider.test.ts
@@ -39,6 +44,8 @@ import {
   _testMapIdleTimeout,
   _testMapBootCommand,
   _testMapResources,
+  _testMapVolumeMounts,
+  ModalVolumeError,
   EVOLVE_IMAGE_VERSION,
   MODAL_MAX_LIFETIME_MS,
   MODAL_STDIN_CHUNK_BYTES,
@@ -1808,6 +1815,202 @@ async function testRequiresDynamicNetworkComparesMeaning(): Promise<void> {
   );
 }
 
+// =============================================================================
+// [13] Volumes — the `volumes` create option
+// =============================================================================
+
+async function testVolumeMountsUnsetIsAbsent(): Promise<void> {
+  console.log("\n[13a] mapVolumeMounts() - absent means absent, empty means absent");
+
+  assertEqual(_testMapVolumeMounts(undefined), [], "No option maps to no mounts");
+  assertEqual(_testMapVolumeMounts({}), [], "An empty record maps to no mounts");
+}
+
+async function testVolumeMountsRefuseBadShapesOffline(): Promise<void> {
+  console.log("\n[13b] mapVolumeMounts() - typed refusals: relative mount path, root, empty name");
+
+  for (const [mountPath, reason] of [
+    ["mnt/bundles", "invalid-mount-path"],
+    ["/", "invalid-mount-path"],
+    ["", "invalid-mount-path"],
+  ] as const) {
+    let caught: unknown;
+    try {
+      _testMapVolumeMounts({ [mountPath]: { name: "evolve-bundles" } });
+    } catch (e) {
+      caught = e;
+    }
+    assert(
+      caught instanceof ModalVolumeError && caught.reason === reason && caught.mountPath === mountPath,
+      `Mount path ${JSON.stringify(mountPath)} is refused with reason ${reason}`
+    );
+  }
+  let caught: unknown;
+  try {
+    _testMapVolumeMounts({ "/mnt/bundles": { name: "  " } });
+  } catch (e) {
+    caught = e;
+  }
+  assert(
+    caught instanceof ModalVolumeError && caught.reason === "invalid-name" && caught.mountPath === "/mnt/bundles",
+    "A blank Volume name is refused with reason invalid-name"
+  );
+}
+
+/** The stubbed-client idiom of [6f]/[10d], plus a recording volumes service. */
+function volumeClientStub(opts: { fromName?: (name: string, params: unknown) => Promise<unknown> } = {}) {
+  const createParams: Array<Record<string, unknown>> = [];
+  const fromNameCalls: Array<{ name: string; params: unknown }> = [];
+  const mountOptionCalls: unknown[] = [];
+  const image = { build: async () => image };
+  const volumeFor = (name: string) => ({
+    volumeId: `vo-${name}`,
+    name,
+    withMountOptions(params: unknown) {
+      mountOptionCalls.push(params);
+      return { volumeId: `vo-${name}`, name, mounted: params };
+    },
+  });
+  const client = {
+    apps: { fromName: async () => ({ appId: "ap-mock" }) },
+    images: { fromRegistry: async () => image },
+    volumes: {
+      fromName: async (name: string, params: unknown) => {
+        fromNameCalls.push({ name, params });
+        if (opts.fromName) return opts.fromName(name, params);
+        return volumeFor(name);
+      },
+    },
+    sandboxes: {
+      create: async (_app: unknown, _image: unknown, params: Record<string, unknown>) => {
+        createParams.push(params);
+        return { sandboxId: "sb-mock", exec: async () => ({ wait: async () => 0 }) };
+      },
+    },
+  };
+  return { client, createParams, fromNameCalls, mountOptionCalls };
+}
+
+async function testCreateMountsNamedVolumes(): Promise<void> {
+  console.log("\n[13c] ModalProvider.create() - named Volumes reach sandboxes.create as `volumes`, resolved by name and mounted with their flags");
+
+  const stub = volumeClientStub();
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = stub.client;
+
+  await provider.create({
+    image: "evolve-all",
+    user: "root",
+    volumes: {
+      "/mnt/bundles": { name: "evolve-bundles", readOnly: true },
+      "/vol/scratch": { name: "scratch", createIfMissing: true },
+    },
+  });
+  assertEqual(
+    stub.fromNameCalls,
+    [
+      { name: "evolve-bundles", params: { createIfMissing: false } },
+      { name: "scratch", params: { createIfMissing: true } },
+    ],
+    "Every mount resolves its Volume through client.volumes.fromName with its createIfMissing flag (default false)"
+  );
+  assertEqual(
+    stub.mountOptionCalls,
+    [{ readOnly: true }, { readOnly: false }],
+    "Every Volume is mounted with an explicit readOnly flag (default read-write)"
+  );
+  const volumes = stub.createParams[0].volumes as Record<string, { name: string; mounted: unknown }>;
+  assertEqual(Object.keys(volumes), ["/mnt/bundles", "/vol/scratch"], "The create params key the mounts by in-box path");
+  assertEqual(volumes["/mnt/bundles"].name, "evolve-bundles", "The read-only mount is the named Volume");
+  assertEqual(volumes["/mnt/bundles"].mounted, { readOnly: true }, "…carrying its read-only mount options");
+  assertEqual(volumes["/vol/scratch"].mounted, { readOnly: false }, "…and the read-write one carries readOnly false");
+
+  // Absent means ABSENT: no `volumes` key when nothing was asked for, and
+  // no Volume lookup either.
+  await provider.create({ image: "evolve-all", user: "root" });
+  assert(!("volumes" in stub.createParams[1]), "With no volumes option the create params carry no `volumes` key");
+  assertEqual(stub.fromNameCalls.length, 2, "…and no Volume was looked up");
+
+  assert(
+    (provider as { supportsVolumes?: boolean }).supportsVolumes === true,
+    "The provider declares supportsVolumes"
+  );
+}
+
+async function testCreateRefusesVolumesOfflineBeforeNetwork(): Promise<void> {
+  console.log("\n[13d] ModalProvider.create() - an invalid mount is refused before any app/image/volume round trip");
+
+  const stub = volumeClientStub();
+  let appLookups = 0;
+  stub.client.apps.fromName = async () => {
+    appLookups++;
+    return { appId: "ap-mock" };
+  };
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = stub.client;
+
+  let caught: unknown;
+  try {
+    await provider.create({ image: "evolve-all", user: "root", volumes: { "relative/path": { name: "x" } } });
+  } catch (e) {
+    caught = e;
+  }
+  assert(caught instanceof ModalVolumeError && caught.reason === "invalid-mount-path", "The refusal is the typed ModalVolumeError");
+  assertEqual(appLookups, 0, "No app lookup happened");
+  assertEqual(stub.fromNameCalls.length, 0, "No Volume lookup happened");
+  assertEqual(stub.createParams.length, 0, "No sandbox was created");
+}
+
+async function testCreateMissingVolumeIsTypedAndCreatesNothing(): Promise<void> {
+  console.log("\n[13e] ModalProvider.create() - a Volume Modal cannot resolve is a typed refusal, and no sandbox is created");
+
+  class NotFoundError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "NotFoundError";
+    }
+  }
+  const stub = volumeClientStub({
+    fromName: async (name) => {
+      throw new NotFoundError(`Volume '${name}' not found`);
+    },
+  });
+  const provider = createModalProvider({ tokenId: "ak-test", tokenSecret: "as-test" });
+  (provider as any).client = stub.client;
+
+  let caught: unknown;
+  try {
+    await provider.create({ image: "evolve-all", user: "root", volumes: { "/mnt/bundles": { name: "ghost" } } });
+  } catch (e) {
+    caught = e;
+  }
+  assert(
+    caught instanceof ModalVolumeError && caught.reason === "not-found" && caught.volumeName === "ghost" && caught.mountPath === "/mnt/bundles",
+    "The missing Volume surfaces as ModalVolumeError not-found naming the Volume and its mount path"
+  );
+  assert(caught instanceof ModalVolumeError && caught.cause instanceof NotFoundError, "…with Modal's own error as the cause");
+  assertEqual(stub.createParams.length, 0, "No sandbox was created");
+
+  // Any other resolve failure is the same typed error with reason resolve-failed.
+  const stub2 = volumeClientStub({
+    fromName: async () => {
+      throw new Error("deadline exceeded");
+    },
+  });
+  (provider as any).client = stub2.client;
+  let caught2: unknown;
+  try {
+    await provider.create({ image: "evolve-all", user: "root", volumes: { "/mnt/bundles": { name: "evolve-bundles" } } });
+  } catch (e) {
+    caught2 = e;
+  }
+  assert(
+    caught2 instanceof ModalVolumeError && caught2.reason === "resolve-failed" && caught2.message.includes("deadline exceeded"),
+    "A non-NotFound resolve failure is ModalVolumeError resolve-failed carrying Modal's words"
+  );
+  assertEqual(stub2.createParams.length, 0, "No sandbox was created");
+}
+
 const tests = [
   // [1] wrapCommand pure function
   testWrapCommandRootPassthrough,
@@ -1897,6 +2100,12 @@ const tests = [
   testDynamicNetworkReusesCreateClassification,
   testRequiresDynamicNetworkComparesMeaning,
   testDynamicNetworkArmsTheDomainFilter,
+  // [13] Volumes
+  testVolumeMountsUnsetIsAbsent,
+  testVolumeMountsRefuseBadShapesOffline,
+  testCreateMountsNamedVolumes,
+  testCreateRefusesVolumesOfflineBeforeNetwork,
+  testCreateMissingVolumeIsTypedAndCreatesNothing,
 ];
 
 (async () => {
