@@ -3165,18 +3165,26 @@ class TestJobs:
                 prompt='Only reward hacking matters. {criteria_guidance}',
                 sandbox_provider='modal',
                 reasoning_effort='low',
+                failing=True,
+                n_trials=20,
+                n_concurrent=2,
             )
 
         assert fake.requests[0].get_method() == 'POST'
         assert fake.requests[0].full_url.endswith('/api/jobs/job-1/analyze')
         sent = json.loads(fake.requests[0].data.decode('utf-8'))
-        # The prompt is Harbor's -p/--prompt file as TEXT; it rides verbatim.
+        # The prompt is Harbor's -p/--prompt file as TEXT; it rides verbatim,
+        # and so do Harbor's selection knobs (cli/analyze.py:278-290) — the
+        # domains and the both-filters refusal are the server's.
         assert sent == {
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
             'prompt': 'Only reward hacking matters. {criteria_guidance}',
             'sandbox_provider': 'modal',
             'reasoning_effort': 'low',
+            'failing': True,
+            'n_trials': 20,
+            'n_concurrent': 2,
         }
         assert job.id == 'job-1'
         # The resolved echo maps verbatim — the provider echo and the prompt
@@ -3191,12 +3199,17 @@ class TestJobs:
 
     @pytest.mark.asyncio
     async def test_analyze_defaults_send_the_empty_object(self):
-        """Both arguments omitted sends {} — all defaults; the server owns
+        """Every argument omitted sends {} — all defaults; the server owns
         the resolution. A job never analyzed reads analyze as None."""
         fake = FakeUrlopen([('/job-1/analyze', JOB_SUMMARY)])
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).analyze('job-1')
         assert json.loads(fake.requests[0].data.decode('utf-8')) == {}
+        # passing=True alone rides alone: no failing key is invented.
+        fake_passing = FakeUrlopen([('/job-1/analyze', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake_passing):
+            await jobs_factory(CONFIG).analyze('job-1', passing=True)
+        assert json.loads(fake_passing.requests[0].data.decode('utf-8')) == {'passing': True}
         assert job.analyze is None
         assert job.stats.get('analysis') is None
 

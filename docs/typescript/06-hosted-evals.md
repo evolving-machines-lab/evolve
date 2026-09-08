@@ -718,6 +718,18 @@ Guidance:
 The prompt is stored as given and frozen into the wave like the rubric — `trial.analysis.prompt` serves the text each analysis ran under (`null` = the built-in), and the resolved `job.analyze.prompt` echoes the policy. An empty prompt, one over 32,000 characters, or one carrying a NUL character is refused at accept with `400 invalid_input` naming `analyze.prompt` and the bound.
 `reasoning_effort` is the same effort an agent arm takes on `start()` (`agents[].reasoning_effort`), applied to the analyzer — it runs the claude harness, so it accepts exactly what a claude arm accepts (`analyze.reasoning_efforts` on `GET /api/meta`; an unknown value refuses `invalid_input` with the list). Omitted, each model has its own default, published as `analyze.models[].default_reasoning_effort`: `high` on `deepseek-v4-flash-vision`, `low` on `glm-5.3-flash` (the platform's ruling for a model whose thinking Z.ai documents as forced, with no levels), and the claude harness default elsewhere. The effort is passed to the analyzer explicitly every time and recorded on the result as `trial.analysis.reasoning_effort`, so two waves can always be compared on what they were asked for. Harbor's `harbor analyze` has no effort option — this is the platform's existing run-time vocabulary applied to one more agent run it hosts.
 
+Which trials, and how wide, are Harbor's own analyze options with their exact names — `--passing` / `--failing`, `-l/--n-trials`, `-n/--n-concurrent`:
+
+```ts
+await evals.analyze(job.id, {
+    failing: true,        // only the failing trials (reward below 1, or an error) — Harbor's --failing
+    n_trials: 20,         // at most 20 of them, in the job's trial order — Harbor's -l/--n-trials
+    n_concurrent: 2,      // two analyses at a time — Harbor's -n/--n-concurrent
+});
+```
+
+`passing: true` is the other side of the line — only trials scored with reward exactly 1 — and the two together are refused `400 invalid_input`, Harbor's own "Cannot use both --passing and --failing". `n_trials` counts after the filter; a filter that selects nothing refuses `409 no_analyzable_trials` naming the side. `n_concurrent` runs beneath the organization's `max_concurrent_analyses` ceiling (fleet default 4, Harbor's own default): the job never holds more than the smaller of the two in flight, and omitting it means the ceiling alone. All three ride the embedded policy too. From the terminal: `evolve analyze <job-id> --failing -l 20 -n 2`.
+
 Analysis can also run **embedded**: create the job with `analyze` and each trial is analyzed automatically the moment it settles, so a long sweep finishes with its analyses already in place. Presence of the object is the switch — `{}` means "analyze with all defaults" — and the job body echoes the resolved policy as `job.analyze`:
 
 ```ts

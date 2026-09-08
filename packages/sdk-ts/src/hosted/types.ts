@@ -517,6 +517,15 @@ export interface Rubric {
  * names, or the platform's analysis default when it names none; its spend is
  * capped per analysis and metered as its own line, never blended into the
  * trial's own bill.
+ *
+ * Which trials, and how wide, are Harbor's own analyze options with their
+ * exact names — `n_concurrent` (`-n/--n-concurrent`), `passing` / `failing`,
+ * `n_trials` (`-l/--n-trials`; their cli/analyze.py:278-290). All omitted
+ * is every analyzable trial, as wide as the organization's
+ * `max_concurrent_analyses` allows. Harbor's `-a/--agent`, `--job-name`,
+ * `-o/--jobs-dir`, `-k/--n-attempts` and the local-runner kwargs are not
+ * on this surface; the contract (`AnalyzeConfigInput` in spec/openapi.yaml)
+ * records each with its reason.
  */
 export interface AnalyzeConfigInput {
   /**
@@ -583,6 +592,43 @@ export interface AnalyzeConfigInput {
    * `AnalyzeConfig.sandbox_provider` echo reports.
    */
   sandbox_provider?: EvalSandboxProvider;
+  /**
+   * How many of this wave's analyses run at once — Harbor's
+   * `-n/--n-concurrent` ("Max concurrent trial analyses", their
+   * cli/analyze.py:278-280). Bounded by the organization's
+   * `max_concurrent_analyses` at every claim: the job never holds more
+   * than the smaller of the two RUNNING fleet-wide. Omitted, the
+   * organization's ceiling alone bounds the wave (its fleet default is 4,
+   * Harbor's own default) and the resolved echo reads `null`. An integer in
+   * `[1, 150]`; anything else is refused `invalid_input` naming
+   * `analyze.n_concurrent`.
+   */
+  n_concurrent?: number;
+  /**
+   * Analyze only the passing trials — Harbor's `--passing` ("Only analyze
+   * passing trials (reward=1.0)", their cli/analyze.py:282-284): a trial
+   * passes when it is SCORED with a primary reward of exactly 1. Mutually
+   * exclusive with `failing`: both true is refused `invalid_input` —
+   * Harbor's own "Cannot use both --passing and --failing".
+   */
+  passing?: boolean;
+  /**
+   * Analyze only the failing trials — Harbor's `--failing` ("Only analyze
+   * failing trials (reward<1.0 or exception)", their cli/analyze.py:285-287):
+   * every analyzable trial that is not passing — a reward below 1 or none,
+   * and every error status. CANCELLED trials are never analyzed under
+   * either filter.
+   */
+  failing?: boolean;
+  /**
+   * At most this many trials get an analysis — Harbor's `-l/--n-trials`
+   * ("Max trials to analyze", their cli/analyze.py:288-290), applied AFTER
+   * the reward filter: on the manual wave the first `n_trials` matching
+   * trials in the job's trial order; on the embedded trigger the first
+   * `n_trials` matching trials to settle. An integer of at least 1;
+   * anything else is refused `invalid_input` naming `analyze.n_trials`.
+   */
+  n_trials?: number;
 }
 
 /**
@@ -616,6 +662,17 @@ export interface AnalyzeConfig {
    * history).
    */
   sandbox_provider: EvalSandboxProvider;
+  /**
+   * The per-job width this policy's analyses are claimed under
+   * (`AnalyzeConfigInput.n_concurrent`, as stored); null = none named, the
+   * organization's `max_concurrent_analyses` alone bounds the wave.
+   */
+  n_concurrent: number | null;
+  /** The reward filter as stored; both `passing` and `failing` false = every analyzable trial. */
+  passing: boolean;
+  failing: boolean;
+  /** The trial cap as stored (`AnalyzeConfigInput.n_trials`); null = no cap. */
+  n_trials: number | null;
 }
 
 /** The job-creation body — POST /api/jobs. */

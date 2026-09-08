@@ -3898,7 +3898,32 @@ async function testAnalyzeVerbReturnsAtOnce() {
     assertEqual(
       JSON.parse(post?.init?.body as string),
       { model_name: "glm-5.3" },
-      "-m rides the body as model_name; no rubric/provider key when none given"
+      "-m rides the body as model_name; no rubric/provider/selection key when none given"
+    );
+
+    // Harbor's selection and width options, their exact spellings
+    // (cli/analyze.py:278-290), ride the body verbatim — the domains and
+    // the both-filters refusal are the server's.
+    fetchCalls.length = 0;
+    const selected = await runCli(
+      ["analyze", "eval-1", "--failing", "-l", "20", "-n", "2", ...AUTH],
+      captureIO().io
+    );
+    assertEqual(selected, 0, "exit 0 on the 202 with the selection flags");
+    const selectedPost = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/analyze"));
+    assertEqual(
+      JSON.parse(selectedPost?.init?.body as string),
+      { n_concurrent: 2, failing: true, n_trials: 20 },
+      "--failing / -l / -n ride as failing / n_trials / n_concurrent; no passing key when not given"
+    );
+    fetchCalls.length = 0;
+    await runCli(["analyze", "eval-1", "--passing", "--n-trials", "3", "--n-concurrent", "1", ...AUTH], captureIO().io);
+    assertEqual(
+      JSON.parse(
+        fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/analyze"))?.init?.body as string
+      ),
+      { n_concurrent: 1, passing: true, n_trials: 3 },
+      "--passing / --n-trials / --n-concurrent are the long spellings of the same three"
     );
     assertEqual(
       fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
