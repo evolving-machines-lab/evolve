@@ -62,6 +62,11 @@
           "description": "Zhipu GLM-5.3 Flash via the Evolve gateway"
         },
         {
+          "alias": "glm-5.3-flash-fireworks",
+          "modelId": "glm-5.3-flash-fireworks",
+          "description": "Zhipu GLM-5.3 Flash on Fireworks via the Evolve gateway"
+        },
+        {
           "alias": "deepseek-v4-flash-vision",
           "modelId": "deepseek-v4-flash-vision",
           "description": "DeepSeek V4 Flash Vision (Fireworks) via the Evolve gateway"
@@ -194,6 +199,11 @@
           "alias": "glm-5.3-flash",
           "modelId": "glm-5.3-flash",
           "description": "Zhipu GLM-5.3 Flash via the Evolve gateway"
+        },
+        {
+          "alias": "glm-5.3-flash-fireworks",
+          "modelId": "glm-5.3-flash-fireworks",
+          "description": "Zhipu GLM-5.3 Flash on Fireworks via the Evolve gateway"
         }
       ],
       "effortSupport": "level",
