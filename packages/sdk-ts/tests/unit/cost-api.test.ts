@@ -1644,7 +1644,6 @@ async function testDroidBuildCommand(): Promise<void> {
   assertEqual(droid.gatewayModelAliases?.["glm-5.3"], "openrouter/z-ai/glm-5.3", "Droid gateway maps GLM alias");
   assertEqual(droid.gatewayModelAliases?.["glm-5.3-flash"], "openrouter/z-ai/glm-5.3-flash", "Droid gateway maps GLM Flash alias");
   assertEqual(droid.gatewayModelAliases?.["glm-5.3-flash-fireworks"], "glm-5.3-flash-fireworks", "Droid gateway maps GLM Flash Fireworks alias to the bare gateway name");
-  assertEqual(droid.gatewayModelAliases?.["deepseek-v4-flash-vision"], "deepseek-v4-flash-vision", "Droid gateway maps DeepSeek V4 Flash Vision alias to the bare gateway name");
   assertEqual(droid.gatewayModelAliases?.["qwen3.7-max"], "dashscope/qwen3.7-max", "Droid gateway maps Qwen alias");
 
   const gatewayCmd = droid.buildCommand({
@@ -1699,7 +1698,6 @@ async function testDroidGatewayModelAliases(): Promise<void> {
   assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.3"), "openrouter/z-ai/glm-5.3", "gateway maps GLM to OpenRouter route");
   assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.3-flash"), "openrouter/z-ai/glm-5.3-flash", "gateway maps GLM Flash to OpenRouter route");
   assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.3-flash-fireworks"), "glm-5.3-flash-fireworks", "gateway sends GLM Flash Fireworks as the bare route name");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("deepseek-v4-flash-vision"), "deepseek-v4-flash-vision", "gateway sends DeepSeek V4 Flash Vision as the bare route name");
   assertEqual((gatewayAgent as any).resolveGatewayModel("qwen3.7-max"), "dashscope/qwen3.7-max", "gateway maps Qwen to DashScope route");
   assertEqual((gatewayAgent as any).resolveGatewayModel("claude-sonnet-5"), "claude-sonnet-5", "gateway leaves Claude model unchanged");
   assertEqual((directAgent as any).resolveGatewayModel("kimi-k3"), "kimi-k3", "direct mode leaves Droid-native Kimi model unchanged");

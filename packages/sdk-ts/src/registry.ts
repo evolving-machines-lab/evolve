@@ -807,7 +807,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
       { alias: "glm-5.3-flash-fireworks", modelId: "glm-5.3-flash-fireworks", description: "Zhipu GLM-5.3 Flash on Fireworks via the Evolve gateway" },
-      { alias: "deepseek-v4-flash-vision", modelId: "deepseek-v4-flash-vision", description: "DeepSeek V4 Flash Vision (Fireworks) via the Evolve gateway" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -824,7 +823,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "glm-5.3": "openrouter/z-ai/glm-5.3",
       "glm-5.3-flash": "openrouter/z-ai/glm-5.3-flash",
       "glm-5.3-flash-fireworks": "glm-5.3-flash-fireworks",
-      "deepseek-v4-flash-vision": "deepseek-v4-flash-vision",
       "qwen3.7-max": "dashscope/qwen3.7-max",
     },
     droidGatewaySettings: {
