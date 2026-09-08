@@ -507,8 +507,8 @@ export interface Rubric {
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
- * wave. `{}` is legal and means "all defaults": glm-5.3-flash-fireworks
- * at its per-model effort (max) over Harbor's default rubric
+ * wave. `{}` is legal and means "all defaults": glm-5.3-flash at its
+ * per-model effort (max) over Harbor's default rubric
  * (reward_hacking, task_specification — their
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
@@ -530,15 +530,15 @@ export interface Rubric {
 export interface AnalyzeConfigInput {
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * glm-5.3-flash-fireworks on this platform's claude roster (GLM-5.3-Flash
-   * served by Fireworks through the gateway route of that name; the
-   * platform's ruling 2026-09-08: GLM-5.3-Flash on Fireworks at max, the
-   * effort its published scores use) — a recorded deviation from Harbor's
-   * default analyze model (their cli/analyze.py `claude-haiku-4-5`):
-   * analysis is input-dominated, and this is the roster's intelligence-per-
-   * input-dollar pick at its published effort; `deepseek-v4-flash-vision`,
-   * `glm-5.3-flash` and `haiku` stay on the roster as alternatives,
-   * `glm-5.3` to escalate. The value speaks
+   * glm-5.3-flash on this platform's claude roster (GLM-5.3-Flash, served
+   * from Fireworks behind the gateway's plain name; the platform's ruling
+   * 2026-09-08: one GLM-5.3-Flash, from Fireworks, under the plain name,
+   * at max — the effort its published scores use) — a recorded deviation
+   * from Harbor's default analyze model (their cli/analyze.py
+   * `claude-haiku-4-5`): analysis is input-dominated, and this is the
+   * roster's intelligence-per-input-dollar pick at its published effort;
+   * `deepseek-v4-flash-vision` and `haiku` stay on the roster as
+   * alternatives, `glm-5.3` to escalate. The value speaks
    * the same vocabulary as `agents[].model_name`: either advertised
    * spelling is accepted and stored AS GIVEN (the default is the roster
    * alias), the wire id is resolved only when the analyzer runs, and every
@@ -576,11 +576,10 @@ export interface AnalyzeConfigInput {
    * `analyze.reasoning_efforts`, an unknown value is refused
    * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
    * applies (`analyze.models[].default_reasoning_effort`: max on
-   * glm-5.3-flash-fireworks, the default model — the platform's ruling
-   * 2026-09-08, the effort its published scores use; high on
-   * deepseek-v4-flash-vision; low on glm-5.3-flash — the platform's ruling
-   * for a model whose thinking Z.ai documents as forced, with no levels —
-   * the claude harness default elsewhere). The effort is always passed to the analyzer explicitly and
+   * glm-5.3-flash, the default model — the platform's ruling 2026-09-08,
+   * the effort its published scores use; high on deepseek-v4-flash-vision
+   * — DeepSeek's own default; the claude harness default elsewhere). The
+   * effort is always passed to the analyzer explicitly and
    * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
    * extension: Harbor's analyze has no effort option; this is the run
    * door's existing platform vocabulary applied to analyze.
@@ -3717,8 +3716,8 @@ export interface JobsClient {
    * them with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
-   * (or `{}`) means the defaults: glm-5.3-flash-fireworks at its
-   * per-model effort over Harbor's default rubric. CANCELLED trials are
+   * (or `{}`) means the defaults: glm-5.3-flash at its per-model effort
+   * over Harbor's default rubric. CANCELLED trials are
    * never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
