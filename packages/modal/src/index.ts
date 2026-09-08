@@ -13,6 +13,11 @@
  *
  * Modal-specific notes:
  * - No native file APIs - uses exec() with stdin/stdout
+ * - Named Volumes mount at create (`volumes`, keyed by in-box path, read-only
+ *   or read-write) — Modal's "upload once, read from many sandboxes" store.
+ *   modal@0.9.0 has no upload-to-Volume call, so a Volume is filled from
+ *   INSIDE a sandbox that mounts it read-write (background commits while it
+ *   runs, a final commit when it exits); this package adds none either
  * - pause() not supported - throws error (use Evolve checkpoints for persistence)
  * - Requires app context for sandbox creation
  * - Hard 24h sandbox lifetime cap (ModalSandboxLifetimeError when exceeded)
@@ -32,6 +37,7 @@ import {
   Image,
   ContainerProcess,
   NotFoundError,
+  type Volume,
 } from "modal";
 import { pack } from "tar-stream";
 
@@ -248,6 +254,106 @@ function mapBootCommand(bootCommand?: readonly string[]): { command?: string[] }
     );
   }
   return { command: [...bootCommand] };
+}
+
+/**
+ * One named Modal Volume to mount at sandbox creation — the value of the
+ * `volumes` create option, keyed by its absolute in-box mount path.
+ */
+export interface ModalVolumeMount {
+  /** The Volume's name in the Modal workspace (client.volumes.fromName). */
+  name: string;
+  /**
+   * Mount read-only (default false). Enforced by Modal inside the box: a
+   * write on a read-only mount answers EROFS ("Read-only file system").
+   */
+  readOnly?: boolean;
+  /**
+   * Create the Volume when no Volume of that name exists (default false —
+   * a missing Volume is a typed refusal, ModalVolumeError "not-found").
+   */
+  createIfMissing?: boolean;
+}
+
+/** Why a Volume mount could not be honored. */
+export type ModalVolumeErrorReason =
+  /** The mount path is not an absolute in-box path (or is "/"). Refused offline. */
+  | "invalid-mount-path"
+  /** The Volume name is blank. Refused offline. */
+  | "invalid-name"
+  /** No Volume of that name exists and createIfMissing was not set. */
+  | "not-found"
+  /** Modal could not resolve the Volume for another reason (its words in the message). */
+  | "resolve-failed";
+
+/**
+ * Typed error for a `volumes` entry this provider cannot mount. Thrown by
+ * create() — the two offline reasons before any network call, the two
+ * resolve reasons before any sandbox exists, so a refused mount never leaves
+ * a box behind. `cause` carries Modal's own error on the resolve reasons.
+ */
+export class ModalVolumeError extends Error {
+  readonly reason: ModalVolumeErrorReason;
+  readonly mountPath: string;
+  readonly volumeName: string;
+
+  constructor(reason: ModalVolumeErrorReason, mountPath: string, volumeName: string, message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "ModalVolumeError";
+    this.reason = reason;
+    this.mountPath = mountPath;
+    this.volumeName = volumeName;
+  }
+}
+
+/** One validated Volume mount, ready to resolve. */
+interface ResolvedVolumeMount {
+  mountPath: string;
+  name: string;
+  readOnly: boolean;
+  createIfMissing: boolean;
+}
+
+/**
+ * Evolve's `volumes` option -> the list create() resolves, same shape as
+ * mapIdleTimeout and mapBootCommand: option in, validated fragment out, and
+ * ABSENT MEANS ABSENT — no option (or an empty record) yields no mounts and
+ * the create call carries no `volumes` key at all.
+ *
+ * Offline refusals, before any app/image/Volume round trip: a mount path
+ * that is not absolute (Modal mounts by absolute path; a relative one has
+ * no meaning) or is "/" (mounting over the root filesystem), and a blank
+ * Volume name (fromName would answer with a confusing not-found).
+ */
+function mapVolumeMounts(volumes?: Record<string, ModalVolumeMount>): ResolvedVolumeMount[] {
+  if (!volumes) return [];
+  const mounts: ResolvedVolumeMount[] = [];
+  for (const [mountPath, mount] of Object.entries(volumes)) {
+    if (!mountPath.startsWith("/") || mountPath === "/") {
+      throw new ModalVolumeError(
+        "invalid-mount-path",
+        mountPath,
+        mount.name,
+        `Modal Volume mount path ${JSON.stringify(mountPath)} is invalid: it must be an absolute in-box path other than "/"`
+      );
+    }
+    const name = mount.name?.trim() ?? "";
+    if (name.length === 0) {
+      throw new ModalVolumeError(
+        "invalid-name",
+        mountPath,
+        mount.name ?? "",
+        `Modal Volume mounted at ${mountPath} has a blank name`
+      );
+    }
+    mounts.push({
+      mountPath,
+      name,
+      readOnly: mount.readOnly === true,
+      createIfMissing: mount.createIfMissing === true,
+    });
+  }
+  return mounts;
 }
 
 /**
@@ -827,6 +933,35 @@ export interface SandboxCreateOptions {
     allowedDestinations?: string[];
   }>;
   /**
+   * Named Modal Volumes mounted into the sandbox at create time, keyed by
+   * the ABSOLUTE in-box mount path. Each entry is resolved through
+   * client.volumes.fromName(name, { createIfMissing }) (modal@0.9.0
+   * index.d.ts:6456) and mounted with its own mount options
+   * (Volume.withMountOptions, index.d.ts:6499-6512) as the create call's
+   * `volumes` record (index.d.ts:7668). A read-only mount is enforced by
+   * Modal in the box (a write answers EROFS).
+   *
+   * WHAT A VOLUME IS FOR: bytes many sandboxes need — Modal's own guidance
+   * for data shared across sandboxes is to load it into a Volume once and
+   * mount it everywhere (modal.com/docs/guide/volumes, /guide/sandbox-files)
+   * — instead of moving them through this provider's per-message stdin
+   * path once per box (MODAL_STDIN_CHUNK_BYTES states that bound). Measured
+   * live 2026-09-08 (160 MiB, python:3.11-slim): a read from a mounted
+   * Volume 0.2-1.1 s (148-773 MiB/s) against 24-37 s per stdin upload.
+   *
+   * FILLING ONE: modal@0.9.0 exposes no upload-to-Volume call, so a Volume
+   * is written from INSIDE a sandbox that mounts it read-write; Modal
+   * commits the writes in the background while that sandbox runs and once
+   * more when it exits (the create call always sets allowBackgroundCommits,
+   * index.js:55511-55521), and a sandbox created after that exit sees the
+   * committed files at boot.
+   *
+   * ABSENT MEANS ABSENT: no option, no `volumes` key on the create call.
+   * Invalid entries are refused with ModalVolumeError before any network
+   * call; a Volume Modal cannot resolve is refused before any sandbox exists.
+   */
+  volumes?: Record<string, ModalVolumeMount>;
+  /**
    * Run all commands and file operations as this user (default "user"),
    * enforced via an `su <user> -c` wrapper since Modal executes everything as
    * root. Pass "root" to run directly as root with no wrapper.
@@ -995,6 +1130,15 @@ export interface SandboxProvider {
    * as the sandbox main process.
    */
   readonly supportsBootCommand?: boolean;
+
+  /**
+   * TRUE on every build whose create() maps SandboxCreateOptions.volumes to
+   * Modal's create-time Volume mounts. Same law as supportsBootCommand: an
+   * older build would silently drop the unknown option and boot a box with
+   * nothing mounted, so a consumer that relies on the mount checks this
+   * before it fills or reads a Volume.
+   */
+  readonly supportsVolumes?: boolean;
 
   /** Create new sandbox */
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
@@ -1574,6 +1718,8 @@ export class ModalProvider implements SandboxProvider {
   readonly name = "Modal";
   /** create() maps bootCommand (see SandboxCreateOptions.bootCommand). */
   readonly supportsBootCommand = true;
+  /** create() maps volumes (see SandboxCreateOptions.volumes). */
+  readonly supportsVolumes = true;
   private readonly client: ModalClient;
   private readonly appName: string;
   private readonly defaultTimeoutMs: number;
@@ -1803,6 +1949,9 @@ export class ModalProvider implements SandboxProvider {
     // Same offline-first law: an empty boot command is refused here, before
     // the app/image round trips, never discovered as a booted entrypoint.
     const bootParams = mapBootCommand(options.bootCommand);
+    // Same law again for the Volume mounts: a relative mount path or a blank
+    // Volume name is refused here, offline, never as a failed create.
+    const volumeMounts = mapVolumeMounts(options.volumes);
     // A box whose later phases differ from its boot policy is created in the
     // SWITCHABLE shape (two allowlists, possibly empty) rather than the blunt
     // `blockNetwork: true` one, because Modal refuses to combine the two and a
@@ -1830,6 +1979,12 @@ export class ModalProvider implements SandboxProvider {
     const { tag: resolvedImage, image: builtImage } = await this.resolveAndBuildImage(
       options.image || this.imageName
     );
+
+    // The Volumes, resolved by name AFTER the app and image (the same
+    // offline-first order as everything above) and BEFORE the sandbox exists:
+    // a Volume Modal cannot resolve is a typed refusal that leaves no box
+    // behind. Absent means absent — no mounts, no `volumes` key.
+    const volumes = await this.resolveVolumes(volumeMounts);
 
     // Filter out undefined values and only pass env if non-empty
     // Modal SDK throws if env is empty object or contains undefined values
@@ -1867,6 +2022,7 @@ export class ModalProvider implements SandboxProvider {
       env,
       tags,
       ...networkParams,
+      ...(volumes !== undefined ? { volumes } : {}),
     });
 
     // Fix workspace directory ownership (Modal creates it as root, but the
@@ -1882,6 +2038,44 @@ export class ModalProvider implements SandboxProvider {
     this.sandboxUsers.set(sandbox.sandboxId, user);
 
     return new ModalSandboxImpl(sandbox, resolvedImage, user);
+  }
+
+  /**
+   * The validated mounts -> Modal's `volumes` create record: each Volume
+   * resolved by name (client.volumes.fromName, createIfMissing as declared)
+   * and carrying its mount options (withMountOptions — readOnly stated
+   * explicitly both ways, since the SDK keeps undefined fields from any
+   * earlier call on the same Volume object). Modal's NotFoundError becomes
+   * ModalVolumeError "not-found", anything else "resolve-failed", both with
+   * Modal's error as the cause. Undefined when there is nothing to mount.
+   */
+  private async resolveVolumes(
+    mounts: ResolvedVolumeMount[]
+  ): Promise<Record<string, Volume> | undefined> {
+    if (mounts.length === 0) return undefined;
+    const volumes: Record<string, Volume> = {};
+    for (const mount of mounts) {
+      let volume: Volume;
+      try {
+        volume = await this.client.volumes.fromName(mount.name, {
+          createIfMissing: mount.createIfMissing,
+        });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        const notFound = err instanceof NotFoundError || (err instanceof Error && err.name === "NotFoundError");
+        throw new ModalVolumeError(
+          notFound ? "not-found" : "resolve-failed",
+          mount.mountPath,
+          mount.name,
+          notFound
+            ? `Modal Volume "${mount.name}" (to mount at ${mount.mountPath}) does not exist and createIfMissing was not set: ${detail}`
+            : `Modal Volume "${mount.name}" (to mount at ${mount.mountPath}) could not be resolved: ${detail}`,
+          err
+        );
+      }
+      volumes[mount.mountPath] = volume.withMountOptions({ readOnly: mount.readOnly });
+    }
+    return volumes;
   }
 
   async connect(sandboxId: string, _timeoutMs?: number): Promise<SandboxInstance> {
@@ -2106,6 +2300,7 @@ export const _testCollectSandboxes = collectSandboxes;
 export const _testValidateTimeout = validateTimeout;
 export const _testMapIdleTimeout = mapIdleTimeout;
 export const _testMapBootCommand = mapBootCommand;
+export const _testMapVolumeMounts = mapVolumeMounts;
 
 /**
  * TYPE-ONLY handle on the concrete sandbox class, for the contract-conformance
