@@ -29,6 +29,7 @@ import { parse as parseToml } from "smol-toml";
 import {
   ANALYSIS_ARTIFACT_STREAMS,
   ANALYSIS_STATUSES,
+  CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
   ImportSettleError,
@@ -40,6 +41,7 @@ import {
   assembleAnalysisTree,
   assembleTrialTree,
   auth,
+  checks,
   datasets,
   jobEvolveRecord,
   jobs,
@@ -61,6 +63,10 @@ import type {
   AgentInput,
   AnalysisArtifactStream,
   AnalysisStatus,
+  Check,
+  CheckConfigInput,
+  CheckStatus,
+  TaskCheck,
   AnalyzeConfigInput,
   AuthStatus,
   Organization,
@@ -754,6 +760,40 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
+  // Task quality checks — the READ side of Harbor's `check`. The verb itself
+  // is top-level (`evolve check <path>`, TOP_LEVEL_COMMANDS below, Harbor's
+  // cli/main.py:163); these two read a hosted check back — a record Harbor's
+  // local foreground command has no need to re-read, and a hosted 202 does.
+  // `evolve check list|show` is routed here by parseArgs; a task directory
+  // literally named `list` or `show` is written `./list`.
+  check: {
+    summary: "Read back task quality checks (the verb itself is `evolve check <path>`)",
+    commands: {
+      list: {
+        summary: "List your task quality checks (newest first)",
+        flags: {
+          ...LIST_FLAGS,
+          scope: SCOPE_FLAG,
+          status: {
+            kind: "string",
+            value: "<s1,s2,...>",
+            help: `Filter by check status (${CHECK_STATUSES.join(", ")})`,
+          },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve check list --status running",
+      },
+      show: {
+        summary: "Show one task quality check in full (Harbor's check report)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<check-id>",
+        example: "evolve check show 5f2c9b1e-…",
+      },
+    },
+  },
   // Managed-agent SESSIONS — the other hosted lane, read-only here: the runs
   // the SDK's `.run()` recorded to the dashboard, listed and inspected
   // headless through sessions(). A session has one owner and no
@@ -1178,6 +1218,92 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     positionalUsage: "<job-id>",
     example: "evolve analyze cme12ab34 -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch",
   },
+  // Harbor's `check` is a top-level command too (their cli/main.py:163
+  // binds check_command beside analyze); its flags are theirs
+  // (cli/analyze.py:84-148), the same trio as analyze plus the task
+  // selection: -i/--include-task-name, -x/--exclude-task-name (globs,
+  // repeatable), -l/--n-tasks. Not carried, for the analyze verb's own
+  // reasons: -a/--agent, --ak, --ae, --ek, -k/--n-attempts, --job-name,
+  // -o/--jobs-dir, -c/--config. --effort and --json are the platform's
+  // conventions, as on analyze; --watch follows the hosted 202.
+  check: {
+    summary:
+      "Check task quality against a rubric (Harbor's `harbor check`; server-side; add --watch to follow)",
+    flags: {
+      model: {
+        kind: "string",
+        short: "m",
+        value: "<name>",
+        help:
+          "Model the checker agent runs (default: glm-5.3-flash — the analyzer's default, a recorded deviation " +
+          "from Harbor's claude-sonnet-4-6; must be on the claude roster, GET /api/meta)",
+      },
+      effort: {
+        kind: "string",
+        value: "<value>",
+        help: "Reasoning effort the checker runs at (values: GET /api/meta analyze; default: the per-model default)",
+      },
+      rubric: {
+        kind: "string",
+        short: "r",
+        value: "<path>",
+        help:
+          "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} shape; " +
+          "default: Harbor's default check rubric — eleven task-quality criteria)",
+      },
+      prompt: {
+        kind: "string",
+        short: "p",
+        value: "<path>",
+        help:
+          "Prompt file for the evaluator agent (Harbor's -p/--prompt; its text replaces the built-in " +
+          "check prompt, {task_path}/{file_tree}/{criteria_guidance} rendered). Uses the built-in default if not specified",
+      },
+      env: {
+        kind: "string",
+        short: "e",
+        value: "<provider>",
+        help: "Sandbox provider the checker runs on (Harbor's -e/--env; the job lineup, GET /api/meta; default: the platform's analysis default)",
+      },
+      "n-concurrent": {
+        kind: "number",
+        short: "n",
+        value: "<n>",
+        help: "Max concurrent task checks (beneath the organization's ceiling; default: the ceiling)",
+      },
+      "include-task-name": {
+        kind: "repeat",
+        short: "i",
+        value: "<glob>",
+        help: "Only check tasks matching glob (repeatable)",
+      },
+      "exclude-task-name": {
+        kind: "repeat",
+        short: "x",
+        value: "<glob>",
+        help: "Skip tasks matching glob (repeatable)",
+      },
+      "n-tasks": {
+        kind: "number",
+        short: "l",
+        value: "<n>",
+        help: "Max tasks to check (after the globs, in sorted directory order)",
+      },
+      watch: {
+        kind: "boolean",
+        help: "Poll until every task check settles (2 s between reads, backing off to 30 s while nothing changes)",
+      },
+      quiet: {
+        kind: "boolean",
+        short: "q",
+        help: "With --watch: suppress the progress lines, print the final report only",
+      },
+    },
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalUsage: "<path>",
+    example: "evolve check ./tasks -i 'abs-*' -l 5 --watch",
+  },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
   // cli/main.py); ours is a deliberate subset — no --public/--share-org/
   // --share-user/--org (no sharing surface yet; the flags adopt Harbor's exact
@@ -1502,7 +1628,16 @@ export function parseArgs(argv: string[]): Invocation {
     return { command: "version", positionals: [], flags: {} };
   }
   const topLevel = TOP_LEVEL_COMMANDS[head];
-  if (topLevel) {
+  // `check` is both Harbor's top-level verb (`evolve check <path>`) and the
+  // noun of its two read verbs (`evolve check list|show`, GROUPS.check): a
+  // first word that names one of those verbs routes to the group, anything
+  // else is the path. A task directory literally named `list` or `show` is
+  // written `./list`.
+  const readVerb =
+    head === "check" && argv[1] !== undefined && !argv[1].startsWith("-")
+      ? resolveVerb(GROUPS.check, argv.slice(1))
+      : null;
+  if (topLevel && readVerb === null) {
     return parseCommandArgs(head, topLevel, argv.slice(1));
   }
 
@@ -4523,6 +4658,229 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   return (final.stats.analysis?.n_failed ?? 0) > 0 ? 1 : 0;
 }
 
+/** Python's str.title() over the criterion name with underscores as spaces — Harbor's row label (cli/analyze.py:37). */
+function checkRowLabel(name: string): string {
+  return name
+    .replace(/_/g, " ")
+    .split(" ")
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : word))
+    .join(" ");
+}
+
+/**
+ * Harbor's check renderers (cli/analyze.py:29-81), as lines: ONE task
+ * prints its checks table (Check | Outcome | Explanation, the criterion
+ * titled) and the agent cost; several print the summary table (Task | Pass
+ * | Fail | N/A | Cost ($)) with an errored task's row dashed, then one
+ * `❌ task: reason` line per failed task and the total agent cost — their
+ * `_render_checks_table` / `_render_check_summary`. A task that is still
+ * queued or running has no verdict yet and prints its status in the
+ * outcome column.
+ */
+export function checkResultLines(check: Check): string[] {
+  const lines: string[] = [];
+  const failed = check.results.filter((r) => r.status === "failed");
+  if (check.results.length === 1) {
+    const result = check.results[0];
+    if (result.status === "failed" && result.failure) {
+      lines.push(`❌ ${result.task_name}: ${result.failure.phase}: ${result.failure.message}`);
+      return lines;
+    }
+    lines.push(`Task Quality Checks: ${result.task_name}`);
+    const rows: string[][] = [["CHECK", "OUTCOME", "EXPLANATION"]];
+    for (const [name, verdict] of Object.entries(result.checks ?? {})) {
+      rows.push([checkRowLabel(name), verdict.outcome, oneLine(verdict.explanation)]);
+    }
+    if (rows.length === 1) rows.push(["-", result.status, "-"]);
+    lines.push(...table(rows));
+    if (result.cost_usd !== null) lines.push(`Agent cost: $${result.cost_usd.toFixed(4)}`);
+    return lines;
+  }
+  lines.push("Task Quality Checks");
+  const rows: string[][] = [["TASK", "PASS", "FAIL", "N/A", "COST ($)"]];
+  for (const result of check.results) {
+    if (result.status === "failed") {
+      rows.push([result.task_name, "-", "-", "-", "-"]);
+      continue;
+    }
+    if (result.status !== "completed") {
+      rows.push([result.task_name, result.status, "", "", "-"]);
+      continue;
+    }
+    const counts = { pass: 0, fail: 0, not_applicable: 0 };
+    for (const verdict of Object.values(result.checks ?? {})) counts[verdict.outcome] += 1;
+    rows.push([
+      result.task_name,
+      String(counts.pass),
+      String(counts.fail),
+      String(counts.not_applicable),
+      result.cost_usd !== null ? result.cost_usd.toFixed(4) : "-",
+    ]);
+  }
+  lines.push(...table(rows));
+  for (const result of failed) {
+    if (result.failure) {
+      lines.push(`❌ ${result.task_name}: ${result.failure.phase}: ${result.failure.message.split("\n")[0]}`);
+    }
+  }
+  if (check.cost_usd !== null) lines.push(`Total agent cost: $${check.cost_usd.toFixed(4)}`);
+  return lines;
+}
+
+/** One line per task, the watch's progress: `alpha completed · beta running · gamma queued`. */
+function checkTally(check: Check): string {
+  const counts: Record<string, number> = {};
+  for (const result of check.results) counts[result.status] = (counts[result.status] ?? 0) + 1;
+  return Object.entries(counts)
+    .map(([status, n]) => `${n} ${status}`)
+    .join(" · ");
+}
+
+/** The record head for `check show` and the verb's return: id, status, source, policy, then Harbor's tables. */
+export function checkDetailLines(check: Check): string[] {
+  const criteria = check.rubric.criteria.length;
+  const rows: string[][] = [
+    ["check id", check.id],
+    ["status", check.status],
+    ["source", `archive ${check.source.bytes} bytes sha256 ${check.source.sha256.slice(0, 12)}…`],
+    ["tasks", `${check.results.length} (${checkTally(check)})`],
+    ["model", `${check.model_name} at effort ${check.reasoning_effort}`],
+    ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
+    ["provider", check.sandbox_provider],
+  ];
+  if (check.prompt !== null) rows.push(["prompt", "custom (Harbor's -p text)"]);
+  if (check.n_concurrent !== null) rows.push(["n_concurrent", String(check.n_concurrent)]);
+  if (check.include_task_names.length > 0) rows.push(["include", check.include_task_names.join(", ")]);
+  if (check.exclude_task_names.length > 0) rows.push(["exclude", check.exclude_task_names.join(", ")]);
+  if (check.n_tasks !== null) rows.push(["n_tasks", String(check.n_tasks)]);
+  rows.push(["created", check.created_at]);
+  if (check.finished_at) rows.push(["finished", check.finished_at]);
+  return [...table(rows), "", ...checkResultLines(check)];
+}
+
+/**
+ * `evolve check <path>` — Harbor's `harbor check <PATH>` (their cli/main.py:163;
+ * check_command cli/analyze.py:149-207) as the hosted verb: the directory
+ * (one task, or a directory of tasks) is tarred and streamed, the policy
+ * rides as the config part, and the 202 IS the accepted check — printed and
+ * returned, the shape of `analyze` (Harbor's hosted launch submits and
+ * returns; the wait is its own poll). --watch is that poll, opted in, ending
+ * with Harbor's own report tables; Harbor's exit law holds — any errored
+ * task is exit 1 (cli/analyze.py:206-207).
+ */
+async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
+  const json = inv.flags.json === true;
+  const watch = inv.flags.watch === true;
+  const quiet = inv.flags.quiet === true;
+  const client = checks(clientConfig(inv));
+  const knobs: CheckConfigInput = {};
+  if (inv.flags.model !== undefined) knobs.model_name = String(inv.flags.model);
+  if (inv.flags.rubric !== undefined) knobs.rubric = loadRubricFile(String(inv.flags.rubric));
+  if (inv.flags.prompt !== undefined) knobs.prompt = loadPromptFile(String(inv.flags.prompt));
+  if (inv.flags.env !== undefined) knobs.sandbox_provider = String(inv.flags.env) as EvalSandboxProvider;
+  if (inv.flags.effort !== undefined) knobs.reasoning_effort = String(inv.flags.effort);
+  if (inv.flags["n-concurrent"] !== undefined) knobs.n_concurrent = inv.flags["n-concurrent"] as number;
+  if (inv.flags["include-task-name"] !== undefined) knobs.include_task_names = inv.flags["include-task-name"] as string[];
+  if (inv.flags["exclude-task-name"] !== undefined) knobs.exclude_task_names = inv.flags["exclude-task-name"] as string[];
+  if (inv.flags["n-tasks"] !== undefined) knobs.n_tasks = inv.flags["n-tasks"] as number;
+  const path = inv.positionals[0];
+  const source = /\.(tar\.gz|tgz)$/i.test(path) ? { archive_path: path } : { directory: path };
+  if (!json && !quiet) io.out("🔎 Checking task quality...");
+  const accepted = await client.create({ source, ...knobs });
+  if (!watch) {
+    if (json) {
+      io.out(JSON.stringify(accepted));
+    } else {
+      for (const line of checkDetailLines(accepted)) io.out(line);
+      io.out("");
+      io.out(`Follow it with: evolve check show ${accepted.id}`);
+    }
+    return 0;
+  }
+  if (json) {
+    io.out(JSON.stringify({ kind: "check.accepted", check: accepted }));
+  } else if (!quiet) {
+    io.out(`Check ${accepted.id} — ${accepted.results.length} task${accepted.results.length === 1 ? "" : "s"} queued, watching…`);
+  }
+  const final = await client.watch(accepted.id, {
+    onProgress: (current) => {
+      if (quiet) return;
+      io.out(json ? JSON.stringify({ kind: "check.progress", check: current }) : `tasks ${checkTally(current)}`);
+    },
+  });
+  if (json) {
+    io.out(JSON.stringify({ kind: "check.final", check: final }));
+  } else {
+    io.out("");
+    for (const line of checkResultLines(final)) io.out(line);
+    io.out("");
+    io.out(`Report: evolve check show ${final.id}`);
+  }
+  return final.results.some((r) => r.status === "failed") ? 1 : 0;
+}
+
+function parseCheckStatusFilter(inv: Invocation): CheckStatus[] | undefined {
+  if (inv.flags.status === undefined) return undefined;
+  const statuses = String(inv.flags.status)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (statuses.length === 0) throw new CliUsageError("--status got an empty status list");
+  const unknown = statuses.filter((s) => !(CHECK_STATUSES as readonly string[]).includes(s));
+  if (unknown.length > 0) {
+    throw new CliUsageError(
+      `--status must name check statuses (${CHECK_STATUSES.join(", ")}); got: ${unknown.join(", ")}`
+    );
+  }
+  return statuses as CheckStatus[];
+}
+
+const CHECK_COLUMNS: ListColumn<Check>[] = [
+  { key: "id", header: "ID", cell: (c) => c.id },
+  { key: "status", header: "STATUS", cell: (c) => c.status },
+  { key: "tasks", header: "TASKS", cell: (c) => String(c.results.length) },
+  { key: "model", header: "MODEL", cell: (c) => c.model_name },
+  { key: "spent", header: "SPENT", cell: (c) => (c.cost_usd !== null ? `$${c.cost_usd.toFixed(4)}` : "-") },
+  { key: "created", header: "CREATED", cell: (c) => c.created_at },
+  { key: "finished", header: "FINISHED", cell: (c) => c.finished_at ?? "-" },
+];
+const CHECK_DEFAULT_COLUMNS = ["id", "status", "tasks", "model", "spent", "created"];
+
+async function cmdCheckList(inv: Invocation, io: CliIO): Promise<number> {
+  if (columnsHelpRequested(inv, io, CHECK_COLUMNS)) return 0;
+  const scope = parseScopeFlag(inv);
+  const status = parseCheckStatusFilter(inv);
+  const page = await checks(clientConfig(inv)).list({
+    ...pageOptions(inv),
+    ...(scope !== undefined ? { scope } : {}),
+    ...(status !== undefined ? { status } : {}),
+  });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(page));
+    return 0;
+  }
+  if (page.items.length === 0) {
+    if (inv.flags.quiet !== true) io.out("No checks.");
+    return 0;
+  }
+  renderList(inv, io, page.items, CHECK_COLUMNS, CHECK_DEFAULT_COLUMNS, (c) => c.id);
+  if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
+    io.out(`\nMore: evolve check list --cursor ${page.nextCursor}`);
+  }
+  return 0;
+}
+
+async function cmdCheckShow(inv: Invocation, io: CliIO): Promise<number> {
+  const check = await checks(clientConfig(inv)).get(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(check));
+  } else {
+    for (const line of checkDetailLines(check)) io.out(line);
+  }
+  // Harbor's exit law on the report (cli/analyze.py:206-207): an errored task is exit 1.
+  return check.results.some((r) => r.status === "failed") ? 1 : 0;
+}
+
 async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const req: { statuses?: TrialStatus[]; task_name?: string } = {};
@@ -6486,6 +6844,7 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   // same handler — so neither can drift into a second implementation.
   run: cmdJobStart,
   analyze: cmdAnalyze,
+  check: cmdCheck,
   upload: cmdUpload,
   "job start": cmdJobStart,
   "job list": cmdJobList,
@@ -6513,6 +6872,8 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "analysis show": cmdAnalysisShow,
   "analysis trace": cmdAnalysisTrace,
   "analysis download": cmdAnalysisDownload,
+  "check list": cmdCheckList,
+  "check show": cmdCheckShow,
   "session list": cmdSessionList,
   "session show": cmdSessionShow,
   "dataset list": cmdDatasetList,

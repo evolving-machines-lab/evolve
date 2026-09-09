@@ -637,6 +637,58 @@ The verifier always re-runs `separate`, under the verifier [network policy](#net
 
 ---
 
+## Check
+
+Harbor's `harbor check`, hosted: rubric-driven **task quality** review of a task directory — or a whole directory of task directories — before you publish it. For each task a checker agent (claude-code, Harbor's own check agent, in its own sealed sandbox) reads every file of the task — the instruction, the tests, the environment, the data files — and rules each criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written rationale. Nothing is modified: the task bytes are read in the sandbox and never written anywhere but the platform's own record.
+
+```python
+from evolve import checks
+
+async with checks() as c:
+    # Check one task directory under the defaults
+    # (glm-5.3-flash at effort max; Harbor's default rubric, eleven criteria)
+    accepted = await c.create('./my-task')            # returns at once — THE RESPONSE IS THE CHECK
+    print(accepted['status'], [r['status'] for r in accepted['results']])
+    # queued ['queued']
+
+    report = await c.watch(accepted['id'])             # follow it to its settled end
+    for result in report['results']:
+        for name, check in (result['checks'] or {}).items():
+            if check['outcome'] == 'fail':
+                print(result['task_name'], name, check['explanation'])
+    # my-task file_reference_mentioned The tests read output.csv, which instruction.md never names.
+```
+
+`create()` packs the directory into a gzipped tar on disk, streams it up, and returns the moment the check is accepted — one entry in `results` per task directory, each `queued` — exactly as Harbor's hosted launch submits and returns; `watch()` is the follow, a separate call on purpose (checks have no event stream, so it polls the check until every task settled — 2 s between reads while something moves, backing off to 30 s while nothing does — firing `on_progress` on every change). `get()` reads the report by id at any time, and `list()` is the catalog of every check you may read.
+
+Which directories are checked is Harbor's own rule (their `checker.py`): the directory you name when it **is** a task directory (`task.toml`, `environment/`, `instruction.md`, `tests/test.sh`), otherwise every top-level directory that is one, in sorted order; a directory that is not a task is skipped, never a refusal. A corpus laid out as `tasks/<name>/` is checked by naming `./tasks`. The selection knobs are Harbor's, with their exact names and their order — the include globs, then the exclude globs, then the cap:
+
+```python
+await c.create(
+    './tasks',
+    include_task_names=['abs-*', 'cache-*'],   # Harbor's -i/--include-task-name (fnmatch globs on the directory name)
+    exclude_task_names=['*-draft'],            # Harbor's -x/--exclude-task-name
+    n_tasks=20,                                # Harbor's -l/--n-tasks, after the globs
+    n_concurrent=4,                            # Harbor's -n/--n-concurrent — beneath your organization's max_concurrent_analyses
+)
+```
+
+A selection that leaves nothing — no task directory in the archive, or globs that match none — is refused at accept with `400 no_checkable_tasks` (Harbor's "No valid task directories found"), and nothing is stored. The default rubric is Harbor's `default-rubric.toml`, verbatim — `behavior_in_task_description`, `behavior_in_tests`, `informative_test_structure`, `anti_cheating_measures`, `structured_data_schema`, `pinned_dependencies`, `typos`, `tests_or_solution_in_image`, `test_deps_in_image`, `hardcoded_solution`, `file_reference_mentioned`. A custom rubric, model, prompt and effort are the same knobs [Analyze](#analyze) takes, under the same rules and the same typed refusals (`400 invalid_rubric` naming the field, `400 invalid_input` naming `check.model_name`, `check.prompt`, and so on); the prompt is Harbor's `check.txt` replaced by your text, rendered with `{task_path}`, `{file_tree}` and `{criteria_guidance}`, the output contract appended after it exactly as Harbor appends it. The model default is the analyzer's, `glm-5.3-flash` — a recorded deviation from Harbor's check default (`claude-sonnet-4-6`): one roster, one default for both rubric agents.
+
+```python
+await c.create(
+    './my-task',
+    model_name='glm-5.3',
+    rubric={'criteria': [{'name': 'has_readme', 'description': 'Does the task ship a README?', 'guidance': 'PASS if README.md exists at the task root.'}]},
+)
+```
+
+The report is Harbor's `CheckReport`: `results` carries one `QualityCheckResult` per task — `task_name`, the flat `checks` dict keyed by criterion (`{outcome, explanation}` each; a check has no summary — analyze does), `cost_usd` (the checker's own metered spend, None when nothing was measured) — plus the hosted provenance: each task's own id, its lifecycle (`queued`, `running`, `completed`, `failed`), the bounded attempt count (a checker run that produces no valid `check-result.json` is re-run once, the analyze verb's rule), and a typed `failure {phase, message}` where Harbor's result carries an `error` string. The check itself carries `status` (`queued` until a task starts, `running`, `completed` once every task settled — a check never fails as a whole; refusals happen at accept and a task's failure is on that task), `source` (the uploaded archive's sha256 and size), the policy it ran under, and `cost_usd`, Harbor's total. A check is readable by its creator and by every member of the owning organization; anyone else gets `404 check_not_found`, the same answer as an id that does not exist.
+
+Two deviations from Harbor are deliberate and named. Their `harbor check` is a client-side command that writes a `check_report.json` into a local job directory; here the check runs **server-side** on an uploaded copy and the report is a record with an id you can list and re-read. And the archive is bounded — 256 MiB compressed (`limits['uploads']['check_archive_bytes']` on `meta()`; a task directory is kilobytes), refused `413 upload_too_large` past it, with no resumable session door in this version. From the terminal: `evolve check ./my-task --watch` — not to be confused with `evolve dataset check`, the pre-flight that parses a corpus's `task.toml` files before a publish; `evolve check` runs the checker agent over the whole task.
+
+---
+
 ## Analyze
 
 Harbor's `harbor analyze`, hosted: rubric-driven trace analysis of a finished job's trials. For each trial an analyzer agent (claude-code, Harbor's default analyze agent, in its own sealed sandbox) reads the trial's recorded tree — the trajectory, the logs, the original task — and rules every criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written explanation and a 3–5 sentence summary of what happened. Use it to catch reward hacking, to audit whether task instructions were sufficient, or to run any read-the-evidence question over a whole job at once:
@@ -889,12 +941,13 @@ evolve job delete cme12ab34 -y --json  # {"job_id":"…","trials_deleted":12,"an
 
 ## CLI
 
-The SDK's TypeScript package ships the `evolve` binary — a thin shell over the SDK clients, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. Three commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint and `--from <url>` for a public archive the server fetches itself — it follows the import to the ingested job and prints the record and the analyze hint; `--no-wait` prints the import instead, and `evolve job import <id> --watch` re-attaches to it from anywhere). Singular nouns are canonical; `job`, `trial`, `analysis` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
+The SDK's TypeScript package ships the `evolve` binary — a thin shell over the SDK clients, and nothing in it needs Python. The grammar is noun-verb: `evolve <noun> <verb>`. Four commands also stand on their own at the top level, as in Harbor's CLI: `run`, taking `job start`'s flags and documenting itself as `evolve run`; `analyze`, the [trace-analysis verb](#analyze); `check`, the [task-quality verb](#check) (`evolve check <path>`); and `upload`, the [job-directory ingest](#upload-a-job) (`evolve upload <job_dir>`, with `-d/--dataset` as the task-linkage hint and `--from <url>` for a public archive the server fetches itself — it follows the import to the ingested job and prints the record and the analyze hint; `--no-wait` prints the import instead, and `evolve job import <id> --watch` re-attaches to it from anywhere). Singular nouns are canonical; `job`, `trial`, `analysis` and `dataset` also answer to their plurals as hidden aliases, as does `ls` for `list`. The plural `agents` is deliberately not an alias — that word is reserved for the managed-agents CLI and refuses with the reason, so use the singular `evolve agent` for eval agent arms.
 
 ```
 job      start | list | show | trials | tasks | compare | cancel | delete | stop | resume | retry | regrade | download | grep | imports | import
 trial    show | trace | download | retry | regrade | stop
 analysis list | show | trace | download
+check    list | show
 session  list | show
 dataset  list | show | publish | watch | download | activate
 skill    list | upload | show | delete
@@ -979,6 +1032,10 @@ evolve analyze <id> -m glm-5.3 -r rubric.toml
 evolve analyze <id> -m glm-5.3-flash --effort low   # the analyzer's effort, run's own flag
 evolve analyze <id> -p prompt.txt          # Harbor's prompt file replaces the built-in analyzer prompt
 
+evolve check ./my-task --watch             # task quality check (Harbor's check): every criterion ruled, Harbor's table
+evolve check ./tasks -i 'abs-*' -l 5       # a directory of tasks, Harbor's -i/-x globs and -l cap; returns the accepted check
+evolve check show <check-id>               # the report (exit 1 when any task errored); evolve check list for the catalog
+
 evolve upload jobs/2026-08-27__12-00-00 -d deep-swe@1.1   # ingest a Harbor job dir as a terminal job (follows the import)
 evolve upload --from https://example.com/job.tar.gz --no-wait   # the server fetches it; prints the import
 evolve job import <import-id> --watch                    # re-attach to an upload's ingest
@@ -1008,6 +1065,8 @@ evolve auth org show acme                   # one organization: role, members, q
 ```
 
 `evolve analyze <job-id>` is [Analyze](#analyze) end to end, in `run`'s shape: it POSTs the wave and returns at once with the job block — the `analysis` row carrying the queued tally — and the re-attach hint (`Follow it with: evolve job show <id>`); `--json` alone prints the accepted job body. `--watch` follows the wave to its settled end (analyses have no event stream, so the follow is the SDK's poll: 2 s between reads, backing off to 30 s while nothing changes), then prints one row per analyzed trial — the criterion outcomes, the analyzer's own cost, a summary excerpt — with every failed analysis shown typed below the table. `-m/--model`, `-r/--rubric <file>`, `-p/--prompt <file>` and `-e/--env <provider>` are Harbor's own four knobs (their cli/analyze.py); the rubric file is TOML, YAML, or JSON in Harbor's `{criteria}` shape (a `[[criteria]]` entry per criterion in TOML), parsed at the keyboard with unknown fields refused by name — the server still owns the bounds; the prompt file is read verbatim and sent as text (see [Analyze](#analyze) for the tokens it may use), an empty file refused at the keyboard. `-e` is re-aimed with the verb itself: Harbor's flag picks a local environment type (docker, daytona); here it picks which **hosted** provider's sandbox the analyzer boots — there is no local backend server-side — defaulting to the platform's analysis default, daytona. `--effort <value>` is `run`'s own flag applied to the analyzer (the one option beyond Harbor's four, a recorded hosted extension): the server's effort vocabulary, refused by name when unknown, defaulting per model (`max` on `glm-5.3-flash`, the default model; `high` on `deepseek-v4-flash-vision`). Under `--watch`, `-q` suppresses the progress lines and `--json` emits NDJSON envelopes (`analysis.accepted`, `analysis.stats` per tally change, `analysis.final` carrying the job and the analyzed trials). Exit codes are `run`'s: 0 on the accepted wave without `--watch`; with `--watch`, 0 only when every analysis completed — a wave with failed analyses exits 1, Harbor's own law. On `job start` / `run`, `--analyze` arms the embedded trigger (each trial analyzed as it settles; bare `--analyze` = all defaults), with `--analyze-model`, `--analyze-rubric <file>`, `--analyze-prompt <file>`, `--analyze-provider <provider>` and `--analyze-effort <value>` as the passthrough set — any of them implies `--analyze`, and over a `-c` config file's `analyze` object each flag overrides its own field, the retry merge rule. `job show` then carries an `analyze` row (the resolved policy) and an `analysis` row (the tally plus the analyzer's own spend, with a per-criterion line each); `trial show` prints the trial's latest analysis in full — verdicts with their explanations, the summary, the typed failure when there is one.
+
+`evolve check <path>` is [Check](#check) end to end, Harbor's own top-level verb (`harbor check <PATH>`) in `analyze`'s shape: `<path>` is one task directory or a directory of task directories (a ready-packed `.tar.gz` of one works too), streamed up and answered with the accepted check — printed with the re-attach hint (`Follow it with: evolve check show <id>`); `--json` alone prints the accepted check body. `--watch` follows the check to its settled end (the SDK's poll, 2 s backing off to 30 s), then prints Harbor's own report: one task prints their checks table (`CHECK | OUTCOME | EXPLANATION`, the criterion titled) and the agent cost, several print their summary table (`TASK | PASS | FAIL | N/A | COST ($)`) with each failed task's typed reason below it and the total agent cost. `-m/--model`, `-r/--rubric <file>`, `-p/--prompt <file>` and `-e/--env <provider>` are the same four knobs as on `analyze`; `-i/--include-task-name` and `-x/--exclude-task-name` (repeatable globs) and `-l/--n-tasks` are Harbor's check selection, `-n/--n-concurrent` its width; `--effort` is the platform's own, as on `analyze`. Under `--watch`, `-q` suppresses the progress lines and `--json` emits NDJSON envelopes (`check.accepted`, `check.progress` per change, `check.final`). Exit codes are Harbor's: 0 on the accepted check without `--watch`; with `--watch` (and on `check show`), 1 when any task errored. `evolve check list` and `evolve check show <id>` read checks back — the noun's two read verbs; a task directory literally named `list` or `show` is written `./list`. This is a different verb from `evolve dataset check`: that one is the publish **pre-flight**, parsing a corpus's `task.toml` files in seconds without an agent; `evolve check` runs the checker agent over every file of every task.
 
 Output follows one precedence everywhere: human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON for `--watch` streams), and `-q` for ids-only lists (on `job start --watch`, `-q` suppresses the event log and prints the final block only). `--columns` chooses and orders list columns (`--columns help` names them; for `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started` — the money column's key is `spent`, not `cost`; for `analysis list` they are `id`, `status`, `task`, `job`, `trial`, `model`, `attempts`, `spent`, `created`, `finished`; for `session list` they are `id`, `tag`, `agent`, `model`, `provider`, `sandbox`, `state`, `runtime`, `cost`, `steps`, `created`, `ended`), `--no-trunc` disables cell truncation, `--no-headers` drops the header row from piped output. `--limit` and `--cursor` page every listing the same way.
 

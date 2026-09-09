@@ -71,6 +71,8 @@ from evolve import (
     AnalysesClient,
     AnalysisStatus,
     AuthClient,
+    CheckStatus,
+    ChecksClient,
     DatasetsClient,
     EvalSandboxProvider,
     JobListScope,
@@ -212,6 +214,11 @@ OPERATION_TO_METHOD = {
     # (verdict, transcript, artifacts) ride the traces feed, which the
     # contract does not declare; this SDK speaks the contract's one door.
     'listAnalyses': (AnalysesClient, 'list'),
+    # Checks — Harbor's `harbor check`, hosted: the upload-and-start verb,
+    # the catalog, the report by id (watch() is the poll over get()).
+    'createCheck': (ChecksClient, 'create'),
+    'listChecks': (ChecksClient, 'list'),
+    'getCheck': (ChecksClient, 'get'),
     # Datasets
     'listDatasets': (DatasetsClient, 'list'),
     'getDataset': (DatasetsClient, 'get'),
@@ -518,6 +525,10 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     statuses = _spec_property_enum('TrialAnalysis', 'status')
     assert len(statuses) >= 4, 'the TrialAnalysis.status parse found too few — spec moved?'
     assert list(typing.get_args(AnalysisStatus)) == statuses
+
+    check_statuses = _spec_property_enum('Check', 'status')
+    assert len(check_statuses) >= 3, 'the Check.status parse found too few — spec moved?'
+    assert list(typing.get_args(CheckStatus)) == check_statuses
 
 
 def _spec_discriminator_mapping(schema: str) -> 'list[str]':
