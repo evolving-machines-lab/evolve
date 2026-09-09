@@ -4884,8 +4884,10 @@ async function testTrialDownloadSave() {
     assertEqual(verifier, "verifier says 1.0", "the verifier log is verifier/test-stdout.txt");
     const reward = JSON.parse(await readFile(join(target, "verifier", "reward.json"), "utf-8"));
     assertEqual(reward.reward, 1, "the rewards map is verifier/reward.json");
-    const home = await readFile(join(target, "agent", "sessions", "claude", "history.jsonl"), "utf-8");
-    assertEqual(home, "{}", "agent/sessions/ wears the home tree's visible names");
+    // A codex trial's home outside $CODEX_HOME/sessions has no Harbor slot:
+    // the lossless extension slot, keyed by the sandbox path.
+    const home = await readFile(join(target, "agent", "evolve-home", "root", ".claude", "history.jsonl"), "utf-8");
+    assertEqual(home, "{}", "the captured home lands by the harness table (agent/evolve-home/ for a slot-less path)");
     const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
     assertEqual(evolve.provider, "modal", "evolve.json names the provider");
     assertEqual(evolve.gateway.cost_usd, 0.5, "evolve.json carries the gateway meter");
@@ -4895,11 +4897,11 @@ async function testTrialDownloadSave() {
     // Null logs were never stored — absence is a normal answer, no empty files.
     let missingThrew = false;
     try {
-      await readFile(join(target, "agent", "stdout.log"), "utf-8");
+      await readFile(join(target, "agent", "codex.txt"), "utf-8");
     } catch {
       missingThrew = true;
     }
-    assert(missingThrew, "an unstored artifact writes no file");
+    assert(missingThrew, "an unstored artifact writes no file (the codex tee name, agent/codex.txt)");
     assert(out.some((l) => l.includes("config.json")), "reports the written files");
 
     // The directory now exists: a second save without --overwrite must refuse
@@ -5295,9 +5297,9 @@ async function testAnalysisDownloadSave() {
     const parsed = await readFile(join(target, "agent", "trace-parsed.jsonl"), "utf-8");
     assert(parsed.includes('"type":"tool_call"'), "the parsed transcript lands in agent/trace-parsed.jsonl");
     assertEqual(
-      await readFile(join(target, "agent", "sessions", "claude", "history.jsonl"), "utf-8"),
+      await readFile(join(target, "agent", "evolve-home", "root", ".claude", "history.jsonl"), "utf-8"),
       "{}",
-      "agent/sessions/ wears the home tree's visible names"
+      "the analyzer's home lands under agent/evolve-home/, keyed by its sandbox path"
     );
     const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
     assertEqual(evolve.analysis_id, "an-1", "evolve.json names the analysis");

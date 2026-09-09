@@ -375,10 +375,15 @@ export {
   analysisEvolveRecord,
   assembleAnalysisTree,
   assembleTrialTree,
+  DEFAULT_HARNESS_TRIAL_LAYOUT,
+  HARNESS_TRIAL_LAYOUTS,
+  harnessTrialLayout,
+  homeFileTrialPath,
   jobEvolveRecord,
   trialEvolveRecord,
   visibleHomeTree,
   type AnalysisTreeParts,
+  type HarnessTrialLayout,
   type TrialTreeParts,
 } from "./trial-tree";
 

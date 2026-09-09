@@ -8,8 +8,9 @@
  *     agent/ (trajectory, raw logs, parsed events, sessions/), verifier/,
  *     exception.txt — and absent artifacts are absent files, never empty
  *     placeholders;
- *   - agent/sessions/ wears the home tree's VISIBLE names (the same
- *     re-keying the server archive and the agent-home tgz apply);
+ *   - the stdout stream sits at Harbor's tee name for the harness and the
+ *     captured home at Harbor's slot for it, the rest lossless under
+ *     agent/evolve-home/ — the server's table, mirrored (HARNESS_TRIAL_LAYOUTS);
  *   - evolve.json carries the platform record Harbor has no slot for:
  *     gateway money/tokens per lane, provider, user_id, regrade lineage;
  *   - the assembly is deterministic — same parts, same bytes.
@@ -181,10 +182,10 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     Object.keys(files).sort(),
     [
       "agent/stderr.log",
-      "agent/stdout.log",
+      "agent/codex.txt",
       "agent/trace-parsed.jsonl",
       "agent/trajectory.json",
-      "agent/sessions/codex/sessions/rollout.jsonl",
+      "agent/sessions/rollout.jsonl",
       "config.json",
       "evolve.json",
       "result.json",
@@ -488,13 +489,13 @@ function fixtureAnalysisParts(): AnalysisTreeParts {
   assertEqual(
     Object.keys(files).sort(),
     [
-      "agent/sessions/claude/session.jsonl",
+      "agent/evolve-home/root/.claude/session.jsonl",
       "agent/stdout.log",
       "agent/trace-parsed.jsonl",
       "analysis.json",
       "evolve.json",
     ],
-    "the analysis tree: verdict at the run's root, analyzer streams in agent/, no trial-only files"
+    "the analysis tree: verdict at the run's root, analyzer streams in agent/ (the default layout), no trial-only files"
   );
   const verdict = JSON.parse(files["analysis.json"]) as Record<string, unknown>;
   assertEqual(verdict.id, "an-1", "analysis.json is the wire verdict document");
