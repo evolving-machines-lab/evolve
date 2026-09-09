@@ -16,6 +16,8 @@
  * tool_call            → Tool started (status: pending/in_progress)
  * tool_call_update     → Tool finished (status: completed/failed)
  * plan                 → TodoWrite updates
+ * error                → A failure the harness reported (never work)
+ * usage                → Token accounting the harness reported (never work)
  * ```
  *
  * @example UI Integration
@@ -161,7 +163,62 @@ export type SessionUpdate =
   | ToolCall
   | ToolCallUpdate
   | Plan
-  | AgentError;
+  | AgentError
+  | AgentUsage;
+
+/**
+ * Token accounting as the harness reported it on one wire line.
+ *
+ * The field names are Harbor's ATIF `Metrics` (harbor/models/trajectories/
+ * metrics.py: prompt_tokens, completion_tokens, cached_tokens, cost_usd,
+ * extra), camel-cased like every other OutputEvent field, so a trajectory
+ * builder copies them without renaming and the SDK and the ATIF document
+ * speak one vocabulary. ACP's own end-turn usage shape is still a draft RFD
+ * (docs/rfds/end-turn-token-usage.mdx) — when it stabilises this is the
+ * one place to reconcile.
+ *
+ * Only what the harness said is here: a counter it did not report is absent,
+ * never 0. `promptTokens` follows Harbor's arithmetic per harness (the cached
+ * and cache-written shares INCLUDED, claude_code.py:842-846, opencode.py:330);
+ * `extra` keeps the harness's remaining counters under their own wire names
+ * verbatim (cache_creation_input_tokens, reasoning_output_tokens, ...).
+ */
+export interface TokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  cachedTokens?: number;
+  costUsd?: number;
+  extra?: Record<string, unknown>;
+}
+
+/**
+ * The harness's own token accounting — NOT agent work.
+ *
+ * DELIBERATE EXTENSION BEYOND ACP, like AgentError. ACP's `usage_update` is
+ * context-window fill plus cumulative session cost (schema/v1 UsageUpdate:
+ * used, size, cost), and its per-turn token shape is an unresolved draft, so
+ * neither carries what every harness actually prints: per-call usage on the
+ * lines that produced it (claude and qwen `message.usage`, opencode
+ * `step_finish`), and a whole-run total on the terminal line (codex
+ * `turn.completed`, gemini `result.stats`, claude and qwen `result`, droid
+ * `completion`). Dropping those left every ATIF step without `metrics`.
+ *
+ * `scope` says which of the two a line is:
+ *   - "call": one LLM inference. Lines of the same `messageId` (OutputEvent)
+ *     repeat the same accounting — claude prints one line per content block
+ *     with the message's running usage — so a consumer keeps the LAST per
+ *     message id (claude_code.py:1147-1158) and sums across ids.
+ *   - "run": the harness's total for the whole run, reported once at the end.
+ *
+ * Excluded from isAgentWorkUpdate: accounting can never make a run that did
+ * nothing look like one that did. Parsers emit it only on successful terminal
+ * lines for the same reason (a failed run's total is the gateway meter's job).
+ */
+export interface AgentUsage {
+  sessionUpdate: "usage";
+  scope: "call" | "run";
+  usage: TokenUsage;
+}
 
 /**
  * A failure the HARNESS itself reported — not model output, not work.
@@ -195,7 +252,7 @@ export interface AgentError {
  * cannot drift between callers.
  */
 export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | undefined): boolean {
-  return !!update && update.sessionUpdate !== "error";
+  return !!update && update.sessionUpdate !== "error" && update.sessionUpdate !== "usage";
 }
 
 /**
@@ -320,13 +377,14 @@ export interface ToolCall {
  * }
  * ```
  *
- * @example Failed tool
+ * @example Failed tool — the harness's error text, verbatim (no fence, no
+ * prefix: the bytes are the harness's, a viewer decides how to frame them)
  * ```json
  * {
  *   "sessionUpdate": "tool_call_update",
  *   "toolCallId": "toolu_01ABC...",
  *   "status": "failed",
- *   "content": [{ "type": "content", "content": { "type": "text", "text": "```\nError: ...\n```" } }]
+ *   "content": [{ "type": "content", "content": { "type": "text", "text": "Error: ..." } }]
  * }
  * ```
  *
@@ -363,6 +421,17 @@ export interface ToolCallUpdate {
   content?: ToolCallContent[];
   /** Updated locations (rare) */
   locations?: ToolCallLocation[];
+  /**
+   * The harness's own structured record of the tool's result, verbatim —
+   * ACP's `rawOutput` ("Raw output returned by the tool", schema/v1
+   * ToolCallUpdate). Present only when the wire carries one beyond the text
+   * in `content`: claude's top-level `tool_use_result` (stdout, stderr,
+   * exitCode, interrupted, the file written ...), codex's completed item
+   * (aggregated_output, exit_code, status; an MCP result), opencode's tool
+   * state (output, metadata, time). A trajectory keeps it as the observation's
+   * metadata so an exit code or a stderr never disappears into prose.
+   */
+  rawOutput?: unknown;
 }
 
 /**
@@ -390,6 +459,37 @@ export interface OutputEvent {
   sessionId?: string;
   /** The session update payload */
   update: SessionUpdate;
+  /**
+   * The harness's own clock for the line this update came from, ISO 8601.
+   * Absent when the wire line carries no time (qwen, kimi, codex stdout).
+   */
+  timestamp?: string;
+  /**
+   * The model the harness named for this line (claude and qwen
+   * `message.model`; gemini and droid name it once on their init line, which
+   * the parser then stamps on every later event). Absent when unnamed.
+   */
+  model?: string;
+  /**
+   * The harness's id for the LLM message this line belongs to (claude and
+   * qwen `message.id`). Lines sharing an id are one inference split across
+   * several wire lines; usage repeats across them (see AgentUsage).
+   */
+  messageId?: string;
+  /**
+   * Set when the line belongs to a SUBAGENT: the id of the parent's tool call
+   * that delegated to it (claude and qwen `parent_tool_use_id`). Absent on
+   * the main conversation. A trajectory groups these into embedded subagent
+   * trajectories referenced from that call's observation (ATIF-v1.7
+   * subagent_trajectories, qwen_code.py:286-328).
+   */
+  parentToolCallId?: string;
+  /**
+   * Facts of the wire line that have no ACP slot, under the harness's own
+   * key names verbatim (claude and qwen: stop_reason, stop_sequence). Only
+   * keys the line actually carried with a value.
+   */
+  extra?: Record<string, unknown>;
 }
 
 /**

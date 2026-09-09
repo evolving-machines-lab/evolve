@@ -23,6 +23,7 @@ import {
   PlanEntry,
   ContentBlock,
 } from "./types";
+import { anthropicTokenUsage, isoTimestamp } from "./usage";
 
 /**
  * Create a Claude parser instance with its own isolated cache.
@@ -60,12 +61,16 @@ export function createClaudeParser() {
       case "system":
         return null;
 
-      case "assistant":
-        return toAcpNotifications(
-          data.message?.content,
-          "assistant",
-          sessionId
-        );
+      case "assistant": {
+        const updates = toAcpNotifications(data.message?.content, "assistant") ?? [];
+        // Every assistant line prints the message's usage (Anthropic's
+        // running total for that message id) — claude_code.py:1147-1158
+        // keeps the last one per message id, which the messageId stamped
+        // on the envelope lets a consumer do.
+        const usage = anthropicTokenUsage(data.message?.usage);
+        if (usage) updates.push({ sessionUpdate: "usage", scope: "call", usage });
+        return wrap(updates, data, sessionId);
+      }
 
       case "user": {
         // Skip pure text user messages (like claude-code-acp lines 521-530)
@@ -81,13 +86,21 @@ export function createClaudeParser() {
         ) {
           return null;
         }
-        // Process tool_result blocks
-        return toAcpNotifications(content, "user", sessionId);
+        // Process tool_result blocks. The line's top-level tool_use_result
+        // (stream-json spelling; the session file writes toolUseResult) is
+        // claude's structured record of what the tool did — stdout, stderr,
+        // exitCode, interrupted, the file it wrote — which the content block
+        // flattens into prose. claude_code.py:871-942 reads it per result.
+        const rawOutput = data.tool_use_result ?? data.toolUseResult;
+        return wrap(toAcpNotifications(content, "user", rawOutput), data, sessionId);
       }
 
-      // THE RUN'S VERDICT. A successful result stays silent — its text already
-      // streamed as assistant messages, so re-emitting it would double the
-      // transcript. A FAILED result is the only place claude reports that the
+      // THE RUN'S VERDICT. A successful result carries no transcript — its
+      // text already streamed as assistant messages, so re-emitting it would
+      // double the transcript — but it IS the one line with the run's whole
+      // accounting (usage, total_cost_usd: claude_code.py:944-973 reads
+      // total_cost_usd from exactly this line), so it becomes a run-scoped
+      // usage event. A FAILED result is the only place claude reports that the
       // run itself failed (subtype error_during_execution / error_max_turns /
       // error_max_budget_usd / error_max_structured_output_retries), and
       // returning null for it dropped that failure entirely: a run that never
@@ -102,7 +115,14 @@ export function createClaudeParser() {
       // is the dedicated failure channel, and before `subtype`, which is a
       // single word and on this shape the actively misleading word "success".
       case "result": {
-        if (data.is_error !== true) return null;
+        if (data.is_error !== true) {
+          const usage = anthropicTokenUsage(data.usage);
+          if (!usage) return null;
+          if (typeof data.total_cost_usd === "number" && Number.isFinite(data.total_cost_usd)) {
+            usage.costUsd = data.total_cost_usd;
+          }
+          return wrap([{ sessionUpdate: "usage", scope: "run", usage }], data, sessionId);
+        }
         const errors: unknown[] = Array.isArray(data.errors) ? data.errors : [];
         const text = errors.filter((e): e is string => typeof e === "string" && e.length > 0).join("\n");
         return [{
@@ -121,25 +141,58 @@ export function createClaudeParser() {
   };
 
   /**
+   * Envelope every update of one wire line with the line's own facts
+   * (parsers/types.ts OutputEvent): claude's clock, the message's model and
+   * id, its stop reason, and — on a subagent's line — the parent tool call
+   * it belongs to. Only what the line carried with a value; null stays absent.
+   */
+  function wrap(
+    updates: SessionUpdate[] | null,
+    line: any,
+    sessionId: string | undefined,
+  ): OutputEvent[] | null {
+    if (!updates || updates.length === 0) return null;
+    const message = line.message;
+    const timestamp = isoTimestamp(line.timestamp);
+    const model = typeof message?.model === "string" && message.model ? message.model : undefined;
+    const messageId = typeof message?.id === "string" && message.id ? message.id : undefined;
+    const parentToolCallId =
+      typeof line.parent_tool_use_id === "string" && line.parent_tool_use_id
+        ? line.parent_tool_use_id
+        : undefined;
+    const extra: Record<string, unknown> = {};
+    for (const key of ["stop_reason", "stop_sequence"]) {
+      const value = message?.[key];
+      if (value !== null && value !== undefined) extra[key] = value;
+    }
+    return updates.map((update) => ({
+      sessionId,
+      update,
+      ...(timestamp !== undefined ? { timestamp } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(messageId !== undefined ? { messageId } : {}),
+      ...(parentToolCallId !== undefined ? { parentToolCallId } : {}),
+      ...(Object.keys(extra).length > 0 ? { extra } : {}),
+    }));
+  }
+
+  /**
    * Convert Claude message content to ACP notifications.
    * Ported from acp-agent.ts toAcpNotifications()
    */
   function toAcpNotifications(
     content: string | any[] | undefined,
     role: "assistant" | "user",
-    sessionId?: string
-  ): OutputEvent[] | null {
+    rawOutput?: unknown,
+  ): SessionUpdate[] | null {
     if (typeof content === "string") {
       // User string content is filtered at caller level, but skip here too for safety
       if (role === "user") {
         return null;
       }
       return [{
-        sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: content },
-        },
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: content },
       }];
     }
 
@@ -147,7 +200,7 @@ export function createClaudeParser() {
       return null;
     }
 
-    const output: OutputEvent[] = [];
+    const output: SessionUpdate[] = [];
 
     for (const chunk of content) {
       let update: SessionUpdate | null = null;
@@ -242,6 +295,7 @@ export function createClaudeParser() {
             toolCallId: chunk.tool_use_id,
             status: "is_error" in chunk && chunk.is_error ? "failed" : "completed",
             ...toolUpdateFromToolResult(chunk, toolUse),
+            ...(rawOutput !== undefined && rawOutput !== null ? { rawOutput } : {}),
           };
           break;
         }
@@ -261,7 +315,7 @@ export function createClaudeParser() {
       }
 
       if (update) {
-        output.push({ sessionId, update });
+        output.push(update);
       }
     }
 
@@ -510,51 +564,23 @@ export function createClaudeParser() {
 
   /**
    * Extract tool update from a tool_result block.
-   * Ported from tools.ts toolUpdateFromToolResult()
+   * Ported from tools.ts toolUpdateFromToolResult() — MINUS its markdown
+   * fences. claude-code-acp wrapped a Read's file content and every error
+   * text in ``` because its consumer was a chat pane; here the consumer is a
+   * transcript, and a fence is bytes the harness never sent (Harbor keeps the
+   * block verbatim, claude_code.py:877-887). Framing belongs to a viewer.
    */
   function toolUpdateFromToolResult(
     toolResult: any,
     toolUse: any
   ): { title?: string; content?: ToolCallContent[] } {
-    const content = toolResult.content;
-
     switch (toolUse?.name) {
-      case "Read":
-        // Return file content
-        if (Array.isArray(content) && content.length > 0) {
-          return {
-            content: content.map((c: any) => ({
-              type: "content" as const,
-              content: c.type === "text"
-                ? { type: "text" as const, text: markdownEscape(c.text) }
-                : transformContentBlock(c, false),
-            })),
-          };
-        } else if (typeof content === "string" && content.length > 0) {
-          return {
-            content: [{
-              type: "content",
-              content: { type: "text", text: markdownEscape(content) },
-            }],
-          };
-        }
-        return {};
-
-      case "Edit":
-      case "Write":
-      case "Bash":
-        // Include output for all results (consistent with Codex/Gemini/Qwen parsers)
-        return toAcpContentUpdate(content, toolResult.is_error || false);
-
       case "ExitPlanMode":
         return { title: "Exited Plan Mode" };
 
-      // All other tools: return content
+      // Every other tool: the result content as claude sent it.
       default:
-        return toAcpContentUpdate(
-          content,
-          "is_error" in toolResult ? toolResult.is_error : false
-        );
+        return toAcpContentUpdate(toolResult.content);
     }
   }
 
@@ -562,25 +588,19 @@ export function createClaudeParser() {
    * Convert raw content to ACP ToolCallContent array.
    * Ported from tools.ts toAcpContentUpdate()
    */
-  function toAcpContentUpdate(
-    content: any,
-    isError: boolean = false
-  ): { content?: ToolCallContent[] } {
+  function toAcpContentUpdate(content: any): { content?: ToolCallContent[] } {
     if (Array.isArray(content) && content.length > 0) {
       return {
         content: content.map((c: any) => ({
           type: "content" as const,
-          content: transformContentBlock(c, isError),
+          content: transformContentBlock(c),
         })),
       };
     } else if (typeof content === "string" && content.length > 0) {
       return {
         content: [{
           type: "content",
-          content: {
-            type: "text",
-            text: isError ? "```\n" + content + "\n```" : content,
-          },
+          content: { type: "text", text: content },
         }],
       };
     }
@@ -592,11 +612,9 @@ export function createClaudeParser() {
    * - MCP format: {type: "image", data, mimeType}
    * - Claude format: {type: "image", source: {type: "base64", data, media_type}}
    */
-  function transformContentBlock(c: any, isError: boolean): ContentBlock {
+  function transformContentBlock(c: any): ContentBlock {
     if (c.type === "text") {
-      return isError
-        ? { type: "text", text: "```\n" + c.text + "\n```" }
-        : { type: "text", text: c.text };
+      return { type: "text", text: c.text };
     }
 
     if (c.type === "image") {
@@ -641,20 +659,5 @@ export function createClaudeParser() {
       status: (todo.status as PlanEntry["status"]) || "pending",
       priority: "medium" as const,
     }));
-  }
-
-  /**
-   * Escape markdown code blocks in text.
-   * Ported from tools.ts markdownEscape()
-   */
-  function markdownEscape(text: string): string {
-    let escape = "```";
-    const matches = Array.from(text.matchAll(/^```+/gm));
-    for (const [m] of matches) {
-      while (m.length >= escape.length) {
-        escape += "`";
-      }
-    }
-    return escape + "\n" + text + (text.endsWith("\n") ? "" : "\n") + escape;
   }
 }
