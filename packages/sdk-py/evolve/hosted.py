@@ -2867,7 +2867,8 @@ class OrgQuota:
     max_queued_trials: int
     #: Dataset imports a worker holds at once; further imports wait.
     max_concurrent_imports: int
-    #: Trace analyses running at once; further analyses wait.
+    #: Rubric-agent runs in flight at once fleet-wide — trace analyses AND
+    #: task quality checks under ONE count; further runs of either kind wait.
     max_concurrent_analyses: int
     #: Managed-agent sessions open at once (recorded and read back; not yet
     #: enforced by the box-create doors).
@@ -2893,6 +2894,8 @@ class OrgUsage:
     in_flight_trials: int
     queued_trials: int
     in_flight_imports: int
+    #: Rubric-agent runs RUNNING now — trace analyses AND task quality
+    #: checks, the one count ``max_concurrent_analyses`` bounds.
     in_flight_analyses: int
     #: Sessions not yet ended; always 0 on a shared org (sessions carry no
     #: organization).
@@ -8122,9 +8125,8 @@ class ChecksClient:
 
     async def create(
         self,
-        directory: Optional[str] = None,
+        directory: str,
         *,
-        archive_path: Optional[str] = None,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
         prompt: Optional[str] = None,
@@ -8137,12 +8139,13 @@ class ChecksClient:
         on_upload_progress: Optional[Callable[[int, int], None]] = None,
     ) -> Check:
         """Check task quality against a rubric — Harbor's ``harbor check
-        <PATH>`` (their cli/analyze.py:149-207), hosted.
+        <PATH>`` (their cli/analyze.py:84-207), hosted.
 
         ``directory`` is Harbor's PATH: one task directory, or a directory of
-        task directories, tarred and streamed from disk; ``archive_path`` is
-        a ready-packed ``.tar.gz`` of one. Exactly one. Which task
-        directories are checked is Harbor's own resolution (checker.py:
+        task directories, tarred and streamed from disk — a directory only,
+        as Harbor's PATH is (their checker.py:125-130 refuses anything else);
+        no ready-packed archive form. Which task directories are checked is
+        Harbor's own resolution (checker.py:
         116-141): the root when it is a task directory (task.toml +
         environment/ + instruction.md + tests/), else every top-level
         directory that is one, sorted; then ``include_task_names`` (any
@@ -8188,19 +8191,7 @@ class ChecksClient:
         # sent before the archive so the server rules it before a byte of
         # the upload — the analyze door's acceptance, under ``check.*``.
         fields: Dict[str, Optional[str]] = {'config': json.dumps(knobs)}
-        if (directory is None) == (archive_path is None):
-            raise ValueError(
-                'checks().create() takes exactly one source: directory=... (a task '
-                'directory, or a directory of task directories) or archive_path=... '
-                '(a ready-packed .tar.gz of one)'
-            )
-        if archive_path is not None:
-            raw = await _upload_archive_file(
-                self._http, '/api/checks', fields, archive_path,
-                os.path.basename(archive_path), 'POST', on_upload_progress,
-            )
-            return _map_check(raw)
-        path = os.path.abspath(directory)  # type: ignore[arg-type]
+        path = os.path.abspath(directory)
         # Harbor's own first refusal: "Path '{path}' does not exist"
         # (checker.py:66-67), at the keyboard, before any tar.
         if not os.path.isdir(path):

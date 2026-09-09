@@ -8,6 +8,7 @@ the contract's two GETs, and ``watch()`` polls to ``completed`` with the
 analysis watch's backoff shape. Mocked urlopen, real tar bytes.
 """
 
+import inspect
 import json
 from unittest.mock import patch
 
@@ -137,30 +138,22 @@ class TestChecksCreate:
         assert json.loads(parts['config'].decode('utf-8')) == {}
 
     @pytest.mark.asyncio
-    async def test_create_takes_a_ready_packed_archive(self, tmp_path):
+    async def test_create_refuses_at_the_keyboard(self, tmp_path):
         from evolve.hosted import _tar_gzip_directory_to_file
 
-        task_dir = tmp_path / 'hello-world'
-        _write_task_dir(task_dir)
-        archive = tmp_path / 'hello-world.tar.gz'
-        _tar_gzip_directory_to_file(str(task_dir), str(archive))
-        fake = FakeUrlopen([('/api/checks', CHECK_ACCEPTED, {}, 202)])
-        with patch('evolve._http.urlopen', fake):
-            await checks_factory(CONFIG).create(archive_path=str(archive))
-        parts = _multipart_parts(fake.requests[0])
-        assert list(parts) == ['config', 'archive']
-        assert parts['archive'] == archive.read_bytes()
-
-    @pytest.mark.asyncio
-    async def test_create_refuses_at_the_keyboard(self, tmp_path):
         client = checks_factory(CONFIG)
         # Harbor's own first refusal (checker.py:66-67), before any tar.
         with pytest.raises(ValueError, match="Path './nope' does not exist"):
             await client.create('./nope')
-        with pytest.raises(ValueError, match='exactly one source'):
-            await client.create()
-        with pytest.raises(ValueError, match='exactly one source'):
-            await client.create(str(tmp_path), archive_path=str(tmp_path / 'x.tar.gz'))
+        # A directory only, as Harbor's PATH is (checker.py:125-130): a
+        # ready-packed archive is a file, refused before any byte moves.
+        task_dir = tmp_path / 'hello-world'
+        _write_task_dir(task_dir)
+        archive = tmp_path / 'hello-world.tar.gz'
+        _tar_gzip_directory_to_file(str(task_dir), str(archive))
+        with pytest.raises(ValueError, match='is not a directory'):
+            await client.create(str(archive))
+        assert 'archive_path' not in inspect.signature(client.create).parameters
 
     @pytest.mark.asyncio
     async def test_no_checkable_tasks_is_a_typed_error(self, tmp_path):

@@ -4158,11 +4158,14 @@ export interface CheckConfigInput {
 /**
  * What checks().create() takes: WHERE the tasks are — a local directory (one
  * task directory, or a directory of task directories: Harbor's `PATH`,
- * tarred and streamed from disk) or a ready-packed `.tar.gz` of one — plus
- * the CheckConfigInput knobs. Exactly one source.
+ * tarred and streamed from disk) — plus the CheckConfigInput knobs. A
+ * directory is the ONLY source, as it is for Harbor's check (their
+ * checker.py:125-130 refuses any PATH that is not a directory): no
+ * ready-packed archive form, the shape datasets().publish gives a local
+ * directory.
  */
 export interface CreateCheckInput extends CheckConfigInput {
-  source: { directory: string } | { archive_path: string };
+  source: { directory: string };
   /** Client-side upload progress (sent bytes, total bytes), from the stream itself. */
   onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
 }
@@ -4329,7 +4332,7 @@ export interface OrgQuota {
   max_queued_trials: number;
   /** Dataset imports a worker holds at once; further imports wait. */
   max_concurrent_imports: number;
-  /** Trace analyses running at once; further analyses wait. */
+  /** Rubric-agent runs in flight at once fleet-wide — trace analyses AND task quality checks under ONE count; further runs of either kind wait. */
   max_concurrent_analyses: number;
   /** Managed-agent sessions open at once (recorded and read back; not yet enforced by the box-create doors). */
   max_concurrent_sessions: number;
@@ -4348,6 +4351,7 @@ export interface OrgUsage {
   in_flight_trials: number;
   queued_trials: number;
   in_flight_imports: number;
+  /** Rubric-agent runs RUNNING now — trace analyses AND task quality checks, the one count `max_concurrent_analyses` bounds. */
   in_flight_analyses: number;
   /** Sessions not yet ended; always 0 on a shared org (sessions carry no organization). */
   active_sessions: number;

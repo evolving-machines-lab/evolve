@@ -3738,15 +3738,6 @@ export function checks(config?: HostedClientConfig): ChecksClient {
       // sent before the archive so the server rules it before a byte of
       // the upload — the analyze door's own acceptance, under `check.*`.
       const fields = { config: JSON.stringify(knobs) };
-      if ("archive_path" in source) {
-        const { basename } = await import("node:path");
-        const res = await uploadArchive(cfg, "/api/checks", source.archive_path, {
-          fields,
-          filename: basename(source.archive_path),
-          ...(onUploadProgress !== undefined ? { onBytes: onUploadProgress } : {}),
-        });
-        return mapCheck(await res.json());
-      }
       const { existsSync, statSync } = await import("node:fs");
       const { basename, resolve } = await import("node:path");
       const directory = resolve(source.directory);

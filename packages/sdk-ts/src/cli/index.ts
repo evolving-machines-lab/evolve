@@ -4658,7 +4658,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   return (final.stats.analysis?.n_failed ?? 0) > 0 ? 1 : 0;
 }
 
-/** Python's str.title() over the criterion name with underscores as spaces — Harbor's row label (cli/analyze.py:37). */
+/** Python's str.title() over the criterion name with underscores as spaces — Harbor's row label (cli/analyze.py:41). */
 function checkRowLabel(name: string): string {
   return name
     .replace(/_/g, " ")
@@ -4760,7 +4760,7 @@ export function checkDetailLines(check: Check): string[] {
 
 /**
  * `evolve check <path>` — Harbor's `harbor check <PATH>` (their cli/main.py:163;
- * check_command cli/analyze.py:149-207) as the hosted verb: the directory
+ * check_command cli/analyze.py:84-207) as the hosted verb: the directory
  * (one task, or a directory of tasks) is tarred and streamed, the policy
  * rides as the config part, and the 202 IS the accepted check — printed and
  * returned, the shape of `analyze` (Harbor's hosted launch submits and
@@ -4783,8 +4783,9 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   if (inv.flags["include-task-name"] !== undefined) knobs.include_task_names = inv.flags["include-task-name"] as string[];
   if (inv.flags["exclude-task-name"] !== undefined) knobs.exclude_task_names = inv.flags["exclude-task-name"] as string[];
   if (inv.flags["n-tasks"] !== undefined) knobs.n_tasks = inv.flags["n-tasks"] as number;
-  const path = inv.positionals[0];
-  const source = /\.(tar\.gz|tgz)$/i.test(path) ? { archive_path: path } : { directory: path };
+  // A directory only, as Harbor's PATH is (checker.py:125-130): the SDK
+  // refuses a file at the keyboard.
+  const source = { directory: inv.positionals[0] };
   if (!json && !quiet) io.out("🔎 Checking task quality...");
   const accepted = await client.create({ source, ...knobs });
   if (!watch) {
