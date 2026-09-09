@@ -225,6 +225,7 @@ async function testGemini(): Promise<void> {
   ]);
   const call = ofKind(events, "tool_call")[0];
   assert(call?.model === "gemini-test-lite", "gemini: the init model is stamped on later events");
+  assert(call?.sessionId === "g-1", "gemini: the init session_id is stamped on later events (message lines carry none)");
   assert(call?.timestamp === "2026-09-08T15:50:05.677Z", "gemini: the line's timestamp is on the envelope");
   const update = ofKind(events, "tool_call_update")[0];
   assert(update?.update.status === "failed" && textOf(update.update) === "Command exited with code 1", "gemini: error output verbatim — no ``` fence (gemini_cli.py:412-416)");

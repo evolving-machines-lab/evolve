@@ -143,8 +143,10 @@ export function createClaudeParser() {
   /**
    * Envelope every update of one wire line with the line's own facts
    * (parsers/types.ts OutputEvent): claude's clock, the message's model and
-   * id, its stop reason, and — on a subagent's line — the parent tool call
-   * it belongs to. Only what the line carried with a value; null stays absent.
+   * id, its stop reason (and requestId, which the session file's lines carry
+   * and claude_code.py:1198-1202 keeps), and — on a subagent's line — the
+   * parent tool call it belongs to. Only what the line carried with a value;
+   * null stays absent.
    */
   function wrap(
     updates: SessionUpdate[] | null,
@@ -161,7 +163,7 @@ export function createClaudeParser() {
         ? line.parent_tool_use_id
         : undefined;
     const extra: Record<string, unknown> = {};
-    for (const key of ["stop_reason", "stop_sequence"]) {
+    for (const key of ["stop_reason", "stop_sequence", "requestId"]) {
       const value = message?.[key];
       if (value !== null && value !== undefined) extra[key] = value;
     }

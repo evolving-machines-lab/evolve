@@ -60,11 +60,13 @@ const TOOL_KINDS: Record<string, ToolKind> = {
  * Create a Gemini parser instance.
  */
 export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null {
-  // gemini names the model ONCE, on init (types.ts:43-47 InitEvent), and
-  // never on a message line — so it is remembered here and stamped on every
-  // later event's envelope. The native session file names it per message
-  // (gemini_cli.py:367); the stream has only this.
+  // gemini names the model and the session ONCE, on init (types.ts:43-47
+  // InitEvent { session_id, model }), and never on a message line — so both
+  // are remembered here and stamped on every later event's envelope. The
+  // native session file names the model per message (gemini_cli.py:367) and
+  // the session in its header (gemini_cli.py:319); the stream has only this.
   let model: string | undefined;
+  let initSessionId: string | undefined;
 
   return function parseGeminiEvent(jsonLine: string): OutputEvent[] | null {
     let data: any;
@@ -79,12 +81,14 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
       return null;
     }
 
-    const sessionId = data.session_id;
+    const sessionId: string | undefined =
+      (typeof data.session_id === "string" && data.session_id ? data.session_id : undefined) ?? initSessionId;
     const events: OutputEvent[] = [];
 
     switch (data.type) {
       case "init":
         if (typeof data.model === "string" && data.model) model = data.model;
+        if (typeof data.session_id === "string" && data.session_id) initSessionId = data.session_id;
         return null;
 
       // THE TERMINAL FAILURE. Unlike every other harness here, gemini does not
