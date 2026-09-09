@@ -99,14 +99,18 @@ export function createClaudeParser() {
       // text already streamed as assistant messages, so re-emitting it would
       // double the transcript — but it IS the one line with the run's whole
       // accounting (usage, total_cost_usd: claude_code.py:944-973 reads
-      // total_cost_usd from exactly this line), so it becomes a run-scoped
-      // usage event. A FAILED result is the only place claude reports that the
-      // run itself failed (subtype error_during_execution / error_max_turns /
-      // error_max_budget_usd / error_max_structured_output_retries), and
-      // returning null for it dropped that failure entirely: a run that never
-      // reached the model produced no events and looked like a run that simply
-      // did nothing. Claude carries the text in `errors: string[]`, and there
-      // is no error.message here.
+      // total_cost_usd from exactly this line, with no is_error check), so it
+      // becomes a run-scoped usage event — on a FAILED result too: a run that
+      // hit error_max_turns after many turns has a real total, and the usage
+      // variant is never work (isAgentWorkUpdate), so carrying it cannot make
+      // the failed run look like one that did something. A FAILED result is
+      // the only place claude reports that the run itself failed (subtype
+      // error_during_execution / error_max_turns / error_max_budget_usd /
+      // error_max_structured_output_retries), and returning null for it
+      // dropped that failure entirely: a run that never reached the model
+      // produced no events and looked like a run that simply did nothing.
+      // Claude carries the text in `errors: string[]`, and there is no
+      // error.message here.
       //
       // `result` IS a carrier though, on one shape: subtype "success" with
       // is_error true — the run finished its turn and the turn's own text is
@@ -115,24 +119,27 @@ export function createClaudeParser() {
       // is the dedicated failure channel, and before `subtype`, which is a
       // single word and on this shape the actively misleading word "success".
       case "result": {
-        if (data.is_error !== true) {
-          const usage = anthropicTokenUsage(data.usage);
-          if (!usage) return null;
-          if (typeof data.total_cost_usd === "number" && Number.isFinite(data.total_cost_usd)) {
-            usage.costUsd = data.total_cost_usd;
-          }
-          return wrap([{ sessionUpdate: "usage", scope: "run", usage }], data, sessionId);
+        const updates: SessionUpdate[] = [];
+        // The line's accounting, whatever its verdict. A result that printed
+        // total_cost_usd without a usage object (a live error_max_turns
+        // capture, parser-harness-errors.test.ts) still reports its cost —
+        // Harbor reads the cost on its own.
+        const cost = typeof data.total_cost_usd === "number" && Number.isFinite(data.total_cost_usd) ? data.total_cost_usd : undefined;
+        const usage = anthropicTokenUsage(data.usage) ?? (cost !== undefined ? {} : null);
+        if (usage) {
+          if (cost !== undefined) usage.costUsd = cost;
+          updates.push({ sessionUpdate: "usage", scope: "run", usage });
         }
-        const errors: unknown[] = Array.isArray(data.errors) ? data.errors : [];
-        const text = errors.filter((e): e is string => typeof e === "string" && e.length > 0).join("\n");
-        return [{
-          sessionId,
-          update: {
+        if (data.is_error === true) {
+          const errors: unknown[] = Array.isArray(data.errors) ? data.errors : [];
+          const text = errors.filter((e): e is string => typeof e === "string" && e.length > 0).join("\n");
+          updates.push({
             sessionUpdate: "error",
             message: harnessErrorText([text, data.result, data.subtype], data),
             fatal: true,
-          },
-        }];
+          });
+        }
+        return wrap(updates, data, sessionId);
       }
 
       default:
@@ -143,10 +150,11 @@ export function createClaudeParser() {
   /**
    * Envelope every update of one wire line with the line's own facts
    * (parsers/types.ts OutputEvent): claude's clock, the message's model and
-   * id, its stop reason (and requestId, which the session file's lines carry
-   * and claude_code.py:1198-1202 keeps), and — on a subagent's line — the
-   * parent tool call it belongs to. Only what the line carried with a value;
-   * null stays absent.
+   * id, its stop reason and stop sequence, and requestId — the three message
+   * keys claude_code.py:1198-1200 reads when present (no captured stream or
+   * session file has printed requestId so far; it is a read, not a promise)
+   * — and, on a subagent's line, the parent tool call it belongs to. Only
+   * what the line carried with a value; null stays absent.
    */
   function wrap(
     updates: SessionUpdate[] | null,

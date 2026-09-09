@@ -211,8 +211,10 @@ export interface TokenUsage {
  *   - "run": the harness's total for the whole run, reported once at the end.
  *
  * Excluded from isAgentWorkUpdate: accounting can never make a run that did
- * nothing look like one that did. Parsers emit it only on successful terminal
- * lines for the same reason (a failed run's total is the gateway meter's job).
+ * nothing look like one that did. That exclusion is the whole law, so a
+ * FAILED terminal line emits its total beside the AgentError — a run that hit
+ * its turn or budget limit did real turns, and Harbor reads the total off the
+ * result line with no is_error check (claude_code.py:944-973).
  */
 export interface AgentUsage {
   sessionUpdate: "usage";

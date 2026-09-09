@@ -101,17 +101,18 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
       // the model produced no events at all — the drop the AgentError variant
       // exists to end.
       //
-      // A SUCCESSFUL result is the one line with the run's accounting: its
+      // The result is also the one line with the run's accounting: its
       // `stats` (total_tokens, input_tokens, output_tokens, cached, per-model
-      // breakdown) — a run-scoped usage event. Per-call usage is not on this
-      // stream at all; it lives in the native session file (gemini_cli.py:481).
+      // breakdown) — a run-scoped usage event, whatever the status: a run
+      // that ended in "error" after real turns has a real total, and the
+      // usage variant is never work (isAgentWorkUpdate), so carrying it
+      // cannot make a failed run look like one that did something. Per-call
+      // usage is not on this stream at all; it lives in the native session
+      // file (gemini_cli.py:481).
       case "result": {
-        if (data.status !== "error") {
-          const usage = geminiStatsUsage(data.stats);
-          if (!usage) return null;
-          events.push({ sessionId, update: { sessionUpdate: "usage", scope: "run", usage } });
-          break;
-        }
+        const usage = geminiStatsUsage(data.stats);
+        if (usage) events.push({ sessionId, update: { sessionUpdate: "usage", scope: "run", usage } });
+        if (data.status !== "error") break;
         events.push({
           sessionId,
           update: {

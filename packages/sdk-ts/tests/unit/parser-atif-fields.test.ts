@@ -175,6 +175,41 @@ async function testClaude(): Promise<void> {
   const run = done[0]?.update.sessionUpdate === "usage" ? done[0].update.usage : null;
   assert(run?.promptTokens === 400 && run?.completionTokens === 40 && run?.costUsd === 0.0123, "claude: run usage carries the tokens and total_cost_usd (claude_code.py:944-973)");
   assert(done.every((e) => !isAgentWorkUpdate(e.update)), "claude: a success result is still not work");
+
+  console.log("\n[claude] requestId rides extra when a line carries it, and only then");
+  // claude_code.py:1198-1200 reads stop_reason, stop_sequence and requestId
+  // off the message when present. No captured stream or session file has
+  // printed requestId so far (prod trial cbf3c254 session file and the
+  // 2026-09-09 dev E2E file both grep 0) — the key is a read, not a promise.
+  const withRequestId = parseAll(createClaudeParser(), [
+    JSON.stringify({ type: "assistant", message: { id: "msg_rq", model: "m", requestId: "req_011", stop_reason: "end_turn", content: [{ type: "text", text: "hi" }] } }),
+  ]);
+  assert(same(withRequestId[0]?.extra, { stop_reason: "end_turn", requestId: "req_011" }), "claude: a message's requestId is kept beside its stop_reason");
+  const withoutRequestId = parseAll(createClaudeParser(), [
+    JSON.stringify({ type: "assistant", message: { id: "msg_nr", model: "m", stop_reason: "end_turn", content: [{ type: "text", text: "hi" }] } }),
+  ]);
+  assert(same(withoutRequestId[0]?.extra, { stop_reason: "end_turn" }), "claude: a line without requestId has no requestId key — absent, never null");
+
+  console.log("\n[claude] a FAILED result still carries the run's accounting beside the error");
+  // claude_code.py:944-973 reads total_cost_usd from the result line with no
+  // is_error check; a run that hit error_max_turns after many turns has a real
+  // total, and dropping it left the ATIF with no harness-reported usage at all.
+  const failed = parseAll(createClaudeParser(), [
+    JSON.stringify({
+      type: "result", subtype: "error_max_turns", is_error: true, num_turns: 9, session_id: "ses_f",
+      total_cost_usd: 0.254125, errors: ["Reached maximum number of turns (9)"],
+      usage: { input_tokens: 4000, output_tokens: 300, cache_creation_input_tokens: 0, cache_read_input_tokens: 100 },
+    }),
+  ]);
+  assert(failed.length === 2 && failed[0].update.sessionUpdate === "usage" && failed[1].update.sessionUpdate === "error", "claude: failed result → the run usage, then the error");
+  const failedUsage = failed[0]?.update.sessionUpdate === "usage" ? failed[0].update : null;
+  assert(failedUsage?.scope === "run" && failedUsage.usage.promptTokens === 4100 && failedUsage.usage.completionTokens === 300 && failedUsage.usage.costUsd === 0.254125, "claude: the failed run's tokens and total_cost_usd are the same arithmetic as a success");
+  assert(failed.every((e) => !isAgentWorkUpdate(e.update)), "claude: neither event is work — harnessNeverRan still fires on a failed-only stream");
+  const costOnly = parseAll(createClaudeParser(), [
+    // the live error_max_turns capture (parser-harness-errors.test.ts): total_cost_usd without a usage object
+    JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 2, session_id: "ses_g", total_cost_usd: 0.0412, errors: ["Reached maximum number of turns (1)"] }),
+  ]);
+  assert(costOnly.length === 2 && costOnly[0].update.sessionUpdate === "usage" && same(costOnly[0].update.usage, { costUsd: 0.0412 }), "claude: total_cost_usd alone is still the run's accounting (claude_code.py:944-973 reads it without usage)");
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +271,14 @@ async function testGemini(): Promise<void> {
     "gemini: input_tokens/output_tokens/cached mapped; the rest rides extra",
   );
   assert(same(Object.keys(usage[0]?.update.usage.extra ?? {}), ["total_tokens", "input", "duration_ms", "tool_calls", "models"]), "gemini: the other stats keys are kept verbatim in extra");
+
+  console.log("\n[gemini] a FAILED result still carries its stats beside the error");
+  const failed = parseAll(createGeminiParser(), [
+    `{"type":"result","timestamp":"2026-09-08T15:50:07.040Z","status":"error","error":{"type":"FatalTurnLimitedError","message":"Reached max session turns"},"stats":{"total_tokens":20042,"input_tokens":19955,"output_tokens":87,"cached":0}}`,
+  ]);
+  assert(failed.length === 2 && failed[0].update.sessionUpdate === "usage" && failed[1].update.sessionUpdate === "error", "gemini: failed result → the run usage, then the error");
+  assert(failed[0]?.update.sessionUpdate === "usage" && failed[0].update.scope === "run" && failed[0].update.usage.promptTokens === 19955, "gemini: the failed run's stats are the same arithmetic as a success");
+  assert(failed.every((e) => !isAgentWorkUpdate(e.update)), "gemini: neither event is work");
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +316,14 @@ async function testQwen(): Promise<void> {
   const update = ofKind(events, "tool_call_update")[0];
   assert(update?.update.status === "failed" && textOf(update.update) === "exit 1", "qwen: error result verbatim — no ``` fence (qwen_code.py:233-244)");
   assert(update?.parentToolCallId === "call_parent_9", "qwen: the subagent's tool result carries the parent call too");
+
+  console.log("\n[qwen] a FAILED result still carries result.usage beside the error");
+  const failed = parseAll(createQwenParser(), [
+    JSON.stringify({ type: "result", subtype: "error_max_turns", uuid: "u9", session_id: "q-9", is_error: true, num_turns: 9, usage: { input_tokens: 9000, output_tokens: 120, total_tokens: 9120 } }),
+  ]);
+  assert(failed.length === 2 && failed[0].update.sessionUpdate === "usage" && failed[1].update.sessionUpdate === "error", "qwen: failed result → the run usage, then the error");
+  assert(failed[0]?.update.sessionUpdate === "usage" && failed[0].update.scope === "run" && same(failed[0].update.usage, { promptTokens: 9000, completionTokens: 120, extra: { total_tokens: 9120 } }), "qwen: the failed run's usage is the same arithmetic as a success");
+  assert(failed.every((e) => !isAgentWorkUpdate(e.update)), "qwen: neither event is work");
 }
 
 // ---------------------------------------------------------------------------

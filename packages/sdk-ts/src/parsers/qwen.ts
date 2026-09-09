@@ -218,7 +218,10 @@ export function createQwenParser() {
       // THE RUN'S VERDICT (protocol.ts:152-170 SDKResultMessageError). A
       // success carries no transcript — its text already streamed — but it
       // is the one line with the run's whole usage (protocol.ts:146,161), so
-      // it becomes a run-scoped usage event. A failure (is_error: true,
+      // it becomes a run-scoped usage event — on a failure too: a run that
+      // hit error_max_turns did its turns, and the usage variant is never
+      // work (isAgentWorkUpdate), so carrying its total cannot make a failed
+      // run look like one that did something. A failure (is_error: true,
       // subtype error_max_turns | error_during_execution) is qwen reporting
       // that the run itself failed, and skipping it dropped that failure
       // entirely, leaving an unreachable-model run indistinguishable from one
@@ -226,12 +229,9 @@ export function createQwenParser() {
       // is the fallback — qwen's own word for what went wrong, not an invented
       // classification.
       case "result": {
-        if (msg.is_error !== true) {
-          const usage = qwenTokenUsage(msg.usage);
-          if (!usage) return null;
-          updates.push({ sessionUpdate: "usage", scope: "run", usage });
-          break;
-        }
+        const usage = qwenTokenUsage(msg.usage);
+        if (usage) updates.push({ sessionUpdate: "usage", scope: "run", usage });
+        if (msg.is_error !== true) break;
         const error = msg.error as { message?: unknown } | undefined;
         updates.push({
           sessionUpdate: "error",
