@@ -3339,8 +3339,9 @@ export interface JobImportFailure {
  * One trial a job import LEFT OUT, typed (spec JobImportSkippedTrial): the
  * failure-envelope grammar plus the trial directory it names.
  * `trial_too_large` is the one cause — the named `file` is over the
- * per-file cap, or `agent/sessions/` totals over the session-tree cap
- * (`limits.uploads` on the capability document), or `agent/trajectory.json`
+ * per-file cap, or the `agent/` subtrees (`file` spelled `agent/`) total
+ * over the session-tree cap (`limits.uploads` on the capability document),
+ * or `agent/trajectory.json`
  * would cost more heap to parse than the per-trial bound (its structure
  * counted from the bytes, never parsed); `details` carry the `bytes`
  * measured and the `max_bytes` bound. The rest of the archive lands; a
@@ -3748,7 +3749,11 @@ export interface JobsClient {
    * config.json, lock.json, result.json (stats incl. pass_at_k) and job.log,
    * and per trial its config.json, lock.json, result.json (step_results on
    * multi-step trials), trial.log, agent/trajectory.json (the normalized
-   * ATIF trajectory), agent/{stdout,stderr}.log, agent/sessions/,
+   * ATIF trajectory), the harness stdout stream at Harbor's tee name for the
+   * harness (agent/claude-code.txt, agent/codex.txt, ...), agent/stderr.log,
+   * agent/trace-parsed.jsonl, the agent home at Harbor's session slot for
+   * the harness (agent/sessions/, agent/qwen-sessions/, agent/.kimi-code/,
+   * agent/opencode/) with the rest under agent/evolve-home/,
    * verifier/test-stdout.txt, verifier/reward.json, the raw
    * verifier/reward.txt (only when the grader wrote one),
    * steps/<name>/verifier/reward.json (multi-step trials only),
@@ -4643,7 +4648,7 @@ export interface CapabilityDocument {
       job_trials: number;
       /** Per-file cap on the trial artifacts an upload stores (a trial with a file past it is skipped, `trial_too_large` on the import). */
       job_trial_file_bytes: number;
-      /** Total cap on one trial's `agent/sessions/` tree (a trial past it is skipped the same way). */
+      /** Total cap on one trial's `agent/` subtrees — its session home: `agent/sessions/`, `agent/qwen-sessions/`, `agent/.kimi-code/`, `agent/opencode/`, `agent/evolve-home/` (a trial past it is skipped the same way). */
       job_trial_session_bytes: number;
     };
     dataset_names: {

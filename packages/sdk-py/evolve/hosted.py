@@ -2899,8 +2899,9 @@ class JobImportSkippedTrial:
     """One trial a job import LEFT OUT, typed (spec ``JobImportSkippedTrial``):
     the failure-envelope grammar plus the trial directory it names.
     ``trial_too_large`` is the one cause — the named ``details['file']`` is
-    over the per-file cap, or ``agent/sessions/`` totals over the
-    session-tree cap (``limits['uploads']`` on the capability document), or
+    over the per-file cap, or the ``agent/`` subtrees (``file`` spelled
+    ``agent/``) total over the session-tree cap (``limits['uploads']`` on
+    the capability document), or
     ``agent/trajectory.json`` would cost more heap to parse than the
     per-trial bound (its structure counted from the bytes, never parsed);
     ``details`` carry the ``bytes`` measured and the ``max_bytes`` bound.
@@ -7298,8 +7299,8 @@ class JobsClient:
         harness (``agent/claude-code.txt``, ``agent/codex.txt``, ...),
         ``agent/stderr.log``, ``agent/trace-parsed.jsonl``, the agent home
         at Harbor's session slot for the harness (``agent/sessions/``,
-        ``agent/qwen-sessions/``, ``agent/.kimi-code/``) with the rest under
-        ``agent/evolve-home/``, ``verifier/test-stdout.txt``,
+        ``agent/qwen-sessions/``, ``agent/.kimi-code/``, ``agent/opencode/``)
+        with the rest under ``agent/evolve-home/``, ``verifier/test-stdout.txt``,
         ``verifier/reward.json``, the raw
         ``verifier/reward.txt`` (only when the grader wrote one),
         ``steps/<name>/verifier/reward.json`` (multi-step trials only),

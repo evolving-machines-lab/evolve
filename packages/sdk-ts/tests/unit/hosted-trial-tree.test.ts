@@ -229,6 +229,33 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
+// The per-harness table: opencode's store at Harbor's XDG slot (opencode.py:524)
+// -----------------------------------------------------------------------------
+{
+  const files = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "opencode" } }),
+      home: {
+        "/root/.local/share/opencode/log/opencode.log": "log",
+        "/root/.local/state/opencode/x": "state",
+      },
+    })
+  );
+  assertEqual(
+    Object.keys(files).filter((p) => p.startsWith("agent/")).sort(),
+    [
+      "agent/evolve-home/root/.local/state/opencode/x",
+      "agent/opencode.txt",
+      "agent/opencode/xdg-data/opencode/log/opencode.log",
+      "agent/stderr.log",
+      "agent/trace-parsed.jsonl",
+      "agent/trajectory.json",
+    ],
+    "opencode: the tee is opencode.txt, the data store lands at agent/opencode/xdg-data/opencode/, the uncaptured state twin's path rides evolve-home"
+  );
+}
+
+// -----------------------------------------------------------------------------
 // The money law of Harbor's result.json: a figure only when one was measured
 // -----------------------------------------------------------------------------
 {

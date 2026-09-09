@@ -46,10 +46,12 @@
  *   agent/sessions/…          the captured agent home at Harbor's own session
  *   agent/qwen-sessions/…     slot for the harness (claude and codex:
  *   agent/.kimi-code/…        sessions/; qwen: qwen-sessions/; kimi:
- *                             .kimi-code/), the subtree Harbor's adapter
- *                             writes there — and the rest of the home under
- *   agent/evolve-home/…       Evolve's own slot, keyed by its sandbox path
- *                             (evolve-home/root/.gemini/…), lossless
+ *   agent/opencode/…          .kimi-code/; opencode: its data store at
+ *                             opencode/xdg-data/opencode/), the subtree
+ *                             Harbor's adapter puts there — and the rest of
+ *   agent/evolve-home/…       the home under Evolve's own slot, keyed by its
+ *                             sandbox path (evolve-home/root/.gemini/…),
+ *                             lossless
  *   verifier/test-stdout.txt  the stored verifier log, when stored
  *   verifier/reward.json      the rewards map, when the verifier produced one
  *   exception.txt             when the trial carries an exception
@@ -141,8 +143,14 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   qwen: { stdoutFile: "qwen-code.txt", homeSlots: [{ sandboxRoot: "/root/.qwen/projects", agentDir: "qwen-sessions" }] },
   // kimi_code.py:17 the home IS agent/.kimi-code; tee :18.
   kimi: { stdoutFile: "kimi-code.txt", homeSlots: [{ sandboxRoot: "/root/.kimi-code", agentDir: ".kimi-code" }] },
-  // opencode.py:74 tee; no session store.
-  opencode: { stdoutFile: "opencode.txt", homeSlots: [] },
+  // opencode.py:74 tee; :524 XDG_DATA_HOME = /logs/agent/opencode/xdg-data, and the
+  // CLI keeps its store at $XDG_DATA_HOME/opencode — the captured default store
+  // (~/.local/share/opencode, registry.ts) sits at that slot. The state twin
+  // (:525 XDG_STATE_HOME) is not captured: no slot.
+  opencode: {
+    stdoutFile: "opencode.txt",
+    homeSlots: [{ sandboxRoot: "/root/.local/share/opencode", agentDir: "opencode/xdg-data/opencode" }],
+  },
   // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
   droid: { stdoutFile: "droid.txt", homeSlots: [] },
 };
