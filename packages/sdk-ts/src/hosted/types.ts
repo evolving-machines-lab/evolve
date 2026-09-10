@@ -2120,6 +2120,12 @@ export interface JobTaskRollup {
   mean_reward: number | null;
   /** Measured spend across the task's settled trials. */
   cost_usd: number | null;
+  /**
+   * The task's LATEST quality check among the checks you may read that ran
+   * on a dataset version this job spans (`checks().create({ source: {
+   * dataset } })`); null = never checked. The job page's CHECK tab reads it.
+   */
+  check: TaskCheck | null;
 }
 
 /** Cursor page of per-task rollups */
@@ -4166,27 +4172,42 @@ export interface CheckConfigInput {
 }
 
 /**
- * What checks().create() takes: WHERE the tasks are — a local directory (one
- * task directory, or a directory of task directories: Harbor's `PATH`,
- * tarred and streamed from disk) — plus the CheckConfigInput knobs. A
- * directory is the ONLY source, as it is for Harbor's check (their
- * checker.py:125-130 refuses any PATH that is not a directory): no
- * ready-packed archive form, the shape datasets().publish gives a local
- * directory.
+ * What checks().create() takes: WHERE the tasks are, plus the
+ * CheckConfigInput knobs. Two sources, one at a time:
+ *
+ *   { directory } — a local directory (one task directory, or a directory of
+ *                   task directories: Harbor's `PATH`, tarred and streamed
+ *                   from disk; a directory only, as Harbor's check is — their
+ *                   checker.py:125-130 refuses any PATH that is not one; no
+ *                   ready-packed archive form).
+ *   { dataset }   — a PUBLISHED dataset, `name` (its active version) or
+ *                   `name@version` — the hosted form, a recorded deviation
+ *                   (Harbor's check takes a local path only): the checker
+ *                   reads the version's retained task package, and the job
+ *                   page's CHECK tab lists these checks by task. Nothing is
+ *                   uploaded.
  */
 export interface CreateCheckInput extends CheckConfigInput {
-  source: { directory: string };
-  /** Client-side upload progress (sent bytes, total bytes), from the stream itself. */
+  source: { directory: string } | { dataset: string };
+  /** Client-side upload progress (sent bytes, total bytes), from the stream itself. Directory source only. */
   onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
 }
 
-/** What was checked — the uploaded archive, by identity (spec CheckSource). */
+/**
+ * What was checked, by identity (spec CheckSource) — two forms told apart by
+ * `type`: `archive` (the uploaded tar's sha256 and compressed `bytes`;
+ * `dataset` null) or `dataset` (the resolved `name@version` and the sha256
+ * of the version's retained task package; `bytes` null — a package's size is
+ * not a recorded fact, so the wire invents none).
+ */
 export interface CheckSource {
-  type: "archive";
-  /** SHA-256 of the archive as uploaded. */
+  type: "archive" | "dataset";
+  /** SHA-256 of the archive as uploaded, or of the version's retained task package. */
   sha256: string;
-  /** The archive's compressed size. */
-  bytes: number;
+  /** The archive's compressed size on the archive form; null on the dataset form. */
+  bytes: number | null;
+  /** The resolved `name@version` on the dataset form; null on the archive form. */
+  dataset: string | null;
 }
 
 /**
@@ -4266,19 +4287,55 @@ export interface WatchCheckOptions {
 }
 
 /**
+ * One task check's transcript: the CHECKER's own parsed events plus the
+ * identity facts the feed serves around them — the AnalysisTranscript's
+ * shape (its docs state the read grammar: no server-side paging, `total`
+ * counts ALL stored rows, `since` resumes), with the check record and the
+ * dataset ref in place of the analyzed trial and its job.
+ */
+export interface TaskCheckTranscript {
+  id: string;
+  /** The check record (Harbor's CheckReport) this task's result belongs to. */
+  check_id: string | null;
+  /** The resolved `name@version` when the check came from a published dataset; null for an uploaded archive. */
+  dataset: string | null;
+  /** The checked task's name. */
+  task_name: string | null;
+  /** The model the checker ran. */
+  model_name: string | null;
+  /** Where the CHECKER's own box ran. */
+  sandbox_provider: string | null;
+  sandbox_id: string | null;
+  /** True once the task check has settled (completed or failed). */
+  is_ended: boolean;
+  /** ALL stored rows for this task check, independent of `since`. */
+  total: number;
+  events: TraceEvent[];
+}
+
+/**
  * Client for task quality checks — Harbor's `harbor check <PATH>`, hosted
  * (`POST /api/checks`, `GET /api/checks`, `GET /api/checks/{checkId}`).
  * Created via the standalone `checks()` factory; requires EVOLVE_API_KEY
  * (or `{ apiKey }` in config).
  *
  * `create()` uploads the task directory (or the directory of task
- * directories) and returns AT ONCE with the accepted Check — one `results`
- * entry per task, each `queued` — exactly as Harbor's hosted launch submits
- * and returns; `watch()` is the follow, a separate poll on purpose. The
- * task bytes are never modified: Harbor's own rule for its check.
+ * directories), or names a published dataset, and returns AT ONCE with the
+ * accepted Check — one `results` entry per task, each `queued` — exactly as
+ * Harbor's hosted launch submits and returns; `watch()` is the follow, a
+ * separate poll on purpose. The task bytes are never modified: Harbor's own
+ * rule for its check.
+ *
+ * EACH TASK'S RESULT IS A RUN OF ITS OWN, read like an analysis run (owner
+ * ruling 2026-09-09): `task()`, `transcript()` and `artifact()` take the
+ * TASK CHECK id (`Check.results[].id`) and ride the same off-contract feed
+ * doors AnalysesClient's reads ride (its doc records the tension), under the
+ * check's own access law — the creator and the owning organization's
+ * members; an id you may not read is 404 `trial_not_found`, the code every
+ * feed door speaks.
  */
 export interface ChecksClient {
-  /** Upload a task directory (or a directory of them) and start the check. Returns the accepted Check (202). */
+  /** Upload a task directory (or a directory of them), or name a published dataset, and start the check. Returns the accepted Check (202). */
   create(input: CreateCheckInput): Promise<Check>;
   /** The check with its per-task results — for every status. 404 `check_not_found` for an id you cannot read. */
   get(checkId: string): Promise<Check>;
@@ -4286,6 +4343,25 @@ export interface ChecksClient {
   list(options?: ListChecksOptions): CheckList;
   /** Poll a check until every task settled; resolves with the final Check. */
   watch(checkId: string, options?: WatchCheckOptions): Promise<Check>;
+  /**
+   * One task's result by TASK CHECK id — the wire's TaskCheck for every
+   * status, typed failure included; the same document the feed downloads
+   * as check-result.json (Harbor's name for the checker's deliverable). A
+   * trial, regrade or analysis id refuses typed at the door, never answering
+   * with another run's document.
+   */
+  task(taskCheckId: string): Promise<TaskCheck>;
+  /** The checker's own transcript (see TaskCheckTranscript); a wrong-species id refuses with the species named. */
+  transcript(taskCheckId: string, options?: AnalysisTranscriptOptions): Promise<TaskCheckTranscript>;
+  /**
+   * One stored artifact by selector — the checker's raw stdout/stderr, or
+   * "agent-home" as the sandbox-path → text map of its session home (the
+   * analysis run's own three selectors). Null = never stored, a normal
+   * answer; a wrong-species id refuses (the ?what=task-check door is
+   * resolved first, so another run's bytes are never served).
+   */
+  artifact(taskCheckId: string, stream: Exclude<AnalysisArtifactStream, "agent-home">): Promise<string | null>;
+  artifact(taskCheckId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
 }
 
 /** A key descriptor. The secret is never returned. */

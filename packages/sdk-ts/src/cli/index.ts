@@ -39,6 +39,7 @@ import {
   agents,
   analyses,
   assembleAnalysisTree,
+  assembleTaskCheckTree,
   assembleTrialTree,
   auth,
   checks,
@@ -761,11 +762,12 @@ const GROUPS: Record<string, GroupSpec> = {
     },
   },
   // Task quality checks — the READ side of Harbor's `check`. The verb itself
-  // is top-level (`evolve check <path>`, TOP_LEVEL_COMMANDS below, Harbor's
-  // cli/main.py:163); these two read a hosted check back — a record Harbor's
-  // local foreground command has no need to re-read, and a hosted 202 does.
-  // `evolve check list|show` is routed here by parseArgs; a task directory
-  // literally named `list` or `show` is written `./list`.
+  // is top-level (`evolve check <path>` / `evolve check -d <dataset>`,
+  // TOP_LEVEL_COMMANDS below, Harbor's cli/main.py:163); these read a hosted
+  // check back — a record Harbor's local foreground command has no need to
+  // re-read, and a hosted 202 does — and, per task, the checker's own run.
+  // `evolve check list|show|trace|download` is routed here by parseArgs; a
+  // task directory literally named like a verb is written `./list`.
   check: {
     summary: "Read back task quality checks (the verb itself is `evolve check <path>`)",
     commands: {
@@ -791,6 +793,54 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<check-id>",
         example: "evolve check show 5f2c9b1e-…",
+      },
+      // The per-task reads — a task check read like an analysis run (owner
+      // ruling 2026-09-09): the analysis verbs' flags, verbatim, on the TASK
+      // CHECK id (`check show` prints one per task).
+      trace: {
+        summary: "Print the checker's own parsed transcript for one task check",
+        flags: {
+          since: {
+            kind: "number",
+            value: "<n>",
+            help:
+              "Skip the first N events — to resume, pass the count you already hold " +
+              "(seqs are dense from 0, so N is also the next seq)",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<task-check-id>",
+        example: "evolve check trace 7c1d2e3f-… --since 200",
+      },
+      download: {
+        summary:
+          "Save one task check whole (check-result.json + checker artifacts + evolve.json), or stream one artifact",
+        flags: {
+          "output-dir": {
+            kind: "string",
+            short: "o",
+            value: "<dir>",
+            help: "Directory to save under (default: checks/); files land in <dir>/<task-check-id>/",
+          },
+          overwrite: { kind: "boolean", help: "Replace an existing <dir>/<task-check-id>/" },
+          stream: {
+            kind: "string",
+            value: "<artifact>",
+            help:
+              "Print ONE artifact to stdout instead of saving: task-check (the result " +
+              "document) | trace-parsed | trace-stdout | trace-stderr | agent-home",
+          },
+          since: {
+            kind: "number",
+            value: "<n>",
+            help: "With --stream trace-parsed: skip the first N events",
+          },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<task-check-id>",
+        example: "evolve check download 7c1d2e3f-… --stream trace-stdout",
       },
     },
   },
@@ -1225,7 +1275,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // repeatable), -l/--n-tasks. Not carried, for the analyze verb's own
   // reasons: -a/--agent, --ak, --ae, --ek, -k/--n-attempts, --job-name,
   // -o/--jobs-dir, -c/--config. --effort and --json are the platform's
-  // conventions, as on analyze; --watch follows the hosted 202.
+  // conventions, as on analyze; --watch follows the hosted 202; -d/--dataset
+  // is the hosted source (the flag's help states the deviation).
   check: {
     summary:
       "Check task quality against a rubric (Harbor's `harbor check`; server-side; add --watch to follow)",
@@ -1298,10 +1349,19 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "q",
         help: "With --watch: suppress the progress lines, print the final report only",
       },
+      dataset: {
+        kind: "string",
+        short: "d",
+        value: "<name[@version]>",
+        help:
+          "Check a PUBLISHED dataset's tasks instead of a local path (the hosted form — a recorded deviation: " +
+          "Harbor's check takes a local path only; the checker reads the version's retained task package, and " +
+          "the job page's CHECK tab lists these checks by task). Either <path> or -d, not both",
+      },
     },
-    minPositionals: 1,
+    minPositionals: 0,
     maxPositionals: 1,
-    positionalUsage: "<path>",
+    positionalUsage: "[<path>]",
     example: "evolve check ./tasks -i 'abs-*' -l 5 --watch",
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
@@ -1629,10 +1689,10 @@ export function parseArgs(argv: string[]): Invocation {
   }
   const topLevel = TOP_LEVEL_COMMANDS[head];
   // `check` is both Harbor's top-level verb (`evolve check <path>`) and the
-  // noun of its two read verbs (`evolve check list|show`, GROUPS.check): a
-  // first word that names one of those verbs routes to the group, anything
-  // else is the path. A task directory literally named `list` or `show` is
-  // written `./list`.
+  // noun of its read verbs (`evolve check list|show|trace|download`,
+  // GROUPS.check): a first word that names one of those verbs routes to the
+  // group, anything else is the path. A task directory literally named like a
+  // verb is written `./list`.
   const readVerb =
     head === "check" && argv[1] !== undefined && !argv[1].startsWith("-")
       ? resolveVerb(GROUPS.check, argv.slice(1))
@@ -3416,8 +3476,21 @@ const TASK_ROLLUP_COLUMNS: ListColumn<JobTaskRollup>[] = [
   },
   { key: "reward", header: "MEAN REWARD", cell: (r) => fmtReward(r.mean_reward) },
   { key: "spent", header: "SPENT", cell: (r) => fmtUsd(r.cost_usd) },
+  // The task's latest quality check (the job page's CHECK tab): its status,
+  // or its pass/fail/n-a tally once completed; a dash for a task never checked.
+  { key: "check", header: "CHECK", cell: (r) => taskCheckCell(r.check) },
+  { key: "check-id", header: "TASK CHECK ID", cell: (r) => r.check?.id ?? "-" },
 ];
-const TASK_ROLLUP_DEFAULT_COLUMNS = ["task", "source", "trials", "statuses", "reward", "spent"];
+const TASK_ROLLUP_DEFAULT_COLUMNS = ["task", "source", "trials", "statuses", "reward", "spent", "check"];
+
+/** One task check's cell — status until completed, then `pass N · fail N · n/a N`. */
+function taskCheckCell(check: TaskCheck | null): string {
+  if (check === null) return "-";
+  if (check.status !== "completed") return check.status;
+  const counts = { pass: 0, fail: 0, not_applicable: 0 };
+  for (const verdict of Object.values(check.checks ?? {})) counts[verdict.outcome] += 1;
+  return `pass ${counts.pass} · fail ${counts.fail} · n/a ${counts.not_applicable}`;
+}
 
 const DATASET_COLUMNS: ListColumn<Dataset>[] = [
   { key: "name", header: "NAME", cell: (b) => b.name },
@@ -4694,17 +4767,20 @@ export function checkResultLines(check: Check): string[] {
     if (rows.length === 1) rows.push(["-", result.status, "-"]);
     lines.push(...table(rows));
     if (result.cost_usd !== null) lines.push(`Agent cost: $${result.cost_usd.toFixed(4)}`);
+    // The task check's own id closes the loop to the per-task verbs
+    // (`evolve check trace|download <task-check-id>`).
+    lines.push(`Task check id: ${result.id}`);
     return lines;
   }
   lines.push("Task Quality Checks");
-  const rows: string[][] = [["TASK", "PASS", "FAIL", "N/A", "COST ($)"]];
+  const rows: string[][] = [["TASK", "PASS", "FAIL", "N/A", "COST ($)", "TASK CHECK ID"]];
   for (const result of check.results) {
     if (result.status === "failed") {
-      rows.push([result.task_name, "-", "-", "-", "-"]);
+      rows.push([result.task_name, "-", "-", "-", "-", result.id]);
       continue;
     }
     if (result.status !== "completed") {
-      rows.push([result.task_name, result.status, "", "", "-"]);
+      rows.push([result.task_name, result.status, "", "", "-", result.id]);
       continue;
     }
     const counts = { pass: 0, fail: 0, not_applicable: 0 };
@@ -4715,6 +4791,7 @@ export function checkResultLines(check: Check): string[] {
       String(counts.fail),
       String(counts.not_applicable),
       result.cost_usd !== null ? result.cost_usd.toFixed(4) : "-",
+      result.id,
     ]);
   }
   lines.push(...table(rows));
@@ -4742,7 +4819,12 @@ export function checkDetailLines(check: Check): string[] {
   const rows: string[][] = [
     ["check id", check.id],
     ["status", check.status],
-    ["source", `archive ${check.source.bytes} bytes sha256 ${check.source.sha256.slice(0, 12)}…`],
+    [
+      "source",
+      check.source.type === "dataset"
+        ? `dataset ${check.source.dataset} (package sha256 ${check.source.sha256.slice(0, 12)}…)`
+        : `archive ${check.source.bytes} bytes sha256 ${check.source.sha256.slice(0, 12)}…`,
+    ],
     ["tasks", `${check.results.length} (${checkTally(check)})`],
     ["model", `${check.model_name} at effort ${check.reasoning_effort}`],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
@@ -4783,9 +4865,17 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   if (inv.flags["include-task-name"] !== undefined) knobs.include_task_names = inv.flags["include-task-name"] as string[];
   if (inv.flags["exclude-task-name"] !== undefined) knobs.exclude_task_names = inv.flags["exclude-task-name"] as string[];
   if (inv.flags["n-tasks"] !== undefined) knobs.n_tasks = inv.flags["n-tasks"] as number;
-  // A directory only, as Harbor's PATH is (checker.py:125-130): the SDK
-  // refuses a file at the keyboard.
-  const source = { directory: inv.positionals[0] };
+  // ONE source: a directory (Harbor's PATH, checker.py:125-130 — the SDK
+  // refuses a file at the keyboard) or -d/--dataset, the hosted form.
+  const path = inv.positionals[0];
+  const dataset = inv.flags.dataset as string | undefined;
+  if (path === undefined && dataset === undefined) {
+    throw new CliUsageError("check takes a <path> (a task directory, or a directory of them) or -d/--dataset <name[@version]>");
+  }
+  if (path !== undefined && dataset !== undefined) {
+    throw new CliUsageError("check takes EITHER a <path> OR -d/--dataset, not both");
+  }
+  const source = dataset !== undefined ? { dataset } : { directory: path! };
   if (!json && !quiet) io.out("🔎 Checking task quality...");
   const accepted = await client.create({ source, ...knobs });
   if (!watch) {
@@ -4880,6 +4970,126 @@ async function cmdCheckShow(inv: Invocation, io: CliIO): Promise<number> {
   }
   // Harbor's exit law on the report (cli/analyze.py:206-207): an errored task is exit 1.
   return check.results.some((r) => r.status === "failed") ? 1 : 0;
+}
+
+async function cmdCheckTrace(inv: Invocation, io: CliIO): Promise<number> {
+  const json = inv.flags.json === true;
+  const since = inv.flags.since as number | undefined;
+  const transcript = await checks(clientConfig(inv)).transcript(
+    inv.positionals[0],
+    since !== undefined ? { since } : undefined
+  );
+  for (const event of transcript.events) {
+    io.out(json ? JSON.stringify(event) : traceEventLine(event));
+  }
+  if (!json && transcript.events.length === 0) io.out("No trace events.");
+  return 0;
+}
+
+/**
+ * The five artifact names `check download --stream` accepts — the analysis
+ * verb's list with the task check's own verdict name: the result document
+ * and the parsed transcript, plus the stored selectors (one list, the
+ * analysis's — a task check stores exactly the same three).
+ */
+const TASK_CHECK_STREAM_ARTIFACTS = ["task-check", "trace-parsed", ...ANALYSIS_ARTIFACT_STREAMS] as const;
+type TaskCheckStreamArtifact = (typeof TASK_CHECK_STREAM_ARTIFACTS)[number];
+
+/** `evolve check download` — the analysis download verb's laws, on a task check (cmdAnalysisDownload states each). */
+async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
+  const client = checks(clientConfig(inv));
+  const taskCheckId = inv.positionals[0];
+  const json = inv.flags.json === true;
+  const stream = inv.flags.stream as string | undefined;
+
+  if (stream !== undefined && (inv.flags["output-dir"] !== undefined || inv.flags.overwrite === true)) {
+    throw new CliUsageError('"check download" takes EITHER --stream OR -o/--overwrite, not both');
+  }
+  if ((stream === undefined || stream !== "trace-parsed") && inv.flags.since !== undefined) {
+    throw new CliUsageError("--since pages the parsed events; it applies only to --stream trace-parsed");
+  }
+
+  if (stream !== undefined) {
+    if (!TASK_CHECK_STREAM_ARTIFACTS.includes(stream as TaskCheckStreamArtifact)) {
+      throw new CliUsageError(`--stream must be one of: ${TASK_CHECK_STREAM_ARTIFACTS.join(", ")}`);
+    }
+    if (stream === "task-check") {
+      // The result document itself — the same object the feed's &format=log
+      // form downloads under Harbor's check-result.json name. --json keeps
+      // the wire's {task_check} envelope, like {log} below.
+      const taskCheck = await client.task(taskCheckId);
+      io.out(json ? JSON.stringify({ task_check: taskCheck }) : JSON.stringify(taskCheck, null, 2));
+      return 0;
+    }
+    if (stream === "trace-parsed") {
+      const since = inv.flags.since as number | undefined;
+      const transcript = await client.transcript(taskCheckId, since !== undefined ? { since } : undefined);
+      for (const event of transcript.events) {
+        io.out(json ? JSON.stringify(event) : traceEventLine(event));
+      }
+      if (!json && transcript.events.length === 0) io.out("No trace events.");
+      return 0;
+    }
+    if (stream === "agent-home") {
+      const files = await client.artifact(taskCheckId, stream);
+      if (files === null) {
+        io.out(json ? JSON.stringify({ files: null }) : `No ${stream} content was stored for this task check.`);
+        return 0;
+      }
+      if (json) {
+        io.out(JSON.stringify({ files }));
+      } else {
+        for (const [path, content] of Object.entries(files)) {
+          io.out(`===== ${path} (${Buffer.byteLength(content, "utf8")} bytes) =====`);
+          io.out(content);
+        }
+      }
+      return 0;
+    }
+    const log = await client.artifact(taskCheckId, stream as Exclude<AnalysisArtifactStream, "agent-home">);
+    if (log === null) {
+      io.out(json ? JSON.stringify({ log: null }) : `No ${stream} log was stored for this task check.`);
+      return 0;
+    }
+    io.out(json ? JSON.stringify({ log }) : log);
+    return 0;
+  }
+
+  // Save mode: the run as the task-check tree under <output-dir>/<task-check-id>/
+  // — check-result.json at the root, the checker's streams and home under
+  // agent/, plus evolve.json (assembleTaskCheckTree states the layout).
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const targetDir = join((inv.flags["output-dir"] as string | undefined) ?? "checks", taskCheckId);
+  if (existsSync(targetDir) && inv.flags.overwrite !== true) {
+    throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
+  }
+  // The result resolves FIRST: its door refuses a non-task-check id typed,
+  // so the wrong species dies before any artifact byte is fetched.
+  const taskCheck = await client.task(taskCheckId);
+  const files = assembleTaskCheckTree({
+    taskCheck,
+    transcript: await client.transcript(taskCheckId),
+    stdout: await client.artifact(taskCheckId, "trace-stdout"),
+    stderr: await client.artifact(taskCheckId, "trace-stderr"),
+    home: await client.artifact(taskCheckId, "agent-home"),
+    userId: await callerUserId(inv),
+  });
+  await mkdir(targetDir, { recursive: true });
+  const saved: string[] = [];
+  for (const path of Object.keys(files).sort()) {
+    const target = join(targetDir, ...path.split("/"));
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, files[path]);
+    saved.push(path);
+    if (!json) io.out(path);
+  }
+  if (json) {
+    io.out(JSON.stringify({ path: targetDir, saved }));
+  } else {
+    io.out(`Saved ${targetDir}`);
+  }
+  return 0;
 }
 
 async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
@@ -6875,6 +7085,8 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "analysis download": cmdAnalysisDownload,
   "check list": cmdCheckList,
   "check show": cmdCheckShow,
+  "check trace": cmdCheckTrace,
+  "check download": cmdCheckDownload,
   "session list": cmdSessionList,
   "session show": cmdSessionShow,
   "dataset list": cmdDatasetList,

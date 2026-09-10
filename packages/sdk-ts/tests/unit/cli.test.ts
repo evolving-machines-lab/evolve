@@ -5224,6 +5224,56 @@ async function testAnalysisDownloadStream() {
   }
 }
 
+async function testCheckDatasetAndTaskVerbs() {
+  console.log("\n--- runCli: check -d posts the dataset form; check trace / download read one task check off the feed doors ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/checks", {
+      status: 202,
+      body: { ...wireCheck(), source: { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" } },
+    });
+    const created = captureIO();
+    assertEqual(await runCli(["check", "-d", "harbor-examples", "--json", ...AUTH], created.io), 0, "check -d exits 0 on the 202");
+    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assert(form instanceof FormData && form.get("dataset") === "harbor-examples" && !form.has("archive"), "the dataset part travels, no archive");
+    assertEqual((JSON.parse(created.out[0]) as { source: { type: string } }).source.type, "dataset", "prints the accepted check");
+    const both = captureIO();
+    assertEqual(await runCli(["check", "./tasks", "-d", "harbor-examples", ...AUTH], both.io), 2, "a path AND -d is a usage error");
+    const neither = captureIO();
+    assertEqual(await runCli(["check", ...AUTH], neither.io), 2, "neither a path nor -d is a usage error");
+
+    setMockResponse("/api/traces/trials/tc-1/events", {
+      status: 200,
+      body: { session: { id: "tc-1", kind: "check", type: "trial", tag: "hello-world", checkId: "chk-1" }, events: [{ _prompt: { text: "check it" } }], total: 1 },
+    });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: (wireCheck().results as Record<string, unknown>[])[0] } });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=trace-stdout", { status: 200, body: { log: "checker stdout" } });
+    const trace = captureIO();
+    assertEqual(await runCli(["check", "trace", "tc-1", "--json", ...AUTH], trace.io), 0, "check trace exits 0");
+    assertEqual((JSON.parse(trace.out[0]) as { seq: number }).seq, 0, "prints the checker's events as TraceEvent lines");
+    const stream = captureIO();
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "trace-stdout", ...AUTH], stream.io), 0, "check download --stream exits 0");
+    assertEqual(stream.out, ["checker stdout"], "prints the raw log verbatim");
+    const verdict = captureIO();
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "task-check", ...AUTH], verdict.io), 0, "--stream task-check is the result document");
+    assertEqual((JSON.parse(verdict.out.join("\n")) as { id: string }).id, "tc-1", "prints the wire TaskCheck");
+    const misuse = captureIO();
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "trace-stdout", "-o", "x", ...AUTH], misuse.io), 2, "--stream with -o is a usage error (the analysis verb's law)");
+    const badName = captureIO();
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "analysis", ...AUTH], badName.io), 2, "the analysis verdict name is not a task check's stream");
+
+    // The species gate: a trial id at a stream selector dies at the verdict door.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=task-check", { status: 400, body: { error: "check-result.json belongs to a task check — open the check row and download it there" } });
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", { status: 200, body: { log: "the TRIAL's stdout" } });
+    const wrong = captureIO();
+    assertEqual(await runCli(["check", "download", "run-1", "--stream", "trace-stdout", ...AUTH], wrong.io), 1, "wrong species exits 1");
+    assert(wrong.err[0].includes("not a task check"), "the refusal names the reason");
+    assertEqual(wrong.out, [], "the trial's bytes never reach stdout");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testAnalysisDownloadStreamRefusesOtherSpecies() {
   console.log("\n--- runCli: analysis download --stream refuses an id of another species ---");
   installMockFetch();
@@ -8619,6 +8669,10 @@ async function testCheckVerb() {
   assertEqual(parseArgs(["check", "list"]).command, "check list", "`check list` routes to the read group");
   assertEqual(parseArgs(["check", "show", "chk-1"]).command, "check show", "`check show <id>` routes to the read group");
   assertEqual(parseArgs(["check", "ls"]).command, "check list", "`ls` aliases list here too");
+  assertEqual(parseArgs(["check", "-d", "harbor-examples@1.0"]).flags.dataset, "harbor-examples@1.0", "-d/--dataset is the hosted source (no path)");
+  assertEqual(parseArgs(["check", "-d", "harbor-examples"]).positionals, [], "the path is optional when -d is given");
+  assertEqual(parseArgs(["check", "trace", "tc-1", "--since", "3"]).command, "check trace", "`check trace <task-check-id>` routes to the read group");
+  assertEqual(parseArgs(["check", "download", "tc-1", "--stream", "task-check"]).command, "check download", "`check download <task-check-id>` routes to the read group");
   assertEqual(parseArgs(["check", "./list"]).positionals, ["./list"], "a directory literally named list is written ./list");
   assertThrowsUsage(() => parseArgs(["check", "./tasks", "--passing"]), "passing", "analyze's trial filters are not check flags");
 
@@ -8808,6 +8862,7 @@ async function main() {
   await testAnalysisShow();
   await testAnalysisTrace();
   await testAnalysisDownloadStream();
+  await testCheckDatasetAndTaskVerbs();
   await testAnalysisDownloadStreamRefusesOtherSpecies();
   await testAnalysisDownloadSave();
   await testAnalysisDownloadUsageErrors();

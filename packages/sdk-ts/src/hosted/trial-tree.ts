@@ -77,7 +77,15 @@
  * clients, writing to the caller, so the assembly is testable byte for byte.
  */
 import { trialAgentCost } from "./money";
-import type { AnalysisTranscript, Job, TraceEvent, Trial, TrialAnalysis } from "./types";
+import type {
+  AnalysisTranscript,
+  Job,
+  TaskCheck,
+  TaskCheckTranscript,
+  TraceEvent,
+  Trial,
+  TrialAnalysis,
+} from "./types";
 
 /** Everything the assembly consumes — fetched by the caller via the clients. */
 export interface TrialTreeParts {
@@ -467,46 +475,126 @@ export function analysisEvolveRecord(
 }
 
 /**
- * Assemble one analysis run as {relative-path: content} — the pure assembly
- * behind `evolve analysis download`. Deterministic like assembleTrialTree.
+ * THE ONE RUBRIC-RUN TREE — an analysis run and a task check materialize
+ * through this one assembly (owner ruling 2026-09-09: a task check is
+ * downloadable like an analysis; never a second tree builder). Deterministic
+ * like assembleTrialTree.
  *
- * The layout reuses the trial tree's own slot names, because the analyzer is
- * itself an agent run and the store keys its artifacts identically:
+ * The layout reuses the trial tree's own slot names, because the rubric
+ * agent is itself an agent run and the store keys its artifacts identically:
  *
- *   analysis.json             the verdict document — the wire's TrialAnalysis,
- *                             the same object the feed's ?what=analysis door
- *                             serves and its &format=log form downloads.
- *                             Harbor's name for the per-trial artifact
- *                             (their analyzer.py:414-424 writes analysis.json
- *                             into the analyzed trial dir; cli/analyze.py:357
- *                             names it) — here it sits at the run's own root,
- *                             because this tree IS the analysis run
- *   agent/stdout.log          the analyzer process's raw streams, when stored
- *   agent/stderr.log          (the wire names no harness for the analyzer
- *                             run, so the default layout applies: stdout.log)
- *   agent/trace-parsed.jsonl  the analyzer's parsed event trace
- *   agent/evolve-home/…       the analyzer CLI's home folder, keyed by its
- *                             sandbox path (the default layout's one slot)
- *   evolve.json               the platform record (analysisEvolveRecord)
+ *   <verdict file>            the verdict document at the run's root — the
+ *                             wire's TrialAnalysis as analysis.json (Harbor's
+ *                             name for the per-trial artifact, their
+ *                             analyzer.py:414-424 / cli/analyze.py:357) or
+ *                             the wire's TaskCheck as check-result.json
+ *                             (Harbor's name for the checker's deliverable,
+ *                             checker.py:37 RESULT_FILENAME) — the same
+ *                             object the feed's verdict door serves and its
+ *                             &format=log form downloads; here it sits at the
+ *                             run's own root, because this tree IS the run
+ *   agent/stdout.log          the agent process's raw streams, when stored
+ *   agent/stderr.log          (the wire names no harness for a rubric run,
+ *                             so the default layout applies: stdout.log)
+ *   agent/trace-parsed.jsonl  the run's parsed event trace
+ *   agent/evolve-home/…       the CLI's home folder, keyed by its sandbox
+ *                             path (the default layout's one slot)
+ *   evolve.json               the platform record (the run's evolve record)
  *
  * Absent artifacts are absent files — never empty placeholders. No
- * config.json/result.json/verifier/: those are trial-tree facts an analysis
+ * config.json/result.json/verifier/: those are trial-tree facts a rubric run
  * does not have, and inventing them would fake a species.
  */
-export function assembleAnalysisTree(parts: AnalysisTreeParts): Record<string, string> {
+function assembleRubricRunTree(parts: {
+  verdictFile: string;
+  verdict: unknown;
+  events: TraceEvent[];
+  stdout: string | null;
+  stderr: string | null;
+  home: Record<string, string> | null;
+  evolveRecord: Record<string, unknown>;
+}): Record<string, string> {
   const files: Record<string, string> = {};
 
-  files["analysis.json"] = record(parts.analysis);
+  files[parts.verdictFile] = record(parts.verdict);
   if (parts.stdout !== null) files["agent/stdout.log"] = parts.stdout;
   if (parts.stderr !== null) files["agent/stderr.log"] = parts.stderr;
-  if (parts.transcript.events.length > 0) {
-    files["agent/trace-parsed.jsonl"] =
-      parts.transcript.events.map((event) => JSON.stringify(event)).join("\n") + "\n";
+  if (parts.events.length > 0) {
+    files["agent/trace-parsed.jsonl"] = parts.events.map((event) => JSON.stringify(event)).join("\n") + "\n";
   }
   if (parts.home !== null) Object.assign(files, placeHome(DEFAULT_HARNESS_TRIAL_LAYOUT, parts.home));
 
-  files["evolve.json"] = record(
-    analysisEvolveRecord(parts.analysis, parts.transcript, parts.userId)
-  );
+  files["evolve.json"] = record(parts.evolveRecord);
   return files;
+}
+
+/** Assemble one analysis run as {relative-path: content} — the pure assembly behind `evolve analysis download` (assembleRubricRunTree states the layout). */
+export function assembleAnalysisTree(parts: AnalysisTreeParts): Record<string, string> {
+  return assembleRubricRunTree({
+    verdictFile: "analysis.json",
+    verdict: parts.analysis,
+    events: parts.transcript.events,
+    stdout: parts.stdout,
+    stderr: parts.stderr,
+    home: parts.home,
+    evolveRecord: analysisEvolveRecord(parts.analysis, parts.transcript, parts.userId),
+  });
+}
+
+// =============================================================================
+// TASK CHECK TREE — one task check, materialized (evolve check download)
+// =============================================================================
+
+/** Everything the task-check assembly consumes — fetched via checks(). */
+export interface TaskCheckTreeParts {
+  /** checks().task(id) — the result document. */
+  taskCheck: TaskCheck;
+  /** checks().transcript(id) — identity facts + the drained events. */
+  transcript: TaskCheckTranscript;
+  /** checks().artifact(id, "trace-stdout") / ("trace-stderr") */
+  stdout: string | null;
+  stderr: string | null;
+  /** checks().artifact(id, "agent-home") — true sandbox paths. */
+  home: Record<string, string> | null;
+  /** The caller's USER id (auth().status() user_id); null when unknown. */
+  userId: string | null;
+}
+
+/**
+ * The task check's evolve.json — the platform record Harbor's
+ * QualityCheckResult has no slot for: the check record this result belongs
+ * to, the dataset the task came from (the dataset form), where the CHECKER's
+ * own box ran, which user downloaded it, and the checker's own meter (the
+ * analysis record's shape, the check's facts).
+ */
+export function taskCheckEvolveRecord(
+  taskCheck: TaskCheck,
+  transcript: TaskCheckTranscript,
+  userId: string | null
+): Record<string, unknown> {
+  return {
+    task_check_id: taskCheck.id,
+    check_id: taskCheck.check_id,
+    dataset: transcript.dataset,
+    task_name: taskCheck.task_name,
+    user_id: userId,
+    provider: transcript.sandbox_provider,
+    sandbox_id: transcript.sandbox_id,
+    status: taskCheck.status,
+    model_name: transcript.model_name,
+    gateway: { cost_usd: taskCheck.cost_usd },
+  };
+}
+
+/** Assemble one task check as {relative-path: content} — the pure assembly behind `evolve check download` (assembleRubricRunTree states the layout). */
+export function assembleTaskCheckTree(parts: TaskCheckTreeParts): Record<string, string> {
+  return assembleRubricRunTree({
+    verdictFile: "check-result.json",
+    verdict: parts.taskCheck,
+    events: parts.transcript.events,
+    stdout: parts.stdout,
+    stderr: parts.stderr,
+    home: parts.home,
+    evolveRecord: taskCheckEvolveRecord(parts.taskCheck, parts.transcript, parts.userId),
+  });
 }
