@@ -7413,6 +7413,7 @@ class JobsClient:
         on_stats: Optional[Callable[[Job], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
+        min_settled: int = 0,
     ) -> Job:
         """Follow a job's analysis wave to its settled end.
 
@@ -7436,6 +7437,13 @@ class JobsClient:
         still-RUNNING job created with ``analyze``, ``n_pending`` can touch
         0 between trial settles, so the watch can return before every trial
         has been analyzed.
+
+        ``min_settled`` is the guard against settling on a wave this watch
+        never saw: pass the accepted job's own
+        ``n_completed + n_failed + n_pending`` (which already counts the
+        batch :meth:`analyze` enqueued) and the poll keeps going until the
+        server's tally has caught up with it. 0, the default, settles on
+        ``n_pending`` 0 alone, as this watch always has.
 
         ``timeout_s`` bounds the whole watch and raises
         :class:`TimeoutError` at the deadline — the last sleep is clamped to
@@ -7478,7 +7486,15 @@ class JobsClient:
                 last_tally = tally
                 if on_stats is not None:
                     on_stats(job)
-            if tally is not None and tally[2] == 0:
+            # Nothing pending — and, when the caller named the total its own
+            # wave brings the tally to, not until the server's numbers have
+            # caught up with it. ``stats['analysis']`` is a JOB-level tally
+            # spanning every wave, so on a job whose previous wave finished it
+            # reads n_pending 0 until the new rows become visible, and a watch
+            # started right after an accepted analyze() would return at once
+            # with the PREVIOUS wave's numbers. Settled counts only grow, so
+            # this cannot deadlock on a row that finished before the first read.
+            if tally is not None and tally[2] == 0 and tally[0] + tally[1] >= min_settled:
                 return job
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_analysis({id!r}) timed out after {timeout_s}s')

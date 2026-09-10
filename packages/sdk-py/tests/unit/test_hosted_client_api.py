@@ -3280,6 +3280,48 @@ class TestJobs:
         assert exc.value.code == 'analysis_already_running'
 
     @pytest.mark.asyncio
+    async def test_watch_analysis_does_not_settle_on_a_wave_it_never_saw(self):
+        """``stats['analysis']`` is a JOB-level tally spanning every wave, so
+        on a job whose previous wave finished it reads n_pending 0 until the
+        new rows become visible — and a watch started right after an accepted
+        analyze() would return at once with the PREVIOUS wave's numbers.
+        ``min_settled`` is the accepted job's own total; the poll keeps going
+        until the server's tally reaches it."""
+        def tallied(n_completed, n_pending):
+            return {
+                **ANALYZED_JOB,
+                'stats': {
+                    **ANALYZED_JOB['stats'],
+                    'analysis': {
+                        'n_completed': n_completed,
+                        'n_failed': 0,
+                        'n_pending': n_pending,
+                        'cost_usd': None,
+                        'checks': {},
+                    },
+                },
+            }
+
+        # The previous wave's settled tally: nothing pending, one done. The
+        # new row is not visible yet for the first two reads.
+        stale = tallied(1, 0)
+        settled = tallied(2, 0)
+        reads = {'n': 0}
+
+        def fake(request, timeout=None):
+            reads['n'] += 1
+            return FakeResponse(stale if reads['n'] <= 2 else settled, {}, 200)
+
+        with patch('evolve._http.urlopen', fake):
+            # The accepted 202 counted 1 done + 1 pending, so the total this
+            # wave brings the job to is 2.
+            final = await jobs_factory(CONFIG).watch_analysis(
+                'job-1', poll_interval_s=0.01, min_settled=2
+            )
+
+        assert final.stats['analysis']['n_completed'] == 2
+        assert reads['n'] == 3, 'it polled past the stale tally instead of settling on it'
+
     async def test_watch_analysis_polls_to_settled(self):
         """watch_analysis polls the job until nothing is pending; on_stats
         fires on every observed tally change with the job it came from."""
