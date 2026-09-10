@@ -289,6 +289,7 @@ UI display. For replay after cleanup, use the `session_id` with
 | `ToolCallUpdate` | `"tool_call_update"` | Tool execution finished |
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
+| `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
 
 ---
 

@@ -264,9 +264,18 @@ HostedErrorCode = Literal[
     'analysis_already_running',
     # Check (POST /api/checks, Harbor's ``harbor check`` hosted): a check the
     # caller cannot read or that never existed (404); an archive with no
-    # task directory, or a selection the globs and the cap emptied (400).
+    # task directory, or a selection the globs and the cap emptied (400);
+    # more task directories selected than one check may hold (422, details
+    # carry task_count and max_tasks — narrow with the globs or cap with
+    # n_tasks); the server already spooling its bound of concurrent check
+    # archives (429, details carry max_concurrent, refused before the first
+    # uploaded byte; retry when one finishes — the check-door sibling of
+    # too_many_concurrent_skill_uploads above, not rate_limited for the
+    # same reason).
     'check_not_found',
     'no_checkable_tasks',
+    'check_too_large',
+    'too_many_concurrent_check_uploads',
     'no_analyzable_trials',
     # Job upload (POST /api/jobs/upload): the archive is not a Harbor job
     # directory (no result.json / config.json at its root, or they do not
@@ -8175,10 +8184,16 @@ class ChecksClient:
         prompt, a provider outside the lineup, an effort outside the
         vocabulary, a malformed glob list, an out-of-range ``n_concurrent``
         or ``n_tasks`` — under ``check.*``), ``invalid_archive`` (not a
-        readable gzipped tar), ``no_checkable_tasks`` (no task directory in
-        the archive, or the globs and the cap selected none — Harbor's "No
-        valid task directories found"), ``upload_too_large`` (over
-        ``limits['uploads']['check_archive_bytes']``).
+        readable gzipped tar, an unsafe entry, or past a listing bound),
+        ``no_checkable_tasks`` (no task directory in the archive, or the
+        globs and the cap selected none — Harbor's "No valid task
+        directories found"), ``check_too_large`` (more than 1,000 task
+        directories selected — narrow the globs or set ``n_tasks``;
+        ``details`` carry ``task_count`` and ``max_tasks``),
+        ``upload_too_large`` (over
+        ``limits['uploads']['check_archive_bytes']``),
+        ``too_many_concurrent_check_uploads`` (the server is already
+        spooling its bound of check archives — retry when one finishes).
         """
         knobs: Dict[str, Any] = {}
         if model_name is not None:

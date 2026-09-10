@@ -4534,9 +4534,18 @@ export const HOSTED_ERROR_CODES = [
   "analysis_already_running",
   // Check (POST /api/checks, Harbor's `harbor check` hosted): a check the
   // caller cannot read or that never existed (404); an archive with no task
-  // directory, or a selection the globs and the cap emptied (400).
+  // directory, or a selection the globs and the cap emptied (400); more task
+  // directories selected than one check may hold (422, details carry
+  // task_count and max_tasks — narrow with the globs or cap with n_tasks);
+  // the server already spooling its bound of concurrent check archives
+  // (429, details carry max_concurrent, refused before the first uploaded
+  // byte; retry when one finishes — the check-door sibling of
+  // too_many_concurrent_skill_uploads above, not rate_limited for the same
+  // reason).
   "check_not_found",
   "no_checkable_tasks",
+  "check_too_large",
+  "too_many_concurrent_check_uploads",
   "no_analyzable_trials",
   // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
   // directory (no result.json / config.json at its root, or they do not
@@ -4855,6 +4864,8 @@ export interface CapabilityDocument {
       skill_uploads_per_user: number;
       /** Compressed cap on one uploaded job archive (`upload_too_large` past it). */
       job_archive_bytes: number;
+      /** Compressed cap on one check archive (POST /api/checks; `upload_too_large` past it). */
+      check_archive_bytes: number;
       /** Most trials one uploaded job archive may carry (`job_too_large` past it). */
       job_trials: number;
       /** Per-file cap on the trial artifacts an upload stores (a trial with a file past it is skipped, `trial_too_large` on the import). */
