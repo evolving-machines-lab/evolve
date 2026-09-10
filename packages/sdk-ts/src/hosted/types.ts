@@ -3244,9 +3244,21 @@ export interface WatchAnalysisOptions {
   /**
    * Initial poll interval (default: 2000ms). Doubles while the tally stands
    * still, up to the 30-s ceiling the job watch's reconnect uses, and
-   * returns to this value on every tally change.
+   * returns to this value on every tally change. Must be greater than 0.
    */
   pollIntervalMs?: number;
+  /**
+   * Bound on the WHOLE watch: past it the watch refuses with
+   * WatchTimeoutError("watch_timeout") carrying the last tally it saw. The
+   * last sleep is clamped to the time left, so the refusal lands on the
+   * deadline rather than a backoff step past it, and a run of rate limits
+   * cannot carry the watch past it either. Python's `timeout_s`.
+   *
+   * Omitted = unbounded, the default this watch has always had — which on a
+   * job that was NEVER analyzed means polling the enqueue race forever, so
+   * set it whenever the id might not have an analysis wave.
+   */
+  timeoutMs?: number;
 }
 
 /** Options for jobs().watch() */
@@ -4261,8 +4273,19 @@ export interface WatchCheckOptions {
   onProgress?: (check: Check) => void;
   /** Abort the watch (rejects with the abort reason) */
   signal?: AbortSignal;
-  /** Initial poll interval (default: 2000ms); doubles while nothing changes, up to 30 s, and snaps back on every change. */
+  /** Initial poll interval (default: 2000ms); doubles while nothing changes, up to 30 s, and snaps back on every change. Must be greater than 0. */
   pollIntervalMs?: number;
+  /**
+   * Bound on the WHOLE watch: past it the watch refuses with
+   * WatchTimeoutError("watch_timeout") carrying the last per-task statuses it
+   * saw. The last sleep is clamped to the time left, so the refusal lands on
+   * the deadline rather than a backoff step past it, and a run of rate limits
+   * cannot carry the watch past it either. Python's `timeout_s`.
+   *
+   * Omitted = unbounded. The check keeps running server-side either way —
+   * read it with checks().get().
+   */
+  timeoutMs?: number;
 }
 
 /**

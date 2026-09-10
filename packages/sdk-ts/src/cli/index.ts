@@ -33,6 +33,7 @@ import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
   ImportSettleError,
+  WatchTimeoutError,
   JOB_LIST_SCOPES,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
@@ -6920,6 +6921,11 @@ function jsonErrorBody(error: unknown): Record<string, unknown> {
   // A settle refusal carries its own named cause — not an invented code, the
   // SDK's typed one (settle_timeout).
   if (error instanceof ImportSettleError) {
+    return { code: error.code, message: error.message };
+  }
+  // A watch that ran out of budget states the same way (watch_timeout), and
+  // names the last progress it saw so a reader knows where the work stands.
+  if (error instanceof WatchTimeoutError) {
     return { code: error.code, message: error.message };
   }
   return { message: error instanceof Error ? error.message : String(error) };
