@@ -7150,6 +7150,92 @@ async function testChecksCreateDirectory() {
   }
 }
 
+async function testChecksCreateDataset() {
+  console.log("\n--- checks().create({ source: { dataset } }) posts config + dataset parts, no archive (the hosted form) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/checks", {
+      status: 202,
+      body: checkFixture({ source: { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" } }),
+    });
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+    const accepted = await c.create({ source: { dataset: "harbor-examples" }, include_task_names: ["hello-*"] });
+    const call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/checks"), "POSTs /api/checks");
+    assertEqual(call.init?.method, "POST", "uses POST");
+    const form = call.init?.body as FormData;
+    assert(form instanceof FormData, "the body is a multipart form with no archive part");
+    assertEqual(form.get("dataset"), "harbor-examples", "the dataset part names the published dataset");
+    assertEqual(JSON.parse(String(form.get("config"))), { include_task_names: ["hello-*"] }, "the knobs ride as the config part");
+    assertEqual(form.has("archive"), false, "nothing is uploaded on the dataset form");
+    assertEqual(accepted.source, { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" }, "the 202's source is the dataset form");
+    let threw = false;
+    try {
+      await c.create({ source: { dataset: "  " } });
+    } catch (e) {
+      threw = true;
+      assert(e instanceof Error && e.message.includes('"name" or "name@version"'), "an empty dataset is refused at the keyboard");
+    }
+    assert(threw, "an empty dataset throws before any request");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testChecksTaskReads() {
+  console.log("\n--- checks().task()/transcript()/artifact() read one task check off the feed doors, species-gated ---");
+  installMockFetch();
+  try {
+    const taskCheck = (checkFixture().results as Record<string, unknown>[])[0];
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: { ...taskCheck, status: "completed" } } });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=trace-stdout", { status: 200, body: { log: "checker stdout" } });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=agent-home", { status: 200, body: { files: { "/root/.claude/s.jsonl": "{}" } } });
+    setMockResponse("/api/traces/trials/tc-1/events", {
+      status: 200,
+      body: {
+        session: { id: "tc-1", kind: "check", type: "trial", tag: "hello-world", checkId: "chk-1", datasetRef: "harbor-examples@1.0", model: "glm-5.3-flash", provider: "e2b", sandboxId: "box-1", isEnded: true },
+        events: [{ _prompt: { text: "check it" } }, { update: { sessionUpdate: "tool_call" } }],
+        total: 2,
+      },
+    });
+    // A trial id at the stored selectors: the verdict door refuses it typed
+    // and the SDK inherits the refusal before any byte is read.
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=task-check", { status: 400, body: { error: "check-result.json belongs to a task check — open the check row and download it there" } });
+    setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", { status: 200, body: { log: "the TRIAL's stdout" } });
+    setMockResponse("/api/traces/trials/an-1/events", { status: 200, body: { session: { id: "an-1", kind: "analysis", type: "trial" }, events: [], total: 0 } });
+
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+    const result = await c.task("tc-1");
+    assertEqual(result.id, "tc-1", "task() answers the wire TaskCheck");
+    assertEqual(result.status, "completed", "…for every status");
+    const transcript = await c.transcript("tc-1", { since: 1 });
+    assertEqual(transcript.check_id, "chk-1", "the transcript carries the check record");
+    assertEqual(transcript.dataset, "harbor-examples@1.0", "…and the dataset ref");
+    assertEqual(transcript.events.map((e) => [e.seq, e.type]), [[1, "unknown"], [2, "tool_call"]], "seq = since + index; the type is the viewer's one extraction");
+    assertEqual(await c.artifact("tc-1", "trace-stdout"), "checker stdout", "artifact() answers the stored log");
+    assertEqual(await c.artifact("tc-1", "agent-home"), { "/root/.claude/s.jsonl": "{}" }, "…and the home map");
+    let threw = false;
+    try {
+      await c.artifact("run-1", "trace-stdout");
+    } catch (e) {
+      threw = true;
+      assert(e instanceof Error && e.message.includes("not a task check"), "a trial id is refused with the reason");
+    }
+    assert(threw, "the wrong species never answers with the trial's bytes");
+    assert(!fetchCalls.some((call) => call.url.includes("/api/traces/trials/run-1/artifacts?what=trace-stdout")), "the trial's stream was never fetched");
+    threw = false;
+    try {
+      await c.transcript("an-1");
+    } catch (e) {
+      threw = true;
+      assert(e instanceof Error && e.message.includes("resolves it as a analysis"), "an analysis id at transcript() names the species");
+    }
+    assert(threw, "transcript() refuses the wrong species");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testChecksReadsAndWatch() {
   console.log("\n--- checks().get()/list()/watch() ride the contract's two GETs; watch polls to completed ---");
   installMockFetch();
@@ -7333,7 +7419,9 @@ async function main() {
   await testListJobsScope();
   await testListAnalyses();
   await testChecksCreateDirectory();
+  await testChecksCreateDataset();
   await testChecksReadsAndWatch();
+  await testChecksTaskReads();
   await testOrgs();
 
   console.log(`\n${"=".repeat(60)}`);

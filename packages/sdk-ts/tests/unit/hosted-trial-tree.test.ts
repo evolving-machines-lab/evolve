@@ -22,6 +22,7 @@
 import {
   AGENT_HOME_MANIFEST_FILENAME,
   assembleAnalysisTree,
+  assembleTaskCheckTree,
   assembleTrialTree,
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
@@ -595,6 +596,60 @@ function fixtureAnalysisParts(): AnalysisTreeParts {
     JSON.stringify(files),
     "deterministic — same parts, same bytes"
   );
+}
+
+// THE TASK CHECK TREE — the analysis tree's assembly (one builder, owner
+// ruling 2026-09-09) with the checker's own verdict name: check-result.json
+// (Harbor's checker.py:37 RESULT_FILENAME) at the root, the same agent/
+// slots, an evolve.json carrying the check record and the dataset ref.
+{
+  const parts = {
+    taskCheck: {
+      id: "tc-1",
+      check_id: "chk-1",
+      task_name: "hello-world",
+      status: "completed" as const,
+      checks: { typos: { outcome: "pass" as const, explanation: "none" } },
+      cost_usd: 0.004,
+      attempts: 1,
+      failure: null,
+      created_at: "2026-09-09T10:00:00.000Z",
+      finished_at: "2026-09-09T10:05:00.000Z",
+    },
+    transcript: {
+      id: "tc-1",
+      check_id: "chk-1",
+      dataset: "harbor-examples@1.0",
+      task_name: "hello-world",
+      model_name: "glm-5.3-flash",
+      sandbox_provider: "e2b",
+      sandbox_id: "box-2",
+      is_ended: true,
+      total: 1,
+      events: [{ seq: 0, type: "unknown", data: { _prompt: { text: "check" } } }],
+    },
+    stdout: "checker out",
+    stderr: null,
+    home: { "/root/.claude/session.jsonl": "{}" },
+    userId: "user-1",
+  };
+  const files = assembleTaskCheckTree(parts);
+  assertEqual(
+    Object.keys(files).sort(),
+    ["agent/evolve-home/root/.claude/session.jsonl", "agent/stdout.log", "agent/trace-parsed.jsonl", "check-result.json", "evolve.json"],
+    "the task check tree: check-result.json at the run's root, the checker's streams in agent/, no trial-only files"
+  );
+  const verdict = JSON.parse(files["check-result.json"]) as Record<string, unknown>;
+  assertEqual(verdict.id, "tc-1", "check-result.json is the wire TaskCheck");
+  assertEqual((verdict.checks as Record<string, unknown>).typos, { outcome: "pass", explanation: "none" }, "checks ride verbatim");
+  assert(!("agent/stderr.log" in files), "an absent artifact is an absent file");
+  const record = JSON.parse(files["evolve.json"]) as Record<string, unknown>;
+  assertEqual(record.task_check_id, "tc-1", "evolve.json names the task check");
+  assertEqual(record.check_id, "chk-1", "…and the check record");
+  assertEqual(record.dataset, "harbor-examples@1.0", "…and the dataset the task came from");
+  assertEqual(record.provider, "e2b", "…and the CHECKER's own provider");
+  assertEqual(record.gateway, { cost_usd: 0.004 }, "the meter restates the result's cost");
+  assertEqual(JSON.stringify(assembleTaskCheckTree(parts)), JSON.stringify(files), "deterministic — same parts, same bytes");
 }
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

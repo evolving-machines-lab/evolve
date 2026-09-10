@@ -1838,13 +1838,20 @@ class CheckConfigInput(TypedDict, total=False):
 
 
 class CheckSource(TypedDict):
-    """What was checked — the uploaded archive, by identity (spec ``CheckSource``)."""
-    #: Always ``'archive'``.
+    """What was checked, by identity (spec ``CheckSource``) — two forms told
+    apart by ``type``: ``'archive'`` (the uploaded tar's sha256 and compressed
+    ``bytes``; ``dataset`` None) or ``'dataset'`` (the resolved
+    ``name@version`` in ``dataset`` and the sha256 of the version's retained
+    task package; ``bytes`` None — a package's size is not a recorded fact,
+    so the wire invents none)."""
+    #: ``'archive'`` or ``'dataset'``.
     type: str
-    #: SHA-256 of the archive as uploaded.
+    #: SHA-256 of the archive as uploaded, or of the version's retained task package.
     sha256: str
-    #: The archive's compressed size.
-    bytes: int
+    #: The archive's compressed size on the archive form; None on the dataset form.
+    bytes: Optional[int]
+    #: The resolved ``name@version`` on the dataset form; None on the archive form.
+    dataset: Optional[str]
 
 
 class TaskCheck(TypedDict):
@@ -2463,6 +2470,10 @@ class JobTaskRollup:
     mean_reward: Optional[float]
     #: Measured spend across the task's settled trials.
     cost_usd: Optional[float]
+    #: The task's LATEST quality check among the checks you may read that ran
+    #: on a dataset version this job spans (``checks().create(dataset=...)``);
+    #: None = never checked. The job page's CHECK tab reads it.
+    check: Optional[TaskCheck]
 
 
 @dataclass
@@ -3730,6 +3741,8 @@ def _map_job_task_rollup(data: Dict[str, Any]) -> JobTaskRollup:
         trials=_map_trial_tally(data.get('trials')),
         mean_reward=float(mean_reward) if isinstance(mean_reward, (int, float)) else None,
         cost_usd=float(cost_usd) if isinstance(cost_usd, (int, float)) else None,
+        # The wire's TaskCheck or None, passed through: the row IS the answer.
+        check=cast(TaskCheck, data['check']) if isinstance(data.get('check'), dict) else None,
     )
 
 
@@ -8146,8 +8159,9 @@ class ChecksClient:
 
     async def create(
         self,
-        directory: str,
+        directory: Optional[str] = None,
         *,
+        dataset: Optional[str] = None,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
         prompt: Optional[str] = None,
@@ -8162,10 +8176,16 @@ class ChecksClient:
         """Check task quality against a rubric — Harbor's ``harbor check
         <PATH>`` (their cli/analyze.py:84-207), hosted.
 
-        ``directory`` is Harbor's PATH: one task directory, or a directory of
-        task directories, tarred and streamed from disk — a directory only,
-        as Harbor's PATH is (their checker.py:125-130 refuses anything else);
-        no ready-packed archive form. Which task directories are checked is
+        ONE source: ``directory`` — Harbor's PATH: one task directory, or a
+        directory of task directories, tarred and streamed from disk, a
+        directory only, as Harbor's PATH is (their checker.py:125-130 refuses
+        anything else; no ready-packed archive form) — or ``dataset``, a
+        PUBLISHED dataset (``'name'`` for its active version, or
+        ``'name@version'``), the hosted form and a recorded deviation: Harbor's
+        check takes a local path only; here the checker reads the version's
+        retained task package, nothing is uploaded, and the job page's CHECK
+        tab lists these checks by task. Both or neither is a ``ValueError``
+        at the keyboard. Which task directories are checked is
         Harbor's own resolution (checker.py:
         116-141): the root when it is a task directory (task.toml +
         environment/ + instruction.md + tests/), else every top-level
@@ -8194,7 +8214,21 @@ class ChecksClient:
         ``limits['uploads']['check_archive_bytes']``),
         ``too_many_concurrent_check_uploads`` (the server is already
         spooling its bound of check archives — retry when one finishes).
+        The dataset form resolves under the job-create door's own refusals:
+        ``dataset_not_found`` (404), ``dataset_version_not_found`` (404),
+        ``no_active_version`` (400), ``version_not_ready`` (409), and
+        ``invalid_input`` on ``dataset`` (400) for a version whose task
+        package was not retained.
+
+        Each task's result (``results[i]['id']``) is also a run of its own,
+        read like an analysis run — the checker's transcript, raw streams,
+        agent home and ``check-result.json``; those reads ride the
+        dashboard's traces feed (not on the contract) and are
+        TypeScript-and-CLI today: ``evolve check trace`` and ``evolve check
+        download``.
         """
+        if (directory is None) == (dataset is None):
+            raise ValueError('checks().create() takes exactly one source: directory or dataset')
         knobs: Dict[str, Any] = {}
         if model_name is not None:
             knobs['model_name'] = model_name
@@ -8218,6 +8252,16 @@ class ChecksClient:
         # sent before the archive so the server rules it before a byte of
         # the upload — the analyze door's acceptance, under ``check.*``.
         fields: Dict[str, Optional[str]] = {'config': json.dumps(knobs)}
+        if dataset is not None:
+            # THE DATASET FORM: no archive travels — the ``dataset`` part
+            # names the published version (the metadata-only multipart body
+            # every no-archive route takes).
+            if dataset.strip() == '':
+                raise ValueError('checks().create(): dataset must be "name" or "name@version"')
+            body, content_type = _multipart_body({**fields, 'dataset': dataset.strip()})
+            raw = await self._http.request_upload('/api/checks', body, {'Content-Type': content_type})
+            return _map_check(raw)
+        assert directory is not None
         path = os.path.abspath(directory)
         # Harbor's own first refusal: "Path '{path}' does not exist"
         # (checker.py:66-67), at the keyboard, before any tar.
