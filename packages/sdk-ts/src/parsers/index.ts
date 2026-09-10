@@ -16,7 +16,7 @@ import { createOpenCodeParser } from "./opencode";
 import { createQwenParser } from "./qwen";
 
 // Re-export types for convenience
-export type { OutputEvent, SessionUpdate, AgentError } from "./types";
+export type { OutputEvent, SessionUpdate, AgentError, AgentUsage, TokenUsage } from "./types";
 // The one predicate callers must use to ask "did the harness do work" — a
 // harness-reported failure is an event but is NOT work (see types.ts).
 export { isAgentWorkUpdate } from "./types";

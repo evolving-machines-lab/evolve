@@ -19,10 +19,12 @@ import {
   harnessErrorText,
   OutputEvent,
   SessionUpdate,
+  TokenUsage,
   ToolKind,
   ToolCallContent,
   ToolCallLocation,
 } from "./types";
+import { isoTimestamp } from "./usage";
 
 /** Map Gemini tool names to ACP ToolKind
  * Reference: gemini-cli/packages/core/src/tools/tool-names.ts
@@ -58,6 +60,14 @@ const TOOL_KINDS: Record<string, ToolKind> = {
  * Create a Gemini parser instance.
  */
 export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null {
+  // gemini names the model and the session ONCE, on init (types.ts:43-47
+  // InitEvent { session_id, model }), and never on a message line — so both
+  // are remembered here and stamped on every later event's envelope. The
+  // native session file names the model per message (gemini_cli.py:367) and
+  // the session in its header (gemini_cli.py:319); the stream has only this.
+  let model: string | undefined;
+  let initSessionId: string | undefined;
+
   return function parseGeminiEvent(jsonLine: string): OutputEvent[] | null {
     let data: any;
     try {
@@ -71,12 +81,14 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
       return null;
     }
 
-    const sessionId = data.session_id;
+    const sessionId: string | undefined =
+      (typeof data.session_id === "string" && data.session_id ? data.session_id : undefined) ?? initSessionId;
     const events: OutputEvent[] = [];
 
     switch (data.type) {
-      // Session lifecycle - skip
       case "init":
+        if (typeof data.model === "string" && data.model) model = data.model;
+        if (typeof data.session_id === "string" && data.session_id) initSessionId = data.session_id;
         return null;
 
       // THE TERMINAL FAILURE. Unlike every other harness here, gemini does not
@@ -88,8 +100,19 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
       // fall in with "init" and return null, so a gemini run that never reached
       // the model produced no events at all — the drop the AgentError variant
       // exists to end.
+      //
+      // The result is also the one line with the run's accounting: its
+      // `stats` (total_tokens, input_tokens, output_tokens, cached, per-model
+      // breakdown) — a run-scoped usage event, whatever the status: a run
+      // that ended in "error" after real turns has a real total, and the
+      // usage variant is never work (isAgentWorkUpdate), so carrying it
+      // cannot make a failed run look like one that did something. Per-call
+      // usage is not on this stream at all; it lives in the native session
+      // file (gemini_cli.py:481).
       case "result": {
-        if (data.status !== "error") return null;
+        const usage = geminiStatsUsage(data.stats);
+        if (usage) events.push({ sessionId, update: { sessionUpdate: "usage", scope: "run", usage } });
+        if (data.status !== "error") break;
         events.push({
           sessionId,
           update: {
@@ -148,8 +171,42 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
         return null;
     }
 
-    return events.length > 0 ? events : null;
+    if (events.length === 0) return null;
+    const timestamp = isoTimestamp(data.timestamp);
+    return events.map((event) => ({
+      ...event,
+      ...(timestamp !== undefined ? { timestamp } : {}),
+      ...(model !== undefined ? { model } : {}),
+    }));
   };
+
+  /**
+   * result.stats → TokenUsage. The stats object (types.ts:91-99 ResultEvent)
+   * names input_tokens, output_tokens and cached; everything else it carries
+   * (total_tokens, duration_ms, tool_calls, the per-model `models` map) rides
+   * extra verbatim. Null when the line carried no stats object.
+   */
+  function geminiStatsUsage(stats: unknown): TokenUsage | null {
+    if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
+    const record = stats as Record<string, unknown>;
+    const num = (value: unknown): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    const usage: TokenUsage = {};
+    const prompt = num(record.input_tokens);
+    const completion = num(record.output_tokens);
+    const cached = num(record.cached);
+    if (prompt !== undefined) usage.promptTokens = prompt;
+    if (completion !== undefined) usage.completionTokens = completion;
+    if (cached !== undefined) usage.cachedTokens = cached;
+    const extra: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (key === "input_tokens" || key === "output_tokens" || key === "cached") continue;
+      if (value === null || value === undefined) continue;
+      extra[key] = value;
+    }
+    if (Object.keys(extra).length > 0) usage.extra = extra;
+    return usage;
+  }
 
   /**
    * Handle message events (types.ts:49-54 MessageEvent)
@@ -213,14 +270,13 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
 
     const content: ToolCallContent[] = [];
 
-    // Add output content
+    // The output and the error text as gemini sent them — no fence around a
+    // failure: the bytes are the harness's (gemini_cli.py:412-416 keeps the
+    // raw output), framing is a viewer's decision.
     if (output && typeof output === "string" && output.length > 0) {
       content.push({
         type: "content",
-        content: {
-          type: "text",
-          text: status === "error" ? `\`\`\`\n${output}\n\`\`\`` : output,
-        },
+        content: { type: "text", text: output },
       });
     }
 
@@ -228,7 +284,7 @@ export function createGeminiParser(): (jsonLine: string) => OutputEvent[] | null
     if (error?.message && !output) {
       content.push({
         type: "content",
-        content: { type: "text", text: `\`\`\`\n${error.message}\n\`\`\`` },
+        content: { type: "text", text: error.message },
       });
     }
 

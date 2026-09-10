@@ -24,6 +24,7 @@ import type {
   ToolCallLocation,
   ToolKind,
 } from "./types";
+import { anthropicTokenUsage, isoTimestamp } from "./usage";
 
 const TOOL_KINDS: Record<string, ToolKind> = {
   applypatch: "edit",
@@ -72,6 +73,10 @@ const IGNORED_NOTIFICATION_TYPES = new Set([
 export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null {
   const toolNames = new Map<string, string>();
   let sessionId: string | undefined;
+  // droid names its model once, on the init line (live capture: {type:
+  // "system", subtype: "init", model, reasoning_effort}); stamped on every
+  // later event's envelope like gemini's.
+  let model: string | undefined;
   let emittedAssistantText = false;
   let lastAssistantText = "";
   let lastThoughtSignature: string | undefined;
@@ -112,6 +117,8 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
 
     switch (type) {
       case "system": {
+        const named = stringField(event, "model");
+        if (named) model = named;
         return null;
       }
 
@@ -133,6 +140,15 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
           emittedAssistantText = true;
           lastAssistantText = text;
           events.push(agentText(sessionId, text));
+        }
+        // The run's accounting: completion.usage carries Anthropic-named
+        // counters (input_tokens, output_tokens, cache_read_input_tokens,
+        // cache_creation_input_tokens) plus droid's own factory_credits and
+        // ttft_ms — the same arithmetic as claude's, the extras verbatim.
+        // Live capture, droid 0.182.0 (file header); no Harbor comparator.
+        const usage = anthropicTokenUsage(event.usage);
+        if (usage) {
+          events.push({ sessionId, update: { sessionUpdate: "usage", scope: "run", usage } });
         }
         break;
       }
@@ -276,7 +292,14 @@ export function createDroidParser(): (jsonLine: string) => OutputEvent[] | null 
       lastThoughtSignature = undefined;
     }
 
-    return events.length > 0 ? events : null;
+    if (events.length === 0) return null;
+    // Every stream-json line carries `timestamp` (epoch ms, live capture).
+    const timestamp = isoTimestamp(event.timestamp);
+    return events.map((item) => ({
+      ...item,
+      ...(timestamp !== undefined ? { timestamp } : {}),
+      ...(model !== undefined ? { model } : {}),
+    }));
   };
 }
 

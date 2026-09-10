@@ -280,10 +280,10 @@ async function testGemini(): Promise<void> {
     fatal: [false, false],
   });
 
-  console.log("\n[gemini] a successful result stays silent, and real output is still work");
+  console.log("\n[gemini] a successful result is accounting only, and real output is still work");
   assert(
-    createGeminiParser()(`{"type":"result","status":"success","stats":{}}`) === null,
-    "gemini: a success result emits nothing",
+    workOf(parseAll(createGeminiParser(), [`{"type":"result","status":"success","stats":{"input_tokens":5,"output_tokens":1}}`])).length === 0,
+    "gemini: a success result emits no work (its stats ride the usage variant)",
   );
   const work = parseAll(createGeminiParser(), [
     `{"type":"message","role":"assistant","content":"hello"}`,
@@ -376,10 +376,12 @@ async function testQwen(): Promise<void> {
   assert(bare.length === 1, "qwen: surfaced even with no error object");
   assert((bare[0]?.message ?? "").includes("error_max_turns"), "qwen: falls back to the harness's own subtype");
 
-  console.log("\n[qwen] a successful result stays silent");
+  console.log("\n[qwen] a successful result is accounting only");
   assert(
-    createQwenParser()(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"q"}`) === null,
-    "qwen: a success result emits nothing",
+    workOf(parseAll(createQwenParser(), [
+      `{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"q","usage":{"input_tokens":5,"output_tokens":1}}`,
+    ])).length === 0,
+    "qwen: a success result emits no work (its usage rides the usage variant)",
   );
 }
 

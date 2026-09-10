@@ -5,12 +5,15 @@
  * Each line is a JSON object with a `type` field.
  *
  * OpenCode event types:
- * - "step_start"  → lifecycle (skip)
+ * - "step_start"  → lifecycle (nothing to carry; every line has its own timestamp)
+ * - "user"        → user_message_chunk (newer opencode echoes the prompt; opencode.py:224-238)
  * - "text"        → agent_message_chunk
  * - "reasoning"   → agent_thought_chunk
  * - "tool_use"    → tool_call + tool_call_update (tools arrive completed or error)
- * - "step_finish" → lifecycle (skip)
+ * - "step_finish" → usage (scope "call": the step's tokens and cost, opencode.py:311-343)
  * - "error"       → error (the harness's own reported failure, never work)
+ *
+ * Every line carries `timestamp` (epoch ms), stamped on the envelope as ISO.
  *
  * Key differences from other parsers:
  * - tool_use events arrive already completed/error (not pending→result like Claude),
@@ -28,10 +31,12 @@ import {
   OutputEvent,
   PlanEntry,
   SessionUpdate,
+  TokenUsage,
   ToolKind,
   ToolCallContent,
   ToolCallLocation,
 } from "./types";
+import { isoTimestamp } from "./usage";
 
 /** Map OpenCode tool names to ACP ToolKind */
 const TOOL_KINDS: Record<string, ToolKind> = {
@@ -184,41 +189,53 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
     if (!data || typeof data !== "object") return null;
 
     const sessionId = data.sessionID;
-    const events: OutputEvent[] = [];
+    const updates: SessionUpdate[] = [];
 
     switch (data.type) {
-      // Lifecycle - skip
+      // Lifecycle - nothing beyond the timestamp every line already carries
       case "step_start":
-      case "step_finish":
         return null;
+
+      // The step's accounting (message-v2.ts StepFinishPart: tokens, cost)
+      case "step_finish": {
+        const usage = stepFinishUsage(data.part);
+        if (!usage) return null;
+        updates.push({ sessionUpdate: "usage", scope: "call", usage });
+        break;
+      }
+
+      // The prompt, echoed by newer opencode (opencode.py:224-238 prefers it
+      // for the opening user step). Older opencode never emits it.
+      case "user": {
+        const update = handleUser(data);
+        if (update) updates.push(update);
+        break;
+      }
 
       // Text content from agent
       case "text": {
         const update = handleText(data);
-        if (update) events.push({ sessionId, update });
+        if (update) updates.push(update);
         break;
       }
 
       // Reasoning/thinking (emitted with --thinking flag)
       case "reasoning": {
         const update = handleReasoning(data);
-        if (update) events.push({ sessionId, update });
+        if (update) updates.push(update);
         break;
       }
 
       // Tool use (arrives already completed or error)
       case "tool_use": {
-        const updates = handleToolUse(data);
-        for (const update of updates) {
-          events.push({ sessionId, update });
-        }
+        updates.push(...handleToolUse(data));
         break;
       }
 
       // Error events
       case "error": {
         const update = handleError(data);
-        if (update) events.push({ sessionId, update });
+        if (update) updates.push(update);
         break;
       }
 
@@ -226,8 +243,67 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
         return null;
     }
 
-    return events.length > 0 ? events : null;
+    if (updates.length === 0) return null;
+    const timestamp = isoTimestamp(data.timestamp);
+    return updates.map((update) => ({
+      sessionId,
+      update,
+      ...(timestamp !== undefined ? { timestamp } : {}),
+    }));
   };
+
+  /**
+   * step_finish.part → TokenUsage, opencode.py:311-343's arithmetic: prompt
+   * is input PLUS the cache-read share, completion is output, cached is the
+   * cache-read share, cost only when non-zero (opencode prints 0 when it
+   * cannot price the model — a gateway run — and Harbor leaves that None);
+   * reasoning and cache-write tokens ride extra under Harbor's names when
+   * non-zero. Null when the part carried no tokens object.
+   */
+  function stepFinishUsage(part: unknown): TokenUsage | null {
+    if (!part || typeof part !== "object") return null;
+    const tokens = (part as { tokens?: unknown }).tokens;
+    if (!tokens || typeof tokens !== "object") return null;
+    const t = tokens as Record<string, unknown>;
+    const cache = (typeof t.cache === "object" && t.cache ? t.cache : {}) as Record<string, unknown>;
+    const num = (value: unknown): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    const input = num(t.input);
+    const output = num(t.output);
+    const cacheRead = num(cache.read);
+    const cacheWrite = num(cache.write);
+    const reasoning = num(t.reasoning);
+    const cost = num((part as { cost?: unknown }).cost);
+
+    const usage: TokenUsage = {};
+    if (input !== undefined || cacheRead !== undefined) usage.promptTokens = (input ?? 0) + (cacheRead ?? 0);
+    if (output !== undefined) usage.completionTokens = output;
+    if (cacheRead !== undefined) usage.cachedTokens = cacheRead;
+    if (cost !== undefined && cost > 0) usage.costUsd = cost;
+    const extra: Record<string, unknown> = {};
+    if (reasoning) extra.reasoning_tokens = reasoning;
+    if (cacheWrite) extra.cache_write_tokens = cacheWrite;
+    if (Object.keys(extra).length > 0) usage.extra = extra;
+    return usage;
+  }
+
+  /**
+   * Handle user events
+   * { type: "user", timestamp, sessionID, parts: [{ type: "text", text }] }
+   * The text parts joined with "\n" (opencode.py:151-162 _user_event_text).
+   */
+  function handleUser(data: any): SessionUpdate | null {
+    const parts = Array.isArray(data.parts) ? data.parts : [];
+    const text = parts
+      .filter((p: any) => p && typeof p === "object" && p.type === "text" && typeof p.text === "string" && p.text)
+      .map((p: any) => p.text as string)
+      .join("\n");
+    if (text.length === 0) return null;
+    return {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text },
+    };
+  }
 
   /**
    * Handle text events
@@ -324,13 +400,13 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
     const resultText = getResultText(status, state);
     const resultContent: ToolCallContent[] = [];
 
+    // The output or error text as opencode sent it — no fence around a
+    // failure (opencode.py:293-297 keeps str(output) raw); framing is a
+    // viewer's decision.
     if (typeof resultText === "string" && resultText.length > 0) {
       resultContent.push({
         type: "content",
-        content: {
-          type: "text",
-          text: updateStatus === "failed" ? `\`\`\`\n${resultText}\n\`\`\`` : resultText,
-        },
+        content: { type: "text", text: resultText },
       });
     }
 
@@ -346,6 +422,11 @@ export function createOpenCodeParser(): (jsonLine: string) => OutputEvent[] | nu
       toolCallId: callId,
       status: updateStatus,
       content: resultContent,
+      // opencode's whole tool state (message-v2.ts ToolStateCompleted /
+      // ToolStateError: status, input, output|error, title, metadata with the
+      // exit code and truncation flag, time) is the harness's structured
+      // record of the result — verbatim.
+      rawOutput: state,
     });
 
     return updates;
