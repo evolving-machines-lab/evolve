@@ -3323,9 +3323,13 @@ export function trials(config?: HostedClientConfig): TrialsClient {
    * the normalized ATIF v1.7 document as JSON text (built server-side from
    * the stored parsed trace); "trajectory" — the reserved harness-native
    * session file — is refused not-found by the server until its wave lands,
-   * and the refusal surfaces as the API error it is; "agent-home" (the CLI's
-   * whole home folder, subagent transcripts included by construction) answers
-   * { files: Record<sandbox-path, text> | null }. Null = never stored
+   * and the refusal surfaces as the API error it is; "agent-home" (the utf8
+   * TEXT VIEW of the CLI's captured home, subagent transcripts included by
+   * construction; a non-UTF-8 file is left out and named in the capture
+   * record at "/agent-home.json" in the same map) answers
+   * { files: Record<sandbox-path, text> | null } — a home over the server's
+   * whole-read ceiling surfaces as the 413 invalid_input (param "format") it
+   * is; the job archive carries the home whole. Null = never stored
    * (normal answer, not an error): a QUEUED/CANCELLED trial, a harness that
    * wrote nothing, or a purged trace.
    */

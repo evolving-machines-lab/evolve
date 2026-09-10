@@ -3899,8 +3899,13 @@ export interface TrialsClient {
    * (the same document jobs.download() places at Harbor's own path
    * agent/trajectory.json); "trajectory" is the reserved harness-native
    * session file, refused not-found by the server until its wave lands;
-   * "agent-home" answers the CLI's whole home folder (subagent transcripts
-   * included), keyed by sandbox path. Null = never stored
+   * "agent-home" answers the utf8 TEXT VIEW of the CLI's captured home
+   * (subagent transcripts included), keyed by sandbox path: a file that is
+   * not UTF-8 text is left out and named in the capture record that rides
+   * the same map as "/agent-home.json"; a home over the server's whole-read
+   * ceiling is refused 413 invalid_input (param "format") — this SDK has no
+   * bytes door for the home, the job archive (jobs().download) carries it
+   * whole. Null = never stored
    * (a normal answer, not an error). "trace-parsed" is not an
    * artifact — the parsed event trace rides trace()/traceEvents().
    */

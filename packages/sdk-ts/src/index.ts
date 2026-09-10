@@ -570,13 +570,20 @@ export {
   type TrialUploadProvenance,
   type JobDeleteResult,
   // Remote inspection: job-wide grep, the per-trial file tree, and the
-  // client-side Harbor-tree assembly behind trial/analysis/job download.
+  // client-side Harbor-tree assembly behind trial/analysis/job download —
+  // with the per-harness table and the home placement rule it applies (the
+  // server's registry, mirrored), so the server's suite can pin its mirror.
   analysisEvolveRecord,
   assembleAnalysisTree,
   assembleTrialTree,
+  DEFAULT_HARNESS_TRIAL_LAYOUT,
+  HARNESS_TRIAL_LAYOUTS,
+  harnessTrialLayout,
+  homeFileTrialPath,
   jobEvolveRecord,
   trialEvolveRecord,
   type AnalysisTreeParts,
+  type HarnessTrialLayout,
   type TrialTreeParts,
   // Analysis runs off the traces feed (deliberately off-contract — see
   // AnalysesClient): the verdict, the analyzer's transcript, its artifacts.

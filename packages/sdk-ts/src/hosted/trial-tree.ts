@@ -27,6 +27,19 @@
  * so the single-trial tree states less rather than stating it differently.
  * A caller that needs the complete tree downloads the JOB.
  *
+ * THE HOME IS THE TEXT VIEW, NOT THE BYTES. The server archive's agent/
+ * home is the capture byte for byte (their lib/evaluations/trial-tree.ts
+ * reads trace-storage readAgentHome); this assembly reads the `agent-home`
+ * artifact, the utf8 TEXT VIEW of the same capture (spec
+ * downloadTrialArtifacts): a file that is not UTF-8 text — opencode's SQLite
+ * store, a cached image — is present in the archive and absent here, named
+ * only in the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME
+ * below, placed by homeFileTrialPath rule 3 at agent/evolve-home/ — the
+ * server's slot for it); and a home over the server's whole-read ceiling is
+ * refused 413 (`invalid_input`, param `format`) with no bytes door on this
+ * side — the JOB archive carries it whole. Every file both trees carry sits
+ * at the same path in both.
+ *
  * The files:
  *
  *   config.json               trial identity (task + agent), Harbor vocabulary
@@ -50,8 +63,9 @@
  *                             opencode/xdg-data/opencode/), the subtree
  *                             Harbor's adapter puts there — and the rest of
  *   agent/evolve-home/…       the home under Evolve's own slot, keyed by its
- *                             sandbox path (evolve-home/root/.gemini/…),
- *                             lossless
+ *                             sandbox path (evolve-home/root/.gemini/…), as
+ *                             far as the text view carries it (above), with
+ *                             the capture record agent-home.json at its root
  *   verifier/test-stdout.txt  the stored verifier log, when stored
  *   verifier/reward.json      the rewards map, when the verifier produced one
  *   exception.txt             when the trial carries an exception
@@ -91,9 +105,11 @@ export interface TrialTreeParts {
 
 /**
  * The agent-home tree in its VISIBLE shape — the mapping the server's
- * agent-home tgz (`?stream=agent-home&format=tgz`) applies (their
- * lib/tar-gz.ts visibleHomeTree): strip the `/root/` (or `/home/<user>/`)
- * wrapper and the leading dot of the first surviving segment, so
+ * agent-home tgz (`?stream=agent-home&format=tgz`) applies as it streams
+ * (their lib/tar-gz.ts visibleHomeEntries — one entry per stored object;
+ * this side maps a map, since the text view arrives whole): strip the
+ * `/root/` (or `/home/<user>/`) wrapper and the leading dot of the first
+ * surviving segment, so
  * `/root/.codex/x` reads `codex/x`. A mapped path that would collide keeps
  * its wrapper-stripped original instead. Presentation only; the trial tree
  * below places the home by the Harbor table instead (homeFileTrialPath).
@@ -178,17 +194,30 @@ export function harnessTrialLayout(label: string): HarnessTrialLayout {
 const HARBOR_AGENT_MOUNT_DIR = "/logs/agent";
 
 /**
+ * The capture record's filename — the ONE name on this side (the server's
+ * lib/evaluations/harbor-output-tree.ts AGENT_HOME_MANIFEST_FILENAME): the
+ * agent-home map carries it at `/` + this, the map's one key that is no
+ * sandbox path — every file's path, size and sha256, the files the text
+ * view left out.
+ */
+export const AGENT_HOME_MANIFEST_FILENAME = "agent-home.json";
+
+/**
  * The trial-relative path of ONE captured home file (the agent-home
  * artifact: sandbox path -> text), by the harness's layout — the server's
  * rule, verbatim (swarm_dashboard lib/evaluations/harbor-output-tree.ts
- * homeFileTrialPath):
+ * homeFileTrialPath, its five rules in its order):
  *
  *   1. a Harbor slot of the layout (`/root/.claude/x` -> agent/sessions/x);
  *   2. Harbor's own mount: `/logs/agent/x` -> agent/x verbatim — an uploaded
  *      archive's home, any slot;
- *   3. a home wrapper (`/root/…`, `/home/<user>/…`) -> agent/evolve-home/
+ *   3. the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME)
+ *      -> agent/evolve-home/agent-home.json, the extension slot — outside
+ *      every Harbor slot, so a Harbor reader of agent/sessions/ never meets
+ *      a file no Harbor agent writes;
+ *   4. a home wrapper (`/root/…`, `/home/<user>/…`) -> agent/evolve-home/
  *      <path>, lossless;
- *   4. anything else -> agent/sessions/<path> (the key shape the platform's
+ *   5. anything else -> agent/sessions/<path> (the key shape the platform's
  *      job-upload ingest wrote before 2026-09-09).
  */
 export function homeFileTrialPath(layout: HarnessTrialLayout, sandboxPath: string): string {
@@ -201,7 +230,9 @@ export function homeFileTrialPath(layout: HarnessTrialLayout, sandboxPath: strin
   const mounted = under(HARBOR_AGENT_MOUNT_DIR);
   if (mounted !== null) return `agent/${mounted}`;
   const clean = sandboxPath.replace(/^\/+/, "");
-  if (/^(root|home)\//.test(clean)) return `agent/evolve-home/${clean}`;
+  if (clean === AGENT_HOME_MANIFEST_FILENAME || /^(root|home)\//.test(clean)) {
+    return `agent/evolve-home/${clean}`;
+  }
   return `agent/sessions/${clean}`;
 }
 

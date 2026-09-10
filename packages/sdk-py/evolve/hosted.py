@@ -7754,9 +7754,15 @@ class TrialsClient:
         artifact — the harness's own native session file, reserved ahead of
         its server wave; the server answers not-found for it until that wave
         lands, and the refusal surfaces as the API error it is;
-        ``"agent-home"`` (the CLI's whole home folder, subagent
-        transcripts included by construction) answers a dict of sandbox path to
-        text. None = never stored (normal answer, not an error): a
+        ``"agent-home"`` (the utf8 TEXT VIEW of the CLI's captured home,
+        subagent transcripts included by construction; a file that is not
+        UTF-8 text is left out and named in the capture record that rides
+        the same dict as ``"/agent-home.json"``) answers a dict of sandbox
+        path to text — a home over the server's whole-read ceiling raises the
+        ``EvolveAPIError`` of its 413 ``invalid_input`` (param ``format``);
+        this SDK has no bytes door for the home, the job archive
+        (``jobs.download()``) carries it whole. None = never stored (normal
+        answer, not an error): a
         QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
         trace. ``"trace-parsed"`` is in the vocabulary but is not
         a raw artifact — the parsed event trace rides ``trace()`` /

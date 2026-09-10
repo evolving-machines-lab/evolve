@@ -20,8 +20,13 @@
  */
 
 import {
+  AGENT_HOME_MANIFEST_FILENAME,
   assembleAnalysisTree,
   assembleTrialTree,
+  DEFAULT_HARNESS_TRIAL_LAYOUT,
+  HARNESS_TRIAL_LAYOUTS,
+  harnessTrialLayout,
+  homeFileTrialPath,
   jobEvolveRecord,
   trialEvolveRecord,
   visibleHomeTree,
@@ -252,6 +257,45 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
       "agent/trajectory.json",
     ],
     "opencode: the tee is opencode.txt, the data store lands at agent/opencode/xdg-data/opencode/, the uncaptured state twin's path rides evolve-home"
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Placement rule 3: the capture record rides the extension slot, never a Harbor
+// slot — the server's harbor-output-tree.ts homeFileTrialPath rule 3, mirrored
+// -----------------------------------------------------------------------------
+{
+  const manifestKey = `/${AGENT_HOME_MANIFEST_FILENAME}`;
+  for (const [id, layout] of Object.entries(HARNESS_TRIAL_LAYOUTS)) {
+    assertEqual(
+      homeFileTrialPath(layout, manifestKey),
+      "agent/evolve-home/agent-home.json",
+      `${id}: the capture record lands at agent/evolve-home/agent-home.json, outside every Harbor slot`
+    );
+  }
+  assertEqual(
+    homeFileTrialPath(DEFAULT_HARNESS_TRIAL_LAYOUT, "/agent-home.json"),
+    "agent/evolve-home/agent-home.json",
+    "the default layout places the record the same way"
+  );
+  assertEqual(
+    homeFileTrialPath(harnessTrialLayout("gemini"), "/root/agent-home.json"),
+    "agent/evolve-home/root/agent-home.json",
+    "a same-named file INSIDE a home is an ordinary home file (rule 4)"
+  );
+  const files = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "claude-code" } }),
+      home: {
+        [manifestKey]: '{"files":[]}',
+        "/root/.claude/projects/-app/s.jsonl": "{}",
+      },
+    })
+  );
+  assertEqual(
+    Object.keys(files).filter((p) => p.startsWith("agent/evolve-home/") || p.startsWith("agent/sessions/")).sort(),
+    ["agent/evolve-home/agent-home.json", "agent/sessions/projects/-app/s.jsonl"],
+    "evolve trial download writes the record beside the lossless home, never inside agent/sessions/ (claude's Harbor slot)"
   );
 }
 
