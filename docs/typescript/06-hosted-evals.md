@@ -709,9 +709,42 @@ await c.create({
 });
 ```
 
-The report is Harbor's `CheckReport`: `results` carries one `QualityCheckResult` per task — `task_name`, the flat `checks` object keyed by criterion (`{outcome, explanation}` each; a check has no summary — analyze does), `cost_usd` (the checker's own metered spend, null when nothing was measured) — plus the hosted provenance: each task's own id, its lifecycle (`queued`, `running`, `completed`, `failed`), the bounded attempt count (a checker run that produces no valid `check-result.json` is re-run once, the analyze verb's rule), and a typed `failure {phase, message}` where Harbor's result carries an `error` string. The check itself carries `status` (`queued` until a task starts, `running`, `completed` once every task settled — a check never fails as a whole; refusals happen at accept and a task's failure is on that task), `source` (the uploaded archive's sha256 and size), the policy it ran under, and `cost_usd`, Harbor's total. A check is readable by its creator and by every member of the owning organization; anyone else gets `404 check_not_found`, the same answer as an id that does not exist.
+The report is Harbor's `CheckReport`: `results` carries one `QualityCheckResult` per task — `task_name`, the flat `checks` object keyed by criterion (`{outcome, explanation}` each; a check has no summary — analyze does), `cost_usd` (the checker's own metered spend, null when nothing was measured) — plus the hosted provenance: each task's own id, its lifecycle (`queued`, `running`, `completed`, `failed`), the bounded attempt count (a checker run that produces no valid `check-result.json` is re-run once, the analyze verb's rule), and a typed `failure {phase, message}` where Harbor's result carries an `error` string. The check itself carries `status` (`queued` until a task starts, `running`, `completed` once every task settled — a check never fails as a whole; refusals happen at accept and a task's failure is on that task), `source` (the uploaded archive's sha256 and size, or the dataset version it checked), the policy it ran under, and `cost_usd`, Harbor's total. A check is readable by its creator and by every member of the owning organization; anyone else gets `404 check_not_found`, the same answer as an id that does not exist.
 
-Two deviations from Harbor are deliberate and named. Their `harbor check` is a client-side command that writes a `check_report.json` into a local job directory; here the check runs **server-side** on an uploaded copy and the report is a record with an id you can list and re-read. And the archive is bounded — 256 MiB compressed (`limits.uploads.check_archive_bytes` on `GET /api/meta`; a task directory is kilobytes), refused `413 upload_too_large` past it, with no resumable session door in this version. From the terminal: `evolve check ./my-task --watch` — not to be confused with `evolve dataset check`, the pre-flight that parses a corpus's `task.toml` files before a publish; `evolve check` runs the checker agent over the whole task.
+Three deviations from Harbor are deliberate and named. Their `harbor check` is a client-side command that writes a `check_report.json` into a local job directory; here the check runs **server-side** on an uploaded copy and the report is a record with an id you can list and re-read. A check can name a published dataset instead of a local path (the next paragraph states why). And the archive is bounded — 256 MiB compressed (`limits.uploads.check_archive_bytes` on `GET /api/meta`; a task directory is kilobytes), refused `413 upload_too_large` past it, with no resumable session door in this version. From the terminal: `evolve check ./my-task --watch` — not to be confused with `evolve dataset check`, the pre-flight that parses a corpus's `task.toml` files before a publish; `evolve check` runs the checker agent over the whole task.
+
+The task check's source can also be a **published dataset** instead of a local directory — the hosted form, and a recorded deviation from Harbor, whose `harbor check` takes a local path only: a local checker has a disk, a hosted one has the platform's published corpora (their retained task packages hold the original task bytes), and a job page needs its tasks' checks attached to a task identity. Nothing is uploaded; the version resolves under the same rules and refusals as creating a job on it (`404 dataset_not_found` / `dataset_version_not_found`, `400 no_active_version`, `409 version_not_ready`; a version whose task package was not retained is `400 invalid_input` on `dataset`), and the selection knobs apply to the version's task names exactly as to an archive's directories. The report's `source` says which form ran: `{type: "archive", sha256, bytes, dataset: null}` or `{type: "dataset", sha256, bytes: null, dataset: "name@version"}`.
+
+```ts
+await c.create({ source: { dataset: "harbor-examples" }, include_task_names: ["hello-*"] });   // the active version
+await c.create({ source: { dataset: "harbor-examples@1.0" }, n_tasks: 5 });                   // a pinned version
+```
+
+Checks made this way appear on every job that spans that dataset version: the job page's **CHECK** tab lists the job's tasks with each task's latest check (the per-task rollup `jobs().tasks(jobId)` carries it as `check`, null for a task never checked), beside the ANALYZE tab — and from the terminal, `evolve check -d harbor-examples@1.0`.
+
+### Reading one task check
+
+Each task's result is itself an agent run — the checker boots in its own sandbox, reads the task directory, and leaves its own record: a live transcript, raw stdout/stderr, a session home, and the result document. `checks()` reads that record by **task check id** (`report.results[i].id`; `evolve check show` prints one per task), exactly as `analyses()` reads an analysis run:
+
+```ts
+const result = await c.task(taskCheckId);                     // the wire's TaskCheck — every status, typed failure included
+const t = await c.transcript(taskCheckId);                    // the CHECKER's own parsed events + identity facts
+console.log(t.check_id, t.dataset, t.total);                  // the check report, the dataset ref (null for an upload), how many rows exist
+const later = await c.transcript(taskCheckId, { since: t.total });   // resume: everything after what you hold
+const stdout = await c.artifact(taskCheckId, "trace-stdout"); // "trace-stderr" | "agent-home" too; null = never stored
+```
+
+The grammar is the analysis run's, verbatim: `task()` serves the result for **every** task check; `transcript()` answers everything after `since` in one read; `artifact()` speaks the null grammar and refuses a trial, regrade or analysis id with the species named, never answering with another run's bytes; a task check stores no verifier log and no ATIF trajectory, so those selectors are refused typed. These per-run reads ride the dashboard's traces feed (not part of the OpenAPI contract — the same boundary the analysis reads record) and are TypeScript-and-CLI today; the report itself stays on the contract. A task check opens to its creator and to every member of the owning organization; an id you may not read answers `trial_not_found` (404), the code every feed door speaks. The traces page lists each task check as its own row (kind CHECK) beside analyses, with the same viewer, the same download menu and the same stop verb — a running task check can be stopped one task at a time; the report keeps it as failed (stopped).
+
+The CLI wraps the same reads:
+
+```bash
+evolve check trace <task-check-id> --since 200                # the checker's transcript; --since resumes
+evolve check download <task-check-id> -o checks/               # the whole run: check-result.json + agent/ streams + evolve.json
+evolve check download <task-check-id> --stream trace-stdout    # or: task-check | trace-parsed | trace-stderr | agent-home
+```
+
+Saved whole, the task check lands as `check-result.json` at the root (Harbor's name for the checker's deliverable — their checker writes it into the wrapper trial's artifacts; here the tree IS the task check), the checker's streams and visible session home under `agent/`, and `evolve.json` carrying what Harbor's shape has no slot for: the check record, the dataset the task came from, the checker's own sandbox and its metered spend. Absent artifacts are absent files.
 
 ---
 

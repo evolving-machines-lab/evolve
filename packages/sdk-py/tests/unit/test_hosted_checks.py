@@ -85,6 +85,26 @@ def _write_task_dir(root):
 
 class TestChecksCreate:
     @pytest.mark.asyncio
+    async def test_create_dataset_form_posts_config_and_dataset_parts_without_an_archive(self):
+        accepted_body = {**CHECK_ACCEPTED, 'source': {'type': 'dataset', 'sha256': 'cd' * 32, 'bytes': None, 'dataset': 'harbor-examples@1.0'}}
+        fake = FakeUrlopen([('/api/checks', accepted_body, {}, 202)])
+        with patch('evolve._http.urlopen', fake):
+            accepted = await checks_factory(CONFIG).create(dataset='harbor-examples', n_tasks=2)
+        request = fake.requests[0]
+        assert request.full_url.endswith('/api/checks')
+        parts = _multipart_parts(request)
+        assert list(parts) == ['config', 'dataset']
+        assert json.loads(parts['config']) == {'n_tasks': 2}
+        assert parts['dataset'] == b'harbor-examples'
+        assert accepted['source'] == {'type': 'dataset', 'sha256': 'cd' * 32, 'bytes': None, 'dataset': 'harbor-examples@1.0'}
+        with pytest.raises(ValueError, match='exactly one source'):
+            await checks_factory(CONFIG).create()
+        with pytest.raises(ValueError, match='exactly one source'):
+            await checks_factory(CONFIG).create('./x', dataset='harbor-examples')
+        with pytest.raises(ValueError, match='"name" or "name@version"'):
+            await checks_factory(CONFIG).create(dataset='   ')
+
+    @pytest.mark.asyncio
     async def test_create_packs_the_directory_and_sends_the_config_part_first(self, tmp_path):
         from evolve.hosted import _tar_gzip_directory_to_file
 
@@ -226,3 +246,16 @@ class TestChecksRead:
         client = hosted(CONFIG)
         assert type(client.checks).__name__ == 'ChecksClient'
         assert client.checks is client.checks
+
+
+def test_job_task_rollup_carries_the_latest_task_check_or_none():
+    # The rollup row's ``check`` (spec JobTaskRollup.check): the wire's
+    # TaskCheck passed through, None for a task never checked or a
+    # malformed value — the row IS the answer.
+    from evolve.hosted import _map_job_task_rollup
+
+    base = {'task_name': 'hello-world', 'source': 'harbor-examples', 'trials': {'total': 1, 'byStatus': {'SCORED': 1}}, 'mean_reward': 1.0, 'cost_usd': None}
+    assert _map_job_task_rollup({**base, 'check': TASK_CHECK}).check == TASK_CHECK
+    assert _map_job_task_rollup({**base, 'check': None}).check is None
+    assert _map_job_task_rollup({**base, 'check': 'nonsense'}).check is None
+    assert _map_job_task_rollup(base).check is None

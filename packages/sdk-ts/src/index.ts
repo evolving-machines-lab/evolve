@@ -577,21 +577,25 @@ export {
   // server's registry, mirrored), so the server's suite can pin its mirror.
   analysisEvolveRecord,
   assembleAnalysisTree,
+  assembleTaskCheckTree,
   assembleTrialTree,
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
   harnessTrialLayout,
   homeFileTrialPath,
   jobEvolveRecord,
+  taskCheckEvolveRecord,
   trialEvolveRecord,
   type AnalysisTreeParts,
   type HarnessTrialLayout,
+  type TaskCheckTreeParts,
   type TrialTreeParts,
   // Analysis runs off the traces feed (deliberately off-contract — see
   // AnalysesClient): the verdict, the analyzer's transcript, its artifacts.
   type AnalysisArtifactStream,
   type AnalysisTranscript,
   type AnalysisTranscriptOptions,
+  type TaskCheckTranscript,
   // The contract-side analyses door: the catalog of runs, cursor-paged.
   type AnalysisList,
   type AnalysisPage,

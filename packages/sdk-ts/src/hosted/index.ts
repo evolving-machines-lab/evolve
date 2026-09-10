@@ -19,6 +19,7 @@ import type {
   CreateCheckInput,
   ListChecksOptions,
   TaskCheck,
+  TaskCheckTranscript,
   WatchCheckOptions,
   ListAnalysesOptions,
   AgentArmInput,
@@ -217,6 +218,7 @@ export type {
   CreateCheckInput,
   ListChecksOptions,
   TaskCheck,
+  TaskCheckTranscript,
   WatchCheckOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
@@ -394,7 +396,9 @@ import {
 export {
   analysisEvolveRecord,
   assembleAnalysisTree,
+  assembleTaskCheckTree,
   assembleTrialTree,
+  taskCheckEvolveRecord,
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
   harnessTrialLayout,
@@ -404,6 +408,7 @@ export {
   visibleHomeTree,
   type AnalysisTreeParts,
   type HarnessTrialLayout,
+  type TaskCheckTreeParts,
   type TrialTreeParts,
 } from "./trial-tree";
 
@@ -2800,6 +2805,12 @@ export function jobs(config?: HostedClientConfig): JobsClient {
       },
       mean_reward: (raw.mean_reward as number | null) ?? null,
       cost_usd: (raw.cost_usd as number | null) ?? null,
+      // The task's latest quality check (the wire's TaskCheck or null) —
+      // passed through: the row IS the answer, a malformed one reads null.
+      check:
+        raw.check && typeof raw.check === "object" && !Array.isArray(raw.check)
+          ? (raw.check as TaskCheck)
+          : null,
     };
   }
 
@@ -3714,12 +3725,15 @@ function mapCheck(raw: unknown): Check {
 }
 
 /**
- * Create a ChecksClient — Harbor's `harbor check <PATH>` as three hosted
- * verbs: `create` (POST /api/checks — the directory tarred from disk and
- * streamed, never held in memory, the config part FIRST so a refused policy
- * never receives its upload), `get` and `list` (the record and its
- * catalog), and `watch` (the poll the contract asks for — checks have no
- * event stream). Requires EVOLVE_API_KEY (or { apiKey } in config).
+ * Create a ChecksClient — Harbor's `harbor check <PATH>` as hosted verbs:
+ * `create` (POST /api/checks — the directory tarred from disk and streamed,
+ * never held in memory, the config part FIRST so a refused policy never
+ * receives its upload; or the dataset form, no upload at all), `get` and
+ * `list` (the record and its catalog), `watch` (the poll the contract asks
+ * for — checks have no event stream), and the per-task reads `task`,
+ * `transcript`, `artifact` (a task check read like an analysis run, off the
+ * traces feed — ChecksClient states the law). Requires EVOLVE_API_KEY (or
+ * { apiKey } in config).
  */
 export function checks(config?: HostedClientConfig): ChecksClient {
   const cfg = resolveConfig("checks", config);
@@ -3740,6 +3754,63 @@ export function checks(config?: HostedClientConfig): ChecksClient {
     return mapPage((await res.json()) as Record<string, unknown>, mapCheck);
   }
 
+  // Ids this client has already proven to be task checks (the analyses
+  // client's provenAnalyses, on this species).
+  const provenTaskChecks = new Set<string>();
+
+  /**
+   * THE SPECIES GATE for the stored streams — the analyses client's, with
+   * the task check's own verdict door: ?what=task-check is the one selector
+   * the server refuses typed for a trial, a regrade or an analysis (400), so
+   * every stream read resolves it FIRST and a wrong-species id dies before
+   * any artifact byte is fetched.
+   */
+  async function getTaskCheck(taskCheckId: string): Promise<TaskCheck> {
+    let res: Response;
+    try {
+      res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(taskCheckId)}/artifacts?what=task-check`
+      );
+    } catch (error) {
+      if (error instanceof EvolveApiError && error.status === 400) {
+        throw new Error(
+          `"${taskCheckId}" is not a task check (the artifacts door refuses it typed) — ` +
+            `for a trial's artifacts use trials(), for an analysis's use analyses()`
+        );
+      }
+      throw error;
+    }
+    const body = (await res.json()) as Record<string, unknown>;
+    const raw = body.task_check;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`The traces feed served no readable task check for "${taskCheckId}"`);
+    }
+    provenTaskChecks.add(taskCheckId);
+    return raw as TaskCheck;
+  }
+
+  async function getTaskCheckArtifact(
+    taskCheckId: string,
+    stream: Exclude<AnalysisArtifactStream, "agent-home">
+  ): Promise<string | null>;
+  async function getTaskCheckArtifact(
+    taskCheckId: string,
+    stream: "agent-home"
+  ): Promise<Record<string, string> | null>;
+  async function getTaskCheckArtifact(
+    taskCheckId: string,
+    stream: AnalysisArtifactStream
+  ): Promise<string | Record<string, string> | null> {
+    if (!provenTaskChecks.has(taskCheckId)) await getTaskCheck(taskCheckId);
+    const res = await request(
+      cfg,
+      `/api/traces/trials/${encodeURIComponent(taskCheckId)}/artifacts?what=${stream}`
+    );
+    const body = (await res.json()) as { log?: string | null; files?: Record<string, string> | null };
+    return stream === "agent-home" ? (body.files ?? null) : (body.log ?? null);
+  }
+
   return {
     async create(input: CreateCheckInput): Promise<Check> {
       const { source, onUploadProgress, ...knobs } = input;
@@ -3747,6 +3818,19 @@ export function checks(config?: HostedClientConfig): ChecksClient {
       // sent before the archive so the server rules it before a byte of
       // the upload — the analyze door's own acceptance, under `check.*`.
       const fields = { config: JSON.stringify(knobs) };
+      if ("dataset" in source) {
+        // THE DATASET FORM (the hosted deviation, CreateCheckInput states
+        // it): no archive travels — the `dataset` part names the published
+        // version and the server reads its retained task package.
+        if (typeof source.dataset !== "string" || source.dataset.trim() === "") {
+          throw new Error('checks().create(): source.dataset must be "name" or "name@version"');
+        }
+        const res = await request(cfg, "/api/checks", {
+          method: "POST",
+          body: uploadForm({ ...fields, dataset: source.dataset.trim() }),
+        });
+        return mapCheck(await res.json());
+      }
       const { existsSync, statSync } = await import("node:fs");
       const { basename, resolve } = await import("node:path");
       const directory = resolve(source.directory);
@@ -3776,6 +3860,54 @@ export function checks(config?: HostedClientConfig): ChecksClient {
         options
       );
     },
+
+    task: getTaskCheck,
+
+    async transcript(taskCheckId: string, options?: AnalysisTranscriptOptions): Promise<TaskCheckTranscript> {
+      const since = options?.since;
+      if (since !== undefined && (!Number.isInteger(since) || since < 0)) {
+        throw new Error(`transcript() since must be a non-negative integer, got ${since}`);
+      }
+      const res = await request(
+        cfg,
+        `/api/traces/trials/${encodeURIComponent(taskCheckId)}/events` +
+          (since !== undefined ? `?since=${since}` : "")
+      );
+      const raw = (await res.json()) as Record<string, unknown>;
+      const session = (raw.session ?? {}) as Record<string, unknown>;
+      // THE SPECIES GATE (the analyses client's): the feed resolves trial,
+      // regrade and analysis ids before a task check, and a wrong species
+      // must not hand back another run's events.
+      if (session.kind !== "check") {
+        const species = typeof session.kind === "string" ? session.kind : "trial";
+        throw new Error(
+          `"${taskCheckId}" is not a task check (the feed resolves it as a ${species}) — ` +
+            `for a trial's trace use trials(), for an analysis's use analyses()`
+        );
+      }
+      const base = since ?? 0;
+      const events = (Array.isArray(raw.events) ? raw.events : []) as unknown[];
+      return {
+        id: typeof session.id === "string" ? session.id : taskCheckId,
+        check_id: typeof session.checkId === "string" ? session.checkId : null,
+        dataset: typeof session.datasetRef === "string" ? session.datasetRef : null,
+        task_name: typeof session.tag === "string" ? session.tag : null,
+        model_name: typeof session.model === "string" ? session.model : null,
+        sandbox_provider: typeof session.provider === "string" ? session.provider : null,
+        sandbox_id: typeof session.sandboxId === "string" ? session.sandboxId : null,
+        is_ended: session.isEnded === true,
+        total: typeof raw.total === "number" ? raw.total : base + events.length,
+        events: events.map((data, i) => ({
+          seq: base + i,
+          type: feedEventType(data),
+          data: (data && typeof data === "object" && !Array.isArray(data)
+            ? data
+            : {}) as Record<string, unknown>,
+        })),
+      };
+    },
+
+    artifact: getTaskCheckArtifact,
 
     async watch(checkId: string, options?: WatchCheckOptions): Promise<Check> {
       // The analysis watch's poll shape (jobs().watchAnalysis): the interval
