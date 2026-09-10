@@ -47,8 +47,24 @@ npx tsx tests/unit/cli.test.ts
 npx tsx tests/unit/cli-bin.test.ts
 
 cd "${REPO_ROOT}/packages/sdk-py"
+set +e
 python -m pytest \
     tests/unit/test_hosted_spec_gate.py \
     tests/unit/test_hosted_stats_typing.py \
     tests/unit/test_hosted_retry_typing.py \
     -v
+PYTEST_STATUS=$?
+set -e
+
+# pytest answers 5 for "no tests collected", which is EXACTLY what a
+# contract-less run produces: every gate test skips itself, so nothing is
+# collected. That is the normal local run — the spec lives in the private
+# server repo — and it made this script exit non-zero on a clean tree, which
+# is how a red gate stops meaning anything. Tolerated only when we already
+# know the contract is absent; where it is set, 5 stays a failure.
+if [ "${PYTEST_STATUS}" -eq 5 ] && [ -z "${EVOLVE_OPENAPI_SPEC_PATH:-}" ]; then
+    echo "[spec-gates] python gates all skipped — no contract present, so nothing to gate"
+    PYTEST_STATUS=0
+fi
+
+exit "${PYTEST_STATUS}"
