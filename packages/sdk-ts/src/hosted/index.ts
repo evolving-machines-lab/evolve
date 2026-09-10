@@ -12,6 +12,14 @@ import type {
   AgentArm,
   AnalysisList,
   AnalysisPage,
+  Check,
+  CheckList,
+  CheckPage,
+  ChecksClient,
+  CreateCheckInput,
+  ListChecksOptions,
+  TaskCheck,
+  WatchCheckOptions,
   ListAnalysesOptions,
   AgentArmInput,
   AgentInfo,
@@ -162,6 +170,7 @@ export {
   AGENT_EFFORT_SUPPORT_VALUES,
   ANALYSIS_ARTIFACT_STREAMS,
   ANALYSIS_STATUSES,
+  CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   JOB_LIST_SCOPES,
@@ -198,6 +207,17 @@ export type {
   AnalysisStatus,
   AnalysisTranscript,
   AnalysisTranscriptOptions,
+  Check,
+  CheckConfigInput,
+  CheckList,
+  CheckPage,
+  CheckSource,
+  CheckStatus,
+  ChecksClient,
+  CreateCheckInput,
+  ListChecksOptions,
+  TaskCheck,
+  WatchCheckOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
   ApiKey,
@@ -375,10 +395,15 @@ export {
   analysisEvolveRecord,
   assembleAnalysisTree,
   assembleTrialTree,
+  DEFAULT_HARNESS_TRIAL_LAYOUT,
+  HARNESS_TRIAL_LAYOUTS,
+  harnessTrialLayout,
+  homeFileTrialPath,
   jobEvolveRecord,
   trialEvolveRecord,
   visibleHomeTree,
   type AnalysisTreeParts,
+  type HarnessTrialLayout,
   type TrialTreeParts,
 } from "./trial-tree";
 
@@ -3318,9 +3343,13 @@ export function trials(config?: HostedClientConfig): TrialsClient {
    * the normalized ATIF v1.7 document as JSON text (built server-side from
    * the stored parsed trace); "trajectory" — the reserved harness-native
    * session file — is refused not-found by the server until its wave lands,
-   * and the refusal surfaces as the API error it is; "agent-home" (the CLI's
-   * whole home folder, subagent transcripts included by construction) answers
-   * { files: Record<sandbox-path, text> | null }. Null = never stored
+   * and the refusal surfaces as the API error it is; "agent-home" (the utf8
+   * TEXT VIEW of the CLI's captured home, subagent transcripts included by
+   * construction; a non-UTF-8 file is left out and named in the capture
+   * record at "/agent-home.json" in the same map) answers
+   * { files: Record<sandbox-path, text> | null } — a home over the server's
+   * whole-read ceiling surfaces as the 413 invalid_input (param "format") it
+   * is; the job archive carries the home whole. Null = never stored
    * (normal answer, not an error): a QUEUED/CANCELLED trial, a harness that
    * wrote nothing, or a purged trace.
    */
@@ -3664,6 +3693,125 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
 }
 
 // =============================================================================
+// CHECKS CLIENT (task quality checks — Harbor's `harbor check`, hosted)
+// =============================================================================
+
+/**
+ * The wire's Check, verbatim, with its results' shape checked: a row that is
+ * not an object cannot be a check — fail closed like every list row.
+ */
+function mapCheck(raw: unknown): Check {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("The checks surface served an unreadable check object");
+  }
+  const value = raw as Record<string, unknown>;
+  const results = Array.isArray(value.results)
+    ? (value.results as unknown[]).filter(
+        (row): row is TaskCheck => !!row && typeof row === "object" && !Array.isArray(row)
+      )
+    : [];
+  return { ...(value as unknown as Check), results };
+}
+
+/**
+ * Create a ChecksClient — Harbor's `harbor check <PATH>` as three hosted
+ * verbs: `create` (POST /api/checks — the directory tarred from disk and
+ * streamed, never held in memory, the config part FIRST so a refused policy
+ * never receives its upload), `get` and `list` (the record and its
+ * catalog), and `watch` (the poll the contract asks for — checks have no
+ * event stream). Requires EVOLVE_API_KEY (or { apiKey } in config).
+ */
+export function checks(config?: HostedClientConfig): ChecksClient {
+  const cfg = resolveConfig("checks", config);
+
+  async function getCheck(checkId: string): Promise<Check> {
+    const res = await request(cfg, `/api/checks/${encodeURIComponent(checkId)}`);
+    return mapCheck(await res.json());
+  }
+
+  async function listPage(options?: ListChecksOptions): Promise<CheckPage> {
+    const res = await request(
+      cfg,
+      `/api/checks${pageQuery(options, {
+        scope: options?.scope,
+        status: options?.status && options.status.length > 0 ? options.status.join(",") : undefined,
+      })}`
+    );
+    return mapPage((await res.json()) as Record<string, unknown>, mapCheck);
+  }
+
+  return {
+    async create(input: CreateCheckInput): Promise<Check> {
+      const { source, onUploadProgress, ...knobs } = input;
+      // The policy rides as ONE JSON part (the spec's CheckConfigInput),
+      // sent before the archive so the server rules it before a byte of
+      // the upload — the analyze door's own acceptance, under `check.*`.
+      const fields = { config: JSON.stringify(knobs) };
+      const { existsSync, statSync } = await import("node:fs");
+      const { basename, resolve } = await import("node:path");
+      const directory = resolve(source.directory);
+      // Harbor's own first refusal: "Path '{path}' does not exist"
+      // (checker.py:66-67), at the keyboard, before any tar.
+      if (!existsSync(directory) || !statSync(directory).isDirectory()) {
+        throw new Error(`checks().create(): Path '${source.directory}' does not exist or is not a directory`);
+      }
+      // The archive's filename carries the directory's NAME: an archive of
+      // one task directory holds its contents, and Harbor names the result
+      // by the directory (checker.py:93) — the server reads it back from
+      // this filename for the single-task case.
+      const res = await uploadDirectory(cfg, "/api/checks", {
+        directory,
+        fields,
+        filename: `${basename(directory) || "task"}.tar.gz`,
+        ...(onUploadProgress !== undefined ? { onBytes: onUploadProgress } : {}),
+      });
+      return mapCheck(await res.json());
+    },
+
+    get: getCheck,
+
+    list(options?: ListChecksOptions): CheckList {
+      return makePaginated(
+        (opts) => listPage({ ...opts, scope: options?.scope, status: options?.status }),
+        options
+      );
+    },
+
+    async watch(checkId: string, options?: WatchCheckOptions): Promise<Check> {
+      // The analysis watch's poll shape (jobs().watchAnalysis): the interval
+      // doubles while nothing changes, up to the 30-s ceiling, and snaps
+      // back on every change; a 429/503 mid-watch is a delay, not an outcome.
+      const initialDelayMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+      let delayMs = initialDelayMs;
+      let lastTally: string | null = null;
+      for (;;) {
+        throwIfAborted(options?.signal);
+        let current: Check;
+        try {
+          current = await getCheck(checkId);
+        } catch (error) {
+          if (error instanceof EvolveApiError && (error.status === 429 || error.status === 503)) {
+            await sleep(Math.max((error.retryAfterSec ?? 0) * 1000, delayMs), options?.signal);
+            delayMs = Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
+            continue;
+          }
+          throw error;
+        }
+        const tally = JSON.stringify(current.results.map((r) => [r.task_name, r.status]));
+        const changed = tally !== lastTally;
+        if (changed) {
+          lastTally = tally;
+          options?.onProgress?.(current);
+        }
+        if (current.status === "completed") return current;
+        delayMs = changed ? initialDelayMs : Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
+        await sleep(delayMs, options?.signal);
+      }
+    },
+  };
+}
+
+// =============================================================================
 // AUTH CLIENT
 // =============================================================================
 
@@ -3819,6 +3967,8 @@ export interface HostedEvolve {
   readonly trials: TrialsClient;
   /** Analysis runs: verdict, the analyzer's own transcript, stored artifacts. */
   readonly analyses: AnalysesClient;
+  /** Task quality checks (Harbor's `harbor check`): create, get, list, watch. */
+  readonly checks: ChecksClient;
   /** Your organizations: list them, read one's quota and usage. */
   readonly orgs: OrgsClient;
   /**
@@ -3857,6 +4007,7 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
   let jobsClient: JobsClient | undefined;
   let trialsClient: TrialsClient | undefined;
   let analysesClient: AnalysesClient | undefined;
+  let checksClient: ChecksClient | undefined;
   let skillsClient: SkillsClient | undefined;
   let orgsClient: OrgsClient | undefined;
 
@@ -3875,6 +4026,9 @@ export function hosted(config?: HostedClientConfig): HostedEvolve {
     },
     get analyses(): AnalysesClient {
       return (analysesClient ??= analyses(config));
+    },
+    get checks(): ChecksClient {
+      return (checksClient ??= checks(config));
     },
     get skills(): SkillsClient {
       return (skillsClient ??= skills(config));

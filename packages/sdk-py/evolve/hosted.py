@@ -262,6 +262,20 @@ HostedErrorCode = Literal[
     # trial (every trial CANCELLED).
     'invalid_rubric',
     'analysis_already_running',
+    # Check (POST /api/checks, Harbor's ``harbor check`` hosted): a check the
+    # caller cannot read or that never existed (404); an archive with no
+    # task directory, or a selection the globs and the cap emptied (400);
+    # more task directories selected than one check may hold (422, details
+    # carry task_count and max_tasks — narrow with the globs or cap with
+    # n_tasks); the server already spooling its bound of concurrent check
+    # archives (429, details carry max_concurrent, refused before the first
+    # uploaded byte; retry when one finishes — the check-door sibling of
+    # too_many_concurrent_skill_uploads above, not rate_limited for the
+    # same reason).
+    'check_not_found',
+    'no_checkable_tasks',
+    'check_too_large',
+    'too_many_concurrent_check_uploads',
     'no_analyzable_trials',
     # Job upload (POST /api/jobs/upload): the archive is not a Harbor job
     # directory (no result.json / config.json at its root, or they do not
@@ -539,6 +553,12 @@ JobListScope = Literal['my', 'shared']
 #: An analysis's own lifecycle ladder — lowercase, the object's Harbor
 #: dialect (spec ``TrialAnalysis.status``).
 AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
+#: A task quality check's own lifecycle ladder — derived from its tasks
+#: (spec ``Check.status``): ``'queued'`` while no task started, ``'running'``
+#: while any task is still queued or running and one has started,
+#: ``'completed'`` once every task settled. A check never fails as a whole;
+#: each task carries its own typed failure (``TaskCheck['failure']``).
+CheckStatus = Literal['queued', 'running', 'completed']
 #: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
 #: ``'measured_provisional'`` is a real gateway reading taken inside its
 #: asynchronous spend flush — an honest floor a deferred pass later confirms or
@@ -1782,6 +1802,117 @@ class JobAnalysisStats(TypedDict):
     checks: Dict[str, Dict[str, int]]
 
 
+class CheckConfigInput(TypedDict, total=False):
+    """Task-check configuration INPUT — Harbor's ``harbor check`` vocabulary
+    (their cli/analyze.py:84-148 check_command), the spec's
+    ``CheckConfigInput`` schema. The rubric-agent trio is the analyze door's
+    under the same rules (:class:`AnalyzeConfigInput` states them; refusals
+    name ``check.*``): ``model_name`` (Harbor's check default is
+    ``claude-sonnet-4-6``; this platform's is the analyzer's
+    ``glm-5.3-flash`` — one roster, one default for both rubric agents, a
+    recorded deviation), ``rubric`` (default: Harbor's
+    cli/quality_checker/default-rubric.toml, eleven criteria verbatim) and
+    ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing their
+    prompts/check.txt; rendered with ``{task_path}``, ``{file_tree}``,
+    ``{criteria_guidance}``; the output contract appended after it exactly
+    as Harbor appends it). ``reasoning_effort`` and ``sandbox_provider`` are
+    the platform's two hosted knobs, exactly as on the analyze door.
+
+    Which tasks, and how wide, are Harbor's own check options with their
+    exact names: ``n_concurrent`` (``-n/--n-concurrent``),
+    ``include_task_names`` (``-i/--include-task-name``, repeatable glob),
+    ``exclude_task_names`` (``-x/--exclude-task-name``), ``n_tasks``
+    (``-l/--n-tasks``) — applied in checker.py's order (include, exclude,
+    then the cap) over the sorted task directory names; Python fnmatch
+    globs against the directory NAME.
+    """
+    model_name: str
+    rubric: Rubric
+    prompt: str
+    reasoning_effort: str
+    sandbox_provider: EvalSandboxProvider
+    n_concurrent: int
+    include_task_names: List[str]
+    exclude_task_names: List[str]
+    n_tasks: int
+
+
+class CheckSource(TypedDict):
+    """What was checked — the uploaded archive, by identity (spec ``CheckSource``)."""
+    #: Always ``'archive'``.
+    type: str
+    #: SHA-256 of the archive as uploaded.
+    sha256: str
+    #: The archive's compressed size.
+    bytes: int
+
+
+class TaskCheck(TypedDict):
+    """One task's quality check — Harbor's QualityCheckResult verbatim (their
+    cli/quality_checker/models.py:31-35: ``task_name``, ``checks`` keyed by
+    criterion, ``cost_usd``) plus the hosted provenance: its own id, the
+    check it belongs to, its lifecycle (the analysis ladder's four lowercase
+    words), the bounded attempt count, and a typed ``failure`` in place of
+    Harbor's ``error`` string.
+
+    ``checks`` is the FLAT object Harbor's validate.py accepts — one key per
+    rubric criterion, each ``{outcome, explanation}``; no summary (analyze
+    has one, check does not). ``cost_usd`` is the checker agent's OWN
+    metered spend; None when nothing was measured, never a fabricated 0.
+    A plain wire dict at runtime.
+    """
+    id: str
+    check_id: str
+    #: The task directory's name (Harbor's task_name).
+    task_name: str
+    #: ``'queued'`` | ``'running'`` | ``'completed'`` | ``'failed'``.
+    status: str
+    #: One entry per rubric criterion, keys exactly the frozen criteria. None until completed.
+    checks: Optional[Dict[str, AnalysisCheck]]
+    cost_usd: Optional[float]
+    #: 1, or 2 when the one automatic re-run fired.
+    attempts: int
+    #: Non-None exactly when status is ``'failed'``.
+    failure: Optional[AnalysisFailure]
+    created_at: str
+    #: When it settled; None while queued or running.
+    finished_at: Optional[str]
+
+
+class Check(TypedDict):
+    """One task quality check — Harbor's CheckReport (``results``, and
+    ``cost_usd`` its ``total_cost_usd``: the sum of measured task costs, None
+    when none was measured) plus the hosted record: the run's own id and
+    lifecycle (:data:`CheckStatus`), its source, and the policy every task
+    ran under, frozen at accept. A plain wire dict at runtime.
+    """
+    id: str
+    #: ``'queued'`` | ``'running'`` | ``'completed'`` (:data:`CheckStatus`).
+    status: str
+    source: CheckSource
+    model_name: str
+    #: The effort every task's checker ran at — named at create, or the model's default, resolved at accept.
+    reasoning_effort: str
+    rubric: Rubric
+    #: The prompt template as stored; None = Harbor's built-in check.txt.
+    prompt: Optional[str]
+    sandbox_provider: EvalSandboxProvider
+    #: Harbor's -n as stored; None = the organization's ceiling alone.
+    n_concurrent: Optional[int]
+    #: The include globs as stored; empty = no include filter.
+    include_task_names: List[str]
+    #: The exclude globs as stored; empty = no exclude filter.
+    exclude_task_names: List[str]
+    #: Harbor's -l/--n-tasks as stored; None = no cap.
+    n_tasks: Optional[int]
+    #: One entry per task directory checked, sorted by task name.
+    results: List[TaskCheck]
+    cost_usd: Optional[float]
+    created_at: str
+    #: When the last task settled; None until every task has.
+    finished_at: Optional[str]
+
+
 class JobRetryConfig(TypedDict):
     """The RESOLVED auto-retry policy a job runs under — the spec's
     ``RetryConfig`` schema, echoed on every job body as ``Job.retry``: the
@@ -2745,7 +2876,8 @@ class OrgQuota:
     max_queued_trials: int
     #: Dataset imports a worker holds at once; further imports wait.
     max_concurrent_imports: int
-    #: Trace analyses running at once; further analyses wait.
+    #: Rubric-agent runs in flight at once fleet-wide — trace analyses AND
+    #: task quality checks under ONE count; further runs of either kind wait.
     max_concurrent_analyses: int
     #: Managed-agent sessions open at once (recorded and read back; not yet
     #: enforced by the box-create doors).
@@ -2771,6 +2903,8 @@ class OrgUsage:
     in_flight_trials: int
     queued_trials: int
     in_flight_imports: int
+    #: Rubric-agent runs RUNNING now — trace analyses AND task quality
+    #: checks, the one count ``max_concurrent_analyses`` bounds.
     in_flight_analyses: int
     #: Sessions not yet ended; always 0 on a shared org (sessions carry no
     #: organization).
@@ -2822,6 +2956,13 @@ class TrialPage:
 @dataclass
 class AnalysisPage:
     items: List[TrialAnalysis]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class CheckPage:
+    items: List[Check]
     next_cursor: Optional[str]
     has_more: bool
 
@@ -2899,8 +3040,9 @@ class JobImportSkippedTrial:
     """One trial a job import LEFT OUT, typed (spec ``JobImportSkippedTrial``):
     the failure-envelope grammar plus the trial directory it names.
     ``trial_too_large`` is the one cause — the named ``details['file']`` is
-    over the per-file cap, or ``agent/sessions/`` totals over the
-    session-tree cap (``limits['uploads']`` on the capability document), or
+    over the per-file cap, or the ``agent/`` subtrees (``file`` spelled
+    ``agent/``) total over the session-tree cap (``limits['uploads']`` on
+    the capability document), or
     ``agent/trajectory.json`` would cost more heap to parse than the
     per-trial bound (its structure counted from the bytes, never parsed);
     ``details`` carry the ``bytes`` measured and the ``max_bytes`` bound.
@@ -3710,6 +3852,19 @@ def _map_trial_analysis(data: Any) -> Optional[TrialAnalysis]:
     return cast(
         TrialAnalysis,
         {**data, 'usage': _usage_reading_from_data(data.get('usage'))},
+    )
+
+
+def _map_check(data: Any) -> Check:
+    """The wire's Check, verbatim, with its ``results`` list checked: a body
+    that is not an object cannot be a check — fail closed, never a fabricated
+    empty record."""
+    if not isinstance(data, dict):
+        raise ValueError('The checks surface served an unreadable check object')
+    results = data.get('results')
+    return cast(
+        Check,
+        {**data, 'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else []},
     )
 
 
@@ -7294,8 +7449,13 @@ class JobsClient:
         ``job.log``, and per trial its ``config.json``, ``lock.json``,
         ``result.json`` (``step_results`` on multi-step trials),
         ``trial.log``, ``agent/trajectory.json`` (the normalized ATIF
-        trajectory), ``agent/{stdout,stderr}.log``, ``agent/sessions/``,
-        ``verifier/test-stdout.txt``, ``verifier/reward.json``, the raw
+        trajectory), the harness stdout stream at Harbor's tee name for the
+        harness (``agent/claude-code.txt``, ``agent/codex.txt``, ...),
+        ``agent/stderr.log``, ``agent/trace-parsed.jsonl``, the agent home
+        at Harbor's session slot for the harness (``agent/sessions/``,
+        ``agent/qwen-sessions/``, ``agent/.kimi-code/``, ``agent/opencode/``)
+        with the rest under ``agent/evolve-home/``, ``verifier/test-stdout.txt``,
+        ``verifier/reward.json``, the raw
         ``verifier/reward.txt`` (only when the grader wrote one),
         ``steps/<name>/verifier/reward.json`` (multi-step trials only),
         ``exception.txt``, and ``artifacts/`` with its always-present
@@ -7748,9 +7908,15 @@ class TrialsClient:
         artifact — the harness's own native session file, reserved ahead of
         its server wave; the server answers not-found for it until that wave
         lands, and the refusal surfaces as the API error it is;
-        ``"agent-home"`` (the CLI's whole home folder, subagent
-        transcripts included by construction) answers a dict of sandbox path to
-        text. None = never stored (normal answer, not an error): a
+        ``"agent-home"`` (the utf8 TEXT VIEW of the CLI's captured home,
+        subagent transcripts included by construction; a file that is not
+        UTF-8 text is left out and named in the capture record that rides
+        the same dict as ``"/agent-home.json"``) answers a dict of sandbox
+        path to text — a home over the server's whole-read ceiling raises the
+        ``EvolveAPIError`` of its 413 ``invalid_input`` (param ``format``);
+        this SDK has no bytes door for the home, the job archive
+        (``jobs.download()``) carries it whole. None = never stored (normal
+        answer, not an error): a
         QUEUED/CANCELLED trial, a harness that wrote nothing, or a purged
         trace. ``"trace-parsed"`` is in the vocabulary but is not
         a raw artifact — the parsed event trace rides ``trace()`` /
@@ -7939,6 +8105,220 @@ class AnalysesClient:
         )
 
 
+class ChecksClient:
+    """Client for task quality checks — Harbor's ``harbor check <PATH>``,
+    hosted (``POST /api/checks``, ``GET /api/checks``,
+    ``GET /api/checks/{checkId}``).
+
+    Created via the standalone ``checks()`` factory. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
+
+    :meth:`create` uploads the task directory (or the directory of task
+    directories — Harbor's PATH, tarred from disk and streamed, never held
+    in memory) and returns AT ONCE with the accepted :class:`Check` — one
+    ``results`` entry per task, each ``'queued'`` — exactly as Harbor's
+    hosted launch submits and returns; :meth:`watch` is the follow, a
+    separate poll on purpose. The task bytes are never modified: Harbor's
+    own rule for its check.
+
+    Example::
+
+        from evolve import checks
+
+        async with checks() as c:
+            accepted = await c.create(directory='./my-task')
+            report = await c.watch(accepted['id'])
+            for result in report['results']:
+                print(result['task_name'], result['checks'])
+    """
+
+    def __init__(self, config: Optional[HostedClientConfig] = None):
+        self._http = _HostedHttp('checks', config)
+
+    async def __aenter__(self) -> 'ChecksClient':
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        return None
+
+    async def create(
+        self,
+        directory: str,
+        *,
+        model_name: Optional[str] = None,
+        rubric: Optional[Rubric] = None,
+        prompt: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
+        sandbox_provider: Optional[EvalSandboxProvider] = None,
+        n_concurrent: Optional[int] = None,
+        include_task_names: Optional[List[str]] = None,
+        exclude_task_names: Optional[List[str]] = None,
+        n_tasks: Optional[int] = None,
+        on_upload_progress: Optional[Callable[[int, int], None]] = None,
+    ) -> Check:
+        """Check task quality against a rubric — Harbor's ``harbor check
+        <PATH>`` (their cli/analyze.py:84-207), hosted.
+
+        ``directory`` is Harbor's PATH: one task directory, or a directory of
+        task directories, tarred and streamed from disk — a directory only,
+        as Harbor's PATH is (their checker.py:125-130 refuses anything else);
+        no ready-packed archive form. Which task directories are checked is
+        Harbor's own resolution (checker.py:
+        116-141): the root when it is a task directory (task.toml +
+        environment/ + instruction.md + tests/), else every top-level
+        directory that is one, sorted; then ``include_task_names`` (any
+        match keeps), ``exclude_task_names`` (any match drops), then the
+        first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
+        Every argument omitted means the defaults: glm-5.3-flash at its
+        per-model effort over Harbor's default check rubric, on the
+        platform's analysis default provider.
+
+        THE RESPONSE IS THE ACCEPTED CHECK (202): one ``results`` entry per
+        task, each ``'queued'``; follow it with :meth:`watch` or poll
+        :meth:`get`. The server owns every acceptance refusal, surfaced
+        typed: ``invalid_rubric`` (unknown keys named, empty or duplicate
+        criteria, bounds), ``invalid_input`` (an off-roster model, a bad
+        prompt, a provider outside the lineup, an effort outside the
+        vocabulary, a malformed glob list, an out-of-range ``n_concurrent``
+        or ``n_tasks`` — under ``check.*``), ``invalid_archive`` (not a
+        readable gzipped tar, an unsafe entry, or past a listing bound),
+        ``no_checkable_tasks`` (no task directory in the archive, or the
+        globs and the cap selected none — Harbor's "No valid task
+        directories found"), ``check_too_large`` (more than 1,000 task
+        directories selected — narrow the globs or set ``n_tasks``;
+        ``details`` carry ``task_count`` and ``max_tasks``),
+        ``upload_too_large`` (over
+        ``limits['uploads']['check_archive_bytes']``),
+        ``too_many_concurrent_check_uploads`` (the server is already
+        spooling its bound of check archives — retry when one finishes).
+        """
+        knobs: Dict[str, Any] = {}
+        if model_name is not None:
+            knobs['model_name'] = model_name
+        if rubric is not None:
+            knobs['rubric'] = rubric
+        if prompt is not None:
+            knobs['prompt'] = prompt
+        if reasoning_effort is not None:
+            knobs['reasoning_effort'] = reasoning_effort
+        if sandbox_provider is not None:
+            knobs['sandbox_provider'] = sandbox_provider
+        if n_concurrent is not None:
+            knobs['n_concurrent'] = n_concurrent
+        if include_task_names is not None:
+            knobs['include_task_names'] = include_task_names
+        if exclude_task_names is not None:
+            knobs['exclude_task_names'] = exclude_task_names
+        if n_tasks is not None:
+            knobs['n_tasks'] = n_tasks
+        # The policy rides as ONE JSON part (the spec's CheckConfigInput),
+        # sent before the archive so the server rules it before a byte of
+        # the upload — the analyze door's acceptance, under ``check.*``.
+        fields: Dict[str, Optional[str]] = {'config': json.dumps(knobs)}
+        path = os.path.abspath(directory)
+        # Harbor's own first refusal: "Path '{path}' does not exist"
+        # (checker.py:66-67), at the keyboard, before any tar.
+        if not os.path.isdir(path):
+            raise ValueError(f"Path '{directory}' does not exist or is not a directory")
+        # The archive's filename carries the directory's NAME: an archive of
+        # one task directory holds its contents, and Harbor names the result
+        # by the directory (checker.py:93) — the server reads it back from
+        # this filename for the single-task case.
+        raw = await _upload_directory_archive(
+            self._http, '/api/checks', fields, path,
+            f'{os.path.basename(path) or "task"}.tar.gz',
+            on_bytes=on_upload_progress,
+        )
+        return _map_check(raw)
+
+    async def get(self, check_id: str) -> Check:
+        """The check with its per-task results — for every status. 404
+        ``check_not_found`` for an id you cannot read."""
+        raw = await self._http.request_json(f'/api/checks/{urllib.parse.quote(check_id)}')
+        return _map_check(raw)
+
+    def list(
+        self,
+        *,
+        scope: Optional[JobListScope] = None,
+        status: Optional[List[CheckStatus]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> _PaginatedList:
+        """Every check you may read, newest first (cursor-paged). ``scope``
+        is Harbor's ``--scope`` (``'my'`` — checks you created, the default;
+        ``'shared'`` — your organizations' checks that teammates created);
+        ``status`` filters by the check's own ladder (:data:`CheckStatus`).
+        ``await`` for one page, ``async for`` to walk them all."""
+        async def fetch_page(page_limit, page_cursor) -> CheckPage:
+            raw = await self._http.request_json(
+                '/api/checks'
+                + _page_query(
+                    page_limit,
+                    page_cursor,
+                    scope=scope,
+                    status=','.join(status) if status else None,
+                )
+            )
+            items, next_cursor, has_more = _page_parts(raw)
+            return CheckPage(
+                items=[_map_check(item) for item in items],
+                next_cursor=next_cursor,
+                has_more=has_more,
+            )
+
+        return _PaginatedList(fetch_page, lambda page: page.items, limit=limit, cursor=cursor)
+
+    async def watch(
+        self,
+        check_id: str,
+        *,
+        on_progress: Optional[Callable[[Check], None]] = None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ) -> Check:
+        """Follow a check to its settled end: poll :meth:`get` until its
+        ``status`` reads ``'completed'`` (every task settled) and return the
+        final check. The poll has :meth:`JobsClient.watch_analysis`'s
+        backoff shape — ``poll_interval_s`` between reads, doubling while
+        nothing changes up to the 30-s ceiling, snapping back on every
+        change; ``on_progress`` fires on every observed change of the tasks'
+        statuses; a 429/503 mid-watch is a delay, not an outcome;
+        ``timeout_s`` bounds the whole watch and raises :class:`TimeoutError`
+        at the deadline."""
+        if poll_interval_s <= 0:
+            raise ValueError('poll_interval_s must be positive')
+        deadline = time.monotonic() + timeout_s if timeout_s is not None else None
+        delay = poll_interval_s
+        last_tally: Optional[str] = None
+        while True:
+            try:
+                check = await self.get(check_id)
+            except EvolveAPIError as error:
+                if error.status not in (429, 503):
+                    raise
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(f'watch({check_id!r}) timed out after {timeout_s}s') from error
+                await asyncio.sleep(_bounded(max(error.retry_after_sec or 0.0, delay), deadline))
+                delay = min(delay * 2, MAX_WATCH_DELAY_SEC)
+                continue
+            tally = json.dumps([[r.get('task_name'), r.get('status')] for r in check['results']])
+            changed = tally != last_tally
+            if changed:
+                last_tally = tally
+                if on_progress is not None:
+                    on_progress(check)
+            if check.get('status') == 'completed':
+                return check
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f'watch({check_id!r}) timed out after {timeout_s}s')
+            delay = poll_interval_s if changed else min(delay * 2, MAX_WATCH_DELAY_SEC)
+            await asyncio.sleep(_bounded(delay, deadline))
+
+
 class AuthClient:
     """Client for caller identity.
 
@@ -8050,6 +8430,7 @@ class HostedEvolve:
         self._jobs: Optional[JobsClient] = None
         self._trials: Optional[TrialsClient] = None
         self._analyses: Optional[AnalysesClient] = None
+        self._checks: Optional[ChecksClient] = None
         self._skills: Optional[SkillsClient] = None
         self._orgs: Optional[OrgsClient] = None
 
@@ -8089,6 +8470,13 @@ class HostedEvolve:
         return self._analyses
 
     @property
+    def checks(self) -> ChecksClient:
+        """Task quality checks (Harbor's ``harbor check``): create, get, list, watch."""
+        if self._checks is None:
+            self._checks = ChecksClient(self._config)
+        return self._checks
+
+    @property
     def skills(self) -> SkillsClient:
         """Platform-stored skills, referenced as ``upload:<id>`` in agents[].skills."""
         if self._skills is None:
@@ -8117,7 +8505,7 @@ class HostedEvolve:
         await self.close()
 
     async def close(self) -> None:
-        for client in (self._datasets, self._agents, self._jobs, self._trials, self._analyses):
+        for client in (self._datasets, self._agents, self._jobs, self._trials, self._analyses, self._checks):
             if client is not None:
                 await client.close()
 

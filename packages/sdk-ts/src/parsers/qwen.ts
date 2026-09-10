@@ -25,6 +25,7 @@ import {
   harnessErrorText,
   OutputEvent,
   SessionUpdate,
+  TokenUsage,
   ToolKind,
   ToolCallContent,
   ToolCallLocation,
@@ -92,18 +93,25 @@ interface ToolResultBlock {
 // protocol.ts:72-76
 type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 
-// protocol.ts:83-91 (subset)
+// protocol.ts:83-91 — id, model, stop_reason and usage are the message's own
+// facts (live wire, qwen-code 0.23.0: usage carries input_tokens,
+// output_tokens, cache_read_input_tokens, total_tokens).
 interface APIAssistantMessage {
   id: string;
   role: "assistant";
   content: ContentBlock[];
+  model?: string;
+  stop_reason?: string | null;
+  usage?: Record<string, unknown>;
 }
 
-// protocol.ts:102-108
+// protocol.ts:102-108; parent_tool_use_id (protocol.ts:98,107) names the
+// parent's tool call on a SUBAGENT's line, null on the main conversation.
 interface SDKAssistantMessage {
   type: "assistant";
   uuid: string;
   session_id: string;
+  parent_tool_use_id?: string | null;
   message: APIAssistantMessage;
 }
 
@@ -177,33 +185,29 @@ export function createQwenParser() {
     }
 
     const sessionId = (msg.session_id as string) || undefined;
-    const events: OutputEvent[] = [];
+    const updates: SessionUpdate[] = [];
 
     switch (msg.type) {
-      // Full assistant message (non-streaming mode)
+      // Full assistant message (non-streaming mode). Each line prints its
+      // message's usage (qwen-code 0.23.0 wire); the message id on the
+      // envelope lets a consumer keep one accounting per message.
       case "assistant": {
-        const updates = handleAssistantMessage(msg as unknown as SDKAssistantMessage);
-        for (const update of updates) {
-          events.push({ sessionId, update });
-        }
+        const assistant = msg as unknown as SDKAssistantMessage;
+        updates.push(...handleAssistantMessage(assistant));
+        const usage = qwenTokenUsage(assistant.message?.usage);
+        if (usage) updates.push({ sessionUpdate: "usage", scope: "call", usage });
         break;
       }
 
       // Streaming events
       case "stream_event": {
-        const updates = handleStreamEvent(msg as unknown as SDKPartialAssistantMessage);
-        for (const update of updates) {
-          events.push({ sessionId, update });
-        }
+        updates.push(...handleStreamEvent(msg as unknown as SDKPartialAssistantMessage));
         break;
       }
 
       // User message (includes tool_result blocks)
       case "user": {
-        const updates = handleUserMessage(msg as unknown as SDKUserMessage);
-        for (const update of updates) {
-          events.push({ sessionId, update });
-        }
+        updates.push(...handleUserMessage(msg as unknown as SDKUserMessage));
         break;
       }
 
@@ -212,23 +216,27 @@ export function createQwenParser() {
         return null;
 
       // THE RUN'S VERDICT (protocol.ts:152-170 SDKResultMessageError). A
-      // success stays silent — its text already streamed. A failure
-      // (is_error: true, subtype error_max_turns | error_during_execution) is
-      // qwen reporting that the run itself failed, and skipping it dropped that
-      // failure entirely, leaving an unreachable-model run indistinguishable
-      // from one that produced nothing. `error` is optional on the wire, so the
-      // subtype is the fallback — qwen's own word for what went wrong, not an
-      // invented classification.
+      // success carries no transcript — its text already streamed — but it
+      // is the one line with the run's whole usage (protocol.ts:146,161), so
+      // it becomes a run-scoped usage event — on a failure too: a run that
+      // hit error_max_turns did its turns, and the usage variant is never
+      // work (isAgentWorkUpdate), so carrying its total cannot make a failed
+      // run look like one that did something. A failure (is_error: true,
+      // subtype error_max_turns | error_during_execution) is qwen reporting
+      // that the run itself failed, and skipping it dropped that failure
+      // entirely, leaving an unreachable-model run indistinguishable from one
+      // that produced nothing. `error` is optional on the wire, so the subtype
+      // is the fallback — qwen's own word for what went wrong, not an invented
+      // classification.
       case "result": {
-        if (msg.is_error !== true) return null;
+        const usage = qwenTokenUsage(msg.usage);
+        if (usage) updates.push({ sessionUpdate: "usage", scope: "run", usage });
+        if (msg.is_error !== true) break;
         const error = msg.error as { message?: unknown } | undefined;
-        events.push({
-          sessionId,
-          update: {
-            sessionUpdate: "error",
-            message: harnessErrorText([error?.message, msg.subtype], msg.error ?? msg),
-            fatal: true,
-          },
+        updates.push({
+          sessionUpdate: "error",
+          message: harnessErrorText([error?.message, msg.subtype], msg.error ?? msg),
+          fatal: true,
         });
         break;
       }
@@ -237,8 +245,56 @@ export function createQwenParser() {
         return null;
     }
 
-    return events.length > 0 ? events : null;
+    if (updates.length === 0) return null;
+
+    // The line's own facts on every envelope (parsers/types.ts OutputEvent):
+    // the message's model and id, its stop reason, and — on a subagent's
+    // line — the parent tool call it belongs to. Only values the line carried.
+    const message = msg.message as Partial<APIAssistantMessage> | undefined;
+    const model = typeof message?.model === "string" && message.model ? message.model : undefined;
+    const messageId = typeof message?.id === "string" && message.id ? message.id : undefined;
+    const parentToolCallId =
+      typeof msg.parent_tool_use_id === "string" && msg.parent_tool_use_id ? msg.parent_tool_use_id : undefined;
+    const stopReason = message?.stop_reason;
+    const extra = stopReason !== null && stopReason !== undefined ? { stop_reason: stopReason } : undefined;
+    return updates.map((update) => ({
+      sessionId,
+      update,
+      ...(model !== undefined ? { model } : {}),
+      ...(messageId !== undefined ? { messageId } : {}),
+      ...(parentToolCallId !== undefined ? { parentToolCallId } : {}),
+      ...(extra !== undefined ? { extra } : {}),
+    }));
   };
+
+  /**
+   * message.usage / result.usage → TokenUsage. qwen's input_tokens is the
+   * whole prompt (it equals the native session file's promptTokenCount, the
+   * figure qwen_code.py:192 reads as prompt_tokens); cache_read_input_tokens
+   * is the cached share; every other counter (total_tokens) rides extra
+   * verbatim. Null when the line carried no usage object.
+   */
+  function qwenTokenUsage(usage: unknown): TokenUsage | null {
+    if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+    const record = usage as Record<string, unknown>;
+    const num = (value: unknown): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    const result: TokenUsage = {};
+    const prompt = num(record.input_tokens);
+    const completion = num(record.output_tokens);
+    const cached = num(record.cache_read_input_tokens);
+    if (prompt !== undefined) result.promptTokens = prompt;
+    if (completion !== undefined) result.completionTokens = completion;
+    if (cached !== undefined) result.cachedTokens = cached;
+    const extra: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (key === "input_tokens" || key === "output_tokens" || key === "cache_read_input_tokens") continue;
+      if (value === null || value === undefined) continue;
+      extra[key] = value;
+    }
+    if (Object.keys(extra).length > 0) result.extra = extra;
+    return result;
+  }
 
   /**
    * Handle full assistant message (protocol.ts:102-108) in non-streaming mode.
@@ -486,25 +542,20 @@ export function createQwenParser() {
     const resultContent = block.content;
     const content: ToolCallContent[] = [];
 
-    // Extract result content
+    // The result content as qwen sent it — no fence around a failure: the
+    // bytes are the harness's (qwen_code.py:233-244 keeps the raw output),
+    // framing is a viewer's decision.
     if (typeof resultContent === "string" && resultContent.length > 0) {
       content.push({
         type: "content",
-        content: {
-          type: "text",
-          text: isError ? `\`\`\`\n${resultContent}\n\`\`\`` : resultContent,
-        },
+        content: { type: "text", text: resultContent },
       });
     } else if (Array.isArray(resultContent)) {
       for (const item of resultContent) {
         if (item.type === "text") {
-          const text = (item as TextBlock).text;
           content.push({
             type: "content",
-            content: {
-              type: "text",
-              text: isError ? `\`\`\`\n${text}\n\`\`\`` : text,
-            },
+            content: { type: "text", text: (item as TextBlock).text },
           });
         }
       }

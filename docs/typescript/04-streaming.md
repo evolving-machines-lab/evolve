@@ -95,8 +95,26 @@ Top-level event structure:
 interface OutputEvent {
   sessionId?: string;
   update: SessionUpdate;
+  /** The harness's own clock for this line, ISO 8601 (absent when the wire line has none). */
+  timestamp?: string;
+  /** The model the harness named for this line. */
+  model?: string;
+  /** The harness's id for the LLM message this line belongs to (claude, qwen). */
+  messageId?: string;
+  /** On a SUBAGENT's line: the parent's tool call that delegated to it. */
+  parentToolCallId?: string;
+  /** Other facts of the line under the harness's own key names (e.g. stop_reason). */
+  extra?: Record<string, unknown>;
 }
 ```
+
+Everything beyond `update` is optional and comes straight from the wire line the update was parsed
+from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
+clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
+the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets you
+tell which lines belong to one LLM message (claude prints one line per content block, all with the
+same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
+of the `Task`/`agent` call that spawned it.
 
 ---
 
@@ -111,7 +129,9 @@ type SessionUpdate =
   | UserMessageChunk
   | ToolCall
   | ToolCallUpdate
-  | Plan;
+  | Plan
+  | AgentError
+  | AgentUsage;
 ```
 
 ### Message Events
@@ -166,10 +186,19 @@ interface ToolCallUpdate {
   title?: string;
   content?: ToolCallContent[];
   locations?: ToolCallLocation[];
+  /** The harness's own structured record of the result, verbatim (ACP's rawOutput). */
+  rawOutput?: unknown;
 }
 ```
 
 `toolName` is the harness-native tool name, verbatim — `Bash`, `Read`, or the joined `mcp__<server>__<tool>` an MCP call carries. Prefer it over parsing `title`, which is formatted per tool for people to read and is not round-trippable; `toolName` is the identifier the model actually called. It is a deliberate addition to the ACP shape, which names no tool and whose `kind` collapses every MCP tool to `other`, and it is optional — absent on traces recorded before the SDK carried it, and on the occasional call a harness cannot name, so fall back to `kind` there.
+
+`content` is the result text exactly as the harness sent it — a failed call's error text is not
+wrapped in a code fence or prefixed; frame it in your own UI. `rawOutput` is the harness's
+structured record of the same result when it prints one beyond the text: claude's
+`tool_use_result` (`stdout`, `stderr`, `exitCode`, `interrupted`, or the file it wrote), codex's
+completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool state (`output`,
+`metadata` with the exit code, `time`). Read an exit code from there rather than from prose.
 
 ### Plan Event
 
@@ -177,6 +206,7 @@ interface ToolCallUpdate {
 |------|-----------------|-------------|
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
+| `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -401,3 +431,48 @@ import { isAgentWorkUpdate } from "@evolvingmachines/sdk";
 
 const didWork = events.some((e) => isAgentWorkUpdate(e.update));
 ```
+
+## Harness-reported usage (`usage`)
+
+Every harness prints its own token accounting on the stream, and it arrives as its own update so
+you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
+opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
+whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
+simply has no `usage` events.
+
+```typescript
+interface AgentUsage {
+  sessionUpdate: "usage";
+  /** "call": one LLM inference. "run": the harness's total for the whole run. */
+  scope: "call" | "run";
+  usage: TokenUsage;
+}
+
+interface TokenUsage {
+  promptTokens?: number;      // input INCLUDING the cached and cache-written shares
+  completionTokens?: number;
+  cachedTokens?: number;      // the cache-read share of promptTokens
+  costUsd?: number;           // only when the harness priced it (claude's total_cost_usd)
+  extra?: Record<string, unknown>; // the harness's other counters, its own key names verbatim
+}
+```
+
+The names are Harbor's ATIF `Metrics` fields, so a trajectory copies them without renaming. A
+counter the harness did not print is absent, never `0`. Two things to know when you sum:
+
+- A `"call"` event repeats for every line of the same `messageId` (claude prints one line per
+  content block, each with the message's running usage) — keep the **last** one per `messageId`,
+  then add across messages.
+- A `"run"` event is the harness's own total, reported once at the end; it is not another call.
+
+```typescript
+const perMessage = new Map<string, TokenUsage>();
+for (const e of events) {
+  if (e.update.sessionUpdate !== "usage" || e.update.scope !== "call") continue;
+  perMessage.set(e.messageId ?? `line-${perMessage.size}`, e.update.usage);
+}
+const promptTokens = [...perMessage.values()].reduce((n, u) => n + (u.promptTokens ?? 0), 0);
+```
+
+Like `error`, `usage` is **not agent work**: `isAgentWorkUpdate` answers `false` for it, so a
+stream that carries only accounting still counts as a run that did nothing.

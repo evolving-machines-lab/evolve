@@ -16,12 +16,15 @@
  *   file_change       → tool_call            (exec_events.rs:176 FileChangeItem)
  *   todo_list         → plan                 (exec_events.rs:245 TodoListItem { items: TodoItem[] })
  *   web_search        → tool_call            (exec_events.rs:227 WebSearchItem { query })
+ *   thread.started    → OutputEvent.sessionId on every later event (thread_id)
+ *   turn.completed    → usage (scope "run")  (the turn's usage: input/cached/cache_write/output/reasoning tokens)
  */
 
 import {
   harnessErrorText,
   OutputEvent,
   SessionUpdate,
+  TokenUsage,
   ToolKind,
   ToolCallContent,
   ToolCallLocation,
@@ -35,6 +38,10 @@ import {
 export function createCodexParser() {
   // Track in-progress tool calls for status updates
   const pendingToolCalls: Record<string, { type: string; name?: string }> = {};
+  // codex names its session ONCE, on thread.started, and never again — the
+  // thread id is the rollout's session_meta id (codex.py:807-814 reads the
+  // same id from the file), so it is stamped on every later event's envelope.
+  let sessionId: string | undefined;
 
   return function parseCodexEvent(jsonLine: string): OutputEvent[] | null {
     let data: any;
@@ -52,11 +59,27 @@ export function createCodexParser() {
     const events: OutputEvent[] = [];
 
     switch (data.type) {
-      // Thread/turn lifecycle - skip
       case "thread.started":
-      case "turn.started":
-      case "turn.completed":
+        if (typeof data.thread_id === "string" && data.thread_id) sessionId = data.thread_id;
         return null;
+
+      // Turn lifecycle - nothing to carry
+      case "turn.started":
+        return null;
+
+      // THE TURN'S ACCOUNTING. codex exec --json reports usage once per turn,
+      // not per model call (the per-call token_count events live only in the
+      // rollout file, codex.py:894-897), so this is a run-scoped total: with
+      // one prompt per run, the turn IS the run. Field mapping per
+      // codex.py:523-541: input_tokens → prompt, output_tokens → completion,
+      // cached_input_tokens → cached; cache_write_input_tokens and
+      // reasoning_output_tokens ride extra under their own names.
+      case "turn.completed": {
+        const usage = codexTokenUsage(data.usage);
+        if (!usage) return null;
+        events.push({ update: { sessionUpdate: "usage", scope: "run", usage } });
+        break;
+      }
 
       // FAILURES THE HARNESS REPORTED. codex streams these on stdout beside its
       // normal output while stderr carries only "Reading prompt from stdin...",
@@ -115,8 +138,35 @@ export function createCodexParser() {
         return null;
     }
 
-    return events.length > 0 ? events : null;
+    if (events.length === 0) return null;
+    return sessionId === undefined ? events : events.map((event) => ({ sessionId, ...event }));
   };
+
+  /**
+   * turn.completed.usage → TokenUsage (codex.py:523-541 field mapping). Null
+   * when the line carried no usage object; a counter it did not print is absent.
+   */
+  function codexTokenUsage(usage: unknown): TokenUsage | null {
+    if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+    const record = usage as Record<string, unknown>;
+    const num = (value: unknown): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    const result: TokenUsage = {};
+    const prompt = num(record.input_tokens);
+    const completion = num(record.output_tokens);
+    const cached = num(record.cached_input_tokens);
+    if (prompt !== undefined) result.promptTokens = prompt;
+    if (completion !== undefined) result.completionTokens = completion;
+    if (cached !== undefined) result.cachedTokens = cached;
+    const extra: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (key === "input_tokens" || key === "output_tokens" || key === "cached_input_tokens") continue;
+      if (value === null || value === undefined) continue;
+      extra[key] = value;
+    }
+    if (Object.keys(extra).length > 0) result.extra = extra;
+    return result;
+  }
 
   /**
    * Handle item.started events.
@@ -248,6 +298,10 @@ export function createCodexParser() {
 
       // exec_events.rs:215 McpToolCallItem { server, tool, arguments, result, error, status }
       // exec_events.rs:194 McpToolCallStatus: in_progress, completed, failed
+      // The completed item is codex's own record of the result (result /
+      // error / status; aggregated_output / exit_code / status), so it rides
+      // rawOutput verbatim — the exit code used to be read for `status` and
+      // then dropped, and a trajectory could not say WHICH non-zero code.
       case "mcp_tool_call": {
         delete pendingToolCalls[itemId];
         const content = extractToolResultContent(item.result);
@@ -257,6 +311,7 @@ export function createCodexParser() {
           toolCallId: itemId,
           status,
           content,
+          rawOutput: item,
         };
       }
 
@@ -275,6 +330,7 @@ export function createCodexParser() {
           toolCallId: itemId,
           status,
           content,
+          rawOutput: item,
         };
       }
 
@@ -294,6 +350,10 @@ export function createCodexParser() {
           toolName: "file_change",
           kind: "edit" as ToolKind,
           status: item.status === "completed" ? "completed" : "failed",
+          // The item's own record of what changed (path + kind per file) is
+          // the call's input as far as this stream tells it — the patch body
+          // itself lives only in the rollout file (codex.py:947-980).
+          rawInput: { changes },
           content: changes.map((c) => ({
             type: "diff" as const,
             path: c.path,

@@ -223,6 +223,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import {
   agents,
   analyses,
+  checks,
   datasets,
   hosted,
   jobs,
@@ -7051,6 +7052,154 @@ async function testOrgs() {
   }
 }
 
+// =============================================================================
+// CHECKS — Harbor's `harbor check <PATH>`, hosted
+// =============================================================================
+
+function checkFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "chk-1",
+    status: "queued",
+    source: { type: "archive", sha256: "ab".repeat(32), bytes: 1234 },
+    model_name: "glm-5.3-flash",
+    reasoning_effort: "max",
+    rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }] },
+    prompt: null,
+    sandbox_provider: "daytona",
+    n_concurrent: null,
+    include_task_names: [],
+    exclude_task_names: [],
+    n_tasks: null,
+    results: [
+      {
+        id: "tc-1",
+        check_id: "chk-1",
+        task_name: "hello-world",
+        status: "queued",
+        checks: null,
+        cost_usd: null,
+        attempts: 1,
+        failure: null,
+        created_at: "2026-09-09T10:00:00.000Z",
+        finished_at: null,
+      },
+    ],
+    cost_usd: null,
+    created_at: "2026-09-09T10:00:00.000Z",
+    finished_at: null,
+    ...overrides,
+  };
+}
+
+async function writeTaskDirFixture(dir: string): Promise<void> {
+  await mkdir(join(dir, "environment"), { recursive: true });
+  await mkdir(join(dir, "tests"), { recursive: true });
+  await writeFile(join(dir, "task.toml"), 'schema_version = "1.4"\n');
+  await writeFile(join(dir, "instruction.md"), "Print hello.\n");
+  await writeFile(join(dir, "environment", "Dockerfile"), "FROM python:3.13-slim\n");
+  await writeFile(join(dir, "tests", "test.sh"), "echo 1\n");
+}
+
+async function testChecksCreateDirectory() {
+  console.log("\n--- checks().create({ source: { directory } }) packs the task dir, sends config FIRST, names the archive by the directory, resolves the 202 Check ---");
+  const server = await startCaptureServer({ status: 202, body: checkFixture() });
+  const dir = await mkdtemp(join(tmpdir(), "evolve-check-"));
+  const taskDir = join(dir, "hello-world");
+  try {
+    await writeTaskDirFixture(taskDir);
+    const c = checks({ apiKey: "test-key", baseUrl: server.base });
+    const progress: [number, number][] = [];
+    const accepted = await c.create({
+      source: { directory: taskDir },
+      model_name: "glm-5.3",
+      include_task_names: ["hello-*"],
+      n_tasks: 3,
+      onUploadProgress: (sent, total) => progress.push([sent, total]),
+    });
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/checks", "POSTs /api/checks");
+    assertEqual(call.method, "POST", "uses POST");
+    const parts = multipartParts(call);
+    assertEqual(parts.map((p) => p.name), ["config", "archive"], "the config part precedes the archive — a refused policy never receives its upload");
+    assertEqual(
+      JSON.parse(partData(parts, "config")!.toString()),
+      { model_name: "glm-5.3", include_task_names: ["hello-*"], n_tasks: 3 },
+      "the knobs ride as ONE JSON config part, absent keys omitted"
+    );
+    assertEqual(parts.find((p) => p.name === "archive")?.filename, "hello-world.tar.gz", "the archive is named by the directory (Harbor's task_name for a single task)");
+    const body = partData(parts, "archive")!;
+    assert(body[0] === 0x1f && body[1] === 0x8b, "the archive part is a gzip stream");
+    const tarText = gunzipSync(body).toString("latin1");
+    assert(tarText.includes("task.toml") && tarText.includes("tests/test.sh"), "the tar carries the task directory's files");
+    assert(progress.length > 0 && progress[progress.length - 1][0] === progress[progress.length - 1][1], "the transfer reading reaches sent == total");
+    assertEqual(accepted.id, "chk-1", "202 maps to the Check");
+    assertEqual(accepted.status, "queued", "accepted, nothing started yet");
+    assertEqual(accepted.results.map((r) => [r.task_name, r.status]), [["hello-world", "queued"]], "one queued task per task directory");
+
+    let threw = false;
+    try {
+      await c.create({ source: { directory: join(dir, "nope") } });
+    } catch (e) {
+      threw = true;
+      assert(e instanceof Error && e.message.includes("does not exist"), "a missing directory is refused at the keyboard with Harbor's sentence");
+    }
+    assert(threw, "a missing directory throws before any upload");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testChecksReadsAndWatch() {
+  console.log("\n--- checks().get()/list()/watch() ride the contract's two GETs; watch polls to completed ---");
+  installMockFetch();
+  try {
+    const done = checkFixture({
+      status: "completed",
+      results: [
+        { ...(checkFixture().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "none" } }, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
+      ],
+      cost_usd: 0.0123,
+      finished_at: "2026-09-09T10:05:00.000Z",
+    });
+    setMockResponse("/api/checks/chk-1", { status: 200, body: done });
+    setMockResponse("/api/checks", { status: 200, body: { items: [done], nextCursor: null, hasMore: false } });
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+    const check = await c.get("chk-1");
+    assertEqual(check.status, "completed", "get maps the check");
+    assertEqual(check.results[0].checks, { typos: { outcome: "pass", explanation: "none" } }, "the flat checks ride verbatim");
+    assertEqual(check.cost_usd, 0.0123, "Harbor's total cost rides verbatim");
+    const page = await c.list({ scope: "shared", status: ["running", "completed"], limit: 5 });
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/checks", "one GET on the checks list");
+    assertEqual(url.searchParams.get("scope"), "shared", "scope forwarded");
+    assertEqual(url.searchParams.get("status"), "running,completed", "status forwarded comma-joined");
+    assertEqual(url.searchParams.get("limit"), "5", "limit forwarded");
+    assertEqual(page.items.length, 1, "maps the items");
+
+    // watch: the first read answers queued, the next completed — one change observed.
+    let reads = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      reads++;
+      const body = reads === 1 ? checkFixture() : done;
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const seen: string[] = [];
+      const final = await c.watch("chk-1", { pollIntervalMs: 1, onProgress: (cur) => seen.push(cur.status) });
+      assertEqual(final.status, "completed", "watch resolves with the settled check");
+      assertEqual(seen, ["queued", "completed"], "onProgress fires on every observed change, the first read included");
+      assertEqual(reads, 2, "two reads: queued, then completed");
+    } finally {
+      globalThis.fetch = original;
+    }
+    assert(hosted({ apiKey: "test-key", baseUrl: BASE }).checks !== undefined, "the facade exposes checks");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("Hosted Evals Client Unit Tests\n");
 
@@ -7183,6 +7332,8 @@ async function main() {
   await testApiErrorHandling();
   await testListJobsScope();
   await testListAnalyses();
+  await testChecksCreateDirectory();
+  await testChecksReadsAndWatch();
   await testOrgs();
 
   console.log(`\n${"=".repeat(60)}`);

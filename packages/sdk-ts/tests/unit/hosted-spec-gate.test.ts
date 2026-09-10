@@ -78,6 +78,7 @@ import { dirname, join } from "node:path";
 import {
   AGENT_EFFORT_SUPPORT_VALUES,
   ANALYSIS_STATUSES,
+  CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   JOB_LIST_SCOPES,
@@ -86,6 +87,7 @@ import {
   agents,
   analyses,
   auth,
+  checks,
   datasets,
   jobs,
   meta,
@@ -205,6 +207,7 @@ const surfaces: Record<string, unknown> = {
   jobs: jobs(cfg),
   trials: trials(cfg),
   analyses: analyses(cfg),
+  checks: checks(cfg),
   datasets: datasets(cfg),
   agents: agents(cfg),
   skills: skills(cfg),
@@ -255,6 +258,11 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   // (verdict, transcript, artifacts) ride the traces feed, which the
   // contract does not declare (docs: "not part of the OpenAPI contract").
   listAnalyses: "analyses.list",
+  // Checks — Harbor's `harbor check`, hosted: the upload-and-start verb,
+  // the catalog, the report by id (checks.watch is the poll over getCheck).
+  createCheck: "checks.create",
+  listChecks: "checks.list",
+  getCheck: "checks.get",
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
@@ -673,6 +681,18 @@ assert(
   JSON.stringify([...ANALYSIS_STATUSES]) === JSON.stringify(specAnalysisStatuses)
     ? `ANALYSIS_STATUSES is the spec's TrialAnalysis.status enum, byte-exactly (${specAnalysisStatuses.join(", ")})`
     : `analysis statuses drifted: SDK [${ANALYSIS_STATUSES.join(", ")}] vs spec [${specAnalysisStatuses.join(", ")}]`
+);
+
+const specCheckStatuses = propertyEnum("Check", "status");
+assert(
+  specCheckStatuses.length >= 3,
+  `the spec's Check.status enum parsed (${specCheckStatuses.length} members)`
+);
+assert(
+  JSON.stringify([...CHECK_STATUSES]) === JSON.stringify(specCheckStatuses),
+  JSON.stringify([...CHECK_STATUSES]) === JSON.stringify(specCheckStatuses)
+    ? `CHECK_STATUSES is the spec's Check.status enum, byte-exactly (${specCheckStatuses.join(", ")})`
+    : `check statuses drifted: SDK [${CHECK_STATUSES.join(", ")}] vs spec [${specCheckStatuses.join(", ")}]`
 );
 
 // -----------------------------------------------------------------------------

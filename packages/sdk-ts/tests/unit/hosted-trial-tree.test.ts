@@ -8,8 +8,9 @@
  *     agent/ (trajectory, raw logs, parsed events, sessions/), verifier/,
  *     exception.txt — and absent artifacts are absent files, never empty
  *     placeholders;
- *   - agent/sessions/ wears the home tree's VISIBLE names (the same
- *     re-keying the server archive and the agent-home tgz apply);
+ *   - the stdout stream sits at Harbor's tee name for the harness and the
+ *     captured home at Harbor's slot for it, the rest lossless under
+ *     agent/evolve-home/ — the server's table, mirrored (HARNESS_TRIAL_LAYOUTS);
  *   - evolve.json carries the platform record Harbor has no slot for:
  *     gateway money/tokens per lane, provider, user_id, regrade lineage;
  *   - the assembly is deterministic — same parts, same bytes.
@@ -19,8 +20,13 @@
  */
 
 import {
+  AGENT_HOME_MANIFEST_FILENAME,
   assembleAnalysisTree,
   assembleTrialTree,
+  DEFAULT_HARNESS_TRIAL_LAYOUT,
+  HARNESS_TRIAL_LAYOUTS,
+  harnessTrialLayout,
+  homeFileTrialPath,
   jobEvolveRecord,
   trialEvolveRecord,
   visibleHomeTree,
@@ -181,10 +187,10 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     Object.keys(files).sort(),
     [
       "agent/stderr.log",
-      "agent/stdout.log",
+      "agent/codex.txt",
       "agent/trace-parsed.jsonl",
       "agent/trajectory.json",
-      "agent/sessions/codex/sessions/rollout.jsonl",
+      "agent/sessions/rollout.jsonl",
       "config.json",
       "evolve.json",
       "result.json",
@@ -225,6 +231,72 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
   assertEqual(evolve.regrade_lineage.is_regrade, true, "the regrade lineage rides the job's word");
   assertEqual(evolve.regrade_lineage.source_jobs[0].job_id, "job-0", "the lineage names the source job");
   assertEqual(evolve.regrade_lineage.n_retries, 1, "the auto-retry lineage rides along");
+}
+
+// -----------------------------------------------------------------------------
+// The per-harness table: opencode's store at Harbor's XDG slot (opencode.py:524)
+// -----------------------------------------------------------------------------
+{
+  const files = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "opencode" } }),
+      home: {
+        "/root/.local/share/opencode/log/opencode.log": "log",
+        "/root/.local/state/opencode/x": "state",
+      },
+    })
+  );
+  assertEqual(
+    Object.keys(files).filter((p) => p.startsWith("agent/")).sort(),
+    [
+      "agent/evolve-home/root/.local/state/opencode/x",
+      "agent/opencode.txt",
+      "agent/opencode/xdg-data/opencode/log/opencode.log",
+      "agent/stderr.log",
+      "agent/trace-parsed.jsonl",
+      "agent/trajectory.json",
+    ],
+    "opencode: the tee is opencode.txt, the data store lands at agent/opencode/xdg-data/opencode/, the uncaptured state twin's path rides evolve-home"
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Placement rule 3: the capture record rides the extension slot, never a Harbor
+// slot — the server's harbor-output-tree.ts homeFileTrialPath rule 3, mirrored
+// -----------------------------------------------------------------------------
+{
+  const manifestKey = `/${AGENT_HOME_MANIFEST_FILENAME}`;
+  for (const [id, layout] of Object.entries(HARNESS_TRIAL_LAYOUTS)) {
+    assertEqual(
+      homeFileTrialPath(layout, manifestKey),
+      "agent/evolve-home/agent-home.json",
+      `${id}: the capture record lands at agent/evolve-home/agent-home.json, outside every Harbor slot`
+    );
+  }
+  assertEqual(
+    homeFileTrialPath(DEFAULT_HARNESS_TRIAL_LAYOUT, "/agent-home.json"),
+    "agent/evolve-home/agent-home.json",
+    "the default layout places the record the same way"
+  );
+  assertEqual(
+    homeFileTrialPath(harnessTrialLayout("gemini"), "/root/agent-home.json"),
+    "agent/evolve-home/root/agent-home.json",
+    "a same-named file INSIDE a home is an ordinary home file (rule 4)"
+  );
+  const files = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "claude-code" } }),
+      home: {
+        [manifestKey]: '{"files":[]}',
+        "/root/.claude/projects/-app/s.jsonl": "{}",
+      },
+    })
+  );
+  assertEqual(
+    Object.keys(files).filter((p) => p.startsWith("agent/evolve-home/") || p.startsWith("agent/sessions/")).sort(),
+    ["agent/evolve-home/agent-home.json", "agent/sessions/projects/-app/s.jsonl"],
+    "evolve trial download writes the record beside the lossless home, never inside agent/sessions/ (claude's Harbor slot)"
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -488,13 +560,13 @@ function fixtureAnalysisParts(): AnalysisTreeParts {
   assertEqual(
     Object.keys(files).sort(),
     [
-      "agent/sessions/claude/session.jsonl",
+      "agent/evolve-home/root/.claude/session.jsonl",
       "agent/stdout.log",
       "agent/trace-parsed.jsonl",
       "analysis.json",
       "evolve.json",
     ],
-    "the analysis tree: verdict at the run's root, analyzer streams in agent/, no trial-only files"
+    "the analysis tree: verdict at the run's root, analyzer streams in agent/ (the default layout), no trial-only files"
   );
   const verdict = JSON.parse(files["analysis.json"]) as Record<string, unknown>;
   assertEqual(verdict.id, "an-1", "analysis.json is the wire verdict document");

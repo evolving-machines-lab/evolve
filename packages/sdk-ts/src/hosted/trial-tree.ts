@@ -3,13 +3,18 @@
  * assembly behind `evolve trial download` (and the evolve.json builders
  * `evolve job download` enriches the server archive with).
  *
- * THE LAYOUT IS HARBOR'S: every file below sits at the same path the server's
- * job archive puts it (spec downloadJob), so a reader written against one
- * finds the other where it expects it.
+ * THE LAYOUT IS HARBOR'S, AND IT IS THE SERVER'S: every file below sits at
+ * the same path the server's job archive puts it (spec downloadJob; the
+ * server's one builder is swarm_dashboard lib/evaluations/trial-tree.ts,
+ * its per-harness table lib/evaluations/worker/harness-registry.ts
+ * `trialLayout`), so a reader written against one finds the other where it
+ * expects it. The per-harness placement is a TABLE (HARNESS_TRIAL_LAYOUTS
+ * below), mirrored from the server's registry with the same citations into
+ * Harbor's own agent adapters — a change to one side is a change to both.
  *
  * IT IS NOT THE SAME FILE SET, and the difference is recorded rather than
  * implied. The server archive also writes, per trial, `lock.json` (the
- * resolved trial inputs), `trial.log` (the lifecycle summary), `artifacts/`
+ * resolved trial inputs), `trial.log` (the trial's phase log), `artifacts/`
  * with its always-present `manifest.json`, the raw `verifier/reward.txt`
  * (the exact bytes the grader wrote, when captured), and — on multi-step
  * trials — the per-step `steps/<name>/verifier/reward.json` files. None of
@@ -22,21 +27,45 @@
  * so the single-trial tree states less rather than stating it differently.
  * A caller that needs the complete tree downloads the JOB.
  *
+ * THE HOME IS THE TEXT VIEW, NOT THE BYTES. The server archive's agent/
+ * home is the capture byte for byte (their lib/evaluations/trial-tree.ts
+ * reads trace-storage readAgentHome); this assembly reads the `agent-home`
+ * artifact, the utf8 TEXT VIEW of the same capture (spec
+ * downloadTrialArtifacts): a file that is not UTF-8 text — opencode's SQLite
+ * store, a cached image — is present in the archive and absent here, named
+ * only in the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME
+ * below, placed by homeFileTrialPath rule 3 at agent/evolve-home/ — the
+ * server's slot for it); and a home over the server's whole-read ceiling is
+ * refused 413 (`invalid_input`, param `format`) with no bytes door on this
+ * side — the JOB archive carries it whole. Every file both trees carry sits
+ * at the same path in both.
+ *
  * The files:
  *
  *   config.json               trial identity (task + agent), Harbor vocabulary
  *   result.json               the outcome (status, reward, verifier verdict,
  *                             exception, agent_result, phase clocks)
  *   agent/trajectory.json     the normalized ATIF trajectory, when stored
- *   agent/stdout.log          the harness process's raw streams, when stored
- *   agent/stderr.log
+ *   agent/<harness>.txt       the harness process's stdout stream at Harbor's
+ *                             own tee name for the harness (claude-code.txt,
+ *                             codex.txt, gemini-cli.txt, qwen-code.txt,
+ *                             kimi-code.txt, opencode.txt; droid.txt is the
+ *                             platform's own, and stdout.log serves a harness
+ *                             Harbor has no name for), when stored
+ *   agent/stderr.log          the harness process's stderr stream, when stored
  *   agent/trace-parsed.jsonl  the parsed event trace (Evolve's own artifact,
  *                             riding inside agent/ — Harbor has no slot for
  *                             it and a Harbor reader ignores it)
- *   agent/sessions/…          the agent CLI's home folder in its VISIBLE
- *                             shape (`codex/…`, never `root/.codex/…`) — the
- *                             same re-keying the server archive and the
- *                             agent-home tgz wear
+ *   agent/sessions/…          the captured agent home at Harbor's own session
+ *   agent/qwen-sessions/…     slot for the harness (claude and codex:
+ *   agent/.kimi-code/…        sessions/; qwen: qwen-sessions/; kimi:
+ *   agent/opencode/…          .kimi-code/; opencode: its data store at
+ *                             opencode/xdg-data/opencode/), the subtree
+ *                             Harbor's adapter puts there — and the rest of
+ *   agent/evolve-home/…       the home under Evolve's own slot, keyed by its
+ *                             sandbox path (evolve-home/root/.gemini/…), as
+ *                             far as the text view carries it (above), with
+ *                             the capture record agent-home.json at its root
  *   verifier/test-stdout.txt  the stored verifier log, when stored
  *   verifier/reward.json      the rewards map, when the verifier produced one
  *   exception.txt             when the trial carries an exception
@@ -75,11 +104,15 @@ export interface TrialTreeParts {
 }
 
 /**
- * The agent-home tree in its VISIBLE shape — the identical mapping the
- * server's tgz and job archive apply (their lib/tar-gz.ts visibleHomeTree):
- * strip the `/root/` (or `/home/<user>/`) wrapper and the leading dot of the
- * first surviving segment, so `/root/.codex/x` reads `codex/x`. A mapped
- * path that would collide keeps its wrapper-stripped original instead.
+ * The agent-home tree in its VISIBLE shape — the mapping the server's
+ * agent-home tgz (`?stream=agent-home&format=tgz`) applies as it streams
+ * (their lib/tar-gz.ts visibleHomeEntries — one entry per stored object;
+ * this side maps a map, since the text view arrives whole): strip the
+ * `/root/` (or `/home/<user>/`) wrapper and the leading dot of the first
+ * surviving segment, so
+ * `/root/.codex/x` reads `codex/x`. A mapped path that would collide keeps
+ * its wrapper-stripped original instead. Presentation only; the trial tree
+ * below places the home by the Harbor table instead (homeFileTrialPath).
  */
 export function visibleHomeTree(files: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -94,6 +127,124 @@ export function visibleHomeTree(files: Record<string, string>): Record<string, s
     else out[mapped] = content;
   }
   return out;
+}
+
+/**
+ * Where ONE harness's files land under agent/ in a Harbor trial dir: the
+ * stdout tee name Harbor's adapter for it uses, and which subtrees of the
+ * captured sandbox home sit at Harbor's own slots (first match wins;
+ * everything else rides agent/evolve-home/). The server's table, mirrored
+ * (swarm_dashboard lib/evaluations/worker/harness-registry.ts trialLayout,
+ * each row cited into Harbor's agents/installed/*.py).
+ */
+export interface HarnessTrialLayout {
+  /** Harbor's tee file for the harness stdout stream, a name under agent/. */
+  stdoutFile: string;
+  /** Captured-home subtrees at Harbor's own slots: sandbox dir -> dir under agent/. */
+  homeSlots: readonly { sandboxRoot: string; agentDir: string }[];
+}
+
+/** A harness Harbor has no adapter for: stdout.log, no Harbor session slot. */
+export const DEFAULT_HARNESS_TRIAL_LAYOUT: HarnessTrialLayout = { stdoutFile: "stdout.log", homeSlots: [] };
+
+/** The table, keyed by SDK harness id (the server's registry entries, mirrored). */
+export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
+  // claude_code.py:482 CLAUDE_CONFIG_DIR = agent/sessions; tee :1890.
+  claude: { stdoutFile: "claude-code.txt", homeSlots: [{ sandboxRoot: "/root/.claude", agentDir: "sessions" }] },
+  // codex.py:1458-1463 copies $CODEX_HOME/sessions to agent/sessions; tee :80.
+  codex: { stdoutFile: "codex.txt", homeSlots: [{ sandboxRoot: "/root/.codex/sessions", agentDir: "sessions" }] },
+  // gemini_cli.py:979-980 tee; its session files are the ACP runner's own — no slot.
+  gemini: { stdoutFile: "gemini-cli.txt", homeSlots: [] },
+  // qwen_code.py:627 copies ~/.qwen/projects to agent/qwen-sessions; tee :619.
+  qwen: { stdoutFile: "qwen-code.txt", homeSlots: [{ sandboxRoot: "/root/.qwen/projects", agentDir: "qwen-sessions" }] },
+  // kimi_code.py:17 the home IS agent/.kimi-code; tee :18.
+  kimi: { stdoutFile: "kimi-code.txt", homeSlots: [{ sandboxRoot: "/root/.kimi-code", agentDir: ".kimi-code" }] },
+  // opencode.py:74 tee; :524 XDG_DATA_HOME = /logs/agent/opencode/xdg-data, and the
+  // CLI keeps its store at $XDG_DATA_HOME/opencode — the captured default store
+  // (~/.local/share/opencode, registry.ts) sits at that slot. The state twin
+  // (:525 XDG_STATE_HOME) is not captured: no slot.
+  opencode: {
+    stdoutFile: "opencode.txt",
+    homeSlots: [{ sandboxRoot: "/root/.local/share/opencode", agentDir: "opencode/xdg-data/opencode" }],
+  },
+  // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
+  droid: { stdoutFile: "droid.txt", homeSlots: [] },
+};
+
+/**
+ * Harbor's own names for the harnesses above (their models/agent/name.py) —
+ * the `agent_info.name` a `harbor run` record carries.
+ */
+const HARBOR_AGENT_NAMES: Record<string, string> = {
+  "claude-code": "claude",
+  codex: "codex",
+  "gemini-cli": "gemini",
+  "qwen-coder": "qwen",
+  "kimi-code": "kimi",
+  opencode: "opencode",
+};
+
+/** The layout for a harness LABEL: an SDK id, Harbor's name for one, else the default. */
+export function harnessTrialLayout(label: string): HarnessTrialLayout {
+  const id = label in HARNESS_TRIAL_LAYOUTS ? label : HARBOR_AGENT_NAMES[label];
+  return id === undefined ? DEFAULT_HARNESS_TRIAL_LAYOUT : HARNESS_TRIAL_LAYOUTS[id];
+}
+
+/** Harbor mounts the trial's agent dir at this path inside the box (models/trial/paths.py). */
+const HARBOR_AGENT_MOUNT_DIR = "/logs/agent";
+
+/**
+ * The capture record's filename — the ONE name on this side (the server's
+ * lib/evaluations/harbor-output-tree.ts AGENT_HOME_MANIFEST_FILENAME): the
+ * agent-home map carries it at `/` + this, the map's one key that is no
+ * sandbox path — every file's path, size and sha256, the files the text
+ * view left out.
+ */
+export const AGENT_HOME_MANIFEST_FILENAME = "agent-home.json";
+
+/**
+ * The trial-relative path of ONE captured home file (the agent-home
+ * artifact: sandbox path -> text), by the harness's layout — the server's
+ * rule, verbatim (swarm_dashboard lib/evaluations/harbor-output-tree.ts
+ * homeFileTrialPath, its five rules in its order):
+ *
+ *   1. a Harbor slot of the layout (`/root/.claude/x` -> agent/sessions/x);
+ *   2. Harbor's own mount: `/logs/agent/x` -> agent/x verbatim — an uploaded
+ *      archive's home, any slot;
+ *   3. the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME)
+ *      -> agent/evolve-home/agent-home.json, the extension slot — outside
+ *      every Harbor slot, so a Harbor reader of agent/sessions/ never meets
+ *      a file no Harbor agent writes;
+ *   4. a home wrapper (`/root/…`, `/home/<user>/…`) -> agent/evolve-home/
+ *      <path>, lossless;
+ *   5. anything else -> agent/sessions/<path> (the key shape the platform's
+ *      job-upload ingest wrote before 2026-09-09).
+ */
+export function homeFileTrialPath(layout: HarnessTrialLayout, sandboxPath: string): string {
+  const under = (root: string): string | null =>
+    sandboxPath.startsWith(`${root}/`) ? sandboxPath.slice(root.length + 1) : null;
+  for (const slot of layout.homeSlots) {
+    const rest = under(slot.sandboxRoot);
+    if (rest !== null) return `agent/${slot.agentDir}/${rest}`;
+  }
+  const mounted = under(HARBOR_AGENT_MOUNT_DIR);
+  if (mounted !== null) return `agent/${mounted}`;
+  const clean = sandboxPath.replace(/^\/+/, "");
+  if (clean === AGENT_HOME_MANIFEST_FILENAME || /^(root|home)\//.test(clean)) {
+    return `agent/evolve-home/${clean}`;
+  }
+  return `agent/sessions/${clean}`;
+}
+
+/** The captured home placed by the table, sorted by its trial path; a collision keeps its bytes at the lossless slot. */
+function placeHome(layout: HarnessTrialLayout, home: Record<string, string>): Record<string, string> {
+  const placed: Record<string, string> = {};
+  for (const sandboxPath of Object.keys(home).sort()) {
+    let path = homeFileTrialPath(layout, sandboxPath);
+    if (path in placed) path = `agent/evolve-home/${sandboxPath.replace(/^\/+/, "")}`;
+    placed[path] = home[sandboxPath];
+  }
+  return Object.fromEntries(Object.keys(placed).sort().map((path) => [path, placed[path]]));
 }
 
 /** One JSON spelling for every record file: 2-space, trailing newline. */
@@ -242,19 +393,15 @@ export function assembleTrialTree(parts: TrialTreeParts): Record<string, string>
     verifier: trial.verifier,
   });
 
+  const layout = harnessTrialLayout(trial.agent_info.name);
   if (parts.atif !== null) files["agent/trajectory.json"] = parts.atif;
-  if (parts.stdout !== null) files["agent/stdout.log"] = parts.stdout;
+  if (parts.stdout !== null) files[`agent/${layout.stdoutFile}`] = parts.stdout;
   if (parts.stderr !== null) files["agent/stderr.log"] = parts.stderr;
   if (parts.events.length > 0) {
     files["agent/trace-parsed.jsonl"] =
       parts.events.map((event) => JSON.stringify(event)).join("\n") + "\n";
   }
-  if (parts.home !== null) {
-    const visible = visibleHomeTree(parts.home);
-    for (const path of Object.keys(visible)) {
-      files[`agent/sessions/${path}`] = visible[path];
-    }
-  }
+  if (parts.home !== null) Object.assign(files, placeHome(layout, parts.home));
 
   if (parts.verifierLog !== null) files["verifier/test-stdout.txt"] = parts.verifierLog;
   if (trial.verifier_result?.rewards) {
@@ -335,9 +482,11 @@ export function analysisEvolveRecord(
  *                             names it) — here it sits at the run's own root,
  *                             because this tree IS the analysis run
  *   agent/stdout.log          the analyzer process's raw streams, when stored
- *   agent/stderr.log
+ *   agent/stderr.log          (the wire names no harness for the analyzer
+ *                             run, so the default layout applies: stdout.log)
  *   agent/trace-parsed.jsonl  the analyzer's parsed event trace
- *   agent/sessions/…          the analyzer CLI's home folder, VISIBLE shape
+ *   agent/evolve-home/…       the analyzer CLI's home folder, keyed by its
+ *                             sandbox path (the default layout's one slot)
  *   evolve.json               the platform record (analysisEvolveRecord)
  *
  * Absent artifacts are absent files — never empty placeholders. No
@@ -354,12 +503,7 @@ export function assembleAnalysisTree(parts: AnalysisTreeParts): Record<string, s
     files["agent/trace-parsed.jsonl"] =
       parts.transcript.events.map((event) => JSON.stringify(event)).join("\n") + "\n";
   }
-  if (parts.home !== null) {
-    const visible = visibleHomeTree(parts.home);
-    for (const path of Object.keys(visible)) {
-      files[`agent/sessions/${path}`] = visible[path];
-    }
-  }
+  if (parts.home !== null) Object.assign(files, placeHome(DEFAULT_HARNESS_TRIAL_LAYOUT, parts.home));
 
   files["evolve.json"] = record(
     analysisEvolveRecord(parts.analysis, parts.transcript, parts.userId)
