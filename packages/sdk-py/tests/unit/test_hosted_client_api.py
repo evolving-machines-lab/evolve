@@ -2867,12 +2867,58 @@ class TestJobs:
             page = await jobs_factory(CONFIG).trials('job-1')
 
         analyzed, bare, bad = page.items
-        assert analyzed.analysis == {**record, 'usage': None}
+        # The two keys this record omits read None, not KeyError: TrialAnalysis
+        # is a total TypedDict, so every documented key must be present.
+        assert analyzed.analysis == {
+            **record,
+            'usage': None,
+            'reasoning_effort': None,
+            'prompt': None,
+        }
         # The analyzer's spend is its OWN line — the trial's model spend keeps
         # its own number beside it.
         assert analyzed.agent_result.cost_usd == 0.93
         assert bare.analysis is None
         assert bad.analysis is None
+
+    async def test_trial_analysis_fills_the_keys_the_server_omitted(self):
+        """TrialAnalysis is a TOTAL TypedDict, so every key it declares must
+        be present at runtime. A server that omits a documented Optional one
+        used to hand back a dict whose own type says the key is required —
+        reading it raised KeyError where the type promised None."""
+        lean = {
+            'id': 'an-9',
+            'trial_id': 'trial-9',
+            'job_id': 'job-1',
+            'task_name': 'demo-task',
+            'status': 'running',
+            'model_name': 'glm-5.3-flash',
+            'rubric': ANALYZE_RUBRIC,
+            'created_at': '2026-09-10T00:00:00.000Z',
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [wire_trial(analysis=lean)],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).trials('job-1')
+
+        analysis = page.items[0].analysis
+        for key in (
+            'reasoning_effort',
+            'prompt',
+            'summary',
+            'checks',
+            'estimated_cost_usd',
+            'failure',
+            'finished_at',
+        ):
+            assert analysis[key] is None, f'{key} reads None when the server omits it'
+        assert analysis['usage'] is None, 'the reading rule is unchanged'
+        assert analysis['status'] == 'running', 'the keys the wire DID carry ride verbatim'
 
     @pytest.mark.asyncio
     async def test_trial_provider_degrade_mapping(self):
@@ -4777,7 +4823,16 @@ class TestTrials:
         assert outcome.stopped[0].status == 'INFRASTRUCTURE_ERROR'
         # The analysis rows ride verbatim beside their one normalized key —
         # exactly the ``Trial.analysis`` rule.
-        assert outcome.stopped_analyses == [{**stopped_analysis, 'usage': None}]
+        assert outcome.stopped_analyses == [
+            {
+                **stopped_analysis,
+                'usage': None,
+                'reasoning_effort': None,
+                'prompt': None,
+                'summary': None,
+                'checks': None,
+            }
+        ]
         assert outcome.already_terminal == ['run-2']
         assert outcome.not_found == ['run-3']
 

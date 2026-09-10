@@ -222,6 +222,47 @@ class TestChecksRead:
         assert seen == ['queued', 'completed']
         assert len(fake.requests) == 2
 
+    async def test_absent_optional_keys_read_none_not_keyerror(self):
+        """Check and TaskCheck are TOTAL TypedDicts — every key is declared
+        required — so a body that omits an Optional one produced a dict
+        contradicting its own type, and reading the documented key raised
+        KeyError. The rows were only filtered for object-ness, never mapped,
+        so a TaskCheck was affected twice over."""
+        lean = {
+            'id': 'chk-9',
+            'status': 'running',
+            'source': {'type': 'archive', 'sha256': 'cd' * 32, 'bytes': 99},
+            'model_name': 'glm-5.3-flash',
+            'reasoning_effort': 'max',
+            'rubric': {'criteria': [{'name': 'typos', 'description': 'd', 'guidance': 'g'}]},
+            'sandbox_provider': 'daytona',
+            'results': [
+                {
+                    'id': 'tc-9',
+                    'check_id': 'chk-9',
+                    'task_name': 'hello-world',
+                    'status': 'running',
+                    'attempts': 1,
+                    'created_at': '2026-09-10T00:00:00.000Z',
+                }
+            ],
+            'created_at': '2026-09-10T00:00:00.000Z',
+        }
+        fake = FakeUrlopen([('/api/checks/chk-9', lean)])
+        with patch('evolve._http.urlopen', fake):
+            check = await checks_factory(CONFIG).get('chk-9')
+
+        for key in ('prompt', 'n_concurrent', 'n_tasks', 'cost_usd', 'finished_at'):
+            assert check[key] is None, f'Check.{key} reads None when omitted'
+        # An absent glob list means "no filter", which is what [] spells —
+        # None would be a third state the type does not have.
+        assert check['include_task_names'] == []
+        assert check['exclude_task_names'] == []
+        row = check['results'][0]
+        for key in ('checks', 'cost_usd', 'failure', 'finished_at'):
+            assert row[key] is None, f'TaskCheck.{key} reads None when omitted'
+        assert row['task_name'] == 'hello-world', 'the keys the wire DID carry ride verbatim'
+
     def test_the_facade_exposes_checks(self):
         client = hosted(CONFIG)
         assert type(client.checks).__name__ == 'ChecksClient'
