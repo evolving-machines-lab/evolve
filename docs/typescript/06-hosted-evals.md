@@ -465,9 +465,12 @@ agent/qwen-sessions/...   the harness (claude and codex: sessions/; qwen:
 agent/.kimi-code/...      qwen-sessions/; kimi: .kimi-code/; opencode: its data
 agent/opencode/...        store at opencode/xdg-data/opencode/) — the subtree
                           Harbor's own adapter for that CLI puts there
-agent/evolve-home/...     the rest of the captured home (gemini and droid
-                          whole), keyed by its sandbox path
-                          (`evolve-home/root/.gemini/...`), so nothing is lost
+agent/evolve-home/...     the rest of the captured home (gemini and droid,
+                          which Harbor has no slot for), keyed by its sandbox
+                          path (`evolve-home/root/.gemini/...`), as far as
+                          the text view carries it — a file that is not
+                          UTF-8 text is in the job archive and absent here —
+                          with the capture record `agent-home.json` at its root
 verifier/test-stdout.txt  the stored verifier log
 verifier/reward.json      the rewards map, when the verifier produced one
 exception.txt             when the trial carries an exception
