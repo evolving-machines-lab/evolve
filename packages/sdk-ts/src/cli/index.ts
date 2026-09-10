@@ -1689,10 +1689,10 @@ export function parseArgs(argv: string[]): Invocation {
   }
   const topLevel = TOP_LEVEL_COMMANDS[head];
   // `check` is both Harbor's top-level verb (`evolve check <path>`) and the
-  // noun of its two read verbs (`evolve check list|show`, GROUPS.check): a
-  // first word that names one of those verbs routes to the group, anything
-  // else is the path. A task directory literally named `list` or `show` is
-  // written `./list`.
+  // noun of its read verbs (`evolve check list|show|trace|download`,
+  // GROUPS.check): a first word that names one of those verbs routes to the
+  // group, anything else is the path. A task directory literally named like a
+  // verb is written `./list`.
   const readVerb =
     head === "check" && argv[1] !== undefined && !argv[1].startsWith("-")
       ? resolveVerb(GROUPS.check, argv.slice(1))
