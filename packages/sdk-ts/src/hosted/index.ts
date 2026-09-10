@@ -3307,7 +3307,15 @@ export function jobs(config?: HostedClientConfig): JobsClient {
             ? JSON.stringify([analysis.n_completed, analysis.n_failed, analysis.n_pending])
             : null;
         },
-        settled: (current) => current.stats.analysis?.n_pending === 0,
+        settled: (current) => {
+          const analysis = current.stats.analysis;
+          if (!analysis || analysis.n_pending !== 0) return false;
+          // …and, when the caller named the total its own wave brings the
+          // tally to, not until the server's numbers have caught up with it
+          // — otherwise a re-analysis settles on the PREVIOUS wave, whose
+          // rows already read n_pending 0.
+          return analysis.n_completed + analysis.n_failed >= (options?.minSettled ?? 0);
+        },
         onChange: (current) => options?.onStats?.(current),
         followUp: `The analyses keep running — read them with jobs().get("${id}").`,
         options,

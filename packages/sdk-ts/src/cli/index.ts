@@ -361,6 +361,32 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
       "default: the per-model default — max on glm-5.3-flash, high on deepseek-v4-flash-vision)",
   },
+  // Harbor's four selection/width options, on the EMBEDDED trigger too —
+  // AnalyzeConfigInput has carried them for JobCreate.analyze all along, and
+  // the standalone verb spells them -n/--passing/--failing/-l. No shorts
+  // here: -n and -l are already job start's own (n_attempts, n-tasks).
+  "analyze-passing": {
+    kind: "boolean",
+    help: "Analyze only the trials that settle passing, reward=1.0 (implies --analyze)",
+  },
+  "analyze-failing": {
+    kind: "boolean",
+    help: "Analyze only the trials that settle failing, reward<1.0 or an exception (implies --analyze)",
+  },
+  "analyze-n-trials": {
+    kind: "number",
+    value: "<n>",
+    help:
+      "Max trials to analyze, after --analyze-passing/--analyze-failing (implies --analyze; " +
+      "the first matching trials to settle)",
+  },
+  "analyze-n-concurrent": {
+    kind: "number",
+    value: "<n>",
+    help:
+      "Max concurrent trial analyses (implies --analyze; beneath the organization's ceiling, " +
+      "default: the ceiling)",
+  },
   "timeout-multiplier": {
     kind: "number",
     value: "<x>",
@@ -400,6 +426,19 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     help: "Accepted for compatibility; hosted runs have no prompt to confirm",
   },
 };
+
+/**
+ * Every `run` / `job start` flag that configures the embedded analyzer, and
+ * therefore ARMS it: presence of the analyze object is the switch, so any one
+ * of these means "analyze, with this field set". Derived from the command
+ * spec itself so the two can never disagree — a new `analyze-*` flag joins
+ * this list by existing, and `cli.test.ts` pins that.
+ *
+ * `analyze` itself is excluded: it is the bare switch, not a field.
+ */
+export const ANALYZE_SUB_FLAGS: string[] = Object.keys(JOB_START_FLAGS).filter(
+  (name) => name.startsWith("analyze-")
+);
 
 interface GroupSpec {
   summary: string;
@@ -1212,6 +1251,12 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         kind: "boolean",
         short: "q",
         help: "With --watch: suppress the progress lines, print the final block only",
+      },
+      "all-waves": {
+        kind: "boolean",
+        help:
+          "With --watch: show every trial carrying an analysis, not just this wave's " +
+          "(a re-analysis then prints earlier waves' verdicts beside its own)",
       },
     },
     minPositionals: 1,
@@ -2704,17 +2749,25 @@ export function buildJobInput(
   if (f["retry-exclude"] !== undefined) retry.exclude_exceptions = f["retry-exclude"] as string[];
 
   // Embedded analysis: PRESENCE of the object is the switch (the spec's
-  // AnalyzeConfigInput law), so the file's `analyze` or ANY of the five
-  // flags arms it — --analyze bare means "all defaults" — and the sub-flags
-  // override the file's fields one by one, the same merge rule as retry.
+  // AnalyzeConfigInput law), so the file's `analyze` or ANY sub-flag arms it
+  // — --analyze bare means "all defaults" — and the sub-flags override the
+  // file's fields one by one, the same merge rule as retry.
+  //
+  // ANALYZE_SUB_FLAGS is the one list: arming reads it rather than repeating
+  // each flag name, so a flag added to the command spec cannot be one a
+  // reader passes without arming analysis. cli.test.ts pins the two lists
+  // against each other.
   const analyzeArmed =
     f.analyze === true ||
-    f["analyze-model"] !== undefined ||
-    f["analyze-rubric"] !== undefined ||
-    f["analyze-prompt"] !== undefined ||
-    f["analyze-provider"] !== undefined ||
-    f["analyze-effort"] !== undefined ||
+    ANALYZE_SUB_FLAGS.some((flag) => f[flag] !== undefined) ||
     base.analyze !== undefined;
+  // Two booleans naming opposite sides of the reward line, refused at the
+  // keyboard here as on the analyze verb.
+  assertRewardFilterExclusive(
+    f["analyze-passing"] === true,
+    f["analyze-failing"] === true,
+    "analyze-"
+  );
   const analyze: AnalyzeConfigInput = { ...(base.analyze ?? {}) };
   if (f["analyze-model"] !== undefined) analyze.model_name = String(f["analyze-model"]);
   if (f["analyze-rubric"] !== undefined) {
@@ -2732,6 +2785,15 @@ export function buildJobInput(
   // Same verbatim ride as --effort on the arms: the server's effort
   // vocabulary (GET /api/meta) is the one copy, and its refusal names it.
   if (f["analyze-effort"] !== undefined) analyze.reasoning_effort = String(f["analyze-effort"]);
+  // Harbor's selection and width, on the embedded trigger: which trials the
+  // wave takes as they settle, and how wide it runs. Same names as the
+  // standalone verb's, prefixed.
+  if (f["analyze-passing"] === true) analyze.passing = true;
+  if (f["analyze-failing"] === true) analyze.failing = true;
+  if (f["analyze-n-trials"] !== undefined) analyze.n_trials = f["analyze-n-trials"] as number;
+  if (f["analyze-n-concurrent"] !== undefined) {
+    analyze.n_concurrent = f["analyze-n-concurrent"] as number;
+  }
 
   // Timeout multipliers: Harbor's five flags verbatim (their
   // cli/jobs.py:378-424), flat on the body exactly as their JobConfig
@@ -3637,7 +3699,10 @@ export function trialDetailLines(run: Trial): string[] {
       rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
     }
     if (analysis.summary) rows.push(["  summary", analysis.summary]);
-    if (analysis.estimated_cost_usd !== null) {
+    // `typeof === "number"`, never `!== null`: the money key is absent, not
+    // null, on a server that does not carry it, and undefined sails straight
+    // through a null check and into a TypeError on .toFixed().
+    if (typeof analysis.estimated_cost_usd === "number") {
       rows.push(["  analyzer spend", `$${analysis.estimated_cost_usd.toFixed(4)}`]);
     }
     if (analysis.failure) {
@@ -3670,7 +3735,8 @@ export function analysisDetailLines(analysis: TrialAnalysis): string[] {
     rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
   }
   if (analysis.summary) rows.push(["summary", analysis.summary]);
-  if (analysis.estimated_cost_usd !== null) {
+  // Same guard as trial show's analyzer-spend row, for the same reason.
+  if (typeof analysis.estimated_cost_usd === "number") {
     rows.push(["spent", `$${analysis.estimated_cost_usd.toFixed(4)}`]);
   }
   // The token half of the analyzer's one-home usage reading — same row, same
@@ -4558,9 +4624,11 @@ export function analysisResultLines(runs: Trial[]): string[] {
       run.id,
       run.task_name,
       checks,
-      analysis.estimated_cost_usd !== null
-        ? `$${analysis.estimated_cost_usd.toFixed(4)}`
-        : "-",
+      // fmtAnalysisSpent is the one home for an analysis's money cell (the
+      // `analysis list` column reads it too): the settled figure, else a live
+      // reading stated as a floor, else "-" — and it can never throw on a key
+      // the server did not carry.
+      fmtAnalysisSpent(analysis),
       analysis.summary ? truncate(oneLine(analysis.summary), 60) : "-",
     ]);
   }
@@ -4592,12 +4660,33 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   // analyzer): the server's effort vocabulary is the one copy.
   if (inv.flags.effort !== undefined) req.reasoning_effort = String(inv.flags.effort);
   // Harbor's selection and width (their cli/analyze.py:278-290) ride as
-  // given — the bounds, and "Cannot use both --passing and --failing", are
-  // the server's typed refusals, never a client-side copy.
+  // given: the BOUNDS are the server's typed refusals, never a client-side
+  // copy of a lineup that could drift. The two reward filters are a
+  // different kind of rule — a law over two booleans, not a roster — and it
+  // is decidable at the keyboard, so it is refused there, in Harbor's own
+  // words, exactly as `run`'s closed sets already are.
+  assertRewardFilterExclusive(inv.flags.passing === true, inv.flags.failing === true, "");
   if (inv.flags["n-concurrent"] !== undefined) req.n_concurrent = inv.flags["n-concurrent"] as number;
   if (inv.flags.passing === true) req.passing = true;
   if (inv.flags.failing === true) req.failing = true;
   if (inv.flags["n-trials"] !== undefined) req.n_trials = inv.flags["n-trials"] as number;
+
+  // WHICH TRIALS THIS WAVE TOUCHED. Trial.analysis is the trial's LATEST
+  // analysis and every analysis is its own row with its own id, so a trial
+  // belongs to this wave iff its analysis id changed across the POST. The
+  // ids are read BEFORE launching: no clock (a client one is skewed, and a
+  // created_at tie is indistinguishable), no ordering assumption, no trust
+  // in the 202's count, and only routes the contract already carries.
+  //
+  // Without it the final table rendered every trial carrying ANY stored
+  // analysis: a re-analysis of `--failing -l 20` printed earlier waves'
+  // verdicts beside its own with nothing to tell them apart, and the exit
+  // code read a job-level tally that spans waves, so one stale failure made
+  // a clean wave exit 1. --all-waves is the way back to that whole picture,
+  // deliberately asked for.
+  const allWaves = inv.flags["all-waves"] === true;
+  const priorAnalysisIds =
+    watch && !allWaves ? await analysisIdsByTrial(client, id) : new Map<string, string>();
   // The 202 IS the queued batch — the job body, `stats.analysis` counting
   // the enqueued rows as pending — and the verb returns with it, the shape
   // of `job start` / `run`: Harbor's hosted launch prints the accepted job
@@ -4625,7 +4714,19 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   // Analyses have no event stream (the contract's own words: poll the job's
   // trials to watch them settle), so the follow is the SDK's poll —
   // -q keeps it silent and prints the final block only, like job start.
+  //
+  // THE START RACE: on a job whose previous wave settled, the tally still
+  // reads n_pending 0 until this wave's rows are visible, and the watch
+  // would return on that first read and report the OLD wave as final. The
+  // accepted 202 already counts the batch it enqueued as pending, so the
+  // total the tally must reach is the whole of it — settled now, plus
+  // everything still to settle. Settled counts only grow, so this is exact
+  // and cannot deadlock on a row that finishes before the first read. An
+  // older server that serves no tally yields 0, which is today's behaviour.
+  const acc = accepted.stats.analysis;
+  const minSettled = acc ? acc.n_completed + acc.n_failed + acc.n_pending : 0;
   const final = await client.watchAnalysis(accepted.id, {
+    minSettled,
     onStats: (job) => {
       if (quiet) return;
       if (!job.stats.analysis) return;
@@ -4637,14 +4738,30 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
     },
   });
 
-  // The per-trial results ride the trials, not the job body.
-  const analyzed: Trial[] = [];
+  // The per-trial results ride the trials, not the job body — and only the
+  // ones whose analysis id moved belong to the wave just watched.
+  const carried: Trial[] = [];
   for await (const run of client.trials(final.id)) {
-    if (run.analysis) analyzed.push(run);
+    if (run.analysis) carried.push(run);
   }
+  const analyzed = allWaves
+    ? carried
+    : carried.filter((run) => run.analysis!.id !== priorAnalysisIds.get(run.id));
+  const fromEarlierWaves = carried.length - analyzed.length;
+  // The wave's own failures, counted from the wave's own rows. The job
+  // tally is reported beside it, never in place of it.
+  const failedInWave = analyzed.filter((run) => run.analysis!.status === "failed").length;
 
   if (json) {
-    io.out(JSON.stringify({ kind: "analysis.final", job: final, trials: analyzed }));
+    io.out(
+      JSON.stringify({
+        kind: "analysis.final",
+        job: final,
+        trials: analyzed,
+        n_failed_in_wave: failedInWave,
+        n_trials_from_earlier_waves: fromEarlierWaves,
+      })
+    );
   } else {
     io.out("");
     for (const line of analysisResultLines(analyzed)) io.out(line);
@@ -4654,9 +4771,47 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
     }
     io.out(`Details: evolve trial show <trial-id>`);
   }
+  // Rows this wave did not produce are never hidden in silence — the count
+  // is stated on stderr in both modes, with the flag that shows them.
+  if (fromEarlierWaves > 0) {
+    io.err(
+      `${fromEarlierWaves} trial(s) carry an analysis from an earlier wave, not shown (--all-waves shows them).`
+    );
+  }
   // Harbor's own exit law: any failed analysis is exit 1 — a wave that lost
-  // trials never reads as a clean pass.
-  return (final.stats.analysis?.n_failed ?? 0) > 0 ? 1 : 0;
+  // trials never reads as a clean pass. THIS wave's failures, so a stale
+  // failure from an earlier one cannot fail a clean run.
+  return failedInWave > 0 ? 1 : 0;
+}
+
+/**
+ * Every trial's LATEST analysis id, keyed by trial id — the pre-POST
+ * snapshot `analyze --watch` diffs against to tell its own wave's verdicts
+ * from ones already stored. Trials with no analysis are simply absent, so a
+ * first wave diffs against an empty map and keeps everything.
+ */
+async function analysisIdsByTrial(
+  client: ReturnType<typeof jobs>,
+  jobId: string
+): Promise<Map<string, string>> {
+  const ids = new Map<string, string>();
+  for await (const run of client.trials(jobId)) {
+    if (run.analysis) ids.set(run.id, run.analysis.id);
+  }
+  return ids;
+}
+
+/**
+ * Harbor's own refusal, at the keyboard: "Cannot use both --passing and
+ * --failing" (their cli/analyze.py). Two booleans naming opposite sides of
+ * the reward line is a usage error a round trip cannot make more true, and
+ * the server refuses it `invalid_input` anyway. `prefix` names the flags on
+ * the verb that carries them ("analyze-" on run/job start).
+ */
+function assertRewardFilterExclusive(passing: boolean, failing: boolean, prefix: string): void {
+  if (passing && failing) {
+    throw new CliUsageError(`Cannot use both --${prefix}passing and --${prefix}failing`);
+  }
 }
 
 /** Python's str.title() over the criterion name with underscores as spaces — Harbor's row label (cli/analyze.py:41). */

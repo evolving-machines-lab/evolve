@@ -143,6 +143,7 @@ import { pack } from "tar-stream";
 
 import {
   buildAgentInput,
+  ANALYZE_SUB_FLAGS,
   buildJobInput,
   buildPublishInput,
   CliUsageError,
@@ -3990,24 +3991,36 @@ async function testAnalyzeVerbWatchFollows() {
     cost_usd: 0.0173,
     checks: { reward_hacking: { n_pass: 1, n_fail: 0, n_not_applicable: 0 } },
   });
+  // The trials feed is read TWICE: once before the POST, to record which
+  // analysis id each trial already carried, and once after the wave settles.
+  // Before, run-1 has never been analyzed; after, it carries this wave's
+  // verdict — which is exactly how the CLI knows the row is its own.
+  let trialReads = 0;
   (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
     const urlStr = url.toString();
     if (urlStr === `${BASE}/api/jobs/eval-1`) {
       jobReads++;
       return buildMockResponse({ status: 200, body: jobReads === 1 ? pendingJob : settledJob });
     }
+    if (urlStr.startsWith(`${BASE}/api/jobs/eval-1/trials`)) {
+      trialReads++;
+      return buildMockResponse({
+        status: 200,
+        body: {
+          items: [
+            trialReads === 1
+              ? { id: "run-1", job_id: "eval-1", task_name: "demo-task", analysis: null }
+              : wireAnalyzedTrial("run-1", COMPLETED_WIRE_ANALYSIS),
+          ],
+          nextCursor: null,
+          hasMore: false,
+        },
+      });
+    }
     return baseFetch(url as any, init);
   };
   try {
     setMockResponse("/api/jobs/eval-1/analyze", { status: 202, body: pendingJob });
-    setMockResponse("/api/jobs/eval-1/trials", {
-      status: 200,
-      body: {
-        items: [wireAnalyzedTrial("run-1", COMPLETED_WIRE_ANALYSIS)],
-        nextCursor: null,
-        hasMore: false,
-      },
-    });
     const { io, out } = captureIO();
     const promptDir = await mkdtemp(join(tmpdir(), "evolve-analyze-prompt-"));
     const promptPath = join(promptDir, "prompt.txt");
@@ -4071,15 +4084,30 @@ async function testAnalyzeVerbJsonAndFailure() {
       finished_at: "2026-08-28T00:01:00.000Z",
     };
     setMockResponse("/api/jobs/eval-1/analyze", { status: 202, body: analyzedWireJob(failedTally) });
-    setMockResponse("/api/jobs/eval-1/trials", {
-      status: 200,
-      body: {
-        items: [wireAnalyzedTrial("run-1", failedAnalysis)],
-        nextCursor: null,
-        hasMore: false,
-      },
-    });
     setMockResponse("/api/jobs/eval-1", { status: 200, body: analyzedWireJob(failedTally) });
+    // Before the POST run-1 carries no analysis; after, it carries this
+    // wave's failed one — so the failure counted is the wave's own.
+    const baseFetch = globalThis.fetch;
+    let trialReads = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      if (urlStr.startsWith(`${BASE}/api/jobs/eval-1/trials`)) {
+        trialReads++;
+        return buildMockResponse({
+          status: 200,
+          body: {
+            items: [
+              trialReads % 2 === 1
+                ? { id: "run-1", job_id: "eval-1", task_name: "demo-task", analysis: null }
+                : wireAnalyzedTrial("run-1", failedAnalysis),
+            ],
+            nextCursor: null,
+            hasMore: false,
+          },
+        });
+      }
+      return baseFetch(url as any, init);
+    };
     const { io, out } = captureIO();
     const code = await runCli(["analyze", "eval-1", "--watch", "--json", ...AUTH], io);
     assertEqual(code, 1, "a wave with failed analyses exits 1 (Harbor's own law)");
@@ -4105,6 +4133,450 @@ async function testAnalyzeVerbJsonAndFailure() {
     assert(
       human.out.some((l) => l.includes("invalid_result") && l.includes("checks missing criterion")),
       "the typed failure is rendered with its phase and message"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// ANALYZE WAVE SCENARIOS — one per defect, each written to FAIL on the code
+// that shipped before them. `stats.analysis` is a JOB-level tally spanning
+// every wave, and Trial.analysis is the trial's LATEST analysis, so a
+// re-analysis used to print and score other waves' work as its own.
+// =============================================================================
+
+/**
+ * A two-wave job. `before` is what the trials feed serves until the analyze
+ * POST lands; `after` is what it serves once the wave has settled. The switch
+ * is the POST itself, which is exactly when the CLI takes its snapshot.
+ */
+function installWaveFetch(spec: {
+  before: Record<string, unknown>[];
+  after: Record<string, unknown>[];
+  acceptedJob: Record<string, unknown>;
+  settledJob: Record<string, unknown>;
+  jobReadsBeforeSettled?: number;
+}): { trialReads: () => number; jobReads: () => number } {
+  const baseFetch = globalThis.fetch;
+  let posted = false;
+  let trialReads = 0;
+  let jobReads = 0;
+  const pendingReads = spec.jobReadsBeforeSettled ?? 0;
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    const urlStr = url.toString();
+    if (urlStr.endsWith("/api/jobs/eval-1/analyze")) {
+      posted = true;
+      return buildMockResponse({ status: 202, body: spec.acceptedJob });
+    }
+    if (urlStr.startsWith(`${BASE}/api/jobs/eval-1/trials`)) {
+      trialReads++;
+      return buildMockResponse({
+        status: 200,
+        body: {
+          // The snapshot read happens BEFORE the POST, so the POST alone is
+          // the switch — and with --all-waves, where no snapshot is taken,
+          // the single read still lands on `after`.
+          items: posted ? spec.after : spec.before,
+          nextCursor: null,
+          hasMore: false,
+        },
+      });
+    }
+    if (urlStr === `${BASE}/api/jobs/eval-1`) {
+      jobReads++;
+      return buildMockResponse({
+        status: 200,
+        body: jobReads <= pendingReads ? spec.acceptedJob : spec.settledJob,
+      });
+    }
+    return baseFetch(url as any, init);
+  };
+  return { trialReads: () => trialReads, jobReads: () => jobReads };
+}
+
+/** A completed analysis with a given id, on the shared rubric. */
+function waveAnalysis(id: string, overrides: Record<string, unknown> = {}) {
+  return { ...COMPLETED_WIRE_ANALYSIS, id, ...overrides };
+}
+
+/**
+ * A: the settled table used to render every trial carrying ANY analysis. On a
+ * re-analysis that is other waves' verdicts printed as this one's, with
+ * nothing in the row to say so.
+ */
+async function scenarioA_waveScopedTable() {
+  console.log("\n--- SCENARIO A: analyze --watch renders THIS wave's rows, not every stored analysis ---");
+  installMockFetch();
+  try {
+    // run-1 was analyzed by an earlier wave and is NOT in this selection;
+    // run-2 is the one this wave re-analyzes.
+    const stale = waveAnalysis("an-old", { summary: "An earlier wave's verdict." });
+    const before = [
+      wireAnalyzedTrial("run-1", stale),
+      { id: "run-2", job_id: "eval-1", task_name: "demo-task", analysis: null },
+    ];
+    const after = [
+      wireAnalyzedTrial("run-1", stale),
+      wireAnalyzedTrial("run-2", waveAnalysis("an-new", { summary: "This wave's verdict." })),
+    ];
+    const tally = (n_completed: number, n_pending: number) => ({
+      n_completed,
+      n_failed: 0,
+      n_pending,
+      cost_usd: null,
+      checks: {},
+    });
+    installWaveFetch({
+      before,
+      after,
+      acceptedJob: analyzedWireJob(tally(1, 1)),
+      settledJob: analyzedWireJob(tally(2, 0)),
+    });
+    const { io, out, err } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "--failing", "--watch", ...AUTH], io);
+    const text = out.join("\n");
+    assertEqual(code, 0, "nothing failed in this wave");
+    assert(text.includes("run-2"), "the wave's own row is rendered");
+    assert(
+      !text.includes("run-1"),
+      "a trial whose analysis predates this wave is NOT rendered as part of it",
+    );
+    assert(
+      !text.includes("An earlier wave's verdict."),
+      "and neither is its summary",
+    );
+    assert(
+      err.some((l) => l.includes("1 trial(s) carry an analysis from an earlier wave")),
+      "the hidden rows are counted on stderr — never dropped in silence",
+    );
+    assert(
+      err.some((l) => l.includes("--all-waves")),
+      "and the flag that shows them is named",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** A, the other half: --all-waves is the way back to the whole picture. */
+async function scenarioA_allWavesOptsBackIn() {
+  console.log("\n--- SCENARIO A: --all-waves renders every stored analysis, deliberately asked for ---");
+  installMockFetch();
+  try {
+    const stale = waveAnalysis("an-old", { summary: "An earlier wave's verdict." });
+    const before = [wireAnalyzedTrial("run-1", stale)];
+    const after = [
+      wireAnalyzedTrial("run-1", stale),
+      wireAnalyzedTrial("run-2", waveAnalysis("an-new")),
+    ];
+    installWaveFetch({
+      before,
+      after,
+      acceptedJob: analyzedWireJob({ n_completed: 1, n_failed: 0, n_pending: 1, cost_usd: null, checks: {} }),
+      settledJob: analyzedWireJob({ n_completed: 2, n_failed: 0, n_pending: 0, cost_usd: null, checks: {} }),
+    });
+    const { io, out, err } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "--watch", "--all-waves", ...AUTH], io);
+    const text = out.join("\n");
+    assertEqual(code, 0, "exit unchanged");
+    assert(text.includes("run-1") && text.includes("run-2"), "every stored analysis is rendered");
+    assertEqual(
+      err.filter((l) => l.includes("earlier wave")).length,
+      0,
+      "nothing is hidden, so nothing is announced as hidden",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * B: the exit code read `stats.analysis.n_failed`, a job-level tally spanning
+ * waves — so one stale failure made a clean wave exit 1. The sharpest single
+ * assertion in the set.
+ */
+async function scenarioB_staleFailureDoesNotFailACleanWave() {
+  console.log("\n--- SCENARIO B: a previous wave's failure does not fail this clean one ---");
+  installMockFetch();
+  try {
+    const staleFailure = waveAnalysis("an-old", {
+      status: "failed",
+      summary: null,
+      checks: null,
+      estimated_cost_usd: null,
+      failure: { phase: "invalid_result", message: "checks missing criterion" },
+    });
+    const before = [
+      wireAnalyzedTrial("run-1", staleFailure),
+      { id: "run-2", job_id: "eval-1", task_name: "demo-task", analysis: null },
+    ];
+    const after = [
+      wireAnalyzedTrial("run-1", staleFailure),
+      wireAnalyzedTrial("run-2", waveAnalysis("an-new")),
+    ];
+    // The job tally carries the earlier wave's failure forever: 1 failed.
+    const tally = (n_completed: number, n_pending: number) => ({
+      n_completed,
+      n_failed: 1,
+      n_pending,
+      cost_usd: null,
+      checks: {},
+    });
+    installWaveFetch({
+      before,
+      after,
+      acceptedJob: analyzedWireJob(tally(0, 1)),
+      settledJob: analyzedWireJob(tally(1, 0)),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "--watch", "--json", ...AUTH], io);
+    assertEqual(code, 0, "THIS wave lost nothing, so it exits 0 despite the job's standing failure");
+    const final = JSON.parse(out[out.length - 1]) as {
+      n_failed_in_wave: number;
+      job: { stats: { analysis: { n_failed: number } } };
+    };
+    assertEqual(final.n_failed_in_wave, 0, "the wave's own failure count");
+    assertEqual(
+      final.job.stats.analysis.n_failed,
+      1,
+      "the job's cross-wave tally is reported beside it, never in place of it",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** B, the other direction: a failure IN the wave still exits 1. */
+async function scenarioB_ownFailureStillFails() {
+  console.log("\n--- SCENARIO B: a failure this wave produced still exits 1 (Harbor's law holds) ---");
+  installMockFetch();
+  try {
+    const before = [{ id: "run-1", job_id: "eval-1", task_name: "demo-task", analysis: null }];
+    const after = [
+      wireAnalyzedTrial(
+        "run-1",
+        waveAnalysis("an-new", {
+          status: "failed",
+          summary: null,
+          checks: null,
+          estimated_cost_usd: null,
+          failure: { phase: "invalid_result", message: "checks missing criterion" },
+        }),
+      ),
+    ];
+    installWaveFetch({
+      before,
+      after,
+      acceptedJob: analyzedWireJob({ n_completed: 0, n_failed: 0, n_pending: 1, cost_usd: null, checks: {} }),
+      settledJob: analyzedWireJob({ n_completed: 0, n_failed: 1, n_pending: 0, cost_usd: null, checks: {} }),
+    });
+    const { io, out } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "--watch", ...AUTH], io);
+    assertEqual(code, 1, "a wave that lost a trial never reads as a clean pass");
+    assert(
+      out.join("\n").includes("invalid_result"),
+      "and the typed failure is shown, not a silent absence",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * C: `estimated_cost_usd !== null` then `.toFixed(4)`. A server that omits
+ * the key sends undefined, which sails through the null guard and throws.
+ * The SDK mapper now fills it; the CLI's money cell is guarded too.
+ */
+async function scenarioC_absentCostKeyDoesNotThrow() {
+  console.log("\n--- SCENARIO C: an analysis with no estimated_cost_usd key renders, never throws ---");
+  installMockFetch();
+  try {
+    // Every nullable key omitted — the shape an older or leaner server serves.
+    const noCost: Record<string, unknown> = {
+      id: "an-new",
+      status: "completed",
+      model_name: "glm-5.3-flash",
+      rubric: CLI_RUBRIC,
+      created_at: "2026-09-10T00:00:00.000Z",
+    };
+    const before = [{ id: "run-1", job_id: "eval-1", task_name: "demo-task", analysis: null }];
+    const after = [wireAnalyzedTrial("run-1", noCost)];
+    installWaveFetch({
+      before,
+      after,
+      acceptedJob: analyzedWireJob({ n_completed: 0, n_failed: 0, n_pending: 1, cost_usd: null, checks: {} }),
+      settledJob: analyzedWireJob({ n_completed: 1, n_failed: 0, n_pending: 0, cost_usd: null, checks: {} }),
+    });
+    const { io, out } = captureIO();
+    // Before the fix this threw `estimated_cost_usd.toFixed is not a function`
+    // inside analysisResultLines, which runCli turned into exit 1.
+    const code = await runCli(["analyze", "eval-1", "--watch", ...AUTH], io);
+    assertEqual(code, 0, "the table renders and the verb exits cleanly");
+    const row = out.find((l) => l.includes("run-1"));
+    assert(row !== undefined, "the row is present");
+    assert(row!.includes("-"), "the money cell reads '-' — nothing measured, nothing invented");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * D: the watch re-GETs the job, and on a job whose previous wave settled the
+ * tally still reads n_pending 0 — so the watch returned at once and reported
+ * the OLD wave as final.
+ */
+async function scenarioD_reanalysisDoesNotSettleOnTheOldWave() {
+  console.log("\n--- SCENARIO D: the watch does not settle on a wave it never saw ---");
+  installMockFetch();
+  try {
+    const stale = waveAnalysis("an-old", { summary: "An earlier wave's verdict." });
+    const before = [wireAnalyzedTrial("run-1", stale)];
+    const after = [wireAnalyzedTrial("run-1", waveAnalysis("an-new", { summary: "This wave's verdict." }))];
+    // The 202 counts this wave's row as pending: 1 done + 1 pending = 2.
+    const acceptedJob = analyzedWireJob({
+      n_completed: 1,
+      n_failed: 0,
+      n_pending: 1,
+      cost_usd: null,
+      checks: {},
+    });
+    // …but the FIRST job read still shows the previous wave's settled tally,
+    // one completed and nothing pending. Settling there is the bug.
+    const staleJob = analyzedWireJob({
+      n_completed: 1,
+      n_failed: 0,
+      n_pending: 0,
+      cost_usd: null,
+      checks: {},
+    });
+    const settledJob = analyzedWireJob({
+      n_completed: 2,
+      n_failed: 0,
+      n_pending: 0,
+      cost_usd: null,
+      checks: {},
+    });
+    const baseFetch = globalThis.fetch;
+    let posted = false;
+    let trialReads = 0;
+    let jobReads = 0;
+    (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      if (urlStr.endsWith("/api/jobs/eval-1/analyze")) {
+        posted = true;
+        return buildMockResponse({ status: 202, body: acceptedJob });
+      }
+      if (urlStr.startsWith(`${BASE}/api/jobs/eval-1/trials`)) {
+        trialReads++;
+        return buildMockResponse({
+          status: 200,
+          body: { items: posted && trialReads > 1 ? after : before, nextCursor: null, hasMore: false },
+        });
+      }
+      if (urlStr === `${BASE}/api/jobs/eval-1`) {
+        jobReads++;
+        // Two reads of the stale tally before the new rows become visible.
+        return buildMockResponse({ status: 200, body: jobReads <= 2 ? staleJob : settledJob });
+      }
+      return baseFetch(url as any, init);
+    };
+    const { io, out } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "--watch", "-q", ...AUTH], io);
+    assertEqual(code, 0, "the wave settles cleanly");
+    assert(
+      jobReads >= 3,
+      `the watch polled past the stale tally instead of settling on it (${jobReads} reads)`,
+    );
+    const text = out.join("\n");
+    assert(text.includes("This wave's verdict."), "the table carries the NEW wave's verdict");
+    assert(
+      !text.includes("An earlier wave's verdict."),
+      "and not the one the stale tally would have handed back",
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * E: AnalyzeConfigInput has always carried the four selection/width options
+ * for the embedded trigger; only the standalone verb could set them.
+ */
+function scenarioE_embeddedSelectionFlags() {
+  console.log("\n--- SCENARIO E: run/job start carry the four embedded-analyze selection flags ---");
+  const body = buildJobInput(
+    parseArgs([
+      "run",
+      "-d", "deep-swe@1.1",
+      "-a", "codex",
+      "-m", "gpt-5.5",
+      "--analyze-failing",
+      "--analyze-n-trials", "20",
+      "--analyze-n-concurrent", "2",
+    ]),
+  );
+  assertEqual(
+    body.analyze,
+    { failing: true, n_trials: 20, n_concurrent: 2 },
+    "the four ride JobCreate.analyze under Harbor's own field names",
+  );
+  // Presence of the object is the switch, so a selection flag alone arms
+  // analysis — the class-level fix, not one more clause per flag.
+  const armedByOneFlag = buildJobInput(
+    parseArgs(["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--analyze-passing"]),
+  );
+  assertEqual(
+    armedByOneFlag.analyze,
+    { passing: true },
+    "a selection flag on its own arms embedded analysis, like every other analyze-* flag",
+  );
+  // And the arming list is derived from the command spec, so the two cannot
+  // disagree: every analyze-* flag the spec declares must arm.
+  for (const flag of ANALYZE_SUB_FLAGS) {
+    assert(
+      flag.startsWith("analyze-"),
+      `${flag} is an analyze sub-flag`,
+    );
+  }
+  assert(
+    ANALYZE_SUB_FLAGS.includes("analyze-n-trials") &&
+      ANALYZE_SUB_FLAGS.includes("analyze-n-concurrent") &&
+      ANALYZE_SUB_FLAGS.includes("analyze-passing") &&
+      ANALYZE_SUB_FLAGS.includes("analyze-failing"),
+    "the four new flags are in the arming list by existing, not by being remembered",
+  );
+}
+
+/** F: two booleans naming opposite sides of the reward line. */
+async function scenarioF_bothRewardFiltersRefusedAtKeyboard() {
+  console.log("\n--- SCENARIO F: --passing with --failing is a usage error, not a round trip ---");
+  installMockFetch();
+  try {
+    const { io, err } = captureIO();
+    const code = await runCli(["analyze", "eval-1", "--passing", "--failing", ...AUTH], io);
+    assertEqual(code, 2, "a usage error exits 2, not 1 — it never reached the server");
+    assert(
+      err.some((l) => l.includes("Cannot use both --passing and --failing")),
+      "in Harbor's own words",
+    );
+    assertEqual(fetchCalls.length, 0, "and no request was made");
+
+    // The same law on the embedded trigger, naming ITS flags.
+    assertThrowsUsage(
+      () =>
+        buildJobInput(
+          parseArgs([
+            "run",
+            "-d", "deep-swe@1.1",
+            "-a", "codex",
+            "-m", "gpt-5.5",
+            "--analyze-passing",
+            "--analyze-failing",
+          ]),
+        ),
+      "Cannot use both --analyze-passing and --analyze-failing",
+      "run's embedded pair is refused the same way, under its own flag names",
     );
   } finally {
     restoreFetch();
@@ -8792,6 +9264,14 @@ async function main() {
   await testAnalyzeVerbWatchFollows();
   await testAnalyzeVerbJsonAndFailure();
   await testAnalyzeRefusalSurfacesVerbatim();
+  await scenarioA_waveScopedTable();
+  await scenarioA_allWavesOptsBackIn();
+  await scenarioB_staleFailureDoesNotFailACleanWave();
+  await scenarioB_ownFailureStillFails();
+  await scenarioC_absentCostKeyDoesNotThrow();
+  await scenarioD_reanalysisDoesNotSettleOnTheOldWave();
+  scenarioE_embeddedSelectionFlags();
+  await scenarioF_bothRewardFiltersRefusedAtKeyboard();
   await testJobShowAnalysisRows();
   testTrialDetailAnalysisRows();
   await testCompareCancelDownload();

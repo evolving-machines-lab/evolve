@@ -3259,6 +3259,24 @@ export interface WatchAnalysisOptions {
    * set it whenever the id might not have an analysis wave.
    */
   timeoutMs?: number;
+  /**
+   * The total settled analyses (`n_completed + n_failed`) the tally must
+   * reach before the watch may return — the guard against settling on a
+   * wave it never saw.
+   *
+   * `stats.analysis` is a JOB-level tally spanning every wave, so on a job
+   * whose previous wave settled it reads `n_pending: 0` until the new rows
+   * become visible, and a watch started right after an accepted `analyze()`
+   * can return at once carrying the PREVIOUS wave's numbers. Pass the
+   * accepted job's own total — `n_completed + n_failed + n_pending`, which
+   * already counts the batch it enqueued — and the watch keeps polling
+   * until the server's tally has caught up with it. Settled counts only
+   * grow, so this cannot deadlock on a row that finished before the first
+   * read.
+   *
+   * Omitted (or 0) = settle on `n_pending: 0` alone, as this watch always has.
+   */
+  minSettled?: number;
 }
 
 /** Options for jobs().watch() */
