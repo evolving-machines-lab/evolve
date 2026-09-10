@@ -81,6 +81,8 @@
     "no_regradable_trials",
     "invalid_rubric",
     "analysis_already_running",
+    "check_not_found",
+    "no_checkable_tasks",
     "no_analyzable_trials",
     "not_a_job_dir",
     "invalid_trial",

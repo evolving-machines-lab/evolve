@@ -147,6 +147,19 @@ export const ANALYSIS_STATUSES = ["queued", "running", "completed", "failed"] as
 export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
 
 /**
+ * A task quality check's own lifecycle ladder — derived from its tasks
+ * (spec Check.status): `queued` while no task started, `running` while any
+ * task is still queued or running and one has started, `completed` once
+ * every task settled. A check never fails as a whole (each task carries its
+ * own typed failure). A runtime value so the CLI validates `check list
+ * --status` against it instead of a second copy.
+ */
+export const CHECK_STATUSES = ["queued", "running", "completed"] as const;
+
+/** One check status — see CHECK_STATUSES. */
+export type CheckStatus = (typeof CHECK_STATUSES)[number];
+
+/**
  * Which lane a settled trial's `agent_result.cost_usd` came from. Only
  * `"measured"` is final. `"measured_provisional"` is a real gateway reading
  * taken inside its asynchronous spend flush — an honest floor a deferred pass
@@ -2087,6 +2100,12 @@ export type AnalysisPage = Page<TrialAnalysis>;
  */
 export interface AnalysisList extends Awaitable<AnalysisPage>, AsyncIterable<TrialAnalysis> {}
 
+/** Cursor page of task quality checks (newest first) */
+export type CheckPage = Page<Check>;
+
+/** The handle returned by checks().list() — one page on await, every page on for-await. */
+export interface CheckList extends Awaitable<CheckPage>, AsyncIterable<Check> {}
+
 /**
  * One task's rollup within a job: its trial tally, mean reward over SCORED
  * trials, and measured cost. Sits between the job body and the trial list so
@@ -3059,6 +3078,14 @@ export interface ListAnalysesOptions extends PageOptions {
   job?: string;
   /** Only analyses in these statuses (the object's own lowercase ladder). */
   status?: AnalysisStatus[];
+}
+
+/** Options for checks().list() (default page 50, max 200) */
+export interface ListChecksOptions extends PageOptions {
+  /** Visibility scope, exactly as on jobs().list(): `my` (the default) or `shared`. */
+  scope?: JobListScope;
+  /** Only checks in these statuses (the check's own ladder, CHECK_STATUSES). */
+  status?: CheckStatus[];
 }
 
 /** Options for jobs().tasks() (default page 50, max 200) */
@@ -4088,6 +4115,179 @@ export interface AnalysesClient {
   artifact(analysisId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
 }
 
+// =============================================================================
+// TASK QUALITY CHECKS — Harbor's `harbor check`, hosted
+// =============================================================================
+
+/**
+ * Task-check configuration — Harbor's `harbor check` vocabulary (their
+ * cli/analyze.py:84-148 check_command), the spec's `CheckConfigInput`. The
+ * rubric-agent trio is the analyze door's, under the same rules
+ * (`AnalyzeConfigInput` states them; refusals name `check.*`): `model_name`
+ * (Harbor's check default is `claude-sonnet-4-6`; this platform's is the
+ * analyzer's `glm-5.3-flash` — one roster, one default for both rubric
+ * agents, a recorded deviation), `rubric` (the default is Harbor's
+ * cli/quality_checker/default-rubric.toml, eleven criteria verbatim), and
+ * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing their
+ * prompts/check.txt and rendered with `{task_path}`, `{file_tree}`,
+ * `{criteria_guidance}`; the output contract is appended after it exactly
+ * as Harbor appends it). `reasoning_effort` and `sandbox_provider` are the
+ * platform's two hosted knobs, exactly as on the analyze door.
+ *
+ * Which tasks, and how wide, are Harbor's own check options with their
+ * exact names: `n_concurrent` (`-n/--n-concurrent`), `include_task_names`
+ * (`-i/--include-task-name`, repeatable glob), `exclude_task_names`
+ * (`-x/--exclude-task-name`), `n_tasks` (`-l/--n-tasks`) — applied in
+ * checker.py's order (:132-138: include, exclude, then the cap) over the
+ * sorted task directory names, Python fnmatch globs against the NAME.
+ * Harbor's `-a/--agent`, `--job-name`, `-o/--jobs-dir`, `-k/--n-attempts`
+ * and the local-runner kwargs are not on this surface; the contract records
+ * each with its reason.
+ */
+export interface CheckConfigInput {
+  /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
+  model_name?: string;
+  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: Harbor's default check rubric. */
+  rubric?: Rubric;
+  /** The prompt template — the TEXT of Harbor's `-p/--prompt` file. */
+  prompt?: string;
+  /** Reasoning effort the checker runs at (the arms' vocabulary; a hosted extension). */
+  reasoning_effort?: string;
+  /** The provider whose sandbox the checker boots (a hosted extension; the job lineup). */
+  sandbox_provider?: EvalSandboxProvider;
+  /** How many of this check's tasks run at once — Harbor's `-n/--n-concurrent`; beneath the organization's `max_concurrent_analyses`. */
+  n_concurrent?: number;
+  /** Only check task directories whose name matches one of these globs — Harbor's `-i`, repeatable. */
+  include_task_names?: string[];
+  /** Skip task directories whose name matches one of these globs — Harbor's `-x`, repeatable. */
+  exclude_task_names?: string[];
+  /** At most this many task directories, after the globs — Harbor's `-l/--n-tasks`. */
+  n_tasks?: number;
+}
+
+/**
+ * What checks().create() takes: WHERE the tasks are — a local directory (one
+ * task directory, or a directory of task directories: Harbor's `PATH`,
+ * tarred and streamed from disk) — plus the CheckConfigInput knobs. A
+ * directory is the ONLY source, as it is for Harbor's check (their
+ * checker.py:125-130 refuses any PATH that is not a directory): no
+ * ready-packed archive form, the shape datasets().publish gives a local
+ * directory.
+ */
+export interface CreateCheckInput extends CheckConfigInput {
+  source: { directory: string };
+  /** Client-side upload progress (sent bytes, total bytes), from the stream itself. */
+  onUploadProgress?: (sentBytes: number, totalBytes: number) => void;
+}
+
+/** What was checked — the uploaded archive, by identity (spec CheckSource). */
+export interface CheckSource {
+  type: "archive";
+  /** SHA-256 of the archive as uploaded. */
+  sha256: string;
+  /** The archive's compressed size. */
+  bytes: number;
+}
+
+/**
+ * One task's quality check — Harbor's QualityCheckResult verbatim (their
+ * cli/quality_checker/models.py:31-35: `task_name`, `checks` keyed by
+ * criterion, `cost_usd`) plus the hosted provenance: its own id, the check
+ * it belongs to, its lifecycle (the analysis ladder's four lowercase words),
+ * the bounded attempt count, and a typed `failure` in place of Harbor's
+ * `error` string (the TrialAnalysis rule).
+ *
+ * `checks` is the FLAT object Harbor's validate.py accepts (one key per
+ * rubric criterion, each `{outcome, explanation}` — no summary; analyze has
+ * one, check does not). `cost_usd` is the checker agent's OWN metered spend;
+ * null when nothing was measured, never a fabricated 0.
+ */
+export interface TaskCheck {
+  id: string;
+  check_id: string;
+  /** The task directory's name (Harbor's task_name). */
+  task_name: string;
+  /** `queued` | `running` | `completed` | `failed` — the analysis ladder, on a task check. */
+  status: AnalysisStatus;
+  /** One entry per rubric criterion, keys exactly the frozen criteria. Null until completed. */
+  checks: Record<string, AnalysisCheck> | null;
+  cost_usd: number | null;
+  /** 1, or 2 when the one automatic re-run fired (a run that produced no valid check-result.json, the missing file included). */
+  attempts: number;
+  /** Non-null exactly when status is `failed`. */
+  failure: AnalysisFailure | null;
+  created_at: string;
+  /** When it settled; null while queued or running. */
+  finished_at: string | null;
+}
+
+/**
+ * One task quality check — Harbor's CheckReport (`results`, and `cost_usd`
+ * its `total_cost_usd`: the sum of measured task costs, null when none was
+ * measured) plus the hosted record: the run's own id and lifecycle
+ * (CheckStatus), its source, and the policy every task ran under, frozen at
+ * accept.
+ */
+export interface Check {
+  id: string;
+  status: CheckStatus;
+  source: CheckSource;
+  model_name: string;
+  /** The effort every task's checker ran at — named at create, or the model's default, resolved at accept. */
+  reasoning_effort: string;
+  rubric: Rubric;
+  /** The prompt template as stored; null = Harbor's built-in check.txt. */
+  prompt: string | null;
+  sandbox_provider: EvalSandboxProvider;
+  /** Harbor's -n as stored; null = the organization's ceiling alone. */
+  n_concurrent: number | null;
+  /** The include globs as stored; empty = no include filter. */
+  include_task_names: string[];
+  /** The exclude globs as stored; empty = no exclude filter. */
+  exclude_task_names: string[];
+  /** Harbor's -l/--n-tasks as stored; null = no cap. */
+  n_tasks: number | null;
+  /** One entry per task directory checked, sorted by task name. */
+  results: TaskCheck[];
+  cost_usd: number | null;
+  created_at: string;
+  /** When the last task settled; null until every task has. */
+  finished_at: string | null;
+}
+
+/** Options for checks().watch() */
+export interface WatchCheckOptions {
+  /** Called on every observed change of the check's per-task statuses, with the check body the observation came from. */
+  onProgress?: (check: Check) => void;
+  /** Abort the watch (rejects with the abort reason) */
+  signal?: AbortSignal;
+  /** Initial poll interval (default: 2000ms); doubles while nothing changes, up to 30 s, and snaps back on every change. */
+  pollIntervalMs?: number;
+}
+
+/**
+ * Client for task quality checks — Harbor's `harbor check <PATH>`, hosted
+ * (`POST /api/checks`, `GET /api/checks`, `GET /api/checks/{checkId}`).
+ * Created via the standalone `checks()` factory; requires EVOLVE_API_KEY
+ * (or `{ apiKey }` in config).
+ *
+ * `create()` uploads the task directory (or the directory of task
+ * directories) and returns AT ONCE with the accepted Check — one `results`
+ * entry per task, each `queued` — exactly as Harbor's hosted launch submits
+ * and returns; `watch()` is the follow, a separate poll on purpose. The
+ * task bytes are never modified: Harbor's own rule for its check.
+ */
+export interface ChecksClient {
+  /** Upload a task directory (or a directory of them) and start the check. Returns the accepted Check (202). */
+  create(input: CreateCheckInput): Promise<Check>;
+  /** The check with its per-task results — for every status. 404 `check_not_found` for an id you cannot read. */
+  get(checkId: string): Promise<Check>;
+  /** Every check you may read, newest first (cursor-paged); `{ scope, status }` narrow it. */
+  list(options?: ListChecksOptions): CheckList;
+  /** Poll a check until every task settled; resolves with the final Check. */
+  watch(checkId: string, options?: WatchCheckOptions): Promise<Check>;
+}
+
 /** A key descriptor. The secret is never returned. */
 export interface ApiKey {
   id: string;
@@ -4142,7 +4342,7 @@ export interface OrgQuota {
   max_queued_trials: number;
   /** Dataset imports a worker holds at once; further imports wait. */
   max_concurrent_imports: number;
-  /** Trace analyses running at once; further analyses wait. */
+  /** Rubric-agent runs in flight at once fleet-wide — trace analyses AND task quality checks under ONE count; further runs of either kind wait. */
   max_concurrent_analyses: number;
   /** Managed-agent sessions open at once (recorded and read back; not yet enforced by the box-create doors). */
   max_concurrent_sessions: number;
@@ -4161,6 +4361,7 @@ export interface OrgUsage {
   in_flight_trials: number;
   queued_trials: number;
   in_flight_imports: number;
+  /** Rubric-agent runs RUNNING now — trace analyses AND task quality checks, the one count `max_concurrent_analyses` bounds. */
   in_flight_analyses: number;
   /** Sessions not yet ended; always 0 on a shared org (sessions carry no organization). */
   active_sessions: number;
@@ -4331,6 +4532,11 @@ export const HOSTED_ERROR_CODES = [
   // trial (every trial CANCELLED).
   "invalid_rubric",
   "analysis_already_running",
+  // Check (POST /api/checks, Harbor's `harbor check` hosted): a check the
+  // caller cannot read or that never existed (404); an archive with no task
+  // directory, or a selection the globs and the cap emptied (400).
+  "check_not_found",
+  "no_checkable_tasks",
   "no_analyzable_trials",
   // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
   // directory (no result.json / config.json at its root, or they do not

@@ -40,6 +40,13 @@ from .hosted import (
     AnalysesClient,
     AnalysisPage,
     AnalysisStatus,
+    Check,
+    CheckConfigInput,
+    CheckPage,
+    CheckSource,
+    CheckStatus,
+    ChecksClient,
+    TaskCheck,
     JobListScope,
     AgentArm,
     AgentCapability,
@@ -399,6 +406,17 @@ def analyses(config: Optional[HostedClientConfig] = None) -> AnalysesClient:
     return AnalysesClient(config)
 
 
+def checks(config: Optional[HostedClientConfig] = None) -> ChecksClient:
+    """Create a standalone hosted-evals checks client.
+
+    Task quality checks — Harbor's ``harbor check <PATH>``, hosted: upload a
+    task directory (or a directory of them), read the report, list your
+    checks. Uses EVOLVE_API_KEY unless HostedClientConfig(api_key=...) is
+    provided.
+    """
+    return ChecksClient(config)
+
+
 def skills(config: Optional[HostedClientConfig] = None) -> SkillsClient:
     """Create a standalone hosted-evals skills client (platform uploads).
 
@@ -550,6 +568,7 @@ __all__ = [
     'JobsClient',
     'TrialsClient',
     'AnalysesClient',
+    'ChecksClient',
     'AuthClient',
     'OrgsClient',
     'EvolveAPIError',
@@ -608,6 +627,10 @@ __all__ = [
     'Rubric',
     'RubricCriterion',
     'TrialAnalysis',
+    'CheckConfigInput',
+    'CheckSource',
+    'TaskCheck',
+    'Check',
     'TrialStatus',
     'EvalSandboxProvider',
     'SpendSource',
@@ -650,8 +673,10 @@ __all__ = [
     'JobPage',
     'TrialPage',
     'AnalysisPage',
+    'CheckPage',
     'JobListScope',
     'AnalysisStatus',
+    'CheckStatus',
     'JobTaskRollupPage',
     'DatasetPage',
     'AgentPage',
@@ -677,6 +702,7 @@ __all__ = [
     'jobs',
     'trials',
     'analyses',
+    'checks',
     'skills',
     'orgs',
     'auth',

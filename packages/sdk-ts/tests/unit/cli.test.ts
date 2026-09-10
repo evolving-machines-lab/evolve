@@ -8563,6 +8563,178 @@ async function testSessionListAndShow() {
   }
 }
 
+// =============================================================================
+// CHECK — Harbor's `harbor check <PATH>`, hosted (top-level verb + read group)
+// =============================================================================
+
+function wireCheck(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "chk-1",
+    status: "queued",
+    source: { type: "archive", sha256: "ab".repeat(32), bytes: 1234 },
+    model_name: "glm-5.3-flash",
+    reasoning_effort: "max",
+    rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
+    prompt: null,
+    sandbox_provider: "daytona",
+    n_concurrent: null,
+    include_task_names: [],
+    exclude_task_names: [],
+    n_tasks: null,
+    results: [
+      {
+        id: "tc-1",
+        check_id: "chk-1",
+        task_name: "hello-world",
+        status: "queued",
+        checks: null,
+        cost_usd: null,
+        attempts: 1,
+        failure: null,
+        created_at: "2026-09-09T10:00:00.000Z",
+        finished_at: null,
+      },
+    ],
+    cost_usd: null,
+    created_at: "2026-09-09T10:00:00.000Z",
+    finished_at: null,
+    ...overrides,
+  };
+}
+
+async function writeCliTaskDir(dir: string): Promise<void> {
+  await mkdir(join(dir, "environment"), { recursive: true });
+  await mkdir(join(dir, "tests"), { recursive: true });
+  await writeFile(join(dir, "task.toml"), 'schema_version = "1.4"\n');
+  await writeFile(join(dir, "instruction.md"), "Print hello.\n");
+  await writeFile(join(dir, "environment", "Dockerfile"), "FROM python:3.13-slim\n");
+  await writeFile(join(dir, "tests", "test.sh"), "echo 1\n");
+}
+
+async function testCheckVerb() {
+  console.log("\n--- runCli: evolve check <path> streams the task dir with the config part first, returns the 202; --watch follows to Harbor's tables and exit law ---");
+  console.log("\n--- parseArgs: `check` is the top-level verb AND the noun of its read verbs ---");
+  assertEqual(parseArgs(["check", "./tasks"]).command, "check", "a path is the verb's positional");
+  assertEqual(parseArgs(["check", "./tasks", "-i", "a-*", "-i", "b-*", "-x", "c", "-l", "3"]).flags["include-task-name"], ["a-*", "b-*"], "-i is repeatable (Harbor's -i/--include-task-name)");
+  assertEqual(parseArgs(["check", "list"]).command, "check list", "`check list` routes to the read group");
+  assertEqual(parseArgs(["check", "show", "chk-1"]).command, "check show", "`check show <id>` routes to the read group");
+  assertEqual(parseArgs(["check", "ls"]).command, "check list", "`ls` aliases list here too");
+  assertEqual(parseArgs(["check", "./list"]).positionals, ["./list"], "a directory literally named list is written ./list");
+  assertThrowsUsage(() => parseArgs(["check", "./tasks", "--passing"]), "passing", "analyze's trial filters are not check flags");
+
+  installMockFetch();
+  const server = await startUploadCaptureServer();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-check-cli-"));
+  const taskDir = join(dir, "hello-world");
+  try {
+    await writeCliTaskDir(taskDir);
+    server.setReply(202, wireCheck());
+    const { io, out, err } = captureIO();
+    const code = await runCli(
+      ["check", taskDir, "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
+      io
+    );
+    assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
+    assertEqual(err, [], "nothing on stderr");
+    const call = server.calls[server.calls.length - 1];
+    assertEqual(call.url, "/api/checks", "POSTs /api/checks");
+    assertEqual(call.method, "POST", "uses POST");
+    const body = call.body.toString("latin1");
+    assert(body.indexOf('name="config"') < body.indexOf('name="archive"'), "the config part precedes the archive part");
+    const configJson = /name="config"\r\n\r\n([^\r]+)\r\n/.exec(body)?.[1] ?? "";
+    assertEqual(
+      JSON.parse(configJson),
+      { model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
+      "-m/-n/-i/-l ride the config part as model_name/n_concurrent/include_task_names/n_tasks"
+    );
+    assert(body.includes('filename="hello-world.tar.gz"'), "the archive is named by the directory");
+    assert(out.some((l) => l.startsWith("check id") && l.includes("chk-1")), "prints the accepted check");
+    assertEqual(out[out.length - 1], "Follow it with: evolve check show chk-1", "ends with the re-attach hint");
+
+    // --watch --json: NDJSON envelopes, Harbor's exit law on a failed task.
+    const failed = wireCheck({
+      status: "completed",
+      results: [
+        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "failed", failure: { phase: "invalid_result", message: "missing result file: check-result.json" }, finished_at: "2026-09-09T10:05:00.000Z" },
+        { ...(wireCheck().results as Record<string, unknown>[])[0], id: "tc-2", task_name: "other-task", status: "completed", checks: { typos: { outcome: "pass", explanation: "none" }, pinned_dependencies: { outcome: "fail", explanation: "unpinned" } }, cost_usd: 0.02, finished_at: "2026-09-09T10:05:00.000Z" },
+      ],
+      cost_usd: 0.02,
+      finished_at: "2026-09-09T10:05:00.000Z",
+    });
+    setMockResponse("/api/checks/chk-1", { status: 200, body: failed });
+    const machine = captureIO();
+    const watchCode = await runCli(
+      ["check", taskDir, "--watch", "--json", "--api-key", "test-key", "--base-url", server.base],
+      machine.io
+    );
+    assertEqual(watchCode, 1, "a check with an errored task exits 1 (Harbor's own law, cli/analyze.py:206-207)");
+    const kinds = machine.out.map((line) => (JSON.parse(line) as { kind?: string }).kind);
+    assert(kinds.includes("check.accepted") && kinds.includes("check.progress") && kinds.includes("check.final"), "--json emits the accepted, progress and final envelopes");
+    assertEqual(kinds[kinds.length - 1], "check.final", "the final envelope is last");
+
+    // The human render: Harbor's multi-task summary table + the error line + the total.
+    const human = captureIO();
+    const humanCode = await runCli(["check", taskDir, "--watch", "--api-key", "test-key", "--base-url", server.base], human.io);
+    assertEqual(humanCode, 1, "human mode exits 1 the same");
+    assert(human.out.some((l) => l.includes("Task Quality Checks")), "Harbor's summary table title");
+    assert(human.out.some((l) => l.startsWith("TASK") && l.includes("PASS") && l.includes("FAIL") && l.includes("N/A") && l.includes("COST")), "Harbor's summary columns");
+    assert(human.out.some((l) => l.startsWith("other-task") && /\b1\b.*\b1\b.*\b0\b.*0\.0200/.test(l)), "a completed task's pass/fail/N-A counts and cost");
+    assert(human.out.some((l) => l.startsWith("hello-world") && l.includes("-")), "an errored task's row is dashed");
+    assert(human.out.some((l) => l.includes("❌ hello-world: invalid_result: missing result file: check-result.json")), "the typed failure line, Harbor's ❌ shape");
+    assert(human.out.some((l) => l === "Total agent cost: $0.0200"), "Harbor's total agent cost line");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+    restoreFetch();
+  }
+}
+
+async function testCheckReadVerbs() {
+  console.log("\n--- runCli: check list / check show ride the contract's GETs; a single-task report prints Harbor's checks table ---");
+  installMockFetch();
+  try {
+    const done = wireCheck({
+      status: "completed",
+      results: [
+        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "None found." }, pinned_dependencies: { outcome: "not_applicable", explanation: "No deps." } }, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
+      ],
+      cost_usd: 0.0123,
+      finished_at: "2026-09-09T10:05:00.000Z",
+    });
+    setMockResponse("/api/checks/chk-1", { status: 200, body: done });
+    // Registered AFTER the per-id door: the mock matches by substring, in order.
+    setMockResponse("/api/checks", { status: 200, body: { items: [done], nextCursor: null, hasMore: false } });
+
+    const show = captureIO();
+    assertEqual(await runCli(["check", "show", "chk-1", ...AUTH], show.io), 0, "show exits 0 when no task failed");
+    assert(show.out.some((l) => l === "Task Quality Checks: hello-world"), "Harbor's single-task table title");
+    assert(show.out.some((l) => l.startsWith("CHECK") && l.includes("OUTCOME") && l.includes("EXPLANATION")), "Harbor's single-task columns");
+    assert(show.out.some((l) => l.startsWith("Typos") && l.includes("pass") && l.includes("None found.")), "the criterion is titled like Harbor's row (Pinned Dependencies, Typos)");
+    assert(show.out.some((l) => l.startsWith("Pinned Dependencies") && l.includes("not_applicable")), "every criterion rows");
+    assert(show.out.some((l) => l === "Agent cost: $0.0123"), "Harbor's agent cost line");
+    const showJson = captureIO();
+    await runCli(["check", "show", "chk-1", "--json", ...AUTH], showJson.io);
+    assertEqual((JSON.parse(showJson.out[0]) as { id: string }).id, "chk-1", "--json prints the wire object");
+
+    const piped = captureIO(false);
+    assertEqual(await runCli(["check", "list", "--status", "completed", "--scope", "shared", ...AUTH], piped.io), 0, "list exits 0");
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/checks", "one GET on the checks list");
+    assertEqual(url.searchParams.get("status"), "completed", "--status rides the query");
+    assertEqual(url.searchParams.get("scope"), "shared", "--scope rides the query");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASKS\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("chk-1\tcompleted\t1\tglm-5.3-flash\t$0.0123"), "the row renders");
+    const badStatus = captureIO();
+    assertEqual(await runCli(["check", "list", "--status", "failed", ...AUTH], badStatus.io), 2, "the check ladder has no failed word — a usage error (exit 2) at the keyboard");
+    assert(badStatus.err.some((l) => l.includes("queued, running, completed")), "the refusal names the ladder");
+    const quiet = captureIO();
+    await runCli(["check", "list", "-q", ...AUTH], quiet.io);
+    assertEqual(quiet.out, ["chk-1"], "-q prints only ids");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function main() {
   console.log("evolve CLI Unit Tests\n");
 
@@ -8670,6 +8842,8 @@ async function main() {
   await testSecretsVerbs();
   await testJobListScope();
   await testAnalysisList();
+  await testCheckVerb();
+  await testCheckReadVerbs();
   await testSessionListAndShow();
 
   console.log(`\n${passed} passed, ${failed} failed`);
