@@ -6361,7 +6361,10 @@ async function testStopTrials() {
     // exactly the Trial.analysis rule.
     assertEqual(
       outcome.stopped_analyses,
-      [{ ...stoppedAnalysis, usage: null }],
+      // The two keys this row omits read null, not undefined: TrialAnalysis
+      // declares them nullable, and the stop path maps through the same
+      // mapTrialAnalysis every other analysis surface uses.
+      [{ ...stoppedAnalysis, reasoning_effort: null, prompt: null, usage: null }],
       "stopped_analyses carries the settled analysis rows (failed, phase stopped)"
     );
     assertEqual(outcome.already_terminal, ["run-2"], "already-terminal ids reported, untouched");
