@@ -3851,9 +3851,11 @@ export interface JobsClient {
    * multi-step trials), trial.log, agent/trajectory.json (the normalized
    * ATIF trajectory), the harness stdout stream at Harbor's tee name for the
    * harness (agent/claude-code.txt, agent/codex.txt, ...), agent/stderr.log,
-   * agent/trace-parsed.jsonl, the agent home at Harbor's session slot for
-   * the harness (agent/sessions/, agent/qwen-sessions/, agent/.kimi-code/,
-   * agent/opencode/) with the rest under agent/evolve-home/,
+   * agent/trace-parsed.jsonl, the captured agent home at its real names
+   * (agent/.claude/, agent/.claude.json, agent/.codex/, agent/.kimi-code/, …)
+   * with the capture record agent/agent-home.json beside it and Harbor's own
+   * copies of the subtrees its adapters keep (agent/sessions/,
+   * agent/qwen-sessions/, agent/opencode/),
    * verifier/test-stdout.txt, verifier/reward.json, the raw
    * verifier/reward.txt (only when the grader wrote one),
    * steps/<name>/verifier/reward.json (multi-step trials only),
@@ -5024,7 +5026,7 @@ export interface CapabilityDocument {
       job_trials: number;
       /** Per-file cap on the trial artifacts an upload stores (a trial with a file past it is skipped, `trial_too_large` on the import). */
       job_trial_file_bytes: number;
-      /** Total cap on one trial's `agent/` subtrees — its session home: `agent/sessions/`, `agent/qwen-sessions/`, `agent/.kimi-code/`, `agent/opencode/`, `agent/evolve-home/` (a trial past it is skipped the same way). */
+      /** Total cap on one trial's `agent/` subtrees — its session home: the home at its real names (`agent/.claude/`, `agent/.codex/`, `agent/.kimi-code/`, …) and Harbor's copies (`agent/sessions/`, `agent/qwen-sessions/`, `agent/opencode/`) (a trial past it is skipped the same way). */
       job_trial_session_bytes: number;
     };
     dataset_names: {
