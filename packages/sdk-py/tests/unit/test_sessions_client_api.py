@@ -129,6 +129,9 @@ class MockBridgeManager:
                     {'jsonrpc': '2.0', 'method': 'session/update', 'params': {'index': 11}},
                 ],
                 'total': 12,
+                # The contract's one declared field on the envelope: one write
+                # instant per entry of events, index-aligned.
+                'stored_at': ['2026-03-05T10:00:01.000Z', '2026-03-05T10:00:02.000Z'],
                 # One gateway usage line as the wire serves it (spec GatewayUsageEvent).
                 'gateway_calls': [
                     {
@@ -332,6 +335,21 @@ class TestSessionsClientTranscript:
         assert call['update']['source'] == 'gateway'
         assert call['update']['usage']['costUsd'] == 0.0042
         assert call['update']['usage']['promptTokens'] == 1200
+        # The server's write instant per event, index-aligned with events.
+        assert transcript.stored_at == ['2026-03-05T10:00:01.000Z', '2026-03-05T10:00:02.000Z']
+
+    @pytest.mark.asyncio
+    async def test_stored_at_absent_reads_none(self):
+        client, bridge = _make_client()
+        # The bridge's default feed minus the field: a transcript served from
+        # its file (or by an older server) carries no write instants.
+        served = dict(await bridge.call('sessions_transcript', {'id': 'sess-1'}))
+        served.pop('stored_at')
+        bridge.overrides['sessions_transcript'] = served
+
+        transcript = await client.transcript('sess-1')
+
+        assert transcript.stored_at is None
 
     @pytest.mark.asyncio
     async def test_events_stay_gateway_free(self):

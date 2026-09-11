@@ -406,6 +406,9 @@ const transcriptFeedFixture = {
   events: [{ update: "chunk1" }, { update: { sessionUpdate: "usage", usage: { promptTokens: 1 } } }],
   total: 12,
   gatewayCalls: [gatewayCallFixture],
+  // The contract's one declared field: one write instant per entry of
+  // `events`, index-aligned, present on every row-served page.
+  storedAt: ["2026-09-10T20:00:01.000Z", "2026-09-10T20:00:02.000Z"],
   traceSource: "db",
   costData: null,
 };
@@ -430,6 +433,11 @@ async function testTranscriptCarriesGatewayCalls() {
       transcript.gatewayCalls[0].update.usage.costUsd,
       0.0042,
       "a call's tokens and money read straight off the typed line"
+    );
+    assertEqual(
+      transcript.storedAt,
+      ["2026-09-10T20:00:01.000Z", "2026-09-10T20:00:02.000Z"],
+      "storedAt is the server's write instant per event, index-aligned with events"
     );
   } finally {
     restoreFetch();
@@ -466,6 +474,55 @@ async function testTranscriptOlderServer() {
 
     assertEqual(transcript.gatewayCalls, [], "no gatewayCalls field reads as no calls");
     assertEqual(transcript.total, 7, "total falls back to since + events served");
+    assertEqual(transcript.storedAt, undefined, "no storedAt field reads as absent, never as an empty list");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTranscriptStoredAt() {
+  console.log("\n--- transcript() carries storedAt as the contract declares it: aligned, optional, refused when broken ---");
+  installMockFetch();
+  try {
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+
+    // A transcript served from its file has no write instants: absent.
+    setMockResponse("/api/sessions/s1/events", {
+      status: 200,
+      body: { ...transcriptFeedFixture, storedAt: undefined, traceSource: "file" },
+    });
+    const fromFile = await s.transcript("s1");
+    assertEqual(fromFile.storedAt, undefined, "a file-served transcript carries no storedAt");
+
+    // An empty row-served page carries an empty list — present, not absent.
+    installMockFetch();
+    setMockResponse("/api/sessions/s1/events", {
+      status: 200,
+      body: { ...transcriptFeedFixture, events: [], total: 12, storedAt: [] },
+    });
+    const empty = await s.transcript("s1", { since: 12 });
+    assertEqual(empty.storedAt, [], "an empty row-served page carries an empty list");
+
+    // A list that is not one date-time string per event is refused by name,
+    // never served misaligned: a reader placing calls by index would place
+    // them under the wrong step.
+    for (const [label, storedAt] of [
+      ["not a list", "2026-09-10T20:00:01.000Z"],
+      ["a non-string entry", ["2026-09-10T20:00:01.000Z", 5]],
+      ["one entry short of the events", ["2026-09-10T20:00:01.000Z"]],
+      ["one entry past the events", ["a", "b", "c"]],
+    ] as const) {
+      installMockFetch();
+      setMockResponse("/api/sessions/s1/events", { status: 200, body: { ...transcriptFeedFixture, storedAt } });
+      let threw = false;
+      try {
+        await s.transcript("s1");
+      } catch (e: any) {
+        threw = true;
+        assert(e.message.includes("storedAt"), `${label}: the refusal names storedAt`);
+      }
+      assert(threw, `${label}: refused, not served`);
+    }
   } finally {
     restoreFetch();
   }
@@ -757,6 +814,7 @@ async function main() {
   await testTranscriptCarriesGatewayCalls();
   await testEventsStayGatewayFree();
   await testTranscriptOlderServer();
+  await testTranscriptStoredAt();
   await testTranscriptRefusesMalformedFeed();
   await testApiErrorHandling();
   await testDownloadStreaming();

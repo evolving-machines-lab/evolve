@@ -373,10 +373,13 @@ function readOAuthFile(filePath: string): string {
  * where the harness's own provider error at run time named nothing the caller
  * wrote (honesty rule: full support or a typed refusal naming the feature).
  * Off-roster names are not judged here: the harness's command builder still
- * prefixes its native route onto a bare name, and a prefixed name beyond the
- * table is the caller's explicit routing. Harnesses without a
- * `providerEnvMap` resolve their key from the harness alone and are not judged
- * here either.
+ * spells their route itself — opencode's (registry.ts `opencodeRoutedModel`)
+ * lets only the `openrouter/…` form and its roster ids ride verbatim and
+ * prepends `openrouter/` to every other name, prefixed or bare — so an
+ * off-roster prefixed name is not the caller's explicit routing but an
+ * OpenRouter id (`fireworks/x` is sent as `openrouter/fireworks/x`). Harnesses
+ * without a `providerEnvMap` resolve their key from the harness alone and are
+ * not judged here either.
  */
 function assertDirectModeServesModel(
   type: AgentType,

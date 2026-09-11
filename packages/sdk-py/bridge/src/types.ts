@@ -489,6 +489,10 @@ export interface SessionTranscriptResponse {
   // The gateway's per-call usage lines, verbatim (spec GatewayUsageEvent —
   // its keys are the wire's own on every surface, like a trace event's data).
   gateway_calls: Record<string, any>[];
+  // The server's write instant per event, index-aligned with `events` (spec
+  // SessionTranscript.storedAt); omitted when the TS SDK read none (a
+  // file-served transcript, an older server).
+  stored_at?: string[];
 }
 
 export interface BrowserReplayResponse {

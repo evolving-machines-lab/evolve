@@ -5785,6 +5785,9 @@ async function testAnalysisTranscript() {
           },
         ],
         traceSource: "db",
+        // The contract's one declared field on the envelope: one write
+        // instant per entry of `events`, index-aligned.
+        storedAt: ["2026-09-10T08:22:24.000Z", "2026-09-10T08:22:41.000Z"],
       },
     });
     setMockResponse("/api/traces/trials/an-1/events", {
@@ -5794,6 +5797,18 @@ async function testAnalysisTranscript() {
         events: [{ update: { sessionUpdate: "agent_message_chunk" } }],
         total: 1,
         traceSource: "db",
+      },
+    });
+    // A storedAt that is not one string per event is refused by name, never
+    // served misaligned (a reader placing calls by index would misplace them).
+    setMockResponse("/api/traces/trials/an-2/events", {
+      status: 200,
+      body: {
+        session: { id: "an-2", kind: "analysis" },
+        events: [{ update: { sessionUpdate: "agent_message_chunk" } }],
+        total: 1,
+        traceSource: "db",
+        storedAt: ["2026-09-10T08:22:24.000Z", "2026-09-10T08:22:41.000Z"],
       },
     });
 
@@ -5826,10 +5841,24 @@ async function testAnalysisTranscript() {
     const gateway = gatewayUsageOf(t.gateway_calls[0]);
     assert(gateway !== null && gateway.callId === "chatcmpl-1", "gatewayUsageOf reads the meter's line");
     assertEqual(gateway!.usage.costUsd, 0.00385, "the cost is the gateway's own");
+    assertEqual(
+      t.stored_at,
+      ["2026-09-10T08:22:24.000Z", "2026-09-10T08:22:41.000Z"],
+      "stored_at is the server's write instant per event, index-aligned with events"
+    );
 
     const whole = await a.transcript("an-1");
     assertEqual(whole.events[0].seq, 0, "no since = the whole transcript, seqs from 0");
     assertEqual(whole.gateway_calls, [], "an envelope without gatewayCalls maps to an empty list");
+    assertEqual(whole.stored_at, undefined, "an envelope without storedAt reads as absent, never as an empty list");
+    let threwStoredAt = false;
+    try {
+      await a.transcript("an-2");
+    } catch (e) {
+      threwStoredAt = true;
+      assert(e instanceof Error && e.message.includes("storedAt"), "a misaligned storedAt is refused by name");
+    }
+    assert(threwStoredAt, "a storedAt that is not one entry per event never serves");
     assert(
       fetchCalls[1].url === `${BASE}/api/traces/trials/an-1/events`,
       "omitted since sends no parameter"
@@ -7224,6 +7253,7 @@ async function testChecksTaskReads() {
         session: { id: "tc-1", kind: "check", type: "trial", tag: "hello-world", checkId: "chk-1", datasetRef: "harbor-examples@1.0", model: "glm-5.3-flash", provider: "e2b", sandboxId: "box-1", isEnded: true },
         events: [{ _prompt: { text: "check it" } }, { update: { sessionUpdate: "tool_call" } }],
         total: 2,
+        storedAt: ["2026-09-10T09:00:01.000Z", "2026-09-10T09:00:02.000Z"],
       },
     });
     // A trial id at the stored selectors: the verdict door refuses it typed
@@ -7240,6 +7270,7 @@ async function testChecksTaskReads() {
     assertEqual(transcript.check_id, "chk-1", "the transcript carries the check record");
     assertEqual(transcript.dataset, "harbor-examples@1.0", "…and the dataset ref");
     assertEqual(transcript.events.map((e) => [e.seq, e.type]), [[1, "unknown"], [2, "tool_call"]], "seq = since + index; the type is the viewer's one extraction");
+    assertEqual(transcript.stored_at, ["2026-09-10T09:00:01.000Z", "2026-09-10T09:00:02.000Z"], "stored_at rides the check transcript too, index-aligned with events");
     assertEqual(await c.artifact("tc-1", "trace-stdout"), "checker stdout", "artifact() answers the stored log");
     assertEqual(await c.artifact("tc-1", "agent-home"), { "/root/.claude/s.jsonl": "{}" }, "…and the home map");
     let threw = false;

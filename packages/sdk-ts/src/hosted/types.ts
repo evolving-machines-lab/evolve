@@ -1873,6 +1873,31 @@ export function gatewayUsageOf(event: Pick<TraceEvent, "data">): GatewayUsage | 
 }
 
 /**
+ * The transcript feed's `storedAt` as the contract declares it (spec
+ * SessionTranscript.storedAt): one date-time string per entry of `events`,
+ * index-aligned — the server's write instant of that event's row. Absent (a
+ * transcript served from its file, or a server predating the field) reads as
+ * undefined, never as an empty list, which the contract reserves for an empty
+ * row-served page; present, it must be one string per event served, or the
+ * read is refused by name — a reader placing the gateway meter's calls by
+ * index would otherwise place them under the wrong step. `where` names the
+ * envelope in the refusal (the sessions and hosted clients share this one
+ * mapping).
+ */
+export function mapStoredAt(raw: unknown, eventCount: number, where: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${where} storedAt is not a list of date-time strings`);
+  }
+  if (raw.length !== eventCount) {
+    throw new Error(
+      `${where} storedAt has ${raw.length} entries for ${eventCount} events (one per event, index-aligned)`
+    );
+  }
+  return raw as string[];
+}
+
+/**
  * One page of a trial's trace — trials().trace().
  *
  * Same envelope as every other collection, and nextCursor means the same
@@ -4135,6 +4160,16 @@ export interface AnalysisTranscript {
    * read: they ride beside `events`, never inside the seq timeline.
    */
   gateway_calls: TraceEvent[];
+  /**
+   * The server's write instant of each event's row, one per entry of
+   * `events`, index-aligned (the contract's SessionTranscript.storedAt):
+   * present on every row-served page (an empty page carries an empty list),
+   * absent when the transcript was served from its file, where no write
+   * instant exists. It places the gateway meter's calls under the harness's
+   * steps for harnesses whose lines carry no clock of their own (codex, kimi,
+   * qwen); a reader that does not place calls needs nothing from it.
+   */
+  stored_at?: string[];
 }
 
 /**
@@ -4393,6 +4428,8 @@ export interface TaskCheckTranscript {
   events: TraceEvent[];
   /** The gateway meter's per-call lines for the checker's key (the AnalysisTranscript's field, same law). */
   gateway_calls: TraceEvent[];
+  /** The server's write instant of each event's row, one per entry of `events`, index-aligned (the AnalysisTranscript's field, same law); absent when the transcript was served from its file. */
+  stored_at?: string[];
 }
 
 /**

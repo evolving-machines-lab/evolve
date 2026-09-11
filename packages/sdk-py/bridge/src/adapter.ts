@@ -782,6 +782,7 @@ export class EvolveAdapter {
       events: transcript.events,
       total: transcript.total,
       gateway_calls: transcript.gatewayCalls as Record<string, any>[],
+      ...(transcript.storedAt !== undefined ? { stored_at: transcript.storedAt } : {}),
     };
   }
 
