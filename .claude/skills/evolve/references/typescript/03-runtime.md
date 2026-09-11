@@ -724,6 +724,7 @@ const page = await session.list({
 const page2 = await session.list({ cursor: page.nextCursor });
 const info = await session.get(page.items[0].id);
 const events = await session.events(info.id, { since: 50 });
+const { gatewayCalls, total } = await session.transcript(info.id);
 const path = await session.download(info.id, { to: "./traces" });
 const replay = await session.browserReplay(info.id);
 ```
@@ -731,6 +732,7 @@ const replay = await session.browserReplay(info.id);
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
 - `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
+- `transcript()` is the same read whole: `SessionTranscript { session, events, total, gatewayCalls }` — `total` counts every stored event (the next delta's `since`), and `gatewayCalls` are the gateway meter's per-call lines (`GatewayUsageEvent`: `update.usage.promptTokens`, `completionTokens`, `cachedTokens`, `costUsd`), in time order, the same line a trial's trace carries; they ride beside `events`, never inside them, and are the only per-call tokens and money a client should show. The session's total stays on `session.usage` / `session.cost`.
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
 - The CLI wraps the same client headless: `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>`
 - `browserReplay()` waits for the managed browser replay and returns `replayUrl` plus `downloadUrl`
