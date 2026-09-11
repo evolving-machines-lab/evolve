@@ -3764,6 +3764,362 @@ async function testWatchAnalysisBacksOffWhileUnchanged() {
   }
 }
 
+/**
+ * THE HOLE THIS PR CLOSES, and the reason pollUntilSettled exists: the
+ * analysis poll had no deadline at all. A tally that never reaches
+ * n_pending: 0 — a wave the server lost, or a job that was never analyzed —
+ * turned `watchAnalysis` into a `for(;;)` nobody could get out of except by
+ * killing the process. Python's watch_analysis has had `timeout_s` since it
+ * shipped; this is TypeScript catching up on both of its poll-shaped watches.
+ */
+async function testWatchAnalysisTimeoutUnderBackoff() {
+  console.log("\n--- jobs().watchAnalysis() bounds the whole wait with a typed watch_timeout ---");
+  installMockFetch();
+  const baseFetch = globalThis.fetch;
+  const stuck = {
+    ...ANALYZED_JOB_BODY,
+    stats: {
+      ...ANALYZED_JOB_BODY.stats,
+      analysis: { n_completed: 0, n_failed: 0, n_pending: 2, cost_usd: null, checks: {} },
+    },
+  };
+  let reads = 0;
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    const urlStr = url.toString();
+    if (urlStr === `${BASE}/api/jobs/eval-1`) {
+      reads++;
+      return buildMockResponse({ status: 200, body: stuck });
+    }
+    return baseFetch(url as any, init);
+  };
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    const startedAt = Date.now();
+    // The backstop proves TERMINATION, not just an eventual throw: on the old
+    // code this promise never settles and the race resolves "still-looping".
+    const outcome = await Promise.race([
+      e
+        .watchAnalysis("eval-1", { pollIntervalMs: 5, timeoutMs: 120 })
+        .then(
+          () => "resolved",
+          (error) => {
+            thrown = error;
+            return "rejected";
+          }
+        ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 3000).unref();
+      }),
+    ]);
+    const elapsedMs = Date.now() - startedAt;
+    assertEqual(outcome, "rejected", "a wave that never settles ends the watch instead of looping forever");
+    assert(
+      hosted.WatchTimeoutError !== undefined && thrown instanceof hosted.WatchTimeoutError,
+      "it ends with the typed WatchTimeoutError, not a bare Error"
+    );
+    assertEqual((thrown as any)?.code, "watch_timeout", "the cause is named: watch_timeout");
+    assertEqual((thrown as any)?.watch, "jobs().watchAnalysis", "the error names which watch refused");
+    assertEqual((thrown as any)?.id, "eval-1", "and the id it was following");
+    assertEqual(
+      (thrown as any)?.lastObserved,
+      JSON.stringify([0, 0, 2]),
+      "it carries the last tally it saw, so a handler can say where the wave stands"
+    );
+    assert(reads >= 2, `it really polled before giving up (${reads} reads)`);
+    // The last sleep is clamped to the time left, so the refusal lands ON the
+    // deadline rather than a backoff step past it (Python's _bounded).
+    assert(elapsedMs < 1000, `the refusal lands near the deadline, not a backoff step past it (${elapsedMs}ms)`);
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The same hole on the other path out of a read. `watchAnalysis`'s 429/503
+ * branch slept and `continue`d with no deadline check, so a server answering
+ * nothing but rate limits was a second way to loop forever — the exact defect
+ * a review already found and fixed in watchImport's settle poll.
+ */
+async function testWatchAnalysisTimeoutOnEndlessRateLimits() {
+  console.log("\n--- jobs().watchAnalysis() watch_timeout fires even when the server answers only 429s ---");
+  installMockFetch();
+  const baseFetch = globalThis.fetch;
+  let reads = 0;
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    const urlStr = url.toString();
+    if (urlStr === `${BASE}/api/jobs/eval-1`) {
+      reads++;
+      return buildMockResponse({
+        status: 429,
+        body: { error: { code: "rate_limited", message: "slow down" } },
+        headers: { "retry-after": "1" },
+      });
+    }
+    return baseFetch(url as any, init);
+  };
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    const outcome = await Promise.race([
+      e.watchAnalysis("eval-1", { pollIntervalMs: 5, timeoutMs: 120 }).then(
+        () => "resolved",
+        (error) => {
+          thrown = error;
+          return "rejected";
+        }
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 3000).unref();
+      }),
+    ]);
+    assertEqual(outcome, "rejected", "endless rate limits end the watch instead of looping forever");
+    assert(
+      hosted.WatchTimeoutError !== undefined && thrown instanceof hosted.WatchTimeoutError,
+      "the rate-limited path refuses with the same typed error"
+    );
+    assertEqual(
+      (thrown as any)?.lastObserved,
+      null,
+      "nothing was ever observed — the error says so rather than inventing a tally"
+    );
+    assert(reads >= 1, `it attempted at least one read (${reads})`);
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * A null tally is the enqueue race after an accepted POST and is watched
+ * through on purpose — but on a job that was NEVER analyzed the race never
+ * resolves. Unbounded, that is a hang; bounded, it is an answer.
+ */
+async function testWatchAnalysisNeverAnalyzedTerminates() {
+  console.log("\n--- jobs().watchAnalysis() on a never-analyzed job ends at the deadline, not never ---");
+  installMockFetch();
+  const baseFetch = globalThis.fetch;
+  const unanalyzed = {
+    ...ANALYZED_JOB_BODY,
+    stats: { ...ANALYZED_JOB_BODY.stats, analysis: null },
+  };
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    if (url.toString() === `${BASE}/api/jobs/eval-1`) {
+      return buildMockResponse({ status: 200, body: unanalyzed });
+    }
+    return baseFetch(url as any, init);
+  };
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    const outcome = await Promise.race([
+      e.watchAnalysis("eval-1", { pollIntervalMs: 5, timeoutMs: 100 }).then(
+        () => "resolved",
+        (error) => {
+          thrown = error;
+          return "rejected";
+        }
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 3000).unref();
+      }),
+    ]);
+    assertEqual(outcome, "rejected", "a null tally is watched through, but not forever");
+    assert(
+      thrown instanceof hosted.WatchTimeoutError,
+      "the never-analyzed job ends with the typed watch_timeout"
+    );
+    assertEqual(
+      (thrown as any)?.lastObserved,
+      null,
+      "no tally was ever served, and the error states that honestly"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * A zero interval never escapes its own backoff (0 * 2 === 0), so it is a
+ * busy-loop wearing a poll's clothes. Python raises ValueError; TypeScript
+ * refuses at the call, before a single request goes out.
+ */
+async function testWatchPollIntervalMustBePositive() {
+  console.log("\n--- both poll-shaped watches refuse a non-positive pollIntervalMs before any request ---");
+  installMockFetch();
+  try {
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+    for (const [label, run] of [
+      ["jobs().watchAnalysis", () => e.watchAnalysis("eval-1", { pollIntervalMs: 0 })],
+      ["checks().watch", () => c.watch("chk-1", { pollIntervalMs: 0 })],
+    ] as const) {
+      let thrown: unknown = null;
+      try {
+        await run();
+      } catch (error) {
+        thrown = error;
+      }
+      assert(
+        thrown instanceof Error && /pollIntervalMs must be greater than 0/.test(thrown.message),
+        `${label} refuses pollIntervalMs: 0 with the reason`
+      );
+    }
+    assertEqual(fetchCalls.length, 0, "the refusal is at the keyboard — no request was made");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * checks().watch() shipped as a copy of the analysis watch and inherited its
+ * unbounded loop. Sharing the primitive is what makes this test pass without
+ * a second implementation of the deadline.
+ */
+async function testWatchCheckIsBoundedToo() {
+  console.log("\n--- checks().watch() carries the same deadline as the analysis watch ---");
+  installMockFetch();
+  const baseFetch = globalThis.fetch;
+  const queued = checkFixture();
+  (globalThis as any).fetch = async (url: string | URL, init?: RequestInit) => {
+    if (url.toString() === `${BASE}/api/checks/chk-1`) {
+      return buildMockResponse({ status: 200, body: queued });
+    }
+    return baseFetch(url as any, init);
+  };
+  try {
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+    const hosted = (await import("../../src/hosted/index.ts")) as Record<string, any>;
+    let thrown: unknown = null;
+    const outcome = await Promise.race([
+      c.watch("chk-1", { pollIntervalMs: 5, timeoutMs: 100 }).then(
+        () => "resolved",
+        (error) => {
+          thrown = error;
+          return "rejected";
+        }
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("still-looping"), 3000).unref();
+      }),
+    ]);
+    assertEqual(outcome, "rejected", "a check that never completes ends the watch instead of looping forever");
+    assert(thrown instanceof hosted.WatchTimeoutError, "the same typed error, from the shared poll");
+    assertEqual((thrown as any)?.watch, "checks().watch", "the error names this watch, not the analysis one");
+    assertEqual(
+      (thrown as any)?.lastObserved,
+      JSON.stringify([["hello-world", "queued"]]),
+      "it carries the per-task statuses it last saw"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+/**
+ * The mapper's own type says these keys are `T | null`. Spread verbatim, an
+ * omitted key arrived as `undefined`, which passes a `!== null` guard and
+ * then throws on `.toFixed()` — the CLI's analyzer money cell, three times
+ * over. The type is the promise; the mapper now keeps it.
+ */
+async function testTrialAnalysisFillsAbsentNullableKeys() {
+  console.log("\n--- Trial.analysis fills the nullable keys a server omitted, so the type does not lie ---");
+  installMockFetch();
+  try {
+    // A minimal analysis: only the non-nullable keys. Every documented
+    // nullable one is absent from the wire.
+    setMockResponse("/api/trials/run-9", {
+      status: 200,
+      body: {
+        id: "run-9",
+        job_id: "eval-1",
+        task_name: "demo-task",
+        analysis: {
+          id: "an-9",
+          trial_id: "run-9",
+          job_id: "eval-1",
+          task_name: "demo-task",
+          status: "running",
+          model_name: "glm-5.3-flash",
+          rubric: ANALYZE_RUBRIC,
+          created_at: "2026-09-10T00:00:00.000Z",
+        },
+      },
+    });
+    const t = trials({ apiKey: "test-key", baseUrl: BASE });
+    const run = await t.get("run-9");
+    const analysis = run.analysis!;
+    for (const key of [
+      "reasoning_effort",
+      "prompt",
+      "summary",
+      "checks",
+      "estimated_cost_usd",
+      "failure",
+      "finished_at",
+    ] as const) {
+      assertEqual(analysis[key], null, `${key} reads null, not undefined, when the server omits it`);
+    }
+    // The one that bit: `!== null` is the guard three CLI sites use before
+    // calling .toFixed(), and undefined sails straight through it.
+    assert(
+      analysis.estimated_cost_usd === null,
+      "a `!== null` guard on the money key is now sound — undefined would pass it and throw"
+    );
+    assertEqual(analysis.usage, null, "the reading rule is unchanged: absent reads null");
+    assertEqual(analysis.status, "running", "the keys the wire DID carry ride verbatim");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** The same defect, twice over, on the checks surface that copied it. */
+async function testCheckFillsAbsentNullableKeys() {
+  console.log("\n--- Check and its TaskCheck rows fill the nullable keys a server omitted ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/checks/chk-9", {
+      status: 200,
+      body: {
+        id: "chk-9",
+        status: "running",
+        source: { type: "archive", sha256: "cd".repeat(32), bytes: 99 },
+        model_name: "glm-5.3-flash",
+        reasoning_effort: "max",
+        rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }] },
+        sandbox_provider: "daytona",
+        results: [
+          {
+            id: "tc-9",
+            check_id: "chk-9",
+            task_name: "hello-world",
+            status: "running",
+            attempts: 1,
+            created_at: "2026-09-10T00:00:00.000Z",
+          },
+        ],
+        created_at: "2026-09-10T00:00:00.000Z",
+      },
+    });
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+    const check = await c.get("chk-9");
+    for (const key of ["prompt", "n_concurrent", "n_tasks", "cost_usd", "finished_at"] as const) {
+      assertEqual(check[key], null, `Check.${key} reads null when omitted`);
+    }
+    assertEqual(check.include_task_names, [], "an absent glob list reads [] — 'no filter', the only state the type has");
+    assertEqual(check.exclude_task_names, [], "and the same for the exclude list");
+    const row = check.results[0];
+    for (const key of ["checks", "cost_usd", "failure", "finished_at"] as const) {
+      assertEqual(row[key], null, `TaskCheck.${key} reads null when omitted — the rows are mapped now, not just filtered`);
+    }
+    assertEqual(row.task_name, "hello-world", "the row's own keys ride verbatim");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testTrialAnalysisMapsVerbatim() {
   console.log(
     "\n--- trials().get() maps Trial.analysis verbatim beside its one normalized key ---",
@@ -3824,21 +4180,21 @@ async function testTrialAnalysisMapsVerbatim() {
     const analyzed = await t.get("run-1");
     assertEqual(
       analyzed.analysis,
-      { ...analysis, usage },
-      "the LATEST analysis rides the trial verbatim, its reading intact",
+      { ...analysis, usage, reasoning_effort: null, prompt: null },
+      "the LATEST analysis rides the trial verbatim, its reading intact, the keys this server omitted filled to the null its type promises",
     );
     const bare = await t.get("run-2");
     assertEqual(bare.analysis, null, "a never-analyzed trial reads null, never a fabricated object");
     const preUsage = await t.get("run-3");
     assertEqual(
       preUsage.analysis,
-      { ...analysis, usage: null },
+      { ...analysis, reasoning_effort: null, prompt: null, usage: null },
       "an analysis without the reading reads usage null — the meter never answered",
     );
     const malformed = await t.get("run-4");
     assertEqual(
       malformed.analysis,
-      { ...analysis, usage: null },
+      { ...analysis, usage: null, reasoning_effort: null, prompt: null },
       "a malformed reading is refused to null; the analysis beside it rides verbatim",
     );
   } finally {
@@ -6005,7 +6361,10 @@ async function testStopTrials() {
     // exactly the Trial.analysis rule.
     assertEqual(
       outcome.stopped_analyses,
-      [{ ...stoppedAnalysis, usage: null }],
+      // The two keys this row omits read null, not undefined: TrialAnalysis
+      // declares them nullable, and the stop path maps through the same
+      // mapTrialAnalysis every other analysis surface uses.
+      [{ ...stoppedAnalysis, reasoning_effort: null, prompt: null, usage: null }],
       "stopped_analyses carries the settled analysis rows (failed, phase stopped)"
     );
     assertEqual(outcome.already_terminal, ["run-2"], "already-terminal ids reported, untouched");
@@ -7359,7 +7718,14 @@ async function main() {
   await testAnalyzeTypedRefusals();
   await testWatchAnalysisPollsToSettled();
   await testWatchAnalysisBacksOffWhileUnchanged();
+  await testWatchAnalysisTimeoutUnderBackoff();
+  await testWatchAnalysisTimeoutOnEndlessRateLimits();
+  await testWatchAnalysisNeverAnalyzedTerminates();
+  await testWatchPollIntervalMustBePositive();
+  await testWatchCheckIsBoundedToo();
   await testTrialAnalysisMapsVerbatim();
+  await testTrialAnalysisFillsAbsentNullableKeys();
+  await testCheckFillsAbsentNullableKeys();
   await testDownloadJobBuffer();
   await testDownloadJobToFile();
   await testDownloadJobStream();

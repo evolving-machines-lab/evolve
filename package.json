@@ -1,6 +1,9 @@
 {
   "name": "evolve-sdk-workspace",
   "private": true,
+  "engines": {
+    "node": ">=20.20.0"
+  },
   "type": "module",
   "version": "0.0.55",
   "license": "Apache-2.0",

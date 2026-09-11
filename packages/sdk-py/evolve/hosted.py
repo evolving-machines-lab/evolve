@@ -3856,28 +3856,78 @@ def _page_query(
     return f'?{query}' if query else ''
 
 
+#: The TrialAnalysis keys the type declares Optional. TrialAnalysis is a
+#: TOTAL TypedDict — every key is required — so a body that omits one
+#: produces a dict contradicting its own type, and a caller reading the
+#: documented key gets a KeyError instead of the None it was promised.
+#: (``usage`` has its own rule: the shared reading mapper.)
+_TRIAL_ANALYSIS_OPTIONAL_KEYS = (
+    'reasoning_effort',
+    'prompt',
+    'summary',
+    'checks',
+    'estimated_cost_usd',
+    'failure',
+    'finished_at',
+)
+
+#: The Check keys the type declares Optional — same rule, same reason.
+_CHECK_OPTIONAL_KEYS = ('prompt', 'n_concurrent', 'n_tasks', 'cost_usd', 'finished_at')
+
+#: The TaskCheck keys the type declares Optional.
+_TASK_CHECK_OPTIONAL_KEYS = ('checks', 'cost_usd', 'failure', 'finished_at')
+
+
+def _fill_optional(data: Dict[str, Any], keys: Any) -> Dict[str, Any]:
+    """The wire dict with every named key the server omitted reading None.
+    Defaults go first so anything the wire carried still wins."""
+    return {**{key: None for key in keys}, **data}
+
+
 def _map_trial_analysis(data: Any) -> Optional[TrialAnalysis]:
     """The wire's TrialAnalysis, its nested ``usage`` normalized through the
     one shared reading rule (exactly as the trial's own ``usage`` is); the
-    dict rides otherwise verbatim. Absent and malformed both read None."""
+    dict rides otherwise verbatim, except that every key the type declares
+    Optional reads None when the server omits it. Absent and malformed both
+    read None."""
     if not isinstance(data, dict):
         return None
     return cast(
         TrialAnalysis,
-        {**data, 'usage': _usage_reading_from_data(data.get('usage'))},
+        {
+            **_fill_optional(data, _TRIAL_ANALYSIS_OPTIONAL_KEYS),
+            'usage': _usage_reading_from_data(data.get('usage')),
+        },
     )
+
+
+def _map_task_check(data: Dict[str, Any]) -> TaskCheck:
+    """One task's quality check: the row verbatim, with every key the type
+    declares Optional reading None when the server omits it."""
+    return cast(TaskCheck, _fill_optional(data, _TASK_CHECK_OPTIONAL_KEYS))
 
 
 def _map_check(data: Any) -> Check:
     """The wire's Check, verbatim, with its ``results`` list checked: a body
     that is not an object cannot be a check — fail closed, never a fabricated
-    empty record."""
+    empty record — and every row mapped, not merely filtered. Every key the
+    type declares Optional reads None when the server omits it, and the two
+    glob lists read [] ("no filter", the only state the type has)."""
     if not isinstance(data, dict):
         raise ValueError('The checks surface served an unreadable check object')
     results = data.get('results')
+    filled = _fill_optional(data, _CHECK_OPTIONAL_KEYS)
+    for key in ('include_task_names', 'exclude_task_names'):
+        if not isinstance(filled.get(key), list):
+            filled[key] = []
     return cast(
         Check,
-        {**data, 'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else []},
+        {
+            **filled,
+            'results': [_map_task_check(row) for row in results if isinstance(row, dict)]
+            if isinstance(results, list)
+            else [],
+        },
     )
 
 
@@ -7376,6 +7426,7 @@ class JobsClient:
         on_stats: Optional[Callable[[Job], None]] = None,
         poll_interval_s: float = 2.0,
         timeout_s: Optional[float] = None,
+        min_settled: int = 0,
     ) -> Job:
         """Follow a job's analysis wave to its settled end.
 
@@ -7399,6 +7450,13 @@ class JobsClient:
         still-RUNNING job created with ``analyze``, ``n_pending`` can touch
         0 between trial settles, so the watch can return before every trial
         has been analyzed.
+
+        ``min_settled`` is the guard against settling on a wave this watch
+        never saw: pass the accepted job's own
+        ``n_completed + n_failed + n_pending`` (which already counts the
+        batch :meth:`analyze` enqueued) and the poll keeps going until the
+        server's tally has caught up with it. 0, the default, settles on
+        ``n_pending`` 0 alone, as this watch always has.
 
         ``timeout_s`` bounds the whole watch and raises
         :class:`TimeoutError` at the deadline — the last sleep is clamped to
@@ -7441,7 +7499,15 @@ class JobsClient:
                 last_tally = tally
                 if on_stats is not None:
                     on_stats(job)
-            if tally is not None and tally[2] == 0:
+            # Nothing pending — and, when the caller named the total its own
+            # wave brings the tally to, not until the server's numbers have
+            # caught up with it. ``stats['analysis']`` is a JOB-level tally
+            # spanning every wave, so on a job whose previous wave finished it
+            # reads n_pending 0 until the new rows become visible, and a watch
+            # started right after an accepted analyze() would return at once
+            # with the PREVIOUS wave's numbers. Settled counts only grow, so
+            # this cannot deadlock on a row that finished before the first read.
+            if tally is not None and tally[2] == 0 and tally[0] + tally[1] >= min_settled:
                 return job
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f'watch_analysis({id!r}) timed out after {timeout_s}s')

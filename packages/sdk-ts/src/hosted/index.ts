@@ -566,6 +566,60 @@ export class NoActiveVersionError extends Error {
   }
 }
 
+/** Why a poll-shaped watch stopped without the thing it followed settling. */
+export type WatchTimeoutErrorCode = "watch_timeout";
+
+/**
+ * Thrown by the poll-shaped watches — jobs().watchAnalysis() and
+ * checks().watch() — when `timeoutMs` elapsed before the thing they follow
+ * settled. This bounds the WAIT, never the work: the analyses (or the check's
+ * tasks) keep running server-side, and the message names the read that keeps
+ * following them.
+ *
+ * NOT an EvolveApiError: no request failed — the caller's wait could not be
+ * honestly satisfied. Sibling of ImportSettleError, which bounds
+ * watchImport's settle phase the same way and for the same reason.
+ *
+ * Python raises the BUILTIN TimeoutError here (beside its ValueError for a
+ * bad poll interval); TypeScript has no builtin timeout class, so the SDK's
+ * own typed one carries the same fact plus the watch's identity — the shape
+ * a --json error body and an `instanceof` branch both need.
+ */
+export class WatchTimeoutError extends Error {
+  readonly name = "WatchTimeoutError";
+  /** The named cause; "watch_timeout" is the only one. */
+  readonly code: WatchTimeoutErrorCode;
+  /** Which watch refused: "jobs().watchAnalysis" | "checks().watch". */
+  readonly watch: string;
+  /** The id it was following. */
+  readonly id: string;
+  /** The budget it spent, in milliseconds. */
+  readonly timeoutMs: number;
+  /**
+   * The last progress key observed — the analysis tally, or the check's
+   * per-task statuses — and null when nothing was ever observed (a job that
+   * was never analyzed, or a server that answered only rate limits).
+   */
+  readonly lastObserved: string | null;
+  constructor(facts: {
+    watch: string;
+    id: string;
+    timeoutMs: number;
+    lastObserved: string | null;
+    followUp: string;
+  }) {
+    super(
+      `${facts.watch}("${facts.id}") did not settle within ${facts.timeoutMs}ms: ` +
+        `last observed ${facts.lastObserved ?? "nothing"}. ${facts.followUp}`
+    );
+    this.code = "watch_timeout";
+    this.watch = facts.watch;
+    this.id = facts.id;
+    this.timeoutMs = facts.timeoutMs;
+    this.lastObserved = facts.lastObserved;
+  }
+}
+
 /** Why datasets().watchImport() could not watch the version to a settled state. */
 export type ImportSettleErrorCode = "settle_timeout";
 
@@ -1123,12 +1177,46 @@ function mapAgentInfo(raw: Record<string, unknown>): AgentInfo {
  * one nested reading, `usage`, goes through the same one rule as the trial's
  * own (mapUsageReading), so absent and malformed both read null there too.
  */
+/**
+ * The TrialAnalysis keys the type declares `| null`. A server that omits one
+ * means "nothing to report", and the type promises a caller reading the
+ * documented key gets null — not undefined, which reads as a number to
+ * `!== null` and then throws on `.toFixed()`. (`usage` has its own rule: the
+ * shared reading mapper.)
+ */
+const TRIAL_ANALYSIS_NULLABLE_KEYS = [
+  "reasoning_effort",
+  "prompt",
+  "summary",
+  "checks",
+  "estimated_cost_usd",
+  "failure",
+  "finished_at",
+] as const;
+
+/**
+ * Fill the keys a type declares nullable that the wire did not carry. The
+ * server's own key order is preserved and the filled keys are appended, so a
+ * body that carries everything is untouched.
+ */
+function fillNullable<T extends Record<string, unknown>>(
+  value: T,
+  keys: readonly string[]
+): T {
+  const filled: Record<string, unknown> = { ...value };
+  for (const key of keys) {
+    if (!(key in filled)) filled[key] = null;
+  }
+  return filled as T;
+}
+
 function mapTrialAnalysis(raw: unknown): TrialAnalysis | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
   return {
-    ...(raw as TrialAnalysis),
-    usage: mapUsageReading((raw as Record<string, unknown>).usage),
-  };
+    ...fillNullable(value, TRIAL_ANALYSIS_NULLABLE_KEYS),
+    usage: mapUsageReading(value.usage),
+  } as unknown as TrialAnalysis;
 }
 
 /** The wire degrade object, defensively: anything malformed answers null. */
@@ -1403,6 +1491,116 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/** One poll-shaped watch, parameterized. See pollUntilSettled. */
+interface PollUntilSettledSpec<T> {
+  /** Names the watch in a WatchTimeoutError: "jobs().watchAnalysis". */
+  watch: string;
+  /** The id being followed, for the error's facts and message. */
+  id: string;
+  /** One read. Rate limits are handled for you; anything else propagates. */
+  read: () => Promise<T>;
+  /**
+   * A comparable key for "has anything moved". Null means nothing to compare
+   * yet — the enqueue race after an accepted POST — which is watched through,
+   * never misread as settled.
+   */
+  progress: (current: T) => string | null;
+  /** True when the watch may return `current`. */
+  settled: (current: T, progress: string | null) => boolean;
+  /** Fired on every observed change, including the first non-null one. */
+  onChange?: (current: T) => void;
+  /** Appended to a timeout message: how the caller keeps following. */
+  followUp: string;
+  options?: {
+    signal?: AbortSignal;
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+  };
+}
+
+/**
+ * The poll behind jobs().watchAnalysis() and checks().watch() — one home, so
+ * the shape cannot drift between them (it already did once: checks().watch()
+ * shipped as a copy of the analysis watch and inherited its unbounded loop).
+ *
+ * The interval doubles while the progress key stands still, up to the same
+ * 30-s ceiling the event stream's reconnect uses, and snaps back to the
+ * initial interval on every change — a long wave costs the server one read
+ * per half-minute, a moving one is followed closely. A 429/503 mid-watch is a
+ * delay, not an outcome: the server's Retry-After is honored, floored at the
+ * current backoff.
+ *
+ * `timeoutMs` bounds the WHOLE watch, the deadline checked on both paths out
+ * of a read — the rate-limited one included, which is the loop's other way to
+ * spin forever. Every sleep is clamped to the time left, so the refusal lands
+ * ON the deadline rather than a backoff step past it (Python's `_bounded`).
+ * Omitted, the watch is unbounded, which is what it has always been.
+ */
+async function pollUntilSettled<T>(spec: PollUntilSettledSpec<T>): Promise<T> {
+  const initialDelayMs = spec.options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
+  if (initialDelayMs <= 0) {
+    // A zero interval never escapes its own backoff (0 * 2 === 0), so it is a
+    // busy-loop wearing a poll's clothes. Python raises ValueError here.
+    throw new Error(
+      `${spec.watch}: pollIntervalMs must be greater than 0, got ${initialDelayMs}`
+    );
+  }
+  const timeoutMs = spec.options?.timeoutMs;
+  if (timeoutMs !== undefined && timeoutMs <= 0) {
+    throw new Error(`${spec.watch}: timeoutMs must be greater than 0, got ${timeoutMs}`);
+  }
+  const deadline = timeoutMs === undefined ? null : Date.now() + timeoutMs;
+  /** One sleep, never carrying the watch past its deadline. */
+  const bounded = (ms: number): number =>
+    deadline === null ? ms : Math.min(ms, Math.max(0, deadline - Date.now()));
+  const expired = (): boolean => deadline !== null && Date.now() >= deadline;
+
+  let delayMs = initialDelayMs;
+  let lastProgress: string | null = null;
+  const timeout = (): WatchTimeoutError =>
+    new WatchTimeoutError({
+      watch: spec.watch,
+      id: spec.id,
+      timeoutMs: timeoutMs as number,
+      lastObserved: lastProgress,
+      followUp: spec.followUp,
+    });
+
+  for (;;) {
+    throwIfAborted(spec.options?.signal);
+    let current: T;
+    try {
+      current = await spec.read();
+    } catch (error) {
+      if (
+        error instanceof EvolveApiError &&
+        (error.status === 429 || error.status === 503)
+      ) {
+        if (expired()) throw timeout();
+        await sleep(
+          bounded(Math.max((error.retryAfterSec ?? 0) * 1000, delayMs)),
+          spec.options?.signal
+        );
+        delayMs = Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
+        if (expired()) throw timeout();
+        continue;
+      }
+      throw error;
+    }
+    const progress = spec.progress(current);
+    const changed = progress !== null && progress !== lastProgress;
+    if (changed) {
+      lastProgress = progress;
+      spec.onChange?.(current);
+    }
+    if (spec.settled(current, progress)) return current;
+    if (expired()) throw timeout();
+    delayMs = changed ? initialDelayMs : Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
+    await sleep(bounded(delayMs), spec.options?.signal);
+    if (expired()) throw timeout();
+  }
 }
 
 // =============================================================================
@@ -3103,51 +3301,36 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     async watchAnalysis(id: string, options?: WatchAnalysisOptions): Promise<Job> {
       // Analyses have no event stream — the contract says "poll the job's
-      // trials to watch them settle" — so this is the poll, in one home, with
-      // watch()'s backoff shape: the interval doubles while the tally stands
-      // still, up to the same 30-s ceiling the event stream's reconnect
-      // uses, and snaps back to the initial interval on every change — a
-      // long wave costs the server one read per half-minute, a moving one
-      // is followed closely. watchImport's posture on a 429/503 mid-watch:
-      // a delay, not an outcome. Settled means stats.analysis reports
-      // nothing pending; a still-null tally is the enqueue race after an
-      // accepted POST, watched through rather than misread as "never
-      // analyzed".
-      const initialDelayMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
-      let delayMs = initialDelayMs;
-      let lastTally: string | null = null;
-      for (;;) {
-        throwIfAborted(options?.signal);
-        let current: Job;
-        try {
-          current = await getJob(id);
-        } catch (error) {
-          if (
-            error instanceof EvolveApiError &&
-            (error.status === 429 || error.status === 503)
-          ) {
-            await sleep(
-              Math.max((error.retryAfterSec ?? 0) * 1000, delayMs),
-              options?.signal
-            );
-            delayMs = Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
-            continue;
-          }
-          throw error;
-        }
-        const analysis = current.stats.analysis ?? null;
-        const tally = analysis
-          ? JSON.stringify([analysis.n_completed, analysis.n_failed, analysis.n_pending])
-          : null;
-        const changed = tally !== null && tally !== lastTally;
-        if (changed) {
-          lastTally = tally;
-          options?.onStats?.(current);
-        }
-        if (analysis?.n_pending === 0) return current;
-        delayMs = changed ? initialDelayMs : Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
-        await sleep(delayMs, options?.signal);
-      }
+      // trials to watch them settle" — so this is the poll, on the shared
+      // primitive checks().watch() rides too. Settled means stats.analysis
+      // reports nothing pending; a still-null tally is the enqueue race
+      // after an accepted POST, watched through rather than misread as
+      // "never analyzed" — which is why `timeoutMs` matters here: on a job
+      // that was NEVER analyzed the race never resolves, and unbounded means
+      // forever.
+      return pollUntilSettled<Job>({
+        watch: "jobs().watchAnalysis",
+        id,
+        read: () => getJob(id),
+        progress: (current) => {
+          const analysis = current.stats.analysis ?? null;
+          return analysis
+            ? JSON.stringify([analysis.n_completed, analysis.n_failed, analysis.n_pending])
+            : null;
+        },
+        settled: (current) => {
+          const analysis = current.stats.analysis;
+          if (!analysis || analysis.n_pending !== 0) return false;
+          // …and, when the caller named the total its own wave brings the
+          // tally to, not until the server's numbers have caught up with it
+          // — otherwise a re-analysis settles on the PREVIOUS wave, whose
+          // rows already read n_pending 0.
+          return analysis.n_completed + analysis.n_failed >= (options?.minSettled ?? 0);
+        },
+        onChange: (current) => options?.onStats?.(current),
+        followUp: `The analyses keep running — read them with jobs().get("${id}").`,
+        options,
+      });
     },
 
     download: (async (
@@ -3711,17 +3894,48 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
  * The wire's Check, verbatim, with its results' shape checked: a row that is
  * not an object cannot be a check — fail closed like every list row.
  */
+/** The Check keys the type declares `| null` — same rule as TrialAnalysis. */
+const CHECK_NULLABLE_KEYS = [
+  "prompt",
+  "n_concurrent",
+  "n_tasks",
+  "cost_usd",
+  "finished_at",
+] as const;
+
+/** The TaskCheck keys the type declares `| null`. */
+const TASK_CHECK_NULLABLE_KEYS = ["checks", "cost_usd", "failure", "finished_at"] as const;
+
+/**
+ * One task's quality check: the row as served, with every key the type
+ * declares nullable reading null when the server omits it. The rows were
+ * previously only filtered for object-ness, never mapped, so an absent
+ * `cost_usd` reached a caller as undefined.
+ */
+function mapTaskCheck(raw: Record<string, unknown>): TaskCheck {
+  return fillNullable(raw, TASK_CHECK_NULLABLE_KEYS) as unknown as TaskCheck;
+}
+
 function mapCheck(raw: unknown): Check {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("The checks surface served an unreadable check object");
   }
   const value = raw as Record<string, unknown>;
   const results = Array.isArray(value.results)
-    ? (value.results as unknown[]).filter(
-        (row): row is TaskCheck => !!row && typeof row === "object" && !Array.isArray(row)
-      )
+    ? (value.results as unknown[])
+        .filter(
+          (row): row is Record<string, unknown> =>
+            !!row && typeof row === "object" && !Array.isArray(row)
+        )
+        .map(mapTaskCheck)
     : [];
-  return { ...(value as unknown as Check), results };
+  const filled = fillNullable(value, CHECK_NULLABLE_KEYS);
+  // An absent glob list means "no filter", which is what [] spells — null
+  // would be a third state the type does not have.
+  for (const key of ["include_task_names", "exclude_task_names"]) {
+    if (!Array.isArray(filled[key])) filled[key] = [];
+  }
+  return { ...filled, results } as unknown as Check;
 }
 
 /**
@@ -3910,35 +4124,22 @@ export function checks(config?: HostedClientConfig): ChecksClient {
     artifact: getTaskCheckArtifact,
 
     async watch(checkId: string, options?: WatchCheckOptions): Promise<Check> {
-      // The analysis watch's poll shape (jobs().watchAnalysis): the interval
-      // doubles while nothing changes, up to the 30-s ceiling, and snaps
-      // back on every change; a 429/503 mid-watch is a delay, not an outcome.
-      const initialDelayMs = options?.pollIntervalMs ?? DEFAULT_IMPORT_POLL_INTERVAL_MS;
-      let delayMs = initialDelayMs;
-      let lastTally: string | null = null;
-      for (;;) {
-        throwIfAborted(options?.signal);
-        let current: Check;
-        try {
-          current = await getCheck(checkId);
-        } catch (error) {
-          if (error instanceof EvolveApiError && (error.status === 429 || error.status === 503)) {
-            await sleep(Math.max((error.retryAfterSec ?? 0) * 1000, delayMs), options?.signal);
-            delayMs = Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
-            continue;
-          }
-          throw error;
-        }
-        const tally = JSON.stringify(current.results.map((r) => [r.task_name, r.status]));
-        const changed = tally !== lastTally;
-        if (changed) {
-          lastTally = tally;
-          options?.onProgress?.(current);
-        }
-        if (current.status === "completed") return current;
-        delayMs = changed ? initialDelayMs : Math.min(delayMs * 2, MAX_WATCH_DELAY_MS);
-        await sleep(delayMs, options?.signal);
-      }
+      // The analysis watch's poll, shared rather than copied — this watch
+      // shipped as a copy of that one and inherited its unbounded loop, which
+      // is the reason pollUntilSettled exists. A check has no failed state
+      // (CHECK_STATUSES is queued/running/completed), so settling is one
+      // equality.
+      return pollUntilSettled<Check>({
+        watch: "checks().watch",
+        id: checkId,
+        read: () => getCheck(checkId),
+        progress: (current) =>
+          JSON.stringify(current.results.map((r) => [r.task_name, r.status])),
+        settled: (current) => current.status === "completed",
+        onChange: (current) => options?.onProgress?.(current),
+        followUp: `The check keeps running — read it with checks().get("${checkId}").`,
+        options,
+      });
     },
   };
 }

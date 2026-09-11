@@ -2867,12 +2867,58 @@ class TestJobs:
             page = await jobs_factory(CONFIG).trials('job-1')
 
         analyzed, bare, bad = page.items
-        assert analyzed.analysis == {**record, 'usage': None}
+        # The two keys this record omits read None, not KeyError: TrialAnalysis
+        # is a total TypedDict, so every documented key must be present.
+        assert analyzed.analysis == {
+            **record,
+            'usage': None,
+            'reasoning_effort': None,
+            'prompt': None,
+        }
         # The analyzer's spend is its OWN line — the trial's model spend keeps
         # its own number beside it.
         assert analyzed.agent_result.cost_usd == 0.93
         assert bare.analysis is None
         assert bad.analysis is None
+
+    async def test_trial_analysis_fills_the_keys_the_server_omitted(self):
+        """TrialAnalysis is a TOTAL TypedDict, so every key it declares must
+        be present at runtime. A server that omits a documented Optional one
+        used to hand back a dict whose own type says the key is required —
+        reading it raised KeyError where the type promised None."""
+        lean = {
+            'id': 'an-9',
+            'trial_id': 'trial-9',
+            'job_id': 'job-1',
+            'task_name': 'demo-task',
+            'status': 'running',
+            'model_name': 'glm-5.3-flash',
+            'rubric': ANALYZE_RUBRIC,
+            'created_at': '2026-09-10T00:00:00.000Z',
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/trials', {
+                'items': [wire_trial(analysis=lean)],
+                'nextCursor': None,
+                'hasMore': False,
+            }),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).trials('job-1')
+
+        analysis = page.items[0].analysis
+        for key in (
+            'reasoning_effort',
+            'prompt',
+            'summary',
+            'checks',
+            'estimated_cost_usd',
+            'failure',
+            'finished_at',
+        ):
+            assert analysis[key] is None, f'{key} reads None when the server omits it'
+        assert analysis['usage'] is None, 'the reading rule is unchanged'
+        assert analysis['status'] == 'running', 'the keys the wire DID carry ride verbatim'
 
     @pytest.mark.asyncio
     async def test_trial_provider_degrade_mapping(self):
@@ -3234,6 +3280,48 @@ class TestJobs:
         assert exc.value.code == 'analysis_already_running'
 
     @pytest.mark.asyncio
+    async def test_watch_analysis_does_not_settle_on_a_wave_it_never_saw(self):
+        """``stats['analysis']`` is a JOB-level tally spanning every wave, so
+        on a job whose previous wave finished it reads n_pending 0 until the
+        new rows become visible — and a watch started right after an accepted
+        analyze() would return at once with the PREVIOUS wave's numbers.
+        ``min_settled`` is the accepted job's own total; the poll keeps going
+        until the server's tally reaches it."""
+        def tallied(n_completed, n_pending):
+            return {
+                **ANALYZED_JOB,
+                'stats': {
+                    **ANALYZED_JOB['stats'],
+                    'analysis': {
+                        'n_completed': n_completed,
+                        'n_failed': 0,
+                        'n_pending': n_pending,
+                        'cost_usd': None,
+                        'checks': {},
+                    },
+                },
+            }
+
+        # The previous wave's settled tally: nothing pending, one done. The
+        # new row is not visible yet for the first two reads.
+        stale = tallied(1, 0)
+        settled = tallied(2, 0)
+        reads = {'n': 0}
+
+        def fake(request, timeout=None):
+            reads['n'] += 1
+            return FakeResponse(stale if reads['n'] <= 2 else settled, {}, 200)
+
+        with patch('evolve._http.urlopen', fake):
+            # The accepted 202 counted 1 done + 1 pending, so the total this
+            # wave brings the job to is 2.
+            final = await jobs_factory(CONFIG).watch_analysis(
+                'job-1', poll_interval_s=0.01, min_settled=2
+            )
+
+        assert final.stats['analysis']['n_completed'] == 2
+        assert reads['n'] == 3, 'it polled past the stale tally instead of settling on it'
+
     async def test_watch_analysis_polls_to_settled(self):
         """watch_analysis polls the job until nothing is pending; on_stats
         fires on every observed tally change with the job it came from."""
@@ -4777,7 +4865,16 @@ class TestTrials:
         assert outcome.stopped[0].status == 'INFRASTRUCTURE_ERROR'
         # The analysis rows ride verbatim beside their one normalized key —
         # exactly the ``Trial.analysis`` rule.
-        assert outcome.stopped_analyses == [{**stopped_analysis, 'usage': None}]
+        assert outcome.stopped_analyses == [
+            {
+                **stopped_analysis,
+                'usage': None,
+                'reasoning_effort': None,
+                'prompt': None,
+                'summary': None,
+                'checks': None,
+            }
+        ]
         assert outcome.already_terminal == ['run-2']
         assert outcome.not_found == ['run-3']
 
