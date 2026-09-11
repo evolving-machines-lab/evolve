@@ -488,8 +488,8 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
-// The copy-skip branch and the mount-vs-native collision — the server's
-// evaluations-harbor-output-tree.test.ts cases, mirrored byte for byte
+// Collisions across the rules and the copy-skip branch — the server's
+// evaluations-harbor-output-tree.test.ts cases, mirrored, contents asserted
 // -----------------------------------------------------------------------------
 {
   const claude = (home: Record<string, string>) =>
@@ -507,6 +507,21 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     claude({ "/logs/agent/.claude/x": "mounted", "/root/.claude/x": "native" }),
     ["agent/.claude/x", "agent/root/.claude/x", "agent/sessions/x"],
     "an uploaded archive's mount key (rule 1) takes .claude/x, the native home file falls back to root/.claude/x, Harbor's copy of the native file still lands at sessions/x"
+  );
+  // The copy-skip branch itself: a key that sorts BEFORE /root/.claude/x already holds sessions/x,
+  // so Harbor's copy of the config dir is NOT written a second time (the bytes stay the uploaded file's).
+  const skipped = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "claude-code" } }),
+      home: { "/logs/agent/sessions/x": "uploaded", "/root/.claude/x": "cfg" },
+    })
+  );
+  assertEqual(skipped["agent/sessions/x"], "uploaded", "a slot already holding an object keeps it: Harbor's copy is skipped, never overwritten");
+  assertEqual(skipped["agent/.claude/x"], "cfg", "the native home file still lands at its real name");
+  assertEqual(
+    Object.keys(skipped).filter((p) => p.startsWith("agent/.") || p.startsWith("agent/root/") || p.startsWith("agent/sessions/")).sort(),
+    ["agent/.claude/x", "agent/sessions/x"],
+    "no fallback path is written when nothing collides at the home path"
   );
 }
 
