@@ -135,15 +135,22 @@ for (const name of registryNames) {
   );
 }
 
-// --- 5. One name per DeepSeek model: DeepSeek V4.1 Flash is on the roster ---
-// under its OpenRouter id `openrouter/deepseek/deepseek-v4.1-flash` (owner
-// 2026-09-10) — served through the gateway's exact entry for that id, alias
-// == wire id, the same spelling on the claude, droid and opencode rosters — and
-// neither the retired Fireworks name `deepseek-flash` nor the older
-// `deepseek-v4-flash-vision` may be advertised or sent. Checked on both the
-// registry and the artifact: the dashboard reads the artifact.
+// --- 5. DeepSeek V4.1 Flash: two routes, two route-visible names, one default --
+// The model is on the claude, droid and opencode rosters under its OpenRouter
+// id `openrouter/deepseek/deepseek-v4.1-flash` (owner 2026-09-10; the trace
+// analyzer's and the check agent's default, swarm_dashboard
+// lib/evaluations/analysis.ts DEFAULT_ANALYZE_MODEL) and, since 2026-09-11
+// (owner: "a further option"), under `fireworks/deepseek-v4.1-flash` — the
+// same model served from Fireworks through the gateway's exact entry for that
+// name. Alias == wire id on both, the same spelling on all three rosters,
+// neither a harness default; the retired Fireworks name `deepseek-flash` and
+// the older `deepseek-v4-flash-vision` may not be advertised or sent (one
+// name per route). Checked on both the registry and the artifact: the
+// dashboard reads the artifact.
 
 const OPENROUTER_DEEPSEEK_FLASH = "openrouter/deepseek/deepseek-v4.1-flash";
+const FIREWORKS_DEEPSEEK_FLASH = "fireworks/deepseek-v4.1-flash";
+const DEEPSEEK_FLASH_ROUTES = [OPENROUTER_DEEPSEEK_FLASH, FIREWORKS_DEEPSEEK_FLASH];
 const RETIRED_DEEPSEEK_NAMES = ["deepseek-flash", "deepseek-v4-flash-vision"];
 const carries = (models: readonly { alias: string; modelId: string }[], name: string) =>
   models.some((model) => model.alias === name && model.modelId === name);
@@ -151,15 +158,25 @@ const names = (models: readonly { alias: string; modelId: string }[], name: stri
   models.some((model) => model.alias === name || model.modelId === name);
 
 for (const harness of ["claude", "droid", "opencode"] as const) {
-  assert(
-    carries(AGENT_REGISTRY[harness].models, OPENROUTER_DEEPSEEK_FLASH),
-    `${harness} roster carries "${OPENROUTER_DEEPSEEK_FLASH}" with alias == wire id (the gateway's exact entry for it)`,
-  );
-  assert(
-    carries(artifact.harnesses[harness].models, OPENROUTER_DEEPSEEK_FLASH),
-    `artifact ${harness} roster advertises "${OPENROUTER_DEEPSEEK_FLASH}"`,
-  );
+  for (const route of DEEPSEEK_FLASH_ROUTES) {
+    assert(
+      carries(AGENT_REGISTRY[harness].models, route),
+      `${harness} roster carries "${route}" with alias == wire id (the gateway's exact entry for it)`,
+    );
+    assert(
+      carries(artifact.harnesses[harness].models, route),
+      `artifact ${harness} roster advertises "${route}"`,
+    );
+  }
 }
+assert(
+  registryNames.every(
+    (name) =>
+      AGENT_REGISTRY[name as keyof typeof AGENT_REGISTRY].defaultModel !== FIREWORKS_DEEPSEEK_FLASH &&
+      artifact.harnesses[name].defaultModel !== FIREWORKS_DEEPSEEK_FLASH,
+  ),
+  `"${FIREWORKS_DEEPSEEK_FLASH}" is a further option, never a harness default (registry and artifact)`,
+);
 for (const retired of RETIRED_DEEPSEEK_NAMES) {
   assert(
     registryNames.every(
@@ -167,9 +184,33 @@ for (const retired of RETIRED_DEEPSEEK_NAMES) {
         !names(AGENT_REGISTRY[name as keyof typeof AGENT_REGISTRY].models, retired) &&
         !names(artifact.harnesses[name].models, retired),
     ),
-    `the retired "${retired}" is gone from every registry roster and the artifact (one name per model)`,
+    `the retired "${retired}" is gone from every registry roster and the artifact (one name per route)`,
   );
 }
+
+// Both routes reach the gateway VERBATIM from the two harnesses that rewrite a
+// model name on its way out: droid's gatewayModelAliases (applied by agent.ts
+// resolveCommandModel before the Evolve-owned settings file is written) has
+// no row for either, and opencode's command line prefixes `openrouter/` onto
+// a BARE name only — a name that already carries its route rides as-is under
+// the litellm provider, whose config keys the model by the same string.
+for (const route of DEEPSEEK_FLASH_ROUTES) {
+  assert(
+    !(route in (AGENT_REGISTRY.droid.gatewayModelAliases ?? {})),
+    `droid sends "${route}" verbatim (no gatewayModelAliases row rewrites it)`,
+  );
+  const command = AGENT_REGISTRY.opencode.buildCommand({ prompt: "p", model: route, isResume: false, isDirectMode: false });
+  assert(
+    command.includes(`--model litellm/${route} `),
+    `opencode gateway command sends "${route}" verbatim under the litellm provider`,
+  );
+}
+assert(
+  AGENT_REGISTRY.opencode
+    .buildCommand({ prompt: "p", model: "glm-5.3-flash", isResume: false, isDirectMode: false })
+    .includes("--model litellm/openrouter/glm-5.3-flash "),
+  "opencode still prefixes openrouter/ onto a bare name",
+);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

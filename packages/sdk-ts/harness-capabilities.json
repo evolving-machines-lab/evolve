@@ -65,6 +65,11 @@
           "alias": "openrouter/deepseek/deepseek-v4.1-flash",
           "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
           "description": "DeepSeek V4.1 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4.1-flash",
+          "modelId": "fireworks/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via Fireworks"
         }
       ],
       "effortSupport": "level",
@@ -199,6 +204,11 @@
           "alias": "openrouter/deepseek/deepseek-v4.1-flash",
           "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
           "description": "DeepSeek V4.1 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4.1-flash",
+          "modelId": "fireworks/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via Fireworks"
         }
       ],
       "effortSupport": "level",
@@ -349,6 +359,11 @@
           "alias": "openrouter/deepseek/deepseek-v4.1-flash",
           "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
           "description": "DeepSeek V4.1 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4.1-flash",
+          "modelId": "fireworks/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via Fireworks"
         }
       ],
       "effortSupport": "level",
