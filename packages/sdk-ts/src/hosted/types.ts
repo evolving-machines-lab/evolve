@@ -520,8 +520,9 @@ export interface Rubric {
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
- * wave. `{}` is legal and means "all defaults": glm-5.3-flash at its
- * per-model effort (max) over Harbor's default rubric
+ * wave. `{}` is legal and means "all defaults":
+ * openrouter/deepseek/deepseek-v4.1-flash at its per-model effort (high)
+ * over Harbor's default rubric
  * (reward_hacking, task_specification — their
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
@@ -543,15 +544,15 @@ export interface Rubric {
 export interface AnalyzeConfigInput {
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * glm-5.3-flash on this platform's claude roster (GLM-5.3-Flash, served
-   * from Fireworks behind the gateway's plain name; the platform's ruling
-   * 2026-09-08: one GLM-5.3-Flash, from Fireworks, under the plain name,
-   * at max — the effort its published scores use) — a recorded deviation
-   * from Harbor's default analyze model (their cli/analyze.py
-   * `claude-haiku-4-5`): analysis is input-dominated, and this is the
-   * roster's intelligence-per-input-dollar pick at its published effort;
-   * `deepseek-flash` and `haiku` stay on the roster as
-   * alternatives, `glm-5.3` to escalate. The value speaks
+   * openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
+   * roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
+   * effort high — the owner's ruling 2026-09-10: cheaper per analysis, and
+   * far more parallel capacity through OpenRouter's provider pool) — a
+   * recorded deviation from Harbor's default analyze model (their
+   * cli/analyze.py `claude-haiku-4-5`): analysis is input-dominated, and
+   * this is the roster's intelligence-per-input-dollar pick; `glm-5.3-flash`
+   * (at max, the effort its published scores use) and `haiku` stay on the
+   * roster as alternatives, `glm-5.3` to escalate. The value speaks
    * the same vocabulary as `agents[].model_name`: either advertised
    * spelling is accepted and stored AS GIVEN (the default is the roster
    * alias), the wire id is resolved only when the analyzer runs, and every
@@ -588,10 +589,11 @@ export interface AnalyzeConfigInput {
    * claude harness: the accepted values are `GET /api/meta`'s
    * `analyze.reasoning_efforts`, an unknown value is refused
    * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
-   * applies (`analyze.models[].default_reasoning_effort`: max on
-   * glm-5.3-flash, the default model — the platform's ruling 2026-09-08,
-   * the effort its published scores use; high on deepseek-flash —
-   * DeepSeek's own default; the claude harness default elsewhere). The
+   * applies (`analyze.models[].default_reasoning_effort`: high on
+   * openrouter/deepseek/deepseek-v4.1-flash, the default model — DeepSeek's
+   * own documented default, the owner's ruling 2026-09-10; max on
+   * glm-5.3-flash — the platform's ruling 2026-09-08, the effort its
+   * published scores use; the claude harness default elsewhere). The
    * effort is always passed to the analyzer explicitly and
    * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
    * extension: Harbor's analyze has no effort option; this is the run
@@ -3750,9 +3752,9 @@ export interface JobsClient {
    * them with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
-   * (or `{}`) means the defaults: glm-5.3-flash at its per-model effort
-   * over Harbor's default rubric. CANCELLED trials are
-   * never analyzed.
+   * (or `{}`) means the defaults: openrouter/deepseek/deepseek-v4.1-flash
+   * at its per-model effort over Harbor's default rubric. CANCELLED trials
+   * are never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
   /**
@@ -4131,7 +4133,8 @@ export interface AnalysesClient {
  * rubric-agent trio is the analyze door's, under the same rules
  * (`AnalyzeConfigInput` states them; refusals name `check.*`): `model_name`
  * (Harbor's check default is `claude-sonnet-4-6`; this platform's is the
- * analyzer's `glm-5.3-flash` — one roster, one default for both rubric
+ * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
+ * default for both rubric
  * agents, a recorded deviation), `rubric` (the default is Harbor's
  * cli/quality_checker/default-rubric.toml, eleven criteria verbatim), and
  * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing their
