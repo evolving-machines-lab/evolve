@@ -111,6 +111,7 @@ import type {
   DatasetVersionSource,
   UsageReading,
 } from "../hosted/types";
+import { gatewayUsageOf } from "../hosted/types";
 import {
   managedSecrets,
   type ManagedSecretMetadata,
@@ -3805,10 +3806,42 @@ function fmtReward(reward: number | null): string {
   return reward !== null ? String(Math.round(reward * 1000) / 1000) : "-";
 }
 
-/** One trace event line — evolve trial download --stream trace-parsed. */
-export function traceEventLine(event: TraceEvent): string {
+/**
+ * One trace event line — evolve trial download --stream trace-parsed, and
+ * every other verb that prints a parsed transcript. Null for a line the
+ * rendering HIDES: a harness's own `usage` event (owner's law 2026-09-10 —
+ * tokens and money shown anywhere come from the gateway meter, never from
+ * what a harness prints; the raw event still rides `--json`). The gateway
+ * meter's usage event (`gatewayUsageOf`) renders as a money line: model,
+ * tokens in / out (cached), cost as the gateway priced it, the call's start
+ * instant.
+ */
+export function traceEventLine(event: TraceEvent): string | null {
+  const gateway = gatewayUsageOf(event);
+  if (gateway !== null) {
+    const model = typeof event.data.model === "string" && event.data.model !== "" ? event.data.model : "-";
+    const u = gateway.usage;
+    const detail =
+      `gateway ${model} in=${u.promptTokens} out=${u.completionTokens} cached=${u.cachedTokens} ` +
+      `$${u.costUsd.toFixed(6)}${gateway.startedAt ? ` ${gateway.startedAt}` : ""}`;
+    return `#${String(event.seq).padStart(4)} ${event.type.padEnd(26)} ${detail}`.trimEnd();
+  }
+  const update = event.data?.update;
+  if (update && typeof update === "object" && (update as Record<string, unknown>).sessionUpdate === "usage") {
+    return null;
+  }
   const detail = truncate(JSON.stringify(event.data ?? {}), 140);
   return `#${String(event.seq).padStart(4)} ${event.type.padEnd(26)} ${detail}`.trimEnd();
+}
+
+/** Print one trace event: the raw JSON under --json, else its rendered line — or nothing when the rendering hides it. */
+function emitTraceEvent(io: CliIO, json: boolean, event: TraceEvent): void {
+  if (json) {
+    io.out(JSON.stringify(event));
+    return;
+  }
+  const line = traceEventLine(event);
+  if (line !== null) io.out(line);
 }
 
 /** One line for a structured import failure: the message plus a failure count. */
@@ -4979,9 +5012,8 @@ async function cmdCheckTrace(inv: Invocation, io: CliIO): Promise<number> {
     inv.positionals[0],
     since !== undefined ? { since } : undefined
   );
-  for (const event of transcript.events) {
-    io.out(json ? JSON.stringify(event) : traceEventLine(event));
-  }
+  for (const event of transcript.events) emitTraceEvent(io, json, event);
+  for (const event of transcript.gateway_calls) emitTraceEvent(io, json, event);
   if (!json && transcript.events.length === 0) io.out("No trace events.");
   return 0;
 }
@@ -5024,9 +5056,8 @@ async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
     if (stream === "trace-parsed") {
       const since = inv.flags.since as number | undefined;
       const transcript = await client.transcript(taskCheckId, since !== undefined ? { since } : undefined);
-      for (const event of transcript.events) {
-        io.out(json ? JSON.stringify(event) : traceEventLine(event));
-      }
+      for (const event of transcript.events) emitTraceEvent(io, json, event);
+      for (const event of transcript.gateway_calls) emitTraceEvent(io, json, event);
       if (!json && transcript.events.length === 0) io.out("No trace events.");
       return 0;
     }
@@ -5457,7 +5488,7 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
     if (stream === "trace-parsed") {
       let count = 0;
       for await (const event of client.traceEvents(trialId, pageOptions(inv))) {
-        io.out(json ? JSON.stringify(event) : traceEventLine(event));
+        emitTraceEvent(io, json, event);
         count += 1;
       }
       if (!json && count === 0) io.out("No trace events.");
@@ -5564,7 +5595,7 @@ async function cmdTrialTrace(inv: Invocation, io: CliIO): Promise<number> {
   if (inv.flags.tail !== undefined) options.tail = inv.flags.tail as number;
   let count = 0;
   for await (const event of client.traceEvents(inv.positionals[0], options)) {
-    io.out(json ? JSON.stringify(event) : traceEventLine(event));
+    emitTraceEvent(io, json, event);
     count += 1;
   }
   if (!json && count === 0) io.out("No trace events.");
@@ -5588,7 +5619,10 @@ async function cmdJobGrep(inv: Invocation, io: CliIO): Promise<number> {
   for (const group of page.items) {
     const label = group.match_count === 1 ? "match" : "matches";
     io.out(`${group.trial_id}  ${group.task_name ?? "-"}  ${group.match_count} ${label}`);
-    for (const event of group.events) io.out(`  ${traceEventLine(event)}`);
+    for (const event of group.events) {
+      const line = traceEventLine(event);
+      if (line !== null) io.out(`  ${line}`);
+    }
   }
   if (page.hasMore && page.nextCursor) {
     io.out("");
@@ -5717,9 +5751,8 @@ async function cmdAnalysisTrace(inv: Invocation, io: CliIO): Promise<number> {
     inv.positionals[0],
     since !== undefined ? { since } : undefined
   );
-  for (const event of transcript.events) {
-    io.out(json ? JSON.stringify(event) : traceEventLine(event));
-  }
+  for (const event of transcript.events) emitTraceEvent(io, json, event);
+  for (const event of transcript.gateway_calls) emitTraceEvent(io, json, event);
   if (!json && transcript.events.length === 0) io.out("No trace events.");
   return 0;
 }
@@ -5775,9 +5808,8 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
         analysisId,
         since !== undefined ? { since } : undefined
       );
-      for (const event of transcript.events) {
-        io.out(json ? JSON.stringify(event) : traceEventLine(event));
-      }
+      for (const event of transcript.events) emitTraceEvent(io, json, event);
+      for (const event of transcript.gateway_calls) emitTraceEvent(io, json, event);
       if (!json && transcript.events.length === 0) io.out("No trace events.");
       return 0;
     }

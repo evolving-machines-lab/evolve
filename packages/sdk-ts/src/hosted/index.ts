@@ -131,6 +131,8 @@ import type {
   TimingInfo,
   TraceEvent,
   TraceEventPage,
+  GatewayUsage,
+  GatewayUsageEvent,
   TraceOptions,
   Trial,
   TrialAnalysis,
@@ -177,6 +179,8 @@ export {
   JOB_LIST_SCOPES,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
+  GATEWAY_TRACE_SEQ_BASE,
+  gatewayUsageOf,
   isHostedErrorCode,
   mapUsageReading,
   passAtK,
@@ -345,6 +349,8 @@ export type {
   TimingInfo,
   TraceEvent,
   TraceEventPage,
+  GatewayUsage,
+  GatewayUsageEvent,
   TraceOptions,
   Trial,
   TrialAnalysis,
@@ -383,6 +389,7 @@ export type {
   WatchJobOptions,
 } from "./types";
 import {
+  GATEWAY_TRACE_SEQ_BASE,
   isHostedErrorCode,
   mapUsageReading,
   type Awaitable,
@@ -1356,6 +1363,20 @@ function mapTraceEvent(raw: Record<string, unknown>): TraceEvent {
     type: raw.type as string,
     data: (raw.data as Record<string, unknown>) ?? {},
   };
+}
+
+/**
+ * The feed's `gatewayCalls` (bare GatewayUsageEvent payloads, time order)
+ * as usage TraceEvents in the gateway band — the same seqs the trial trace
+ * route gives a terminal trial's gateway lines.
+ */
+function mapGatewayCalls(raw: unknown): TraceEvent[] {
+  const calls = (Array.isArray(raw) ? raw : []) as unknown[];
+  return calls.map((data, i) => ({
+    seq: GATEWAY_TRACE_SEQ_BASE + i,
+    type: "usage",
+    data: (data && typeof data === "object" && !Array.isArray(data) ? data : {}) as Record<string, unknown>,
+  }));
 }
 
 function mapJobGrepGroup(raw: Record<string, unknown>): JobGrepGroup {
@@ -3696,6 +3717,7 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
             ? data
             : {}) as Record<string, unknown>,
         })),
+        gateway_calls: mapGatewayCalls(raw.gatewayCalls),
       };
     },
 
@@ -3904,6 +3926,7 @@ export function checks(config?: HostedClientConfig): ChecksClient {
             ? data
             : {}) as Record<string, unknown>,
         })),
+        gateway_calls: mapGatewayCalls(raw.gatewayCalls),
       };
     },
 

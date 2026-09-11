@@ -2508,10 +2508,47 @@ class JobEvent:
 
 @dataclass
 class TraceEvent:
-    """One parsed trace event of a trial (seq-ordered timeline)."""
+    """One parsed trace event of a trial (seq-ordered timeline).
+
+    ``data`` is the harness-native payload, deliberately open — with ONE typed
+    member: a ``usage`` event whose ``data["update"]["source"]`` is
+    ``"gateway"`` is the platform's gateway meter speaking (the spec's
+    GatewayUsageEvent; :func:`gateway_usage_of` reads it), and it is the ONLY
+    usage line that carries tokens and money a client may show. A harness's
+    own ``usage`` line (no ``source``) stays in the stream as the raw record
+    and is never rendered as tokens or cost. Once a trial is terminal its
+    gateway lines follow the last harness row with ``seq`` at or past
+    :data:`GATEWAY_TRACE_SEQ_BASE`.
+    """
     seq: int
     type: str
     data: Dict[str, Any]
+
+
+#: The seq band a terminal trial's gateway lines ride on the trace-parsed
+#: stream — a MIRROR of the server's constant (swarm_dashboard
+#: lib/gateway-calls.ts GATEWAY_TRACE_SEQ_BASE), the TypeScript SDK's twin.
+GATEWAY_TRACE_SEQ_BASE = 1_000_000_000
+
+
+def gateway_usage_of(event: TraceEvent) -> Optional[Dict[str, Any]]:
+    """The gateway meter's usage on a trace event, or None — the TypeScript
+    SDK's ``gatewayUsageOf``: None for a harness's own usage line (no
+    ``source``) and for every other event. THE ONE test a renderer applies
+    before it shows tokens or money from a trace. The dict is the spec's
+    GatewayUsageEvent ``update``: ``callId``, ``status``, ``startedAt``,
+    ``endedAt``, ``receivedAt`` and ``usage`` (``promptTokens`` INCLUDING
+    the cached and cache-written shares, ``completionTokens``,
+    ``cachedTokens``, ``costUsd`` — the gateway's own price — and ``extra``
+    with ``cache_write_tokens`` and, when reported, ``reasoning_tokens``)."""
+    update = event.data.get('update') if isinstance(event.data, dict) else None
+    if not isinstance(update, dict):
+        return None
+    if update.get('sessionUpdate') != 'usage' or update.get('source') != 'gateway':
+        return None
+    if not isinstance(update.get('usage'), dict):
+        return None
+    return update
 
 
 @dataclass
