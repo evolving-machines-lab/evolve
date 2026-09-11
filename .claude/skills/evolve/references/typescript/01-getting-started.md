@@ -294,7 +294,7 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 
 | type | models | default | Gateway | Direct key |
 |------|--------|---------|---------|------|
-| `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"opus[1m]"` `"sonnet[1m]"` `"glm-5.3"` `"glm-5.3-flash"` `"deepseek-v4-flash-vision"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"opus[1m]"` `"sonnet[1m]"` `"glm-5.3"` `"glm-5.3-flash"` `"deepseek-flash"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `"codex"` | `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gpt-5.5"` `"gpt-5.3-codex"` | `"gpt-5.6-sol"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `"gemini"` | `"gemini-3.5-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` `"gemini-3.7-flash"` *(not selectable yet — see below)* | `"gemini-3.5-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `"qwen"` | `"qwen3.7-max"` `"qwen3.7-plus"` `"qwen3.6-flash"` | `"qwen3.7-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
