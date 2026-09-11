@@ -543,9 +543,11 @@ async function runTests(): Promise<void> {
   clearEnv();
   process.env.OPENROUTER_API_KEY = "env-openrouter-key";
   {
-    // Not judged here: a prefixed name beyond the roster is the caller's own
-    // routing (the docs' "prefixed routing beyond the table"), and a bare
-    // name gets the harness's native prefix on the command line.
+    // Not judged here: a prefixed name beyond the roster is sent as an
+    // OpenRouter id — opencode's command builder (registry.ts
+    // opencodeRoutedModel) prepends openrouter/ to every name that is neither
+    // the openrouter/ form nor a roster id, so the route, not the caller,
+    // decides; a bare name likewise gets the harness's native prefix.
     const beyond = resolveAgentConfig({ type: "opencode", model: "anthropic/claude-opus-5" });
     assertEqual(beyond.isDirectMode, true, "an off-roster prefixed name still resolves to direct mode");
     const bare = resolveAgentConfig({ type: "opencode", model: "glm-5.3-flash" });
