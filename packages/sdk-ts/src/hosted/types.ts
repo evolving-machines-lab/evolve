@@ -1794,13 +1794,78 @@ export interface StopResponse {
 /**
  * One parsed trace event of a trial's transcript. `seq` orders the stream and
  * is the paging cursor. `data` is the harness-native payload, deliberately
- * open.
+ * open — with ONE typed member: a `usage` event whose `data.update.source`
+ * is `"gateway"` is the platform's gateway meter speaking (GatewayUsageEvent,
+ * `gatewayUsageOf` reads it), and it is the ONLY usage line that carries
+ * tokens and money a client may show. A harness's own `usage` line (no
+ * `source`) stays in the stream as the raw record and is never rendered as
+ * tokens or cost. Once a trial is terminal its gateway lines follow the last
+ * harness row with `seq` at or past GATEWAY_TRACE_SEQ_BASE.
  */
 export interface TraceEvent {
   /** Monotonic sequence number (the resume position). */
   seq: number;
   type: string;
   data: Record<string, unknown>;
+}
+
+/**
+ * THE GATEWAY METER'S PER-CALL LINE (spec GatewayUsageEvent): one model call
+ * as the LiteLLM gateway priced and recorded it. `promptTokens` INCLUDES the
+ * cached and cache-written shares (the same law as UsageReading.input_tokens);
+ * `cachedTokens` is the cached share; the cache-write and reasoning counts
+ * ride `extra` under the gateway's own names. `costUsd` is the gateway's
+ * `response_cost` — no client prices anything.
+ */
+export interface GatewayUsage {
+  sessionUpdate: "usage";
+  scope: "call";
+  source: "gateway";
+  /** LiteLLM's own id for the call. */
+  callId: string;
+  /** The gateway's status word for the call (`success` / `failure`). */
+  status: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  /** When the platform stored the call. */
+  receivedAt: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    costUsd: number;
+    extra: { cache_write_tokens: number; reasoning_tokens?: number };
+  };
+}
+
+/** The `data` of a gateway usage TraceEvent: the call's start instant and model beside the update. */
+export interface GatewayUsageEvent {
+  timestamp: string | null;
+  model: string | null;
+  update: GatewayUsage;
+}
+
+/**
+ * The seq band a terminal trial's gateway lines ride on the trace-parsed
+ * stream — a MIRROR of the server's constant (swarm_dashboard
+ * lib/gateway-calls.ts GATEWAY_TRACE_SEQ_BASE); the transcript readers below
+ * synthesize the same band for an analysis's or a task check's calls.
+ */
+export const GATEWAY_TRACE_SEQ_BASE = 1_000_000_000;
+
+/**
+ * The gateway meter's usage on a trace event, or null: null for a harness's
+ * own usage line (no `source`) and for every other event. THE ONE test a
+ * renderer applies before it shows tokens or money from a trace.
+ */
+export function gatewayUsageOf(event: Pick<TraceEvent, "data">): GatewayUsage | null {
+  const update = event.data?.update;
+  if (!update || typeof update !== "object" || Array.isArray(update)) return null;
+  const record = update as Record<string, unknown>;
+  if (record.sessionUpdate !== "usage" || record.source !== "gateway") return null;
+  const usage = record.usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  return record as unknown as GatewayUsage;
 }
 
 /**
@@ -4057,6 +4122,13 @@ export interface AnalysisTranscript {
    * are dense from 0) and `type` by the viewer's own one extraction.
    */
   events: TraceEvent[];
+  /**
+   * The gateway meter's per-call lines for the analyzer's key (spec
+   * GatewayUsageEvent), in time order, as `usage` TraceEvents with `seq` in
+   * the gateway band (GATEWAY_TRACE_SEQ_BASE + index). Served whole on every
+   * read: they ride beside `events`, never inside the seq timeline.
+   */
+  gateway_calls: TraceEvent[];
 }
 
 /**
@@ -4311,6 +4383,8 @@ export interface TaskCheckTranscript {
   /** ALL stored rows for this task check, independent of `since`. */
   total: number;
   events: TraceEvent[];
+  /** The gateway meter's per-call lines for the checker's key (the AnalysisTranscript's field, same law). */
+  gateway_calls: TraceEvent[];
 }
 
 /**

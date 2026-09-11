@@ -411,7 +411,7 @@ Beside the parsed trace, every trial archives its raw record, and one vocabulary
 
 | Name | What it is |
 |------|------------|
-| `trace-parsed` | The parsed event timeline — what `trace()` / `trace_events()` page |
+| `trace-parsed` | The parsed event timeline — what `trace()` / `trace_events()` page. Once the trial is terminal, the gateway meter's per-call `usage` lines follow the last harness event (`update.source` is `gateway`; `seq` from 1000000000): the only usage lines that carry tokens and money — a harness's own `usage` line stays in the stream unrendered |
 | `trace-stdout` | The agent process's stdout, byte for byte |
 | `trace-stderr` | The agent process's stderr, byte for byte |
 | `trace-atif` | The normalized trajectory — an ATIF v1.7 document built from the parsed trace; for an uploaded trial, the archive's own `agent/trajectory.json` served verbatim |
