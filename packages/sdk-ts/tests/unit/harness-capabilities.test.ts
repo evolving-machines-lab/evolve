@@ -135,31 +135,41 @@ for (const name of registryNames) {
   );
 }
 
-// --- 5. One name per DeepSeek model: the roster names V4.1 Flash the way -----
-// DeepSeek does. `deepseek-flash` is DeepSeek's own API name for V4.1 Flash
-// (api-docs.deepseek.com changelog, 2026-09-10) and the gateway's bare route
-// name for the Fireworks backend; the retired roster name
-// `deepseek-v4-flash-vision` survives only as a gateway-side transitional
-// alias, so the SDK must neither advertise nor send it. Checked on both the
+// --- 5. One name per DeepSeek model: DeepSeek V4.1 Flash is on the roster ---
+// under its OpenRouter id `openrouter/deepseek/deepseek-v4.1-flash` (owner
+// 2026-09-10) — served through the gateway's exact entry for that id, alias
+// == wire id, the same spelling on the claude, droid and opencode rosters — and
+// neither the retired Fireworks name `deepseek-flash` nor the older
+// `deepseek-v4-flash-vision` may be advertised or sent. Checked on both the
 // registry and the artifact: the dashboard reads the artifact.
 
-const claudeRegistryAliases = AGENT_REGISTRY.claude.models.map((model) => model.alias);
-const claudeArtifactAliases = artifact.harnesses.claude.models.map((model) => model.alias);
-const deepseekFlash = AGENT_REGISTRY.claude.models.find((model) => model.alias === "deepseek-flash");
-assert(
-  deepseekFlash !== undefined && deepseekFlash.modelId === "deepseek-flash",
-  'claude roster carries "deepseek-flash" with alias == wire id (the gateway\'s bare route name)',
-);
-assert(
-  claudeArtifactAliases.includes("deepseek-flash"),
-  'artifact claude roster advertises "deepseek-flash"',
-);
-assert(
-  !claudeRegistryAliases.includes("deepseek-v4-flash-vision") &&
-    !AGENT_REGISTRY.claude.models.some((model) => model.modelId === "deepseek-v4-flash-vision") &&
-    !claudeArtifactAliases.includes("deepseek-v4-flash-vision"),
-  'the retired "deepseek-v4-flash-vision" is gone from the registry and the artifact (one name per model)',
-);
+const OPENROUTER_DEEPSEEK_FLASH = "openrouter/deepseek/deepseek-v4.1-flash";
+const RETIRED_DEEPSEEK_NAMES = ["deepseek-flash", "deepseek-v4-flash-vision"];
+const carries = (models: readonly { alias: string; modelId: string }[], name: string) =>
+  models.some((model) => model.alias === name && model.modelId === name);
+const names = (models: readonly { alias: string; modelId: string }[], name: string) =>
+  models.some((model) => model.alias === name || model.modelId === name);
+
+for (const harness of ["claude", "droid", "opencode"] as const) {
+  assert(
+    carries(AGENT_REGISTRY[harness].models, OPENROUTER_DEEPSEEK_FLASH),
+    `${harness} roster carries "${OPENROUTER_DEEPSEEK_FLASH}" with alias == wire id (the gateway's exact entry for it)`,
+  );
+  assert(
+    carries(artifact.harnesses[harness].models, OPENROUTER_DEEPSEEK_FLASH),
+    `artifact ${harness} roster advertises "${OPENROUTER_DEEPSEEK_FLASH}"`,
+  );
+}
+for (const retired of RETIRED_DEEPSEEK_NAMES) {
+  assert(
+    registryNames.every(
+      (name) =>
+        !names(AGENT_REGISTRY[name as keyof typeof AGENT_REGISTRY].models, retired) &&
+        !names(artifact.harnesses[name].models, retired),
+    ),
+    `the retired "${retired}" is gone from every registry roster and the artifact (one name per model)`,
+  );
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

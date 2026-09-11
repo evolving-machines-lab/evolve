@@ -360,7 +360,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<value>",
     help:
       "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
-      "default: the per-model default — max on glm-5.3-flash, high on deepseek-flash)",
+      "default: the per-model default — high on openrouter/deepseek/deepseek-v4.1-flash, max on glm-5.3-flash)",
   },
   "timeout-multiplier": {
     kind: "number",
@@ -1189,7 +1189,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help:
-          "Model the analyzer agent runs (default: glm-5.3-flash; deepseek-flash and haiku " +
+          "Model the analyzer agent runs (default: openrouter/deepseek/deepseek-v4.1-flash; glm-5.3-flash and haiku " +
           "as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
       },
       // The one option beyond Harbor's analyze trio, recorded as the hosted
@@ -1202,7 +1202,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<value>",
         help:
           "Reasoning effort the analyzer runs at (values: GET /api/meta analyze; default: the " +
-          "per-model default — max on glm-5.3-flash, high on deepseek-flash)",
+          "per-model default — high on openrouter/deepseek/deepseek-v4.1-flash, max on glm-5.3-flash)",
       },
       rubric: {
         kind: "string",
@@ -1287,7 +1287,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help:
-          "Model the checker agent runs (default: glm-5.3-flash — the analyzer's default, a recorded deviation " +
+          "Model the checker agent runs (default: openrouter/deepseek/deepseek-v4.1-flash — the analyzer's default, a recorded deviation " +
           "from Harbor's claude-sonnet-4-6; must be on the claude roster, GET /api/meta)",
       },
       effort: {
