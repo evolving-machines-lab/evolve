@@ -363,6 +363,7 @@ export {
   type SessionPage,
   type SessionInfo,
   type SessionEvent,
+  type SessionTranscript,
   type GetEventsOptions,
   type DownloadSessionOptions,
   type BrowserReplay,

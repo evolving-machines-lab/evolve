@@ -5,6 +5,7 @@ Coverage:
 - SessionsClient.list() — delegates, parses, omits None params
 - SessionsClient.get() — returns SessionInfo with snake_case fields
 - SessionsClient.events() — returns parsed JSONL objects, passes since
+- SessionsClient.transcript() — the feed whole: session, events, total, the gateway's per-call lines
 - SessionsClient.download() — returns file path, passes to
 - standalone sessions() — sync factory, gateway mode, explicit config
 - Context manager / cleanup behavior
@@ -25,6 +26,8 @@ class MockBridgeManager:
         self.callbacks = {}
         self.started = False
         self.stopped = False
+        # A test's own response for a method, consulted before the defaults below.
+        self.overrides = {}
 
     async def start(self):
         self.started = True
@@ -37,6 +40,9 @@ class MockBridgeManager:
 
     async def call(self, method, params=None, timeout_s=None):
         self.calls.append((method, params, timeout_s))
+
+        if method in self.overrides:
+            return self.overrides[method]
 
         if method == 'sessions_list':
             return {
@@ -98,6 +104,54 @@ class MockBridgeManager:
                 'events': [
                     {'_meta': {'tag': 'demo-a'}},
                     {'jsonrpc': '2.0', 'method': 'session/update', 'params': {'index': 11}},
+                ],
+            }
+
+        if method == 'sessions_transcript':
+            return {
+                'session': {
+                    'id': params['id'],
+                    'tag': 'demo-a',
+                    'agent': 'codex',
+                    'model': 'gpt-5.3-codex',
+                    'provider': 'gateway',
+                    'sandbox_id': 'sbx-1',
+                    'state': 'ended',
+                    'runtime_status': 'dead',
+                    'cost': 0.0042,
+                    'created_at': '2026-03-05T10:00:00.000Z',
+                    'ended_at': '2026-03-05T10:03:00.000Z',
+                    'step_count': 12,
+                    'tool_stats': {'bash': 2},
+                },
+                'events': [
+                    {'_meta': {'tag': 'demo-a'}},
+                    {'jsonrpc': '2.0', 'method': 'session/update', 'params': {'index': 11}},
+                ],
+                'total': 12,
+                # One gateway usage line as the wire serves it (spec GatewayUsageEvent).
+                'gateway_calls': [
+                    {
+                        'timestamp': '2026-03-05T10:00:01.000Z',
+                        'model': 'gpt-5.3-codex',
+                        'update': {
+                            'sessionUpdate': 'usage',
+                            'scope': 'call',
+                            'source': 'gateway',
+                            'callId': 'chatcmpl-abc',
+                            'status': 'success',
+                            'startedAt': '2026-03-05T10:00:01.000Z',
+                            'endedAt': '2026-03-05T10:00:03.000Z',
+                            'receivedAt': '2026-03-05T10:00:08.000Z',
+                            'usage': {
+                                'promptTokens': 1200,
+                                'completionTokens': 300,
+                                'cachedTokens': 1000,
+                                'costUsd': 0.0042,
+                                'extra': {'cache_write_tokens': 0, 'reasoning_tokens': 40},
+                            },
+                        },
+                    },
                 ],
             }
 
@@ -251,6 +305,51 @@ class TestSessionsClientEvents:
         params = calls[0][1]
         assert params['id'] == 'sess-1'
         assert params['since'] == 10
+
+
+class TestSessionsClientTranscript:
+    @pytest.mark.asyncio
+    async def test_serves_the_feed_whole(self):
+        client, bridge = _make_client()
+
+        transcript = await client.transcript('sess-1', since=10)
+
+        calls = _get_calls(bridge, 'sessions_transcript')
+        assert len(calls) == 1
+        assert calls[0][1]['id'] == 'sess-1'
+        assert calls[0][1]['since'] == 10
+        # The session by the one SessionInfo parser — its cost is the run's total.
+        assert transcript.session.id == 'sess-1'
+        assert transcript.session.state == 'ended'
+        assert transcript.session.cost == 0.0042
+        # The events after since, untouched; total counts ALL stored events.
+        assert len(transcript.events) == 2
+        assert transcript.events[1]['method'] == 'session/update'
+        assert transcript.total == 12
+        # The gateway's per-call line, verbatim: tokens and money read off it.
+        assert len(transcript.gateway_calls) == 1
+        call = transcript.gateway_calls[0]
+        assert call['update']['source'] == 'gateway'
+        assert call['update']['usage']['costUsd'] == 0.0042
+        assert call['update']['usage']['promptTokens'] == 1200
+
+    @pytest.mark.asyncio
+    async def test_events_stay_gateway_free(self):
+        client, _ = _make_client()
+
+        events = await client.events('sess-1')
+
+        # since is an event count: a gateway call never rides the delta list.
+        assert len(events) == 2
+        assert all(event.get('update', {}).get('source') != 'gateway' for event in events)
+
+    @pytest.mark.asyncio
+    async def test_refuses_a_feed_without_its_session(self):
+        client, bridge = _make_client()
+        bridge.overrides['sessions_transcript'] = {'events': [], 'total': 0, 'gateway_calls': []}
+
+        with pytest.raises(ValueError, match='session'):
+            await client.transcript('sess-1')
 
 
 class TestSessionsClientDownload:

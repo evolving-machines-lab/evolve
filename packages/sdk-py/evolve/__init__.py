@@ -199,6 +199,7 @@ from .results import (
     SessionInfo,
     SessionPage,
     SessionEvent,
+    SessionTranscript,
     BrowserReplay,
     UsageReading,
 )
@@ -553,6 +554,7 @@ __all__ = [
     'SessionInfo',
     'SessionPage',
     'SessionEvent',
+    'SessionTranscript',
     'BrowserReplay',
     'UsageReading',
 

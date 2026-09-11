@@ -340,7 +340,11 @@ async function testEventsWithSince() {
   try {
     setMockResponse("/api/sessions/s1/events", {
       status: 200,
-      body: { events: [{ update: "chunk1" }, { update: "chunk2" }] },
+      body: {
+        session: { id: "s1", tag: "a", agent: "claude", provider: "e2b", isEnded: true, createdAt: "2026-01-01" },
+        events: [{ update: "chunk1" }, { update: "chunk2" }],
+        total: 2,
+      },
     });
 
     const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
@@ -359,6 +363,143 @@ async function testEventsWithSince() {
     await s.events("s1", { since: 0 });
     url = fetchCalls[fetchCalls.length - 1].url;
     assert(url.includes("since=0"), "since=0 (falsy but valid) included in params");
+  } finally {
+    restoreFetch();
+  }
+}
+
+/** One gateway usage line as the feed serves it (swarm_dashboard lib/gateway-calls.ts gatewayUsageEvent). */
+const gatewayCallFixture = {
+  timestamp: "2026-09-10T20:00:01.000Z",
+  model: "claude-sonnet-4-5",
+  update: {
+    sessionUpdate: "usage",
+    scope: "call",
+    source: "gateway",
+    callId: "chatcmpl-abc",
+    status: "success",
+    startedAt: "2026-09-10T20:00:01.000Z",
+    endedAt: "2026-09-10T20:00:03.000Z",
+    receivedAt: "2026-09-10T20:00:08.000Z",
+    usage: {
+      promptTokens: 1200,
+      completionTokens: 300,
+      cachedTokens: 1000,
+      costUsd: 0.0042,
+      extra: { cache_write_tokens: 0, reasoning_tokens: 40 },
+    },
+  },
+};
+
+const transcriptFeedFixture = {
+  session: {
+    id: "s1",
+    tag: "my-session",
+    agent: "claude",
+    provider: "e2b",
+    isEnded: true,
+    runtimeStatus: "dead",
+    cost: 0.0042,
+    createdAt: "2026-09-10T20:00:00.000Z",
+    endedAt: "2026-09-10T20:00:05.000Z",
+  },
+  events: [{ update: "chunk1" }, { update: { sessionUpdate: "usage", usage: { promptTokens: 1 } } }],
+  total: 12,
+  gatewayCalls: [gatewayCallFixture],
+  traceSource: "db",
+  costData: null,
+};
+
+async function testTranscriptCarriesGatewayCalls() {
+  console.log("\n--- transcript() serves the feed whole: session, events, total, gatewayCalls ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/s1/events", { status: 200, body: transcriptFeedFixture });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const transcript = await s.transcript("s1", { since: 10 });
+
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("since=10"), "since param forwarded");
+    assertEqual(transcript.session.id, "s1", "session mapped by the one SessionInfo mapper");
+    assertEqual(transcript.session.state, "ended", "session state computed from isEnded");
+    assertEqual(transcript.session.cost, 0.0042, "session cost is the run's total");
+    assertEqual(transcript.events, transcriptFeedFixture.events, "events are the feed's rows after since, untouched");
+    assertEqual(transcript.total, 12, "total is the feed's count of ALL stored events");
+    assertEqual(transcript.gatewayCalls, [gatewayCallFixture], "gatewayCalls are the gateway's per-call lines, verbatim");
+    assertEqual(
+      transcript.gatewayCalls[0].update.usage.costUsd,
+      0.0042,
+      "a call's tokens and money read straight off the typed line"
+    );
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testEventsStayGatewayFree() {
+  console.log("\n--- events() is the transcript's events alone — gateway lines never ride the delta list ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/s1/events", { status: 200, body: transcriptFeedFixture });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const events = await s.events("s1");
+
+    assertEqual(events, transcriptFeedFixture.events, "only the feed's events");
+    assertEqual(events.length, 2, "a gateway call never counts as a session event (since is an event count)");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTranscriptOlderServer() {
+  console.log("\n--- transcript() on a server that predates gatewayCalls/total ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/s1/events", {
+      status: 200,
+      body: { session: transcriptFeedFixture.session, events: [{ a: 1 }, { b: 2 }] },
+    });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const transcript = await s.transcript("s1", { since: 5 });
+
+    assertEqual(transcript.gatewayCalls, [], "no gatewayCalls field reads as no calls");
+    assertEqual(transcript.total, 7, "total falls back to since + events served");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testTranscriptRefusesMalformedFeed() {
+  console.log("\n--- transcript() fails closed on a malformed feed ---");
+  installMockFetch();
+  try {
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+
+    setMockResponse("/api/sessions/s1/events", {
+      status: 200,
+      body: { ...transcriptFeedFixture, gatewayCalls: [{ update: { sessionUpdate: "usage" } }] },
+    });
+    let threwCall = false;
+    try {
+      await s.transcript("s1");
+    } catch (e: any) {
+      threwCall = true;
+      assert(e.message.includes("gatewayCalls[0]"), "names the offending gateway line");
+    }
+    assert(threwCall, "a gatewayCalls row without the gateway's usage shape is refused, not shown");
+
+    installMockFetch();
+    setMockResponse("/api/sessions/s1/events", { status: 200, body: { events: [], total: 0, gatewayCalls: [] } });
+    let threwSession = false;
+    try {
+      await s.transcript("s1");
+    } catch (e: any) {
+      threwSession = true;
+      assert(e.message.includes("session"), "names the missing session");
+    }
+    assert(threwSession, "a feed without its session is refused");
   } finally {
     restoreFetch();
   }
@@ -613,6 +754,10 @@ async function main() {
   await testListPagination();
   await testAuthHeader();
   await testEventsWithSince();
+  await testTranscriptCarriesGatewayCalls();
+  await testEventsStayGatewayFree();
+  await testTranscriptOlderServer();
+  await testTranscriptRefusesMalformedFeed();
   await testApiErrorHandling();
   await testDownloadStreaming();
   await testDownloadNoBody();

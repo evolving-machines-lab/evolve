@@ -74,6 +74,7 @@ import type {
   SessionInfoResponse,
   SessionPageResponse,
   SessionEventsResponse,
+  SessionTranscriptResponse,
   BrowserReplayResponse,
   GetRunCostParams,
   RunCostResponse,
@@ -328,6 +329,8 @@ export class EvolveAdapter {
         return this.sessionsGet(params);
       case 'sessions_events':
         return this.sessionsEvents(params);
+      case 'sessions_transcript':
+        return this.sessionsTranscript(params);
       case 'sessions_download':
         return this.sessionsDownload(params);
       case 'sessions_browser_replay':
@@ -766,6 +769,20 @@ export class EvolveAdapter {
       params.since !== undefined ? { since: params.since } : undefined,
     );
     return { events };
+  }
+
+  async sessionsTranscript(params: SessionsEventsParams): Promise<SessionTranscriptResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    const transcript = await client.transcript(
+      params.id,
+      params.since !== undefined ? { since: params.since } : undefined,
+    );
+    return {
+      session: this.toSessionInfoResponse(transcript.session),
+      events: transcript.events,
+      total: transcript.total,
+      gateway_calls: transcript.gatewayCalls as Record<string, any>[],
+    };
   }
 
   async sessionsDownload(params: SessionsDownloadParams): Promise<{ path: string }> {

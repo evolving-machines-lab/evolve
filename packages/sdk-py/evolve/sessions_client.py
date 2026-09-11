@@ -3,8 +3,13 @@
 import asyncio
 from typing import Any, Dict, List, Literal, Optional
 
-from .results import BrowserReplay, SessionEvent, SessionInfo, SessionPage
-from .utils import _filter_none, _require_browser_replay, _require_session_info
+from .results import BrowserReplay, SessionEvent, SessionInfo, SessionPage, SessionTranscript
+from .utils import (
+    _filter_none,
+    _require_browser_replay,
+    _require_session_info,
+    _require_session_transcript,
+)
 
 
 class SessionsClient:
@@ -97,6 +102,19 @@ class SessionsClient:
         await self._ensure_ready()
         response = await self._bridge.call('sessions_events', self._build_params(id=id, since=since))
         return list(response.get('events', []))
+
+    async def transcript(
+        self,
+        id: str,
+        *,
+        since: Optional[int] = None,
+    ) -> SessionTranscript:
+        """The transcript feed in one read: the ``session``, its ``events``
+        after ``since``, the ``total`` stored, and the gateway meter's per-call
+        ``gateway_calls`` (see :class:`SessionTranscript`)."""
+        await self._ensure_ready()
+        response = await self._bridge.call('sessions_transcript', self._build_params(id=id, since=since))
+        return _require_session_transcript(response)
 
     async def download(
         self,
