@@ -488,6 +488,29 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
+// The copy-skip branch and the mount-vs-native collision — the server's
+// evaluations-harbor-output-tree.test.ts cases, mirrored byte for byte
+// -----------------------------------------------------------------------------
+{
+  const claude = (home: Record<string, string>) =>
+    Object.keys(
+      assembleTrialTree(fullParts({ trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "claude-code" } }), home }))
+    )
+      .filter((p) => p.startsWith("agent/.") || p.startsWith("agent/root/") || p.startsWith("agent/sessions/"))
+      .sort();
+  assertEqual(
+    claude({ "/root/sessions/x": "native", "/root/.claude/x": "cfg" }),
+    ["agent/.claude/x", "agent/root/sessions/x", "agent/sessions/x"],
+    "Harbor's copy of .claude/x takes sessions/x first (sandbox-path order), so the native /root/sessions/x falls back to root/sessions/x — no second write, no bytes dropped"
+  );
+  assertEqual(
+    claude({ "/logs/agent/.claude/x": "mounted", "/root/.claude/x": "native" }),
+    ["agent/.claude/x", "agent/root/.claude/x", "agent/sessions/x"],
+    "an uploaded archive's mount key (rule 1) takes .claude/x, the native home file falls back to root/.claude/x, Harbor's copy of the native file still lands at sessions/x"
+  );
+}
+
+// -----------------------------------------------------------------------------
 // The job-level evolve record
 // -----------------------------------------------------------------------------
 {

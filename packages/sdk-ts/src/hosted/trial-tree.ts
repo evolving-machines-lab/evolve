@@ -36,7 +36,8 @@
  * downloadTrialArtifacts): a file that is not UTF-8 text — opencode's SQLite
  * store, a cached image — is present in the archive and absent here, named
  * only in the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME
- * below, placed by homeRelativePath at agent/agent-home.json); and a home over the server's whole-read ceiling is
+ * below, placed by homeRelativePath at agent/agent-home.json); and a home
+ * over the server's whole-read ceiling is
  * refused 413 (`invalid_input`, param `format`) with no bytes door on this
  * side — the JOB archive carries it whole. Every file both trees carry sits
  * at the same path in both.
@@ -128,7 +129,10 @@ export interface HarnessTrialLayout {
 }
 
 /** A harness Harbor has no adapter for: stdout.log, no Harbor copy. */
-export const DEFAULT_HARNESS_TRIAL_LAYOUT: HarnessTrialLayout = { stdoutFile: "stdout.log", harborCopies: [] };
+export const DEFAULT_HARNESS_TRIAL_LAYOUT: HarnessTrialLayout = {
+  stdoutFile: "stdout.log",
+  harborCopies: [],
+};
 
 /** The table, keyed by SDK harness id (the server's registry entries, mirrored). */
 export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
@@ -140,7 +144,7 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   gemini: { stdoutFile: "gemini-cli.txt", harborCopies: [] },
   // qwen_code.py:627 copies ~/.qwen/projects to agent/qwen-sessions; tee :619.
   qwen: { stdoutFile: "qwen-code.txt", harborCopies: [{ sandboxRoot: "/root/.qwen/projects", agentDir: "qwen-sessions" }] },
-  // kimi_cli.py writes trajectory.json only: no Harbor copy; the home lands at .kimi-code/ by the one rule. Tee :18.
+  // kimi_code.py:17 _KIMI_CODE_HOME = agent/.kimi-code — the home's own dir IS Harbor's slot, so no copy; tee :18.
   kimi: { stdoutFile: "kimi-code.txt", harborCopies: [] },
   // opencode.py:74 tee; :524 XDG_DATA_HOME = /logs/agent/opencode/xdg-data, and the
   // CLI keeps its store at $XDG_DATA_HOME/opencode — the captured default store
