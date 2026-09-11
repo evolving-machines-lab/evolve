@@ -4143,13 +4143,14 @@ export interface AnalysisTranscript {
  * gate walks (swarm_dashboard `__tests__/api/spec-drift-gate.test.ts`
  * CONTRACT_PREFIXES), and the one precedent for a transcript door living
  * off-contract is that gate's RUNTIME_INTERNAL_ROUTES: `api/sessions/[id]/
- * events`, the dashboard UI's own session transcript view, is enumerated
- * there as a route no SDK client calls. RECORDED TENSION: that gate names the
- * excluded planes "planes no SDK client calls" — this client is the first to
- * call one, so whether the feed joins the contract (spec + both SDK shadows)
- * is an open ruling, not something settled here. The contract-side verdict
- * stays where it always was — `Trial.analysis` on the trial body; this client
- * adds the reads the contract does not carry today.
+ * events`, the session transcript feed, is enumerated there by recorded
+ * exemption — both SDKs' sessions client reads it (`sessions().transcript()`
+ * / `events()`), and its `gatewayCalls` shape is named in the contract's
+ * GatewayUsageEvent prose, not as an operation. RECORDED TENSION: whether
+ * that feed and this one join the contract as operations (spec + both SDK
+ * shadows) is an open ruling, not something settled here. The contract-side
+ * verdict stays where it always was — `Trial.analysis` on the trial body;
+ * this client adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
   /**
