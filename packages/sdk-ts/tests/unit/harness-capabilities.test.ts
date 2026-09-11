@@ -191,25 +191,42 @@ for (const retired of RETIRED_DEEPSEEK_NAMES) {
 // Both routes reach the gateway VERBATIM from the two harnesses that rewrite a
 // model name on its way out: droid's gatewayModelAliases (applied by agent.ts
 // resolveCommandModel before the Evolve-owned settings file is written) has
-// no row for either, and opencode's command line prefixes `openrouter/` onto
-// a BARE name only — a name that already carries its route rides as-is under
-// the litellm provider, whose config keys the model by the same string.
+// no row for either, and opencode's command line (registry.ts
+// opencodeRoutedModel) prefixes `openrouter/` onto a BARE name only — a
+// roster id, or any name in OpenRouter's own `openrouter/…` form, rides
+// as-is under the litellm provider, whose config keys the model by the same
+// string. The rule is derived from the roster, so it is pinned roster-wide:
+// EVERY opencode roster id rides verbatim, on both the gateway and the direct
+// command line — a roster row on a route the rule did not know would fail
+// here instead of leaving as `litellm/openrouter/<route>/…`.
 for (const route of DEEPSEEK_FLASH_ROUTES) {
   assert(
     !(route in (AGENT_REGISTRY.droid.gatewayModelAliases ?? {})),
     `droid sends "${route}" verbatim (no gatewayModelAliases row rewrites it)`,
   );
-  const command = AGENT_REGISTRY.opencode.buildCommand({ prompt: "p", model: route, isResume: false, isDirectMode: false });
-  assert(
-    command.includes(`--model litellm/${route} `),
-    `opencode gateway command sends "${route}" verbatim under the litellm provider`,
-  );
 }
+const opencodeCommand = (model: string, isDirectMode: boolean) =>
+  AGENT_REGISTRY.opencode.buildCommand({ prompt: "p", model, isResume: false, isDirectMode });
 assert(
-  AGENT_REGISTRY.opencode
-    .buildCommand({ prompt: "p", model: "glm-5.3-flash", isResume: false, isDirectMode: false })
-    .includes("--model litellm/openrouter/glm-5.3-flash "),
-  "opencode still prefixes openrouter/ onto a bare name",
+  AGENT_REGISTRY.opencode.models.every(
+    (row) =>
+      opencodeCommand(row.modelId, false).includes(`--model litellm/${row.modelId} `) &&
+      opencodeCommand(row.modelId, true).includes(`--model ${row.modelId} `),
+  ),
+  `every opencode roster id rides the gateway and direct command lines verbatim (${AGENT_REGISTRY.opencode.models.length} ids)`,
+);
+assert(
+  AGENT_REGISTRY.opencode.models.every((row) => row.alias === row.modelId),
+  "every opencode roster alias equals its wire id (what makes 'a roster id rides verbatim' the whole rule)",
+);
+assert(
+  opencodeCommand("glm-5.3-flash", false).includes("--model litellm/openrouter/glm-5.3-flash ") &&
+    opencodeCommand("glm-5.3-flash", true).includes("--model openrouter/glm-5.3-flash "),
+  "opencode still prefixes openrouter/ onto a bare non-roster name",
+);
+assert(
+  opencodeCommand("openrouter/deepseek/deepseek-r2", false).includes("--model litellm/openrouter/deepseek/deepseek-r2 "),
+  "an off-roster OpenRouter id rides verbatim (the docs' prefixed routing beyond the table)",
 );
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

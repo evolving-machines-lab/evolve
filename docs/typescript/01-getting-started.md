@@ -310,7 +310,7 @@ Model names route by themselves: pass just the name from the table and Evolve se
 
 `"openrouter/deepseek/deepseek-v4.1-flash"` is DeepSeek V4.1 Flash served through OpenRouter, under the same spelling on `"claude"`, `"droid"` and `"opencode"`. The `openrouter/<vendor>/<model>` form is OpenRouter's own model id: the gateway routes any id in that form to OpenRouter and bills the call at OpenRouter's price for it, so other OpenRouter models work the same way — the table lists the supported ones. It is also the default model of the hosted evals analyzer (its default reasoning effort is `"high"`).
 
-`"fireworks/deepseek-v4.1-flash"` is the same DeepSeek V4.1 Flash on a second route, served from Fireworks through the gateway, on the same three agents: $0.22/M input and $0.66/M output ($0.007/M cached input). Pick it when you want the Fireworks host; `"openrouter/deepseek/deepseek-v4.1-flash"` remains the default model of the hosted evals analyzer and task checker.
+`"fireworks/deepseek-v4.1-flash"` is the same DeepSeek V4.1 Flash on a second route, served from Fireworks through the gateway, on the same three agents: $0.22/M input and $0.66/M output ($0.007/M cached input). Pick it when you want the Fireworks host; `"openrouter/deepseek/deepseek-v4.1-flash"` remains the default model of the hosted evals analyzer and task checker. It is served through the Evolve gateway; direct mode has no Fireworks key, so `"opencode"` with your own `OPENROUTER_API_KEY` refuses the name at configuration (`EvolveConfigError`, naming the model) instead of sending it.
 
 Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
 

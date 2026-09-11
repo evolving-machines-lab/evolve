@@ -392,17 +392,6 @@ function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
  * Each agent defines a buildCommand function that constructs the CLI command.
  * This is type-safe and handles conditional logic cleanly.
  */
-/**
- * The route prefixes an opencode model name may already carry. The opencode
- * roster speaks OpenRouter ids, so its buildCommand prefixes `openrouter/`
- * onto a BARE name; a name starting with one of these is sent as-is —
- * `openrouter/…` to OpenRouter itself (direct mode) or to the gateway,
- * `fireworks/…` to the gateway's exact entry for it (the roster's
- * fireworks/deepseek-v4.1-flash). A mirror of the gateway's route spellings
- * (litellm_gcp_cloud_run litellm_config.yaml model_name), declared as such.
- */
-const OPENCODE_ROUTED_PREFIXES = ["openrouter/", "fireworks/"] as const;
-
 export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   claude: {
     image: "evolve-all",
@@ -789,10 +778,12 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // exact entry for it, priced from OpenRouter's own bill.
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
       // The same model on its second route, Fireworks (owner 2026-09-11: a
-      // further option). Gateway-only: buildCommand below sends a name that
-      // already carries its route verbatim (`litellm/fireworks/...`,
-      // OPENCODE_ROUTED_PREFIXES) onto the gateway's exact entry for it;
-      // there is no direct-mode home for it — OpenRouter has no such id.
+      // further option). Gateway-only: a roster id rides the command line
+      // verbatim (opencodeRoutedModel below), so buildCommand sends
+      // `litellm/fireworks/...` onto the gateway's exact entry for it; there
+      // is no direct-mode home for it — OpenRouter has no such id and this
+      // harness holds no Fireworks key (providerEnvMap above), so direct mode
+      // refuses the name typed at config resolution (utils/config.ts).
       { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
     ],
     systemPromptFile: "AGENTS.md",
@@ -819,11 +810,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
         // (no openrouter/ rewrite — route names are the caller's).
         return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${model} --format json${reasoningFlags} "${prompt}" < /dev/null`;
       }
-      // The roster speaks OpenRouter ids: a BARE name gets OpenRouter's
-      // prefix; a name that already carries its route rides verbatim.
-      const routedModel = OPENCODE_ROUTED_PREFIXES.some((prefix) => model.startsWith(prefix))
-        ? model
-        : `openrouter/${model}`;
+      // A roster id or an OpenRouter-form name rides verbatim; only a bare
+      // name gets OpenRouter's prefix (opencodeRoutedModel, below the table).
+      const routedModel = opencodeRoutedModel(model);
       if (!isDirectMode) {
         return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${routedModel} --format json${reasoningFlags} "${prompt}" < /dev/null`;
       }
@@ -921,6 +910,46 @@ export function getAgentConfig(agentType: AgentType): AgentRegistryEntry {
     throw new Error(`Unknown agent type: ${agentType}`);
   }
   return config;
+}
+
+/**
+ * True when `model` is an identifier the registry entry itself declares: a
+ * roster alias or wire id, or a key or value of its alias tables.
+ */
+export function registryOwnsModel(registry: AgentRegistryEntry, model: string): boolean {
+  if (registry.models.some((entry) => entry.alias === model || entry.modelId === model)) {
+    return true;
+  }
+  const aliases = registry.gatewayModelAliases;
+  if (aliases && (model in aliases || Object.values(aliases).includes(model))) {
+    return true;
+  }
+  const directAliases = registry.directModelAliases;
+  return Boolean(
+    directAliases && (model in directAliases || Object.values(directAliases).includes(model)),
+  );
+}
+
+/**
+ * The model string opencode's command line carries for `model`, derived from
+ * this file's own roster — not a mirror of the gateway's route spellings,
+ * which name more routes than this harness carries.
+ *
+ * The roster speaks OpenRouter ids (`openrouter/<vendor>/<model>`, OpenRouter's
+ * own form), so a name in that form rides as-is — a roster id, or beyond the
+ * table any OpenRouter id the caller routes explicitly (the docs' prefixed
+ * routing) — to OpenRouter itself in direct mode or to the gateway's
+ * `openrouter/*` route. Every other roster id already carries its route in
+ * its spelling (alias == wire id, pinned in
+ * tests/unit/harness-capabilities.test.ts): `fireworks/deepseek-v4.1-flash`
+ * rides verbatim onto the gateway's exact entry for that name. Only a bare
+ * name that is neither gets OpenRouter's prefix.
+ */
+export function opencodeRoutedModel(model: string): string {
+  if (model.startsWith("openrouter/") || registryOwnsModel(AGENT_REGISTRY.opencode, model)) {
+    return model;
+  }
+  return `openrouter/${model}`;
 }
 
 /**
