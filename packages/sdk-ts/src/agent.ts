@@ -41,6 +41,7 @@ import {
   getAgentConfig,
   getOpenCodeReasoningVariant,
   isThinkingEnabled,
+  registryOwnsModel,
   resolveReasoningEffort,
   type AgentRegistryEntry,
 } from "./registry";
@@ -264,20 +265,6 @@ const KIMI_CODE_DEFAULT_CONTEXT_SIZE = 262144;
  */
 const FOREIGN_MODEL_MAX_CONTEXT_SIZE = 128000;
 
-/** True when `model` is an identifier the registry entry itself declares. */
-function registryOwnsModel(registry: AgentRegistryEntry, model: string): boolean {
-  if (registry.models.some((entry) => entry.alias === model || entry.modelId === model)) {
-    return true;
-  }
-  const aliases = registry.gatewayModelAliases;
-  if (aliases && (model in aliases || Object.values(aliases).includes(model))) {
-    return true;
-  }
-  const directAliases = registry.directModelAliases;
-  return Boolean(
-    directAliases && (model in directAliases || Object.values(directAliases).includes(model)),
-  );
-}
 // Kimi Code accepts these as provider-dependent config/env values. Moonshot's
 // K3 API documents reasoning_effort low|high|max (default max, thinking
 // always on); the Kimi Code CLI effort enum is low|medium|high|xhigh|max.

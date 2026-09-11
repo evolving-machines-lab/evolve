@@ -552,7 +552,9 @@ export interface AnalyzeConfigInput {
    * cli/analyze.py `claude-haiku-4-5`): analysis is input-dominated, and
    * this is the roster's intelligence-per-input-dollar pick; `glm-5.3-flash`
    * (at max, the effort its published scores use) and `haiku` stay on the
-   * roster as alternatives, `glm-5.3` to escalate. The value speaks
+   * roster as alternatives, `glm-5.3` to escalate, and the same model on
+   * its Fireworks route, `fireworks/deepseek-v4.1-flash`, is a further
+   * option (the OpenRouter id stays the default). The value speaks
    * the same vocabulary as `agents[].model_name`: either advertised
    * spelling is accepted and stored AS GIVEN (the default is the roster
    * alias), the wire id is resolved only when the analyzer runs, and every

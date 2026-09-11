@@ -1564,7 +1564,9 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: is input-dominated, and this is the roster's
     #: intelligence-per-input-dollar pick; glm-5.3-flash (at max, the effort
     #: its published scores use) and haiku stay as alternatives, glm-5.3 to
-    #: escalate).
+    #: escalate, and the same model on its Fireworks route,
+    #: fireworks/deepseek-v4.1-flash, is a further option — the OpenRouter id
+    #: stays the default).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
