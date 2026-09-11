@@ -1,4 +1,4 @@
-import { mapUsageReading } from "../hosted/types";
+import { gatewayUsageOf, mapUsageReading, type GatewayUsageEvent } from "../hosted/types";
 import { createWriteStream } from "fs";
 import { mkdir } from "fs/promises";
 import { join } from "path";
@@ -12,6 +12,7 @@ import type {
   SessionPage,
   SessionInfo,
   SessionEvent,
+  SessionTranscript,
   GetEventsOptions,
   DownloadSessionOptions,
   BrowserReplay,
@@ -25,6 +26,7 @@ export type {
   SessionPage,
   SessionInfo,
   SessionEvent,
+  SessionTranscript,
   GetEventsOptions,
   DownloadSessionOptions,
   BrowserReplay,
@@ -54,6 +56,7 @@ function positiveNumber(name: string, value: number | undefined, fallback: numbe
  * const s = sessions();
  * const page = await s.list({ limit: 20, state: "ended" });
  * const events = await s.events(page.items[0].id);
+ * const { gatewayCalls } = await s.transcript(page.items[0].id); // the gateway's per-call tokens + cost
  * await s.download(page.items[0].id, { to: "./traces" });
  * ```
  */
@@ -125,6 +128,51 @@ export function sessions(config?: SessionsConfig): SessionsClient {
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  /**
+   * The feed's `gatewayCalls` as the typed lines they claim to be. A row that
+   * is not the gateway's usage shape (gatewayUsageOf — the ONE test a
+   * renderer applies before it shows tokens or money) is refused by index,
+   * never shown as a $0 call; a feed without the field (a server predating
+   * the push meter) reads as no calls.
+   */
+  function mapGatewayCalls(raw: unknown): GatewayUsageEvent[] {
+    if (raw === undefined || raw === null) return [];
+    if (!Array.isArray(raw)) {
+      throw new Error("Session transcript response gatewayCalls is not a list");
+    }
+    return raw.map((row, i) => {
+      const data = row && typeof row === "object" && !Array.isArray(row) ? (row as Record<string, unknown>) : null;
+      if (!data || gatewayUsageOf({ data }) === null) {
+        throw new Error(`Session transcript response gatewayCalls[${i}] is not a gateway usage event`);
+      }
+      return data as unknown as GatewayUsageEvent;
+    });
+  }
+
+  // The one read of the transcript feed; events() is its `events` projection.
+  async function transcript(id: string, options?: GetEventsOptions): Promise<SessionTranscript> {
+    const params = new URLSearchParams();
+    if (options?.since != null) params.set("since", String(options.since));
+    const qs = params.toString();
+    const res = await request(
+      `/api/sessions/${encodeURIComponent(id)}/events${qs ? `?${qs}` : ""}`
+    );
+    const data = (await res.json()) as Record<string, unknown>;
+    const session = data.session;
+    if (!session || typeof session !== "object" || Array.isArray(session)) {
+      throw new Error("Session transcript response missing session");
+    }
+    const events = (data.events as SessionEvent[]) || [];
+    return {
+      session: mapSessionInfo(session as Record<string, unknown>),
+      events,
+      // The feed states the stored count; a server predating the field can
+      // only be read as "what this page reached" (since + rows served).
+      total: typeof data.total === "number" ? data.total : (options?.since ?? 0) + events.length,
+      gatewayCalls: mapGatewayCalls(data.gatewayCalls),
+    };
+  }
+
   return {
     async list(options?: ListSessionsOptions): Promise<SessionPage> {
       const params = new URLSearchParams({
@@ -171,15 +219,10 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       id: string,
       options?: GetEventsOptions
     ): Promise<SessionEvent[]> {
-      const params = new URLSearchParams();
-      if (options?.since != null) params.set("since", String(options.since));
-      const qs = params.toString();
-      const res = await request(
-        `/api/sessions/${encodeURIComponent(id)}/events${qs ? `?${qs}` : ""}`
-      );
-      const data = await res.json();
-      return (data.events as SessionEvent[]) || [];
+      return (await transcript(id, options)).events;
     },
+
+    transcript,
 
     async download(
       id: string,

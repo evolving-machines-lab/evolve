@@ -1,4 +1,4 @@
-import type { UsageReading } from "../hosted/types";
+import type { GatewayUsageEvent, UsageReading } from "../hosted/types";
 
 /** Options for listing sessions */
 export interface ListSessionsOptions {
@@ -55,6 +55,33 @@ export interface SessionInfo {
 /** Raw parsed JSONL event — no imposed schema */
 export type SessionEvent = Record<string, unknown>;
 
+/**
+ * One read of a session's transcript feed (`GET /api/sessions/{id}/events`):
+ * the parsed events after `since` plus the facts the feed serves around them.
+ * Unlike a trial's trace there is no server-side paging — one read answers
+ * everything after `since`, and `total` counts ALL stored events, so the next
+ * delta read passes `since: total`.
+ */
+export interface SessionTranscript {
+  /** The session as the feed served it — the same shape `get()` returns, so `usage` / `cost` is the run's total. */
+  session: SessionInfo;
+  /** The events after `since`: what `events()` returns alone. */
+  events: SessionEvent[];
+  /** ALL stored events, independent of `since`. */
+  total: number;
+  /**
+   * THE GATEWAY METER's per-call lines for this session (spec
+   * GatewayUsageEvent), in time order: one model call as the LiteLLM gateway
+   * priced it — prompt / completion / cached tokens and `costUsd`, the same
+   * line a trial's trace carries in its gateway band. Served whole on every
+   * read and beside `events`, never inside them: a session's `since` is an
+   * event COUNT, so a call line in the list would corrupt every delta
+   * poller's cursor. The ONLY per-call tokens and money a client may show
+   * (a harness's own `usage` line stays a raw record).
+   */
+  gatewayCalls: GatewayUsageEvent[];
+}
+
 /** Options for downloading a session trace */
 export interface DownloadSessionOptions {
   /** Directory to save the JSONL file (default: cwd) */
@@ -100,8 +127,14 @@ export interface SessionsClient {
   list(options?: ListSessionsOptions): Promise<SessionPage>;
   /** Get a single session by ID */
   get(id: string): Promise<SessionInfo>;
-  /** Get parsed JSONL events for a session */
+  /** Get parsed JSONL events for a session (the transcript's `events` alone) */
   events(id: string, options?: GetEventsOptions): Promise<SessionEvent[]>;
+  /**
+   * The transcript feed in one read: the `session`, its `events` after
+   * `since`, the `total` stored, and the gateway meter's per-call
+   * `gatewayCalls` (see SessionTranscript).
+   */
+  transcript(id: string, options?: GetEventsOptions): Promise<SessionTranscript>;
   /** Download raw JSONL trace file. Returns the file path. */
   download(id: string, options?: DownloadSessionOptions): Promise<string>;
   /** Wait for browser replay and return Dashboard-owned replay/download URLs. */

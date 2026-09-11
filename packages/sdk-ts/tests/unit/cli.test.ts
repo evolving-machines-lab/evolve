@@ -160,6 +160,7 @@ import {
   parseSecretRefs,
   parseYamlConfig,
   runCli,
+  traceEventLine,
   trialDetailLines,
 } from "../../src/cli/index.ts";
 import type { CliIO } from "../../src/cli/index.ts";
@@ -5047,6 +5048,47 @@ function analysisEventsFixture(events: unknown[], total = events.length): Record
   };
 }
 
+/** One gateway usage event as the feed serves it (spec GatewayUsageEvent). */
+function gatewayCallFixture(callId: string, costUsd: number): Record<string, unknown> {
+  return {
+    timestamp: "2026-09-10T08:22:23.682Z",
+    model: "openai/glm-5.3-flash",
+    update: {
+      sessionUpdate: "usage",
+      scope: "call",
+      source: "gateway",
+      callId,
+      status: "success",
+      startedAt: "2026-09-10T08:22:23.682Z",
+      endedAt: "2026-09-10T08:22:35.912Z",
+      receivedAt: "2026-09-10T08:22:40.000Z",
+      usage: { promptTokens: 21179, completionTokens: 1123, cachedTokens: 20000, costUsd, extra: { cache_write_tokens: 0 } },
+    },
+  };
+}
+
+async function testTraceEventLineGatewayOnly() {
+  console.log("\n--- traceEventLine: the gateway meter's usage renders as money; a harness's own usage line is hidden ---");
+  const gateway = traceEventLine({ seq: 1_000_000_000, type: "usage", data: gatewayCallFixture("chatcmpl-1", 0.00385) });
+  assert(gateway !== null, "a gateway usage line renders");
+  assert(gateway!.includes("gateway openai/glm-5.3-flash"), "names the meter and the model");
+  assert(gateway!.includes("in=21179 out=1123 cached=20000"), "prints the gateway's counters");
+  assert(gateway!.includes("$0.003850"), "prints the gateway's price, never a client's");
+  assert(gateway!.includes("2026-09-10T08:22:23.682Z"), "prints the call's start instant");
+  assertEqual(
+    traceEventLine({ seq: 5, type: "usage", data: { update: { sessionUpdate: "usage", scope: "run", usage: { costUsd: 3.81, promptTokens: 792200 } } } }),
+    null,
+    "a harness's self-priced run total is hidden (owner's law: money comes from the gateway only)"
+  );
+  assertEqual(
+    traceEventLine({ seq: 6, type: "usage", data: { update: { sessionUpdate: "usage", scope: "call", usage: { promptTokens: 0 } } } }),
+    null,
+    "a harness's per-call zeros are hidden"
+  );
+  const tool = traceEventLine({ seq: 7, type: "tool_call", data: { update: { sessionUpdate: "tool_call", title: "Read" } } });
+  assert(tool !== null && tool.includes("tool_call"), "every other event still renders");
+}
+
 async function testAnalysisShow() {
   console.log("\n--- runCli: analysis show renders the verdict document; --json is the wire object ---");
   installMockFetch();
@@ -5152,6 +5194,28 @@ async function testAnalysisTrace() {
     );
     assert(out[0].includes("#   0") && out[0].includes("unknown"), "the raw prompt row renders as unknown");
     assert(out[1].includes("agent_message_chunk"), "the viewer's own type extraction names ACP events");
+
+    // The push meter's lines follow the transcript; a harness usage line in
+    // the transcript prints nothing.
+    setMockResponse("/api/traces/trials/an-1/events", {
+      status: 200,
+      body: {
+        ...analysisEventsFixture([
+          { _prompt: { text: "You are analyzing an agent trial run." } },
+          { update: { sessionUpdate: "usage", scope: "run", usage: { costUsd: 3.81 } } },
+        ]),
+        gatewayCalls: [gatewayCallFixture("chatcmpl-1", 0.00385), gatewayCallFixture("chatcmpl-2", 0.0041)],
+      },
+    });
+    const metered = captureIO();
+    assertEqual(await runCli(["analysis", "trace", "an-1", ...AUTH], metered.io), 0, "exit 0 with gateway lines");
+    assertEqual(metered.out.length, 3, "the prompt row and two gateway lines; the harness usage line is hidden");
+    assert(metered.out[1].includes("#1000000000") && metered.out[1].includes("$0.003850"), "gateway line 1 in the band, priced by the gateway");
+    assert(metered.out[2].includes("#1000000001") && metered.out[2].includes("$0.004100"), "gateway line 2 follows");
+    assert(!metered.out.join("\n").includes("3.81"), "the harness's own dollars never print");
+    const meteredJson = captureIO();
+    assertEqual(await runCli(["analysis", "trace", "an-1", "--json", ...AUTH], meteredJson.io), 0, "--json exit 0");
+    assertEqual(meteredJson.out.length, 4, "--json is the raw wire: every event and every gateway call, one per line");
 
     const since = captureIO();
     assertEqual(await runCli(["analysis", "trace", "an-1", "--since", "2", ...AUTH], since.io), 0, "--since exits 0");
@@ -8860,6 +8924,7 @@ async function main() {
   await testTrialDownloadUsageErrors();
   await testTrialStop();
   await testAnalysisShow();
+  await testTraceEventLineGatewayOnly();
   await testAnalysisTrace();
   await testAnalysisDownloadStream();
   await testCheckDatasetAndTaskVerbs();

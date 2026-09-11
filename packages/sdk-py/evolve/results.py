@@ -269,6 +269,33 @@ class SessionPage:
 
 
 @dataclass
+class SessionTranscript:
+    """One read of a session's transcript feed — the TypeScript SDK's
+    ``SessionTranscript``: the parsed events after ``since`` plus the facts
+    the feed serves around them. There is no server-side paging: one read
+    answers everything after ``since``, and ``total`` counts ALL stored
+    events, so the next delta read passes ``since=total``.
+    """
+    #: The session as the feed served it — the same shape ``get()`` returns,
+    #: so ``usage`` / ``cost`` is the run's total.
+    session: SessionInfo
+    #: The events after ``since``: what ``events()`` returns alone.
+    events: List[SessionEvent]
+    #: ALL stored events, independent of ``since``.
+    total: int
+    #: THE GATEWAY METER's per-call lines for this session (the spec's
+    #: GatewayUsageEvent, its own camelCase keys — ``call['update']['usage']``
+    #: carries ``promptTokens``, ``completionTokens``, ``cachedTokens`` and
+    #: ``costUsd``), in time order: one model call as the LiteLLM gateway
+    #: priced it, the same line a trial's trace carries in its gateway band.
+    #: Served whole on every read and beside ``events``, never inside them: a
+    #: session's ``since`` is an event COUNT, so a call line in the list would
+    #: corrupt every delta poller's cursor. The ONLY per-call tokens and money
+    #: a client may show (a harness's own ``usage`` line stays a raw record).
+    gateway_calls: List[Dict[str, Any]]
+
+
+@dataclass
 class BrowserReplay:
     """Browser replay metadata and Dashboard-owned access URLs."""
     session_id: str

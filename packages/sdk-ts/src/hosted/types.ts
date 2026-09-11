@@ -520,8 +520,9 @@ export interface Rubric {
  * switch: on `JobCreate.analyze` it arms the embedded trigger (each trial is
  * analyzed server-side right after it settles; CANCELLED trials are skipped);
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
- * wave. `{}` is legal and means "all defaults": glm-5.3-flash at its
- * per-model effort (max) over Harbor's default rubric
+ * wave. `{}` is legal and means "all defaults":
+ * openrouter/deepseek/deepseek-v4.1-flash at its per-model effort (high)
+ * over Harbor's default rubric
  * (reward_hacking, task_specification — their
  * analyze/prompts/analyze-rubric.toml, ported verbatim).
  *
@@ -543,15 +544,15 @@ export interface Rubric {
 export interface AnalyzeConfigInput {
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * glm-5.3-flash on this platform's claude roster (GLM-5.3-Flash, served
-   * from Fireworks behind the gateway's plain name; the platform's ruling
-   * 2026-09-08: one GLM-5.3-Flash, from Fireworks, under the plain name,
-   * at max — the effort its published scores use) — a recorded deviation
-   * from Harbor's default analyze model (their cli/analyze.py
-   * `claude-haiku-4-5`): analysis is input-dominated, and this is the
-   * roster's intelligence-per-input-dollar pick at its published effort;
-   * `deepseek-flash` and `haiku` stay on the roster as
-   * alternatives, `glm-5.3` to escalate. The value speaks
+   * openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
+   * roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
+   * effort high — the owner's ruling 2026-09-10: far more parallel capacity
+   * through OpenRouter's provider pool than one pinned Fireworks host) — a
+   * recorded deviation from Harbor's default analyze model (their
+   * cli/analyze.py `claude-haiku-4-5`): analysis is input-dominated, and
+   * this is the roster's intelligence-per-input-dollar pick; `glm-5.3-flash`
+   * (at max, the effort its published scores use) and `haiku` stay on the
+   * roster as alternatives, `glm-5.3` to escalate. The value speaks
    * the same vocabulary as `agents[].model_name`: either advertised
    * spelling is accepted and stored AS GIVEN (the default is the roster
    * alias), the wire id is resolved only when the analyzer runs, and every
@@ -588,10 +589,11 @@ export interface AnalyzeConfigInput {
    * claude harness: the accepted values are `GET /api/meta`'s
    * `analyze.reasoning_efforts`, an unknown value is refused
    * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
-   * applies (`analyze.models[].default_reasoning_effort`: max on
-   * glm-5.3-flash, the default model — the platform's ruling 2026-09-08,
-   * the effort its published scores use; high on deepseek-flash —
-   * DeepSeek's own default; the claude harness default elsewhere). The
+   * applies (`analyze.models[].default_reasoning_effort`: high on
+   * openrouter/deepseek/deepseek-v4.1-flash, the default model — DeepSeek's
+   * own documented default, the owner's ruling 2026-09-10; max on
+   * glm-5.3-flash — the platform's ruling 2026-09-08, the effort its
+   * published scores use; the claude harness default elsewhere). The
    * effort is always passed to the analyzer explicitly and
    * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
    * extension: Harbor's analyze has no effort option; this is the run
@@ -1794,13 +1796,78 @@ export interface StopResponse {
 /**
  * One parsed trace event of a trial's transcript. `seq` orders the stream and
  * is the paging cursor. `data` is the harness-native payload, deliberately
- * open.
+ * open — with ONE typed member: a `usage` event whose `data.update.source`
+ * is `"gateway"` is the platform's gateway meter speaking (GatewayUsageEvent,
+ * `gatewayUsageOf` reads it), and it is the ONLY usage line that carries
+ * tokens and money a client may show. A harness's own `usage` line (no
+ * `source`) stays in the stream as the raw record and is never rendered as
+ * tokens or cost. Once a trial is terminal its gateway lines follow the last
+ * harness row with `seq` at or past GATEWAY_TRACE_SEQ_BASE.
  */
 export interface TraceEvent {
   /** Monotonic sequence number (the resume position). */
   seq: number;
   type: string;
   data: Record<string, unknown>;
+}
+
+/**
+ * THE GATEWAY METER'S PER-CALL LINE (spec GatewayUsageEvent): one model call
+ * as the LiteLLM gateway priced and recorded it. `promptTokens` INCLUDES the
+ * cached and cache-written shares (the same law as UsageReading.input_tokens);
+ * `cachedTokens` is the cached share; the cache-write and reasoning counts
+ * ride `extra` under the gateway's own names. `costUsd` is the gateway's
+ * `response_cost` — no client prices anything.
+ */
+export interface GatewayUsage {
+  sessionUpdate: "usage";
+  scope: "call";
+  source: "gateway";
+  /** LiteLLM's own id for the call. */
+  callId: string;
+  /** The gateway's status word for the call (`success` / `failure`). */
+  status: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  /** When the platform stored the call. */
+  receivedAt: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    costUsd: number;
+    extra: { cache_write_tokens: number; reasoning_tokens?: number };
+  };
+}
+
+/** The `data` of a gateway usage TraceEvent: the call's start instant and model beside the update. */
+export interface GatewayUsageEvent {
+  timestamp: string | null;
+  model: string | null;
+  update: GatewayUsage;
+}
+
+/**
+ * The seq band a terminal trial's gateway lines ride on the trace-parsed
+ * stream — a MIRROR of the server's constant (swarm_dashboard
+ * lib/gateway-calls.ts GATEWAY_TRACE_SEQ_BASE); the transcript readers below
+ * synthesize the same band for an analysis's or a task check's calls.
+ */
+export const GATEWAY_TRACE_SEQ_BASE = 1_000_000_000;
+
+/**
+ * The gateway meter's usage on a trace event, or null: null for a harness's
+ * own usage line (no `source`) and for every other event. THE ONE test a
+ * renderer applies before it shows tokens or money from a trace.
+ */
+export function gatewayUsageOf(event: Pick<TraceEvent, "data">): GatewayUsage | null {
+  const update = event.data?.update;
+  if (!update || typeof update !== "object" || Array.isArray(update)) return null;
+  const record = update as Record<string, unknown>;
+  if (record.sessionUpdate !== "usage" || record.source !== "gateway") return null;
+  const usage = record.usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  return record as unknown as GatewayUsage;
 }
 
 /**
@@ -3750,9 +3817,9 @@ export interface JobsClient {
    * them with watchAnalysis(), or poll the job's trials. This is also the
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
-   * (or `{}`) means the defaults: glm-5.3-flash at its per-model effort
-   * over Harbor's default rubric. CANCELLED trials are
-   * never analyzed.
+   * (or `{}`) means the defaults: openrouter/deepseek/deepseek-v4.1-flash
+   * at its per-model effort over Harbor's default rubric. CANCELLED trials
+   * are never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
   /**
@@ -4057,6 +4124,13 @@ export interface AnalysisTranscript {
    * are dense from 0) and `type` by the viewer's own one extraction.
    */
   events: TraceEvent[];
+  /**
+   * The gateway meter's per-call lines for the analyzer's key (spec
+   * GatewayUsageEvent), in time order, as `usage` TraceEvents with `seq` in
+   * the gateway band (GATEWAY_TRACE_SEQ_BASE + index). Served whole on every
+   * read: they ride beside `events`, never inside the seq timeline.
+   */
+  gateway_calls: TraceEvent[];
 }
 
 /**
@@ -4069,13 +4143,14 @@ export interface AnalysisTranscript {
  * gate walks (swarm_dashboard `__tests__/api/spec-drift-gate.test.ts`
  * CONTRACT_PREFIXES), and the one precedent for a transcript door living
  * off-contract is that gate's RUNTIME_INTERNAL_ROUTES: `api/sessions/[id]/
- * events`, the dashboard UI's own session transcript view, is enumerated
- * there as a route no SDK client calls. RECORDED TENSION: that gate names the
- * excluded planes "planes no SDK client calls" — this client is the first to
- * call one, so whether the feed joins the contract (spec + both SDK shadows)
- * is an open ruling, not something settled here. The contract-side verdict
- * stays where it always was — `Trial.analysis` on the trial body; this client
- * adds the reads the contract does not carry today.
+ * events`, the session transcript feed, is enumerated there by recorded
+ * exemption — both SDKs' sessions client reads it (`sessions().transcript()`
+ * / `events()`), and its `gatewayCalls` shape is named in the contract's
+ * GatewayUsageEvent prose, not as an operation. RECORDED TENSION: whether
+ * that feed and this one join the contract as operations (spec + both SDK
+ * shadows) is an open ruling, not something settled here. The contract-side
+ * verdict stays where it always was — `Trial.analysis` on the trial body;
+ * this client adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
   /**
@@ -4131,7 +4206,8 @@ export interface AnalysesClient {
  * rubric-agent trio is the analyze door's, under the same rules
  * (`AnalyzeConfigInput` states them; refusals name `check.*`): `model_name`
  * (Harbor's check default is `claude-sonnet-4-6`; this platform's is the
- * analyzer's `glm-5.3-flash` — one roster, one default for both rubric
+ * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
+ * default for both rubric
  * agents, a recorded deviation), `rubric` (the default is Harbor's
  * cli/quality_checker/default-rubric.toml, eleven criteria verbatim), and
  * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing their
@@ -4311,6 +4387,8 @@ export interface TaskCheckTranscript {
   /** ALL stored rows for this task check, independent of `since`. */
   total: number;
   events: TraceEvent[];
+  /** The gateway meter's per-call lines for the checker's key (the AnalysisTranscript's field, same law). */
+  gateway_calls: TraceEvent[];
 }
 
 /**

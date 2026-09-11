@@ -123,6 +123,26 @@ def _require_browser_replay(data: Optional[Dict[str, Any]]) -> 'BrowserReplay':
     return result
 
 
+def _require_session_transcript(data: Optional[Dict[str, Any]]) -> 'SessionTranscript':
+    """Parse a ``sessions_transcript`` bridge response into SessionTranscript.
+
+    The bridge (adapter.ts sessionsTranscript) serves the TypeScript SDK's
+    already-checked read: the session in snake_case, the events and the
+    gateway's usage lines verbatim. A response without its session is refused.
+    """
+    if not data:
+        raise ValueError(f"Expected session transcript data, got: {data!r}")
+    from .results import SessionTranscript  # noqa: E402
+    events = list(data.get('events') or [])
+    total = data.get('total')
+    return SessionTranscript(
+        session=_require_session_info(data.get('session')),
+        events=events,
+        total=total if isinstance(total, int) else len(events),
+        gateway_calls=list(data.get('gateway_calls') or []),
+    )
+
+
 def _encode_files_for_transport(
     files: Dict[str, Union[str, bytes]]
 ) -> Dict[str, Dict[str, str]]:

@@ -740,6 +740,7 @@ async with sessions() as session:
     if page.items:
         info = await session.get(page.items[0].id)
         recent_events = await session.events(info.id, since=10)
+        transcript = await session.transcript(info.id)
         path = await session.download(info.id, to='./traces')
         replay = await session.browser_replay(info.id)
 
@@ -751,7 +752,7 @@ async with sessions() as session:
 
 The CLI wraps the same client headless — `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>` — with no Python code involved.
 
-The `sessions()` factory returns a `SessionsClient` with five methods:
+The `sessions()` factory returns a `SessionsClient` with six methods:
 
 ```python
 page = await session.list(
@@ -765,6 +766,7 @@ page = await session.list(
 
 info = await session.get('session-id')
 events = await session.events('session-id', since=50)
+transcript = await session.transcript('session-id', since=50)
 path = await session.download('session-id', to='./traces')
 replay = await session.browser_replay(
     'session-id',
@@ -780,6 +782,7 @@ replay = await session.browser_replay(
   records, `provisional` marking numbers that can still grow); it carries the
   same keys a trial's `usage` does, and `None` means the meter never answered
 - `events()` returns parsed JSONL objects for programmatic inspection
+- `transcript()` is the same read whole: `SessionTranscript(session, events, total, gateway_calls)` — `total` counts every stored event (the next delta's `since`), and `gateway_calls` are the gateway meter's per-call lines (the spec's `GatewayUsageEvent`, its own camelCase keys: `call['update']['usage']` carries `promptTokens`, `completionTokens`, `cachedTokens`, `costUsd`), in time order, the same line a trial's trace carries; they ride beside `events`, never inside them, and are the only per-call tokens and money a client should show. The session's total stays on `session.usage` / `session.cost`.
 - `download()` saves the raw `.jsonl` trace file to disk and returns the path
 - `browser_replay()` waits for the managed browser replay and returns
   `replay_url` plus `download_url`

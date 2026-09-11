@@ -481,6 +481,16 @@ export interface SessionEventsResponse {
   events: Record<string, any>[];
 }
 
+/** The transcript feed whole (TS SessionTranscript): `sessions_transcript` takes the same params as `sessions_events`. */
+export interface SessionTranscriptResponse {
+  session: SessionInfoResponse;
+  events: Record<string, any>[];
+  total: number;
+  // The gateway's per-call usage lines, verbatim (spec GatewayUsageEvent —
+  // its keys are the wire's own on every surface, like a trace event's data).
+  gateway_calls: Record<string, any>[];
+}
+
 export interface BrowserReplayResponse {
   session_id: string;
   status: 'ready';

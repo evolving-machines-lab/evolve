@@ -235,6 +235,8 @@ import {
   EvolveIncompleteDownloadError,
   isHostedErrorCode,
   NoActiveVersionError,
+  GATEWAY_TRACE_SEQ_BASE,
+  gatewayUsageOf,
 } from "../../src/hosted/index.ts";
 import type { JobEvent } from "../../src/hosted/index.ts";
 import {
@@ -5763,6 +5765,25 @@ async function testAnalysisTranscript() {
           { _prompt: { text: "You are analyzing an agent trial run." } },
         ],
         total: 4,
+        // The push meter's calls ride beside the events (never inside the
+        // seq timeline), as bare GatewayUsageEvent payloads in time order.
+        gatewayCalls: [
+          {
+            timestamp: "2026-09-10T08:22:23.682Z",
+            model: "openai/glm-5.3-flash",
+            update: {
+              sessionUpdate: "usage",
+              scope: "call",
+              source: "gateway",
+              callId: "chatcmpl-1",
+              status: "success",
+              startedAt: "2026-09-10T08:22:23.682Z",
+              endedAt: "2026-09-10T08:22:35.912Z",
+              receivedAt: "2026-09-10T08:22:40.000Z",
+              usage: { promptTokens: 21179, completionTokens: 1123, cachedTokens: 0, costUsd: 0.00385, extra: { cache_write_tokens: 0 } },
+            },
+          },
+        ],
         traceSource: "db",
       },
     });
@@ -5799,9 +5820,16 @@ async function testAnalysisTranscript() {
       fetchCalls[0].url === `${BASE}/api/traces/trials/an-1/events?since=2`,
       "since rides the wire as the feed's own parameter"
     );
+    assertEqual(t.gateway_calls.length, 1, "the push meter's calls map beside the events");
+    assertEqual(t.gateway_calls[0].seq, GATEWAY_TRACE_SEQ_BASE, "a gateway call's seq is in the gateway band");
+    assertEqual(t.gateway_calls[0].type, "usage", "a gateway call is a usage event");
+    const gateway = gatewayUsageOf(t.gateway_calls[0]);
+    assert(gateway !== null && gateway.callId === "chatcmpl-1", "gatewayUsageOf reads the meter's line");
+    assertEqual(gateway!.usage.costUsd, 0.00385, "the cost is the gateway's own");
 
     const whole = await a.transcript("an-1");
     assertEqual(whole.events[0].seq, 0, "no since = the whole transcript, seqs from 0");
+    assertEqual(whole.gateway_calls, [], "an envelope without gatewayCalls maps to an empty list");
     assert(
       fetchCalls[1].url === `${BASE}/api/traces/trials/an-1/events`,
       "omitted since sends no parameter"

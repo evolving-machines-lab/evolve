@@ -164,6 +164,8 @@ from .hosted import (
     TimingInfo,
     TraceEvent,
     TraceEventPage,
+    GATEWAY_TRACE_SEQ_BASE,
+    gateway_usage_of,
     JobGrepGroup,
     JobGrepPage,
     Rubric,
@@ -197,6 +199,7 @@ from .results import (
     SessionInfo,
     SessionPage,
     SessionEvent,
+    SessionTranscript,
     BrowserReplay,
     UsageReading,
 )
@@ -551,6 +554,7 @@ __all__ = [
     'SessionInfo',
     'SessionPage',
     'SessionEvent',
+    'SessionTranscript',
     'BrowserReplay',
     'UsageReading',
 
@@ -666,6 +670,8 @@ __all__ = [
     'StopResponse',
     'TraceEvent',
     'TraceEventPage',
+    'GATEWAY_TRACE_SEQ_BASE',
+    'gateway_usage_of',
     'JobGrepGroup',
     'JobGrepPage',
     'TrialFile',

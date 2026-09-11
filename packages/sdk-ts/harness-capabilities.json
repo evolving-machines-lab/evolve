@@ -62,9 +62,9 @@
           "description": "Zhipu GLM-5.3 Flash via the Evolve gateway"
         },
         {
-          "alias": "deepseek-flash",
-          "modelId": "deepseek-flash",
-          "description": "DeepSeek V4.1 Flash (Fireworks) via the Evolve gateway"
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
         }
       ],
       "effortSupport": "level",
@@ -194,6 +194,11 @@
           "alias": "glm-5.3-flash",
           "modelId": "glm-5.3-flash",
           "description": "Zhipu GLM-5.3 Flash via the Evolve gateway"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
         }
       ],
       "effortSupport": "level",
@@ -339,6 +344,11 @@
           "alias": "openrouter/z-ai/glm-5.3-flash",
           "modelId": "openrouter/z-ai/glm-5.3-flash",
           "description": "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
         }
       ],
       "effortSupport": "level",

@@ -1547,7 +1547,8 @@ class AnalyzeConfigInput(TypedDict, total=False):
     PRESENCE of this object is the switch: on ``jobs().start(analyze=...)``
     it arms the embedded trigger (each trial is analyzed server-side right
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
-    means "all defaults" — glm-5.3-flash at its per-model effort (max)
+    means "all defaults" — openrouter/deepseek/deepseek-v4.1-flash at its
+    per-model effort (high)
     over Harbor's default rubric (reward_hacking, task_specification). The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
@@ -1555,14 +1556,15 @@ class AnalyzeConfigInput(TypedDict, total=False):
     line, never blended into the trial's own bill.
     """
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
-    #: glm-5.3-flash on this platform's claude roster (GLM-5.3-Flash, served
-    #: from Fireworks behind the gateway's plain name; the platform's ruling
-    #: 2026-09-08: one GLM-5.3-Flash, from Fireworks, under the plain name,
-    #: at max — the effort its published scores use; a recorded deviation
-    #: from Harbor's claude-haiku-4-5 default — analysis is input-dominated,
-    #: and this is the roster's intelligence-per-input-dollar pick at its
-    #: published effort; deepseek-flash and haiku stay as
-    #: alternatives, glm-5.3 to escalate).
+    #: openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
+    #: roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
+    #: effort high — the owner's ruling 2026-09-10: far more parallel capacity
+    #: through OpenRouter's provider pool than one pinned Fireworks host; a
+    #: recorded deviation from Harbor's claude-haiku-4-5 default — analysis
+    #: is input-dominated, and this is the roster's
+    #: intelligence-per-input-dollar pick; glm-5.3-flash (at max, the effort
+    #: its published scores use) and haiku stay as alternatives, glm-5.3 to
+    #: escalate).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
@@ -1593,10 +1595,11 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``analyze['reasoning_efforts']``, an unknown value is refused
     #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
     #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
-    #: max on glm-5.3-flash, the default model — the platform's ruling
-    #: 2026-09-08, the effort its published scores use; high on
-    #: deepseek-flash — DeepSeek's own default; the claude harness
-    #: default elsewhere). Always passed to the analyzer explicitly and
+    #: high on openrouter/deepseek/deepseek-v4.1-flash, the default model —
+    #: DeepSeek's own documented default, the owner's ruling 2026-09-10; max
+    #: on glm-5.3-flash — the platform's ruling 2026-09-08, the effort its
+    #: published scores use; the claude harness default elsewhere). Always
+    #: passed to the analyzer explicitly and
     #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
     #: hosted extension: Harbor's analyze has no effort option.
     reasoning_effort: str
@@ -1809,7 +1812,8 @@ class CheckConfigInput(TypedDict, total=False):
     under the same rules (:class:`AnalyzeConfigInput` states them; refusals
     name ``check.*``): ``model_name`` (Harbor's check default is
     ``claude-sonnet-4-6``; this platform's is the analyzer's
-    ``glm-5.3-flash`` — one roster, one default for both rubric agents, a
+    ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
+    for both rubric agents, a
     recorded deviation), ``rubric`` (default: Harbor's
     cli/quality_checker/default-rubric.toml, eleven criteria verbatim) and
     ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing their
@@ -2508,10 +2512,47 @@ class JobEvent:
 
 @dataclass
 class TraceEvent:
-    """One parsed trace event of a trial (seq-ordered timeline)."""
+    """One parsed trace event of a trial (seq-ordered timeline).
+
+    ``data`` is the harness-native payload, deliberately open — with ONE typed
+    member: a ``usage`` event whose ``data["update"]["source"]`` is
+    ``"gateway"`` is the platform's gateway meter speaking (the spec's
+    GatewayUsageEvent; :func:`gateway_usage_of` reads it), and it is the ONLY
+    usage line that carries tokens and money a client may show. A harness's
+    own ``usage`` line (no ``source``) stays in the stream as the raw record
+    and is never rendered as tokens or cost. Once a trial is terminal its
+    gateway lines follow the last harness row with ``seq`` at or past
+    :data:`GATEWAY_TRACE_SEQ_BASE`.
+    """
     seq: int
     type: str
     data: Dict[str, Any]
+
+
+#: The seq band a terminal trial's gateway lines ride on the trace-parsed
+#: stream — a MIRROR of the server's constant (swarm_dashboard
+#: lib/gateway-calls.ts GATEWAY_TRACE_SEQ_BASE), the TypeScript SDK's twin.
+GATEWAY_TRACE_SEQ_BASE = 1_000_000_000
+
+
+def gateway_usage_of(event: TraceEvent) -> Optional[Dict[str, Any]]:
+    """The gateway meter's usage on a trace event, or None — the TypeScript
+    SDK's ``gatewayUsageOf``: None for a harness's own usage line (no
+    ``source``) and for every other event. THE ONE test a renderer applies
+    before it shows tokens or money from a trace. The dict is the spec's
+    GatewayUsageEvent ``update``: ``callId``, ``status``, ``startedAt``,
+    ``endedAt``, ``receivedAt`` and ``usage`` (``promptTokens`` INCLUDING
+    the cached and cache-written shares, ``completionTokens``,
+    ``cachedTokens``, ``costUsd`` — the gateway's own price — and ``extra``
+    with ``cache_write_tokens`` and, when reported, ``reasoning_tokens``)."""
+    update = event.data.get('update') if isinstance(event.data, dict) else None
+    if not isinstance(update, dict):
+        return None
+    if update.get('sessionUpdate') != 'usage' or update.get('source') != 'gateway':
+        return None
+    if not isinstance(update.get('usage'), dict):
+        return None
+    return update
 
 
 @dataclass
@@ -6710,7 +6751,8 @@ class JobsClient:
         trigger (Harbor's ``harbor analyze`` vocabulary, the spec's
         AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
         server-side right after it settles (CANCELLED trials are skipped),
-        ``{}`` means "all defaults" (glm-5.3-flash at its per-model
+        ``{}`` means "all defaults" (openrouter/deepseek/deepseek-v4.1-flash
+        at its per-model
         effort, Harbor's default rubric), and the response
         echoes the RESOLVED policy as
         ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
@@ -7314,11 +7356,13 @@ class JobsClient:
         applies (daytona unless the operator retuned the fleet).
         ``reasoning_effort`` is the arms' effort vocabulary applied to the
         analyzer (``meta().analyze['reasoning_efforts']``); omitted, the
-        per-model default applies (max on glm-5.3-flash, high on
-        deepseek-flash, the claude harness default elsewhere) —
+        per-model default applies (high on
+        openrouter/deepseek/deepseek-v4.1-flash, max on glm-5.3-flash, the
+        claude harness default elsewhere) —
         the effort is always passed explicitly and recorded on each
         analysis.
-        Every argument omitted means the defaults: glm-5.3-flash at max
+        Every argument omitted means the defaults:
+        openrouter/deepseek/deepseek-v4.1-flash at high
         over Harbor's default rubric (reward_hacking,
         task_specification), on the platform's analysis default provider.
         CANCELLED trials are never analyzed.
@@ -8192,7 +8236,8 @@ class ChecksClient:
         directory that is one, sorted; then ``include_task_names`` (any
         match keeps), ``exclude_task_names`` (any match drops), then the
         first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
-        Every argument omitted means the defaults: glm-5.3-flash at its
+        Every argument omitted means the defaults:
+        openrouter/deepseek/deepseek-v4.1-flash at its
         per-model effort over Harbor's default check rubric, on the
         platform's analysis default provider.
 
