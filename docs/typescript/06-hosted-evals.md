@@ -830,7 +830,7 @@ await evals.analyze(job.id, {
 });
 ```
 
-`passing: true` is the other side of the line — only trials scored with reward exactly 1 — and the two together are refused `400 invalid_input`, Harbor's own "Cannot use both --passing and --failing". `n_trials` counts after the filter; a filter that selects nothing refuses `409 no_analyzable_trials` naming the side. `n_concurrent` runs beneath the organization's `max_concurrent_analyses` ceiling (fleet default 16, four times Harbor's own default of 4): the job never holds more than the smaller of the two in flight, and omitting it means the ceiling alone. All three ride the embedded policy too. From the terminal: `evolve analyze <job-id> --failing -l 20 -n 2`.
+`passing: true` is the other side of the line — only trials scored with reward exactly 1 — and the two together are refused `400 invalid_input`, Harbor's own "Cannot use both --passing and --failing". `n_trials` counts after the filter; a filter that selects nothing refuses `409 no_analyzable_trials` naming the side. `n_concurrent` runs beneath the organization's `max_concurrent_analyses` ceiling (fleet default 60, fifteen times Harbor's own default of 4): the job never holds more than the smaller of the two in flight, and omitting it means the ceiling alone. All three ride the embedded policy too. From the terminal: `evolve analyze <job-id> --failing -l 20 -n 2`.
 
 Analysis can also run **embedded**: create the job with `analyze` and each trial is analyzed automatically the moment it settles, so a long sweep finishes with its analyses already in place. Presence of the object is the switch — `{}` means "analyze with all defaults" — and the job body echoes the resolved policy as `job.analyze`:
 
