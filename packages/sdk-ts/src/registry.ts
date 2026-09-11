@@ -417,14 +417,15 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
       // DeepSeek V4.1 Flash (released 2026-09-10: native image input, 1M
-      // context), served through OpenRouter behind the gateway's openrouter/*
-      // wildcard — no gateway entry of its own, priced from OpenRouter's own
-      // bill (the owner's ruling 2026-09-10: one name per model, this
-      // OpenRouter spelling on the claude, droid and opencode rosters; the
-      // Fireworks name `deepseek-flash` is gone). Alias == wire id, like the
-      // GLM rows above, so either spelling reaches the same wildcard. Default
-      // effort `high` (DeepSeek's documented default). THE trace analyzer's
-      // default model (swarm_dashboard lib/evaluations/analysis.ts
+      // context), served through OpenRouter behind the gateway's exact entry
+      // for this id (the entry carries the flag that forwards the effort;
+      // the call is priced from OpenRouter's own bill — the owner's ruling
+      // 2026-09-10: one name per model, this OpenRouter spelling on the
+      // claude, droid and opencode rosters; the Fireworks name
+      // `deepseek-flash` is gone). Alias == wire id, like the GLM rows above,
+      // so either spelling reaches the same gateway entry. Default effort
+      // `high` (DeepSeek's documented default). THE trace analyzer's default
+      // model (swarm_dashboard lib/evaluations/analysis.ts
       // DEFAULT_ANALYZE_MODEL).
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
     ],
@@ -767,7 +768,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // form: direct mode sends the id to OpenRouter itself; through the
       // Evolve gateway the litellm provider carries it verbatim (agent.ts
       // buildGatewayConfigJson keys the model by this id, buildCommand sends
-      // `litellm/openrouter/...`) onto the gateway's openrouter/* wildcard,
+      // `litellm/openrouter/...`) onto the gateway's exact entry for it,
       // priced from OpenRouter's own bill.
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
     ],
@@ -830,7 +831,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // owner's ruling 2026-09-10). Unlike glm-5.3, which rides a bare alias
       // rewritten by gatewayModelAliases below, this id needs no rewrite:
       // resolveCommandModel passes it through verbatim into the Evolve-owned
-      // settings file, and the gateway's openrouter/* wildcard serves it,
+      // settings file, and the gateway's exact entry for it serves it,
       // priced from OpenRouter's own bill.
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
     ],

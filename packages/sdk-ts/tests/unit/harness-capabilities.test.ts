@@ -137,8 +137,8 @@ for (const name of registryNames) {
 
 // --- 5. One name per DeepSeek model: DeepSeek V4.1 Flash is on the roster ---
 // under its OpenRouter id `openrouter/deepseek/deepseek-v4.1-flash` (owner
-// 2026-09-10) — served through the gateway's openrouter/* wildcard, alias ==
-// wire id, the same spelling on the claude, droid and opencode rosters — and
+// 2026-09-10) — served through the gateway's exact entry for that id, alias
+// == wire id, the same spelling on the claude, droid and opencode rosters — and
 // neither the retired Fireworks name `deepseek-flash` nor the older
 // `deepseek-v4-flash-vision` may be advertised or sent. Checked on both the
 // registry and the artifact: the dashboard reads the artifact.
@@ -153,7 +153,7 @@ const names = (models: readonly { alias: string; modelId: string }[], name: stri
 for (const harness of ["claude", "droid", "opencode"] as const) {
   assert(
     carries(AGENT_REGISTRY[harness].models, OPENROUTER_DEEPSEEK_FLASH),
-    `${harness} roster carries "${OPENROUTER_DEEPSEEK_FLASH}" with alias == wire id (the gateway's openrouter/* wildcard)`,
+    `${harness} roster carries "${OPENROUTER_DEEPSEEK_FLASH}" with alias == wire id (the gateway's exact entry for it)`,
   );
   assert(
     carries(artifact.harnesses[harness].models, OPENROUTER_DEEPSEEK_FLASH),

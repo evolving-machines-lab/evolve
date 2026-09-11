@@ -546,8 +546,8 @@ export interface AnalyzeConfigInput {
    * Model the analyzer agent runs — Harbor's `--model`. The default is
    * openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
    * roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
-   * effort high — the owner's ruling 2026-09-10: cheaper per analysis, and
-   * far more parallel capacity through OpenRouter's provider pool) — a
+   * effort high — the owner's ruling 2026-09-10: far more parallel capacity
+   * through OpenRouter's provider pool than one pinned Fireworks host) — a
    * recorded deviation from Harbor's default analyze model (their
    * cli/analyze.py `claude-haiku-4-5`): analysis is input-dominated, and
    * this is the roster's intelligence-per-input-dollar pick; `glm-5.3-flash`
