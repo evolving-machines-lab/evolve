@@ -1561,7 +1561,7 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: at max — the effort its published scores use; a recorded deviation
     #: from Harbor's claude-haiku-4-5 default — analysis is input-dominated,
     #: and this is the roster's intelligence-per-input-dollar pick at its
-    #: published effort; deepseek-v4-flash-vision and haiku stay as
+    #: published effort; deepseek-flash and haiku stay as
     #: alternatives, glm-5.3 to escalate).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
@@ -1595,7 +1595,7 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
     #: max on glm-5.3-flash, the default model — the platform's ruling
     #: 2026-09-08, the effort its published scores use; high on
-    #: deepseek-v4-flash-vision — DeepSeek's own default; the claude harness
+    #: deepseek-flash — DeepSeek's own default; the claude harness
     #: default elsewhere). Always passed to the analyzer explicitly and
     #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
     #: hosted extension: Harbor's analyze has no effort option.
@@ -7315,7 +7315,7 @@ class JobsClient:
         ``reasoning_effort`` is the arms' effort vocabulary applied to the
         analyzer (``meta().analyze['reasoning_efforts']``); omitted, the
         per-model default applies (max on glm-5.3-flash, high on
-        deepseek-v4-flash-vision, the claude harness default elsewhere) —
+        deepseek-flash, the claude harness default elsewhere) —
         the effort is always passed explicitly and recorded on each
         analysis.
         Every argument omitted means the defaults: glm-5.3-flash at max

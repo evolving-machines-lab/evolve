@@ -416,11 +416,13 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "sonnet[1m]", modelId: "sonnet[1m]", description: "Daily coding with 1M context window" },
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
-      // DeepSeek V4 Flash Vision, served by Fireworks behind the gateway's bare
-      // name — alias == wire id, like the GLM rows above, so either spelling
-      // reaches the same gateway entry. A selectable analyzer model (its default
-      // effort `high`), no longer the analyzer's default.
-      { alias: "deepseek-v4-flash-vision", modelId: "deepseek-v4-flash-vision", description: "DeepSeek V4 Flash Vision (Fireworks) via the Evolve gateway" },
+      // DeepSeek V4.1 Flash (released 2026-09-10: native image input, 1M
+      // context), served by Fireworks behind the gateway's bare name, which is
+      // DeepSeek's own API name for it (api-docs.deepseek.com changelog). Alias
+      // == wire id, like the GLM rows above, so either spelling reaches the
+      // same gateway entry. A selectable analyzer model (its default effort
+      // `high`), not the analyzer's default.
+      { alias: "deepseek-flash", modelId: "deepseek-flash", description: "DeepSeek V4.1 Flash (Fireworks) via the Evolve gateway" },
     ],
     systemPromptFile: "CLAUDE.md",
     mcpConfig: {

@@ -550,7 +550,7 @@ export interface AnalyzeConfigInput {
    * from Harbor's default analyze model (their cli/analyze.py
    * `claude-haiku-4-5`): analysis is input-dominated, and this is the
    * roster's intelligence-per-input-dollar pick at its published effort;
-   * `deepseek-v4-flash-vision` and `haiku` stay on the roster as
+   * `deepseek-flash` and `haiku` stay on the roster as
    * alternatives, `glm-5.3` to escalate. The value speaks
    * the same vocabulary as `agents[].model_name`: either advertised
    * spelling is accepted and stored AS GIVEN (the default is the roster
@@ -590,8 +590,8 @@ export interface AnalyzeConfigInput {
    * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
    * applies (`analyze.models[].default_reasoning_effort`: max on
    * glm-5.3-flash, the default model — the platform's ruling 2026-09-08,
-   * the effort its published scores use; high on deepseek-v4-flash-vision
-   * — DeepSeek's own default; the claude harness default elsewhere). The
+   * the effort its published scores use; high on deepseek-flash —
+   * DeepSeek's own default; the claude harness default elsewhere). The
    * effort is always passed to the analyzer explicitly and
    * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
    * extension: Harbor's analyze has no effort option; this is the run
