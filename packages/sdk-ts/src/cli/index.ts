@@ -359,7 +359,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     value: "<value>",
     help:
       "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
-      "default: the per-model default — max on glm-5.3-flash, high on deepseek-v4-flash-vision)",
+      "default: the per-model default — max on glm-5.3-flash, high on deepseek-flash)",
   },
   "timeout-multiplier": {
     kind: "number",
@@ -1188,7 +1188,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help:
-          "Model the analyzer agent runs (default: glm-5.3-flash; deepseek-v4-flash-vision and haiku " +
+          "Model the analyzer agent runs (default: glm-5.3-flash; deepseek-flash and haiku " +
           "as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
       },
       // The one option beyond Harbor's analyze trio, recorded as the hosted
@@ -1201,7 +1201,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<value>",
         help:
           "Reasoning effort the analyzer runs at (values: GET /api/meta analyze; default: the " +
-          "per-model default — max on glm-5.3-flash, high on deepseek-v4-flash-vision)",
+          "per-model default — max on glm-5.3-flash, high on deepseek-flash)",
       },
       rubric: {
         kind: "string",
