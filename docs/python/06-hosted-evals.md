@@ -652,7 +652,7 @@ The verifier always re-runs `separate`, under the verifier [network policy](#net
 
 ## Check
 
-Harbor's `harbor check`, hosted: rubric-driven **task quality** review of a task directory — or a whole directory of task directories — before you publish it. For each task a checker agent (claude-code, Harbor's own check agent, in its own sealed sandbox) reads every file of the task — the instruction, the tests, the environment, the data files — and rules each criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written rationale. Nothing is modified: the task bytes are read in the sandbox and never written anywhere but the platform's own record.
+Harbor's `harbor check`, hosted: rubric-driven **task quality** review of a task directory — or a whole directory of task directories — before you publish it. For each task a checker agent (claude-code, Harbor's own check agent, in its own sandbox, under the network Harbor's check wrapper task gives it — open by default) reads every file of the task — the instruction, the tests, the environment, the data files — and rules each criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written rationale. Nothing is modified: the task bytes are read in the sandbox and never written anywhere but the platform's own record.
 
 ```python
 from evolve import checks
@@ -725,7 +725,7 @@ Saved whole, the task check lands as `check-result.json` at the root (Harbor's n
 
 ## Analyze
 
-Harbor's `harbor analyze`, hosted: rubric-driven trace analysis of a finished job's trials. For each trial an analyzer agent (claude-code, Harbor's default analyze agent, in its own sealed sandbox) reads the trial's recorded tree — the trajectory, the logs, the original task — and rules every criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written explanation and a 3–5 sentence summary of what happened. Use it to catch reward hacking, to audit whether task instructions were sufficient, or to run any read-the-evidence question over a whole job at once:
+Harbor's `harbor analyze`, hosted: rubric-driven trace analysis of a finished job's trials. For each trial an analyzer agent (claude-code, Harbor's default analyze agent, in its own sandbox, under the network Harbor's analyze wrapper task gives it — open by default) reads the trial's recorded tree — the trajectory, the logs, the original task — and rules every criterion of a rubric `pass`, `fail`, or `not_applicable`, with a written explanation and a 3–5 sentence summary of what happened. Use it to catch reward hacking, to audit whether task instructions were sufficient, or to run any read-the-evidence question over a whole job at once:
 
 ```python
 # Analyze a terminal job under the defaults
