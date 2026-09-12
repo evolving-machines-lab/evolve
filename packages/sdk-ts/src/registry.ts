@@ -420,14 +420,20 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // context), served through OpenRouter behind the gateway's exact entry
       // for this id (the entry carries the flag that forwards the effort;
       // the call is priced from OpenRouter's own bill — the owner's ruling
-      // 2026-09-10: one name per model, this OpenRouter spelling on the
-      // claude, droid and opencode rosters; the Fireworks name
-      // `deepseek-flash` is gone). Alias == wire id, like the GLM rows above,
-      // so either spelling reaches the same gateway entry. Default effort
-      // `high` (DeepSeek's documented default). THE trace analyzer's default
-      // model (swarm_dashboard lib/evaluations/analysis.ts
-      // DEFAULT_ANALYZE_MODEL).
+      // 2026-09-10: one name per route, this OpenRouter spelling on the
+      // claude, droid and opencode rosters). Alias == wire id, like the GLM
+      // rows above, so either spelling reaches the same gateway entry.
+      // Default effort `high` (DeepSeek's documented default). THE trace
+      // analyzer's and check agent's default model (swarm_dashboard
+      // lib/evaluations/analysis.ts DEFAULT_ANALYZE_MODEL).
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      // The same model on a second route, Fireworks, behind the gateway's
+      // exact entry for this name (owner 2026-09-11: "a further option" —
+      // the Fireworks route is back under a name that shows its route, the
+      // way the OpenRouter id shows its own; the retired bare names
+      // `deepseek-flash` and `deepseek-v4-flash-vision` stay gone). The same
+      // three rosters, the same default effort; never the analyzer's default.
+      { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
     ],
     systemPromptFile: "CLAUDE.md",
     mcpConfig: {
@@ -763,14 +769,22 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // platform's one GLM-5.3-Flash, served from Fireworks (the ruling
       // 2026-09-08), exactly like the bare `glm-5.3-flash` elsewhere.
       { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)" },
-      // DeepSeek V4.1 Flash under the platform's one spelling for it (the
-      // owner's ruling 2026-09-10), which is this harness's native OpenRouter
-      // form: direct mode sends the id to OpenRouter itself; through the
-      // Evolve gateway the litellm provider carries it verbatim (agent.ts
-      // buildGatewayConfigJson keys the model by this id, buildCommand sends
-      // `litellm/openrouter/...`) onto the gateway's exact entry for it,
-      // priced from OpenRouter's own bill.
+      // DeepSeek V4.1 Flash under its OpenRouter id (the owner's ruling
+      // 2026-09-10; the analyzer's default), which is this harness's native
+      // OpenRouter form: direct mode sends the id to OpenRouter itself;
+      // through the Evolve gateway the litellm provider carries it verbatim
+      // (agent.ts buildGatewayConfigJson keys the model by this id,
+      // buildCommand sends `litellm/openrouter/...`) onto the gateway's
+      // exact entry for it, priced from OpenRouter's own bill.
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      // The same model on its second route, Fireworks (owner 2026-09-11: a
+      // further option). Gateway-only: a roster id rides the command line
+      // verbatim (opencodeRoutedModel below), so buildCommand sends
+      // `litellm/fireworks/...` onto the gateway's exact entry for it; there
+      // is no direct-mode home for it — OpenRouter has no such id and this
+      // harness holds no Fireworks key (providerEnvMap above), so direct mode
+      // refuses the name typed at config resolution (utils/config.ts).
+      { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -796,7 +810,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
         // (no openrouter/ rewrite — route names are the caller's).
         return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${model} --format json${reasoningFlags} "${prompt}" < /dev/null`;
       }
-      const routedModel = model.startsWith("openrouter/") ? model : `openrouter/${model}`;
+      // A roster id or an OpenRouter-form name rides verbatim; only a bare
+      // name gets OpenRouter's prefix (opencodeRoutedModel, below the table).
+      const routedModel = opencodeRoutedModel(model);
       if (!isDirectMode) {
         return `OPENCODE_PERMISSION='{"*":"allow"}' opencode run ${continueFlag}--model litellm/${routedModel} --format json${reasoningFlags} "${prompt}" < /dev/null`;
       }
@@ -827,13 +843,17 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "kimi-k3", modelId: "kimi-k3", description: "Factory-managed Droid Core Kimi K3" },
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
-      // DeepSeek V4.1 Flash under the platform's one spelling for it (the
-      // owner's ruling 2026-09-10). Unlike glm-5.3, which rides a bare alias
-      // rewritten by gatewayModelAliases below, this id needs no rewrite:
-      // resolveCommandModel passes it through verbatim into the Evolve-owned
-      // settings file, and the gateway's exact entry for it serves it,
-      // priced from OpenRouter's own bill.
+      // DeepSeek V4.1 Flash under its OpenRouter id (the owner's ruling
+      // 2026-09-10; the analyzer's default). Unlike glm-5.3, which rides a
+      // bare alias rewritten by gatewayModelAliases below, this id needs no
+      // rewrite: resolveCommandModel passes it through verbatim into the
+      // Evolve-owned settings file, and the gateway's exact entry for it
+      // serves it, priced from OpenRouter's own bill.
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      // The same model on its second route, Fireworks (owner 2026-09-11: a
+      // further option) — the same verbatim path, onto the gateway's exact
+      // entry for this name.
+      { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -890,6 +910,46 @@ export function getAgentConfig(agentType: AgentType): AgentRegistryEntry {
     throw new Error(`Unknown agent type: ${agentType}`);
   }
   return config;
+}
+
+/**
+ * True when `model` is an identifier the registry entry itself declares: a
+ * roster alias or wire id, or a key or value of its alias tables.
+ */
+export function registryOwnsModel(registry: AgentRegistryEntry, model: string): boolean {
+  if (registry.models.some((entry) => entry.alias === model || entry.modelId === model)) {
+    return true;
+  }
+  const aliases = registry.gatewayModelAliases;
+  if (aliases && (model in aliases || Object.values(aliases).includes(model))) {
+    return true;
+  }
+  const directAliases = registry.directModelAliases;
+  return Boolean(
+    directAliases && (model in directAliases || Object.values(directAliases).includes(model)),
+  );
+}
+
+/**
+ * The model string opencode's command line carries for `model`, derived from
+ * this file's own roster — not a mirror of the gateway's route spellings,
+ * which name more routes than this harness carries.
+ *
+ * The roster speaks OpenRouter ids (`openrouter/<vendor>/<model>`, OpenRouter's
+ * own form), so a name in that form rides as-is — a roster id, or beyond the
+ * table any OpenRouter id the caller routes explicitly (the docs' prefixed
+ * routing) — to OpenRouter itself in direct mode or to the gateway's
+ * `openrouter/*` route. Every other roster id already carries its route in
+ * its spelling (alias == wire id, pinned in
+ * tests/unit/harness-capabilities.test.ts): `fireworks/deepseek-v4.1-flash`
+ * rides verbatim onto the gateway's exact entry for that name. Only a bare
+ * name that is neither gets OpenRouter's prefix.
+ */
+export function opencodeRoutedModel(model: string): string {
+  if (model.startsWith("openrouter/") || registryOwnsModel(AGENT_REGISTRY.opencode, model)) {
+    return model;
+  }
+  return `openrouter/${model}`;
 }
 
 /**

@@ -1564,7 +1564,9 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: is input-dominated, and this is the roster's
     #: intelligence-per-input-dollar pick; glm-5.3-flash (at max, the effort
     #: its published scores use) and haiku stay as alternatives, glm-5.3 to
-    #: escalate).
+    #: escalate, and the same model on its Fireworks route,
+    #: fireworks/deepseek-v4.1-flash, is a further option — the OpenRouter id
+    #: stays the default).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
@@ -1616,8 +1618,8 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: cli/analyze.py:278-280). Bounded by the organization's
     #: ``max_concurrent_analyses`` at every claim: the job never holds more
     #: than the smaller of the two RUNNING fleet-wide. Omitted, the
-    #: organization's ceiling alone bounds the wave (its fleet default is 16,
-    #: four times Harbor's own default of 4) and the resolved echo reads ``None``. An
+    #: organization's ceiling alone bounds the wave (its fleet default is 60,
+    #: fifteen times Harbor's own default of 4) and the resolved echo reads ``None``. An
     #: integer in ``[1, 150]``; anything else is refused ``invalid_input``
     #: naming ``analyze.n_concurrent``.
     n_concurrent: int
@@ -7509,9 +7511,11 @@ class JobsClient:
         trajectory), the harness stdout stream at Harbor's tee name for the
         harness (``agent/claude-code.txt``, ``agent/codex.txt``, ...),
         ``agent/stderr.log``, ``agent/trace-parsed.jsonl``, the agent home
-        at Harbor's session slot for the harness (``agent/sessions/``,
-        ``agent/qwen-sessions/``, ``agent/.kimi-code/``, ``agent/opencode/``)
-        with the rest under ``agent/evolve-home/``, ``verifier/test-stdout.txt``,
+        at its real names (``agent/.claude/``, ``agent/.claude.json``,
+        ``agent/.codex/``, ``agent/.kimi-code/``, ...) with the capture record
+        ``agent/agent-home.json`` beside it and Harbor's own copies of the
+        subtrees its adapters keep (``agent/sessions/``, ``agent/qwen-sessions/``,
+        ``agent/opencode/``), ``verifier/test-stdout.txt``,
         ``verifier/reward.json``, the raw
         ``verifier/reward.txt`` (only when the grader wrote one),
         ``steps/<name>/verifier/reward.json`` (multi-step trials only),

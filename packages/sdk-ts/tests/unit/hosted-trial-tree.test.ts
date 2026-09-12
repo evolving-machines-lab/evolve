@@ -5,12 +5,14 @@
  *
  * What is held here:
  *   - the LAYOUT is Harbor's, file for file: config.json, result.json,
- *     agent/ (trajectory, raw logs, parsed events, sessions/), verifier/,
+ *     agent/ (trajectory, raw logs, parsed events, the home at its real
+ *     names, Harbor's copies), verifier/,
  *     exception.txt — and absent artifacts are absent files, never empty
  *     placeholders;
- *   - the stdout stream sits at Harbor's tee name for the harness and the
- *     captured home at Harbor's slot for it, the rest lossless under
- *     agent/evolve-home/ — the server's table, mirrored (HARNESS_TRIAL_LAYOUTS);
+ *   - the stdout stream sits at Harbor's tee name for the harness; the
+ *     captured home lands at its real names by the server's ONE rule
+ *     (homeRelativePath, mirrored) with Harbor's own copies beside it by the
+ *     server's small table (HARNESS_TRIAL_LAYOUTS, mirrored and pinned);
  *   - evolve.json carries the platform record Harbor has no slot for:
  *     gateway money/tokens per lane, provider, user_id, regrade lineage;
  *   - the assembly is deterministic — same parts, same bytes.
@@ -27,10 +29,11 @@ import {
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
   harnessTrialLayout,
-  homeFileTrialPath,
+  harborCopyPath,
+  homeRelativePath,
   jobEvolveRecord,
+  placeHomeObject,
   trialEvolveRecord,
-  visibleHomeTree,
   type AnalysisTreeParts,
   type TrialTreeParts,
 } from "../../src/hosted/trial-tree";
@@ -187,6 +190,7 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
   assertEqual(
     Object.keys(files).sort(),
     [
+      "agent/.codex/sessions/rollout.jsonl",
       "agent/stderr.log",
       "agent/codex.txt",
       "agent/trace-parsed.jsonl",
@@ -250,53 +254,52 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
   assertEqual(
     Object.keys(files).filter((p) => p.startsWith("agent/")).sort(),
     [
-      "agent/evolve-home/root/.local/state/opencode/x",
+      "agent/.local/share/opencode/log/opencode.log",
+      "agent/.local/state/opencode/x",
       "agent/opencode.txt",
       "agent/opencode/xdg-data/opencode/log/opencode.log",
       "agent/stderr.log",
       "agent/trace-parsed.jsonl",
       "agent/trajectory.json",
     ],
-    "opencode: the tee is opencode.txt, the data store lands at agent/opencode/xdg-data/opencode/, the uncaptured state twin's path rides evolve-home"
+    "opencode: the tee is opencode.txt, the home at its real names, and the data store a second time at agent/opencode/xdg-data/opencode/ (Harbor's copy)"
   );
 }
 
 // -----------------------------------------------------------------------------
-// Placement rule 3: the capture record rides the extension slot, never a Harbor
-// slot — the server's harbor-output-tree.ts homeFileTrialPath rule 3, mirrored
+// The ONE placement rule — the server's harbor-output-tree.ts homeRelativePath,
+// mirrored: the record at agent-home.json, the home at its real names, the
+// pre-2026-09-09 upload keys under sessions/, the mount rule verbatim
 // -----------------------------------------------------------------------------
 {
   const manifestKey = `/${AGENT_HOME_MANIFEST_FILENAME}`;
-  for (const [id, layout] of Object.entries(HARNESS_TRIAL_LAYOUTS)) {
-    assertEqual(
-      homeFileTrialPath(layout, manifestKey),
-      "agent/evolve-home/agent-home.json",
-      `${id}: the capture record lands at agent/evolve-home/agent-home.json, outside every Harbor slot`
-    );
-  }
-  assertEqual(
-    homeFileTrialPath(DEFAULT_HARNESS_TRIAL_LAYOUT, "/agent-home.json"),
-    "agent/evolve-home/agent-home.json",
-    "the default layout places the record the same way"
-  );
-  assertEqual(
-    homeFileTrialPath(harnessTrialLayout("gemini"), "/root/agent-home.json"),
-    "agent/evolve-home/root/agent-home.json",
-    "a same-named file INSIDE a home is an ordinary home file (rule 4)"
-  );
+  assertEqual(homeRelativePath(manifestKey), "agent-home.json", "the capture record lands at agent/agent-home.json (rule 2)");
+  assertEqual(homeRelativePath("/root/.claude/projects/-app/s.jsonl"), ".claude/projects/-app/s.jsonl", "a /root home file keeps its real name (rule 3)");
+  assertEqual(homeRelativePath("/home/user/.codex/s.jsonl"), ".codex/s.jsonl", "a /home/<user> home file keeps its real name (rule 3)");
+  assertEqual(homeRelativePath("/root/.claude.json"), ".claude.json", "a dot-file at the home root keeps its real name (rule 3)");
+  assertEqual(homeRelativePath("/logs/agent/sessions/x.jsonl"), "sessions/x.jsonl", "an uploaded archive's mount key is verbatim (rule 1)");
+  assertEqual(homeRelativePath("/projects/-app/s.jsonl"), "sessions/projects/-app/s.jsonl", "a pre-2026-09-09 upload key rides sessions/ (rule 4)");
+  const placed = new Set<string>();
+  assertEqual(placeHomeObject(placed, manifestKey), "agent-home.json", "the record is placed first");
+  assertEqual(placeHomeObject(placed, "/root/agent-home.json"), "root/agent-home.json", "a same-named file INSIDE a home falls back to its sandbox path (collision rule)");
+  const suffixed = new Set<string>();
+  placeHomeObject(suffixed, "/home/u/x");
+  placeHomeObject(suffixed, "/home/u/root/x");
+  assertEqual(placeHomeObject(suffixed, "/root/x"), "root/x.2", "a taken fallback takes a numbered suffix (x and root/x already placed)");
   const files = assembleTrialTree(
     fullParts({
       trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "claude-code" } }),
       home: {
         [manifestKey]: '{"files":[]}',
         "/root/.claude/projects/-app/s.jsonl": "{}",
+        "/root/.claude.json": "{}",
       },
     })
   );
   assertEqual(
-    Object.keys(files).filter((p) => p.startsWith("agent/evolve-home/") || p.startsWith("agent/sessions/")).sort(),
-    ["agent/evolve-home/agent-home.json", "agent/sessions/projects/-app/s.jsonl"],
-    "evolve trial download writes the record beside the lossless home, never inside agent/sessions/ (claude's Harbor slot)"
+    Object.keys(files).filter((p) => p.startsWith("agent/.") || p.startsWith("agent/agent-home") || p.startsWith("agent/sessions/")).sort(),
+    ["agent/.claude.json", "agent/.claude/projects/-app/s.jsonl", "agent/agent-home.json", "agent/sessions/projects/-app/s.jsonl"],
+    "evolve trial download writes the home at its real names with the record beside it, and Harbor's copy of the claude config dir at agent/sessions/"
   );
 }
 
@@ -463,21 +466,63 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
-// The visible home mapping — the server's exact rule
+// Harbor's copies — the server's table (harness-registry.ts harborCopies), pinned
 // -----------------------------------------------------------------------------
 {
+  const expected: Record<string, readonly { sandboxRoot: string; agentDir: string }[]> = {
+    claude: [{ sandboxRoot: "/root/.claude", agentDir: "sessions" }],
+    codex: [{ sandboxRoot: "/root/.codex/sessions", agentDir: "sessions" }],
+    gemini: [],
+    qwen: [{ sandboxRoot: "/root/.qwen/projects", agentDir: "qwen-sessions" }],
+    kimi: [],
+    opencode: [{ sandboxRoot: "/root/.local/share/opencode", agentDir: "opencode/xdg-data/opencode" }],
+    droid: [],
+  };
+  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the seven harnesses");
+  for (const [id, copies] of Object.entries(expected)) {
+    assertEqual(HARNESS_TRIAL_LAYOUTS[id].harborCopies, copies, `${id}: Harbor's copies mirror the server's table`);
+  }
+  assertEqual(harborCopyPath(harnessTrialLayout("claude-code"), "/root/.claude/x"), "sessions/x", "claude's config dir is copied to Harbor's sessions/");
+  assertEqual(harborCopyPath(harnessTrialLayout("kimi"), "/root/.kimi-code/x"), null, "kimi has no Harbor copy: the home at .kimi-code/ is the whole record");
+  assertEqual(harborCopyPath(DEFAULT_HARNESS_TRIAL_LAYOUT, "/root/.claude/x"), null, "the default layout copies nothing");
+}
+
+// -----------------------------------------------------------------------------
+// Collisions across the rules and the copy-skip branch — the server's
+// evaluations-harbor-output-tree.test.ts cases, mirrored, contents asserted
+// -----------------------------------------------------------------------------
+{
+  const claude = (home: Record<string, string>) =>
+    Object.keys(
+      assembleTrialTree(fullParts({ trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "claude-code" } }), home }))
+    )
+      .filter((p) => p.startsWith("agent/.") || p.startsWith("agent/root/") || p.startsWith("agent/sessions/"))
+      .sort();
   assertEqual(
-    visibleHomeTree({ "/root/.kimi-code/config.toml": "x" }),
-    { "kimi-code/config.toml": "x" },
-    "/root/.name strips to name/"
+    claude({ "/root/sessions/x": "native", "/root/.claude/x": "cfg" }),
+    ["agent/.claude/x", "agent/root/sessions/x", "agent/sessions/x"],
+    "Harbor's copy of .claude/x takes sessions/x first (sandbox-path order), so the native /root/sessions/x falls back to root/sessions/x — no second write, no bytes dropped"
   );
   assertEqual(
-    visibleHomeTree({ "/home/user/.codex/s.jsonl": "y" }),
-    { "codex/s.jsonl": "y" },
-    "/home/<user>/.name strips to name/"
+    claude({ "/logs/agent/.claude/x": "mounted", "/root/.claude/x": "native" }),
+    ["agent/.claude/x", "agent/root/.claude/x", "agent/sessions/x"],
+    "an uploaded archive's mount key (rule 1) takes .claude/x, the native home file falls back to root/.claude/x, Harbor's copy of the native file still lands at sessions/x"
   );
-  const collided = visibleHomeTree({ "/root/.codex/a": "1", "/.codex/a": "2" });
-  assertEqual(Object.keys(collided).sort(), [".codex/a", "codex/a"], "a colliding mapped path keeps its original");
+  // The copy-skip branch itself: a key that sorts BEFORE /root/.claude/x already holds sessions/x,
+  // so Harbor's copy of the config dir is NOT written a second time (the bytes stay the uploaded file's).
+  const skipped = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...fixtureTrial().agent_info, name: "claude-code" } }),
+      home: { "/logs/agent/sessions/x": "uploaded", "/root/.claude/x": "cfg" },
+    })
+  );
+  assertEqual(skipped["agent/sessions/x"], "uploaded", "a slot already holding an object keeps it: Harbor's copy is skipped, never overwritten");
+  assertEqual(skipped["agent/.claude/x"], "cfg", "the native home file still lands at its real name");
+  assertEqual(
+    Object.keys(skipped).filter((p) => p.startsWith("agent/.") || p.startsWith("agent/root/") || p.startsWith("agent/sessions/")).sort(),
+    ["agent/.claude/x", "agent/sessions/x"],
+    "no fallback path is written when nothing collides at the home path"
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -561,7 +606,7 @@ function fixtureAnalysisParts(): AnalysisTreeParts {
   assertEqual(
     Object.keys(files).sort(),
     [
-      "agent/evolve-home/root/.claude/session.jsonl",
+      "agent/.claude/session.jsonl",
       "agent/stdout.log",
       "agent/trace-parsed.jsonl",
       "analysis.json",
@@ -636,7 +681,7 @@ function fixtureAnalysisParts(): AnalysisTreeParts {
   const files = assembleTaskCheckTree(parts);
   assertEqual(
     Object.keys(files).sort(),
-    ["agent/evolve-home/root/.claude/session.jsonl", "agent/stdout.log", "agent/trace-parsed.jsonl", "check-result.json", "evolve.json"],
+    ["agent/.claude/session.jsonl", "agent/stdout.log", "agent/trace-parsed.jsonl", "check-result.json", "evolve.json"],
     "the task check tree: check-result.json at the run's root, the checker's streams in agent/, no trial-only files"
   );
   const verdict = JSON.parse(files["check-result.json"]) as Record<string, unknown>;

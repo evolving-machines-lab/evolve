@@ -20,7 +20,7 @@
  *   npx tsx tests/unit/auth-config.test.ts
  */
 
-import { resolveAgentConfig } from "../../src/utils/config.js";
+import { EvolveConfigError, resolveAgentConfig } from "../../src/utils/config.js";
 import { managedSandbox, resolveDefaultSandbox, toManagedE2BKey } from "../../src/utils/sandbox.js";
 import {
   getDashboardUrl,
@@ -112,6 +112,7 @@ function clearEnv(): void {
   delete process.env.GOOGLE_GEMINI_BASE_URL;
   delete process.env.FACTORY_API_KEY;
   delete process.env.FACTORY_BASE_URL;
+  delete process.env.OPENROUTER_API_KEY;
   delete process.env.E2B_API_KEY;
   delete process.env.E2B_API_URL;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -482,6 +483,75 @@ async function runTests(): Promise<void> {
   {
     const result = resolveAgentConfig({ type: "claude" });
     assertEqual(result.baseUrl, "https://custom.anthropic.com", "uses baseUrl from env var");
+  }
+
+  // -------------------------------------------------------------------------
+  console.log("\nDirect mode: a roster id whose route has no key is refused typed");
+  // -------------------------------------------------------------------------
+  // opencode's roster carries fireworks/deepseek-v4.1-flash (owner
+  // 2026-09-11: a further option), a name that spells its route; the harness
+  // holds an OpenRouter key only (apiKeyEnv, providerEnvMap), so in direct
+  // mode no key can serve it — the name is served through the Evolve gateway,
+  // whose exact entry for it holds the Fireworks key. Honesty rule: full
+  // support or a typed refusal naming the feature — never opencode's own
+  // provider error at run time.
+
+  const GATEWAY_ONLY = "fireworks/deepseek-v4.1-flash";
+  const refusal = (fn: () => void): unknown => {
+    try {
+      fn();
+      return undefined;
+    } catch (e) {
+      return e;
+    }
+  };
+
+  clearEnv();
+  process.env.OPENROUTER_API_KEY = "env-openrouter-key";
+  {
+    const result = resolveAgentConfig({ type: "opencode", model: "openrouter/deepseek/deepseek-v4.1-flash" });
+    assertEqual(result.isDirectMode, true, "OPENROUTER_API_KEY serves an OpenRouter roster id in direct mode");
+    assertEqual(result.apiKey, "env-openrouter-key", "…with the OpenRouter key");
+  }
+  {
+    const error = refusal(() => resolveAgentConfig({ type: "opencode", model: GATEWAY_ONLY }));
+    assert(error instanceof EvolveConfigError, `OPENROUTER_API_KEY + "${GATEWAY_ONLY}" is refused with EvolveConfigError`);
+    assertEqual((error as EvolveConfigError | undefined)?.field, "model", "…on the model field");
+    const message = (error as Error)?.message ?? "";
+    assert(message.includes(`"${GATEWAY_ONLY}"`), "…the message names the model");
+    assert(message.includes("served through the Evolve gateway"), "…and says it is served through the Evolve gateway");
+    assert(message.includes("fireworks"), "…and names the route that has no direct-mode key");
+  }
+
+  clearEnv();
+  {
+    const error = refusal(() =>
+      resolveAgentConfig({ type: "opencode", providerApiKey: "explicit-openrouter-key", model: GATEWAY_ONLY }),
+    );
+    assert(error instanceof EvolveConfigError, `explicit providerApiKey + "${GATEWAY_ONLY}" is refused the same way`);
+  }
+
+  clearEnv();
+  process.env.EVOLVE_API_KEY = "env-evolve-key";
+  process.env.OPENROUTER_API_KEY = "env-openrouter-key";
+  {
+    const result = resolveAgentConfig({ type: "opencode", model: GATEWAY_ONLY });
+    assertEqual(result.isDirectMode, false, `EVOLVE_API_KEY serves "${GATEWAY_ONLY}" in gateway mode`);
+    assertEqual(result.model, GATEWAY_ONLY, "…with the model passed through verbatim");
+  }
+
+  clearEnv();
+  process.env.OPENROUTER_API_KEY = "env-openrouter-key";
+  {
+    // Not judged here: a prefixed name beyond the roster is sent as an
+    // OpenRouter id — opencode's command builder (registry.ts
+    // opencodeRoutedModel) prepends openrouter/ to every name that is neither
+    // the openrouter/ form nor a roster id, so the route, not the caller,
+    // decides; a bare name likewise gets the harness's native prefix.
+    const beyond = resolveAgentConfig({ type: "opencode", model: "anthropic/claude-opus-5" });
+    assertEqual(beyond.isDirectMode, true, "an off-roster prefixed name still resolves to direct mode");
+    const bare = resolveAgentConfig({ type: "opencode", model: "glm-5.3-flash" });
+    assertEqual(bare.isDirectMode, true, "a bare name still resolves to direct mode");
   }
 
   // -------------------------------------------------------------------------

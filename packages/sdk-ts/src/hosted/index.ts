@@ -391,6 +391,7 @@ export type {
 import {
   GATEWAY_TRACE_SEQ_BASE,
   isHostedErrorCode,
+  mapStoredAt,
   mapUsageReading,
   type Awaitable,
   type CapabilityDocument,
@@ -409,10 +410,11 @@ export {
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
   harnessTrialLayout,
-  homeFileTrialPath,
+  harborCopyPath,
+  homeRelativePath,
+  placeHomeObject,
   jobEvolveRecord,
   trialEvolveRecord,
-  visibleHomeTree,
   type AnalysisTreeParts,
   type HarnessTrialLayout,
   type TaskCheckTreeParts,
@@ -3718,6 +3720,7 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
             : {}) as Record<string, unknown>,
         })),
         gateway_calls: mapGatewayCalls(raw.gatewayCalls),
+        stored_at: mapStoredAt(raw.storedAt, events.length, "Analysis transcript response"),
       };
     },
 
@@ -3927,6 +3930,7 @@ export function checks(config?: HostedClientConfig): ChecksClient {
             : {}) as Record<string, unknown>,
         })),
         gateway_calls: mapGatewayCalls(raw.gatewayCalls),
+        stored_at: mapStoredAt(raw.storedAt, events.length, "Task check transcript response"),
       };
     },
 

@@ -552,7 +552,9 @@ export interface AnalyzeConfigInput {
    * cli/analyze.py `claude-haiku-4-5`): analysis is input-dominated, and
    * this is the roster's intelligence-per-input-dollar pick; `glm-5.3-flash`
    * (at max, the effort its published scores use) and `haiku` stay on the
-   * roster as alternatives, `glm-5.3` to escalate. The value speaks
+   * roster as alternatives, `glm-5.3` to escalate, and the same model on
+   * its Fireworks route, `fireworks/deepseek-v4.1-flash`, is a further
+   * option (the OpenRouter id stays the default). The value speaks
    * the same vocabulary as `agents[].model_name`: either advertised
    * spelling is accepted and stored AS GIVEN (the default is the roster
    * alias), the wire id is resolved only when the analyzer runs, and every
@@ -617,8 +619,8 @@ export interface AnalyzeConfigInput {
    * cli/analyze.py:278-280). Bounded by the organization's
    * `max_concurrent_analyses` at every claim: the job never holds more
    * than the smaller of the two RUNNING fleet-wide. Omitted, the
-   * organization's ceiling alone bounds the wave (its fleet default is 16,
-   * four times Harbor's own default of 4) and the resolved echo reads `null`. An integer in
+   * organization's ceiling alone bounds the wave (its fleet default is 60,
+   * fifteen times Harbor's own default of 4) and the resolved echo reads `null`. An integer in
    * `[1, 150]`; anything else is refused `invalid_input` naming
    * `analyze.n_concurrent`.
    */
@@ -1868,6 +1870,31 @@ export function gatewayUsageOf(event: Pick<TraceEvent, "data">): GatewayUsage | 
   const usage = record.usage;
   if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
   return record as unknown as GatewayUsage;
+}
+
+/**
+ * The transcript feed's `storedAt` as the contract declares it (spec
+ * SessionTranscript.storedAt): one date-time string per entry of `events`,
+ * index-aligned — the server's write instant of that event's row. Absent (a
+ * transcript served from its file, or a server predating the field) reads as
+ * undefined, never as an empty list, which the contract reserves for an empty
+ * row-served page; present, it must be one string per event served, or the
+ * read is refused by name — a reader placing the gateway meter's calls by
+ * index would otherwise place them under the wrong step. `where` names the
+ * envelope in the refusal (the sessions and hosted clients share this one
+ * mapping).
+ */
+export function mapStoredAt(raw: unknown, eventCount: number, where: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${where} storedAt is not a list of date-time strings`);
+  }
+  if (raw.length !== eventCount) {
+    throw new Error(
+      `${where} storedAt has ${raw.length} entries for ${eventCount} events (one per event, index-aligned)`
+    );
+  }
+  return raw as string[];
 }
 
 /**
@@ -3851,9 +3878,11 @@ export interface JobsClient {
    * multi-step trials), trial.log, agent/trajectory.json (the normalized
    * ATIF trajectory), the harness stdout stream at Harbor's tee name for the
    * harness (agent/claude-code.txt, agent/codex.txt, ...), agent/stderr.log,
-   * agent/trace-parsed.jsonl, the agent home at Harbor's session slot for
-   * the harness (agent/sessions/, agent/qwen-sessions/, agent/.kimi-code/,
-   * agent/opencode/) with the rest under agent/evolve-home/,
+   * agent/trace-parsed.jsonl, the captured agent home at its real names
+   * (agent/.claude/, agent/.claude.json, agent/.codex/, agent/.kimi-code/, …)
+   * with the capture record agent/agent-home.json beside it and Harbor's own
+   * copies of the subtrees its adapters keep (agent/sessions/,
+   * agent/qwen-sessions/, agent/opencode/),
    * verifier/test-stdout.txt, verifier/reward.json, the raw
    * verifier/reward.txt (only when the grader wrote one),
    * steps/<name>/verifier/reward.json (multi-step trials only),
@@ -4131,6 +4160,16 @@ export interface AnalysisTranscript {
    * read: they ride beside `events`, never inside the seq timeline.
    */
   gateway_calls: TraceEvent[];
+  /**
+   * The server's write instant of each event's row, one per entry of
+   * `events`, index-aligned (the contract's SessionTranscript.storedAt):
+   * present on every row-served page (an empty page carries an empty list),
+   * absent when the transcript was served from its file, where no write
+   * instant exists. It places the gateway meter's calls under the harness's
+   * steps for harnesses whose lines carry no clock of their own (codex, kimi,
+   * qwen); a reader that does not place calls needs nothing from it.
+   */
+  stored_at?: string[];
 }
 
 /**
@@ -4389,6 +4428,8 @@ export interface TaskCheckTranscript {
   events: TraceEvent[];
   /** The gateway meter's per-call lines for the checker's key (the AnalysisTranscript's field, same law). */
   gateway_calls: TraceEvent[];
+  /** The server's write instant of each event's row, one per entry of `events`, index-aligned (the AnalysisTranscript's field, same law); absent when the transcript was served from its file. */
+  stored_at?: string[];
 }
 
 /**
@@ -5024,7 +5065,7 @@ export interface CapabilityDocument {
       job_trials: number;
       /** Per-file cap on the trial artifacts an upload stores (a trial with a file past it is skipped, `trial_too_large` on the import). */
       job_trial_file_bytes: number;
-      /** Total cap on one trial's `agent/` subtrees — its session home: `agent/sessions/`, `agent/qwen-sessions/`, `agent/.kimi-code/`, `agent/opencode/`, `agent/evolve-home/` (a trial past it is skipped the same way). */
+      /** Total cap on one trial's `agent/` subtrees — its session home: the home at its real names (`agent/.claude/`, `agent/.codex/`, `agent/.kimi-code/`, …) and Harbor's copies (`agent/sessions/`, `agent/qwen-sessions/`, `agent/opencode/`) (a trial past it is skipped the same way). */
       job_trial_session_bytes: number;
     };
     dataset_names: {

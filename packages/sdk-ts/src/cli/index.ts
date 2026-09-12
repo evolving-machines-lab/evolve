@@ -1190,7 +1190,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<name>",
         help:
           "Model the analyzer agent runs (default: openrouter/deepseek/deepseek-v4.1-flash; glm-5.3-flash and haiku " +
-          "as alternatives, glm-5.3 to escalate; must be on the claude roster, GET /api/meta)",
+          "as alternatives, glm-5.3 to escalate, fireworks/deepseek-v4.1-flash the same model on its Fireworks route; " +
+          "must be on the claude roster, GET /api/meta)",
       },
       // The one option beyond Harbor's analyze trio, recorded as the hosted
       // extension it is: `run`'s own --effort (the platform's reasoning_effort
@@ -1288,7 +1289,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<name>",
         help:
           "Model the checker agent runs (default: openrouter/deepseek/deepseek-v4.1-flash — the analyzer's default, a recorded deviation " +
-          "from Harbor's claude-sonnet-4-6; must be on the claude roster, GET /api/meta)",
+          "from Harbor's claude-sonnet-4-6; fireworks/deepseek-v4.1-flash is the same model on its Fireworks route; " +
+          "must be on the claude roster, GET /api/meta)",
       },
       effort: {
         kind: "string",

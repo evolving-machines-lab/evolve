@@ -8,7 +8,9 @@
  * server's one builder is swarm_dashboard lib/evaluations/trial-tree.ts,
  * its per-harness table lib/evaluations/worker/harness-registry.ts
  * `trialLayout`), so a reader written against one finds the other where it
- * expects it. The per-harness placement is a TABLE (HARNESS_TRIAL_LAYOUTS
+ * expects it. The captured home is placed by ONE rule (homeRelativePath
+ * below, the server's harbor-output-tree.ts homeRelativePath verbatim) and
+ * Harbor's own copies of its subtrees by a small TABLE (HARNESS_TRIAL_LAYOUTS
  * below), mirrored from the server's registry with the same citations into
  * Harbor's own agent adapters — a change to one side is a change to both.
  *
@@ -34,8 +36,8 @@
  * downloadTrialArtifacts): a file that is not UTF-8 text — opencode's SQLite
  * store, a cached image — is present in the archive and absent here, named
  * only in the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME
- * below, placed by homeFileTrialPath rule 3 at agent/evolve-home/ — the
- * server's slot for it); and a home over the server's whole-read ceiling is
+ * below, placed by homeRelativePath at agent/agent-home.json); and a home
+ * over the server's whole-read ceiling is
  * refused 413 (`invalid_input`, param `format`) with no bytes door on this
  * side — the JOB archive carries it whole. Every file both trees carry sits
  * at the same path in both.
@@ -56,16 +58,16 @@
  *   agent/trace-parsed.jsonl  the parsed event trace (Evolve's own artifact,
  *                             riding inside agent/ — Harbor has no slot for
  *                             it and a Harbor reader ignores it)
- *   agent/sessions/…          the captured agent home at Harbor's own session
- *   agent/qwen-sessions/…     slot for the harness (claude and codex:
- *   agent/.kimi-code/…        sessions/; qwen: qwen-sessions/; kimi:
- *   agent/opencode/…          .kimi-code/; opencode: its data store at
- *                             opencode/xdg-data/opencode/), the subtree
- *                             Harbor's adapter puts there — and the rest of
- *   agent/evolve-home/…       the home under Evolve's own slot, keyed by its
- *                             sandbox path (evolve-home/root/.gemini/…), as
- *                             far as the text view carries it (above), with
- *                             the capture record agent-home.json at its root
+ *   agent/.claude/…           the captured agent home at its real names —
+ *   agent/.claude.json        the path relative to the home directory
+ *   agent/.codex/…            (homeRelativePath: `/root/.gemini/x` -> .gemini/x),
+ *   agent/.kimi-code/…        as far as the text view carries it (above)
+ *   agent/agent-home.json     the capture record, beside the home
+ *   agent/sessions/…          Harbor's own copies of the subtrees its adapter
+ *   agent/qwen-sessions/…     keeps (claude and codex: sessions/; qwen:
+ *   agent/opencode/…          qwen-sessions/; opencode: opencode/xdg-data/
+ *                             opencode/) — the same text a second time at
+ *                             Harbor's slot (harborCopyPath)
  *   verifier/test-stdout.txt  the stored verifier log, when stored
  *   verifier/reward.json      the rewards map, when the verifier produced one
  *   exception.txt             when the trial carries an exception
@@ -112,71 +114,48 @@ export interface TrialTreeParts {
 }
 
 /**
- * The agent-home tree in its VISIBLE shape — the mapping the server's
- * agent-home tgz (`?stream=agent-home&format=tgz`) applies as it streams
- * (their lib/tar-gz.ts visibleHomeEntries — one entry per stored object;
- * this side maps a map, since the text view arrives whole): strip the
- * `/root/` (or `/home/<user>/`) wrapper and the leading dot of the first
- * surviving segment, so
- * `/root/.codex/x` reads `codex/x`. A mapped path that would collide keeps
- * its wrapper-stripped original instead. Presentation only; the trial tree
- * below places the home by the Harbor table instead (homeFileTrialPath).
- */
-export function visibleHomeTree(files: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [path, content] of Object.entries(files)) {
-    const clean = path.replace(/^\/+/, "");
-    const segs = clean.split("/");
-    if (segs.length > 1 && segs[0] === "root") segs.shift();
-    else if (segs.length > 2 && segs[0] === "home") segs.splice(0, 2);
-    if (segs[0].length > 1 && segs[0].startsWith(".")) segs[0] = segs[0].slice(1);
-    const mapped = segs.join("/");
-    if (mapped in out) out[clean] = content;
-    else out[mapped] = content;
-  }
-  return out;
-}
-
-/**
  * Where ONE harness's files land under agent/ in a Harbor trial dir: the
  * stdout tee name Harbor's adapter for it uses, and which subtrees of the
- * captured sandbox home sit at Harbor's own slots (first match wins;
- * everything else rides agent/evolve-home/). The server's table, mirrored
+ * captured sandbox home Harbor's own adapter keeps a copy of (first match
+ * wins; the home itself always lands at homeRelativePath). The server's table, mirrored
  * (swarm_dashboard lib/evaluations/worker/harness-registry.ts trialLayout,
  * each row cited into Harbor's agents/installed/*.py).
  */
 export interface HarnessTrialLayout {
   /** Harbor's tee file for the harness stdout stream, a name under agent/. */
   stdoutFile: string;
-  /** Captured-home subtrees at Harbor's own slots: sandbox dir -> dir under agent/. */
-  homeSlots: readonly { sandboxRoot: string; agentDir: string }[];
+  /** Harbor's own copies of captured-home subtrees: sandbox dir -> dir under agent/. */
+  harborCopies: readonly { sandboxRoot: string; agentDir: string }[];
 }
 
-/** A harness Harbor has no adapter for: stdout.log, no Harbor session slot. */
-export const DEFAULT_HARNESS_TRIAL_LAYOUT: HarnessTrialLayout = { stdoutFile: "stdout.log", homeSlots: [] };
+/** A harness Harbor has no adapter for: stdout.log, no Harbor copy. */
+export const DEFAULT_HARNESS_TRIAL_LAYOUT: HarnessTrialLayout = {
+  stdoutFile: "stdout.log",
+  harborCopies: [],
+};
 
 /** The table, keyed by SDK harness id (the server's registry entries, mirrored). */
 export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   // claude_code.py:482 CLAUDE_CONFIG_DIR = agent/sessions; tee :1890.
-  claude: { stdoutFile: "claude-code.txt", homeSlots: [{ sandboxRoot: "/root/.claude", agentDir: "sessions" }] },
+  claude: { stdoutFile: "claude-code.txt", harborCopies: [{ sandboxRoot: "/root/.claude", agentDir: "sessions" }] },
   // codex.py:1458-1463 copies $CODEX_HOME/sessions to agent/sessions; tee :80.
-  codex: { stdoutFile: "codex.txt", homeSlots: [{ sandboxRoot: "/root/.codex/sessions", agentDir: "sessions" }] },
+  codex: { stdoutFile: "codex.txt", harborCopies: [{ sandboxRoot: "/root/.codex/sessions", agentDir: "sessions" }] },
   // gemini_cli.py:979-980 tee; its session files are the ACP runner's own — no slot.
-  gemini: { stdoutFile: "gemini-cli.txt", homeSlots: [] },
+  gemini: { stdoutFile: "gemini-cli.txt", harborCopies: [] },
   // qwen_code.py:627 copies ~/.qwen/projects to agent/qwen-sessions; tee :619.
-  qwen: { stdoutFile: "qwen-code.txt", homeSlots: [{ sandboxRoot: "/root/.qwen/projects", agentDir: "qwen-sessions" }] },
-  // kimi_code.py:17 the home IS agent/.kimi-code; tee :18.
-  kimi: { stdoutFile: "kimi-code.txt", homeSlots: [{ sandboxRoot: "/root/.kimi-code", agentDir: ".kimi-code" }] },
+  qwen: { stdoutFile: "qwen-code.txt", harborCopies: [{ sandboxRoot: "/root/.qwen/projects", agentDir: "qwen-sessions" }] },
+  // kimi_code.py:17 _KIMI_CODE_HOME = agent/.kimi-code — the home's own dir IS Harbor's slot, so no copy; tee :18.
+  kimi: { stdoutFile: "kimi-code.txt", harborCopies: [] },
   // opencode.py:74 tee; :524 XDG_DATA_HOME = /logs/agent/opencode/xdg-data, and the
   // CLI keeps its store at $XDG_DATA_HOME/opencode — the captured default store
   // (~/.local/share/opencode, registry.ts) sits at that slot. The state twin
   // (:525 XDG_STATE_HOME) is not captured: no slot.
   opencode: {
     stdoutFile: "opencode.txt",
-    homeSlots: [{ sandboxRoot: "/root/.local/share/opencode", agentDir: "opencode/xdg-data/opencode" }],
+    harborCopies: [{ sandboxRoot: "/root/.local/share/opencode", agentDir: "opencode/xdg-data/opencode" }],
   },
   // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
-  droid: { stdoutFile: "droid.txt", homeSlots: [] },
+  droid: { stdoutFile: "droid.txt", harborCopies: [] },
 };
 
 /**
@@ -211,48 +190,85 @@ const HARBOR_AGENT_MOUNT_DIR = "/logs/agent";
 export const AGENT_HOME_MANIFEST_FILENAME = "agent-home.json";
 
 /**
- * The trial-relative path of ONE captured home file (the agent-home
- * artifact: sandbox path -> text), by the harness's layout — the server's
- * rule, verbatim (swarm_dashboard lib/evaluations/harbor-output-tree.ts
- * homeFileTrialPath, its five rules in its order):
+ * The HOME-RELATIVE path of ONE captured home file (the agent-home
+ * artifact: sandbox path -> text) — the server's ONE rule, verbatim
+ * (swarm_dashboard lib/evaluations/harbor-output-tree.ts homeRelativePath;
+ * no harness enters it). The trial tree writes it at agent/<this>:
  *
- *   1. a Harbor slot of the layout (`/root/.claude/x` -> agent/sessions/x);
- *   2. Harbor's own mount: `/logs/agent/x` -> agent/x verbatim — an uploaded
- *      archive's home, any slot;
- *   3. the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME)
- *      -> agent/evolve-home/agent-home.json, the extension slot — outside
- *      every Harbor slot, so a Harbor reader of agent/sessions/ never meets
- *      a file no Harbor agent writes;
- *   4. a home wrapper (`/root/…`, `/home/<user>/…`) -> agent/evolve-home/
- *      <path>, lossless;
- *   5. anything else -> agent/sessions/<path> (the key shape the platform's
+ *   1. Harbor's own mount: `/logs/agent/x` -> x — an uploaded archive's
+ *      home, any slot, verbatim;
+ *   2. the capture record (`/agent-home.json`, AGENT_HOME_MANIFEST_FILENAME)
+ *      -> agent-home.json;
+ *   3. a home wrapper (`/root/x`, `/home/<user>/x`) -> x: the path relative
+ *      to the home directory, real names kept (`.claude/…`, `.claude.json`,
+ *      `.kimi-code/…`, `.local/share/opencode/…`);
+ *   4. anything else -> sessions/<path> (the key shape the platform's
  *      job-upload ingest wrote before 2026-09-09).
  */
-export function homeFileTrialPath(layout: HarnessTrialLayout, sandboxPath: string): string {
-  const under = (root: string): string | null =>
-    sandboxPath.startsWith(`${root}/`) ? sandboxPath.slice(root.length + 1) : null;
-  for (const slot of layout.homeSlots) {
-    const rest = under(slot.sandboxRoot);
-    if (rest !== null) return `agent/${slot.agentDir}/${rest}`;
-  }
-  const mounted = under(HARBOR_AGENT_MOUNT_DIR);
-  if (mounted !== null) return `agent/${mounted}`;
+export function homeRelativePath(sandboxPath: string): string {
+  const mounted = pathUnder(HARBOR_AGENT_MOUNT_DIR, sandboxPath);
+  if (mounted !== null) return mounted;
   const clean = sandboxPath.replace(/^\/+/, "");
-  if (clean === AGENT_HOME_MANIFEST_FILENAME || /^(root|home)\//.test(clean)) {
-    return `agent/evolve-home/${clean}`;
-  }
-  return `agent/sessions/${clean}`;
+  if (clean === AGENT_HOME_MANIFEST_FILENAME) return clean;
+  const inHome = /^(?:root|home\/[^/]+)\/(.+)$/.exec(clean);
+  if (inHome !== null) return inHome[1];
+  return `sessions/${clean}`;
 }
 
-/** The captured home placed by the table, sorted by its trial path; a collision keeps its bytes at the lossless slot. */
-function placeHome(layout: HarnessTrialLayout, home: Record<string, string>): Record<string, string> {
-  const placed: Record<string, string> = {};
-  for (const sandboxPath of Object.keys(home).sort()) {
-    let path = homeFileTrialPath(layout, sandboxPath);
-    if (path in placed) path = `agent/evolve-home/${sandboxPath.replace(/^\/+/, "")}`;
-    placed[path] = home[sandboxPath];
+/** `<rest>` of `<root>/<rest>`, or null when the path is not under the root. */
+function pathUnder(root: string, path: string): string | null {
+  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+}
+
+/**
+ * homeRelativePath for one folder being written, with the server's collision
+ * rule (harbor-output-tree.ts placeHomeObject): `placed` holds every path
+ * already written; a later key that lands on a taken path goes to its sandbox
+ * path minus the leading slash, then to that path with a numbered suffix
+ * (root/x.2, root/x.3, …) until free — no bytes dropped, one object per path.
+ */
+export function placeHomeObject(placed: Set<string>, sandboxPath: string): string {
+  let path = homeRelativePath(sandboxPath);
+  const fallback = sandboxPath.replace(/^\/+/, "");
+  if (placed.has(path)) path = fallback;
+  for (let n = 2; placed.has(path); n++) path = `${fallback}.${n}`;
+  placed.add(path);
+  return path;
+}
+
+/**
+ * Harbor's own copy of ONE captured home file, by the harness's layout: the
+ * agent-relative path of the second write (`/root/.claude/x` -> sessions/x
+ * for claude; the first matching root wins), or null when Harbor's adapter
+ * keeps no such slot for it (server: harbor-output-tree.ts harborCopyPath).
+ */
+export function harborCopyPath(layout: HarnessTrialLayout, sandboxPath: string): string | null {
+  for (const copy of layout.harborCopies) {
+    const rest = pathUnder(copy.sandboxRoot, sandboxPath);
+    if (rest !== null) return `${copy.agentDir}/${rest}`;
   }
-  return Object.fromEntries(Object.keys(placed).sort().map((path) => [path, placed[path]]));
+  return null;
+}
+
+/**
+ * The captured home as trial files: every object at agent/<homeRelativePath>
+ * (real names, the record beside), and Harbor's copy at agent/<slot> where
+ * the table names one — the same text written twice, as the server's trial
+ * tree does (swarm_dashboard lib/evaluations/trial-tree.ts); sandbox-path
+ * order, so the placement is deterministic.
+ */
+function placeHome(layout: HarnessTrialLayout, home: Record<string, string>): Record<string, string> {
+  const placed = new Set<string>();
+  const files: Record<string, string> = {};
+  for (const sandboxPath of Object.keys(home).sort()) {
+    files[`agent/${placeHomeObject(placed, sandboxPath)}`] = home[sandboxPath];
+    const copy = harborCopyPath(layout, sandboxPath);
+    if (copy !== null && !placed.has(copy)) {
+      placed.add(copy);
+      files[`agent/${copy}`] = home[sandboxPath];
+    }
+  }
+  return Object.fromEntries(Object.keys(files).sort().map((path) => [path, files[path]]));
 }
 
 /** One JSON spelling for every record file: 2-space, trailing newline. */
@@ -497,8 +513,9 @@ export function analysisEvolveRecord(
  *   agent/stderr.log          (the wire names no harness for a rubric run,
  *                             so the default layout applies: stdout.log)
  *   agent/trace-parsed.jsonl  the run's parsed event trace
- *   agent/evolve-home/…       the CLI's home folder, keyed by its sandbox
- *                             path (the default layout's one slot)
+ *   agent/.claude/…           the CLI's home folder at its real names
+ *   agent/agent-home.json     (homeRelativePath; the default layout copies
+ *                             nothing), the capture record beside it
  *   evolve.json               the platform record (the run's evolve record)
  *
  * Absent artifacts are absent files — never empty placeholders. No

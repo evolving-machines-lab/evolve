@@ -135,11 +135,15 @@ def _require_session_transcript(data: Optional[Dict[str, Any]]) -> 'SessionTrans
     from .results import SessionTranscript  # noqa: E402
     events = list(data.get('events') or [])
     total = data.get('total')
+    stored_at = data.get('stored_at')
     return SessionTranscript(
         session=_require_session_info(data.get('session')),
         events=events,
         total=total if isinstance(total, int) else len(events),
         gateway_calls=list(data.get('gateway_calls') or []),
+        # Absent (a file-served transcript, an older server) stays None — never
+        # an empty list, which the contract reserves for an empty row-served page.
+        stored_at=list(stored_at) if isinstance(stored_at, list) else None,
     )
 
 

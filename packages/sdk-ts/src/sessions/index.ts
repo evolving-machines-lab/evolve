@@ -1,4 +1,4 @@
-import { gatewayUsageOf, mapUsageReading, type GatewayUsageEvent } from "../hosted/types";
+import { gatewayUsageOf, mapStoredAt, mapUsageReading, type GatewayUsageEvent } from "../hosted/types";
 import { createWriteStream } from "fs";
 import { mkdir } from "fs/promises";
 import { join } from "path";
@@ -170,6 +170,7 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       // only be read as "what this page reached" (since + rows served).
       total: typeof data.total === "number" ? data.total : (options?.since ?? 0) + events.length,
       gatewayCalls: mapGatewayCalls(data.gatewayCalls),
+      storedAt: mapStoredAt(data.storedAt, events.length, "Session transcript response"),
     };
   }
 

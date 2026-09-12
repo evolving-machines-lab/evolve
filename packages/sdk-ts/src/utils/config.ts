@@ -7,7 +7,13 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import type { AgentConfig, AgentPreset, AgentType, ResolvedAgentConfig, RunOptions } from "../types";
 import { AGENT_PRESETS } from "../types";
 import { DEFAULT_AGENT_TYPE, ENV_EVOLVE_API_KEY, RESERVED_OBSERVABILITY_KEYS } from "../constants";
-import { AGENT_REGISTRY, getAgentConfig, isValidAgentType } from "../registry";
+import {
+  AGENT_REGISTRY,
+  getAgentConfig,
+  isValidAgentType,
+  registryOwnsModel,
+  type AgentRegistryEntry,
+} from "../registry";
 
 /**
  * A configuration field the caller got wrong, reported by name.
@@ -358,6 +364,42 @@ function readOAuthFile(filePath: string): string {
 }
 
 /**
+ * Direct mode (the caller's own provider key, no Evolve gateway) can serve a
+ * roster id only where this SDK holds a key for its route: the harness's own
+ * key (`apiKeyEnv`) or a `providerEnvMap` row for the id's prefix. A roster
+ * id that spells a route with neither — opencode's
+ * `fireworks/deepseek-v4.1-flash`, whose only key is the Fireworks one the
+ * Evolve gateway's exact entry holds — is refused TYPED here, at resolution,
+ * where the harness's own provider error at run time named nothing the caller
+ * wrote (honesty rule: full support or a typed refusal naming the feature).
+ * Off-roster names are not judged here: the harness's command builder still
+ * spells their route itself — opencode's (registry.ts `opencodeRoutedModel`)
+ * lets only the `openrouter/…` form and its roster ids ride verbatim and
+ * prepends `openrouter/` to every other name, prefixed or bare — so an
+ * off-roster prefixed name is not the caller's explicit routing but an
+ * OpenRouter id (`fireworks/x` is sent as `openrouter/fireworks/x`). Harnesses
+ * without a `providerEnvMap` resolve their key from the harness alone and are
+ * not judged here either.
+ */
+function assertDirectModeServesModel(
+  type: AgentType,
+  registry: AgentRegistryEntry,
+  model: string | undefined,
+): void {
+  if (!registry.providerEnvMap || !model) return;
+  const slash = model.indexOf("/");
+  if (slash <= 0) return;
+  const prefix = model.slice(0, slash);
+  if (registry.providerEnvMap[prefix] || !registryOwnsModel(registry, model)) return;
+  throw new EvolveConfigError(
+    "model",
+    `Model "${model}" is served through the Evolve gateway only: the ${type} agent holds no ${prefix} key in ` +
+      `direct mode. Set ${ENV_EVOLVE_API_KEY} (or apiKey) to run it through the gateway, or pick a model whose ` +
+      `route has a direct-mode key (${Object.keys(registry.providerEnvMap).join(", ")}).`,
+  );
+}
+
+/**
  * Resolve AgentConfig with defaults and environment variables.
  *
  * Priority (explicit config first, then env vars):
@@ -432,6 +474,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
 
   // Provider API key (direct mode)
   if (config?.providerApiKey) {
+    assertDirectModeServesModel(type, registry, config.model);
     const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
     const baseUrl = config.providerBaseUrl ?? envBaseUrl ?? registry.defaultBaseUrl;
     return {
@@ -503,6 +546,7 @@ export function resolveAgentConfig(config?: AgentConfig): ResolvedAgentConfig {
   // Direct mode (generic provider env var — fallback for single-provider agents)
   const providerKey = process.env[registry.apiKeyEnv];
   if (providerKey) {
+    assertDirectModeServesModel(type, registry, config?.model);
     const envBaseUrl = registry.baseUrlEnv ? process.env[registry.baseUrlEnv] : undefined;
     const baseUrl = envBaseUrl ?? registry.defaultBaseUrl;
     return {

@@ -4885,10 +4885,10 @@ async function testTrialDownloadSave() {
     assertEqual(verifier, "verifier says 1.0", "the verifier log is verifier/test-stdout.txt");
     const reward = JSON.parse(await readFile(join(target, "verifier", "reward.json"), "utf-8"));
     assertEqual(reward.reward, 1, "the rewards map is verifier/reward.json");
-    // A codex trial's home outside $CODEX_HOME/sessions has no Harbor slot:
-    // the lossless extension slot, keyed by the sandbox path.
-    const home = await readFile(join(target, "agent", "evolve-home", "root", ".claude", "history.jsonl"), "utf-8");
-    assertEqual(home, "{}", "the captured home lands by the harness table (agent/evolve-home/ for a slot-less path)");
+    // A codex trial's home outside $CODEX_HOME/sessions has no Harbor copy:
+    // it lands at its real name under agent/ (the one rule).
+    const home = await readFile(join(target, "agent", ".claude", "history.jsonl"), "utf-8");
+    assertEqual(home, "{}", "the captured home lands at its real name under agent/ (no Harbor copy for a path outside the table)");
     const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
     assertEqual(evolve.provider, "modal", "evolve.json names the provider");
     assertEqual(evolve.gateway.cost_usd, 0.5, "evolve.json carries the gateway meter");
@@ -5411,9 +5411,9 @@ async function testAnalysisDownloadSave() {
     const parsed = await readFile(join(target, "agent", "trace-parsed.jsonl"), "utf-8");
     assert(parsed.includes('"type":"tool_call"'), "the parsed transcript lands in agent/trace-parsed.jsonl");
     assertEqual(
-      await readFile(join(target, "agent", "evolve-home", "root", ".claude", "history.jsonl"), "utf-8"),
+      await readFile(join(target, "agent", ".claude", "history.jsonl"), "utf-8"),
       "{}",
-      "the analyzer's home lands under agent/evolve-home/, keyed by its sandbox path"
+      "the analyzer's home lands at its real name under agent/ (the default layout copies nothing)"
     );
     const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
     assertEqual(evolve.analysis_id, "an-1", "evolve.json names the analysis");

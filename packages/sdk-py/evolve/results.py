@@ -293,6 +293,14 @@ class SessionTranscript:
     #: corrupt every delta poller's cursor. The ONLY per-call tokens and money
     #: a client may show (a harness's own ``usage`` line stays a raw record).
     gateway_calls: List[Dict[str, Any]]
+    #: The server's write instant of each event's row, one per entry of
+    #: ``events``, index-aligned (the contract's ``SessionTranscript.storedAt``):
+    #: present on every row-served page (an empty page carries an empty list),
+    #: ``None`` when the transcript was served from its file, where no write
+    #: instant exists. It places the gateway meter's calls under the harness's
+    #: steps for harnesses whose lines carry no clock of their own (codex,
+    #: kimi, qwen); a reader that does not place calls needs nothing from it.
+    stored_at: Optional[List[str]] = None
 
 
 @dataclass
