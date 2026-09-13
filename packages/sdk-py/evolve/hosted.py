@@ -262,17 +262,27 @@ HostedErrorCode = Literal[
     # trial (every trial CANCELLED).
     'invalid_rubric',
     'analysis_already_running',
+    # The contract's per-analysis door (GET /api/analyses/{analysisId}/
+    # download): an analysis the caller cannot read or that never existed
+    # (404); one still queued or running (409 — its Harbor wrapper-trial
+    # folder exists only once the run settled).
+    'analysis_not_found',
+    'analysis_not_terminal',
     # Check (POST /api/checks, Harbor's ``harbor check`` hosted): a check the
-    # caller cannot read or that never existed (404); an archive with no
-    # task directory, or a selection the globs and the cap emptied (400);
-    # more task directories selected than one check may hold (422, details
-    # carry task_count and max_tasks — narrow with the globs or cap with
-    # n_tasks); the server already spooling its bound of concurrent check
-    # archives (429, details carry max_concurrent, refused before the first
-    # uploaded byte; retry when one finishes — the check-door sibling of
-    # too_many_concurrent_skill_uploads above, not rate_limited for the
-    # same reason).
+    # caller cannot read or that never existed (404 — on the download door,
+    # where the id may also be one task check's, neither form resolving;
+    # the message names both forms); the check or the task check not yet
+    # settled on the download door (409, the job download's own law); an
+    # archive with no task directory, or a selection the globs and the cap
+    # emptied (400); more task directories selected than one check may hold
+    # (422, details carry task_count and max_tasks — narrow with the globs
+    # or cap with n_tasks); the server already spooling its bound of
+    # concurrent check archives (429, details carry max_concurrent, refused
+    # before the first uploaded byte; retry when one finishes — the
+    # check-door sibling of too_many_concurrent_skill_uploads above, not
+    # rate_limited for the same reason).
     'check_not_found',
+    'check_not_terminal',
     'no_checkable_tasks',
     'check_too_large',
     'too_many_concurrent_check_uploads',
@@ -4752,6 +4762,27 @@ class _HostedHttp:
     async def download(self, path: str, to_dir: str, default_filename: str) -> str:
         return await asyncio.to_thread(self._download_sync, path, to_dir, default_filename)
 
+    async def download_archive(self, path: str, to_dir: Optional[str], default_filename: str):
+        """ONE archive download for the three tar doors — the job's results
+        archive, a check's job folder, an analysis's wrapper-trial folder —
+        in the two delivery shapes: a file under ``to_dir`` (:meth:`download`,
+        temp-then-rename with the truncation and digest checks) or the
+        verified bytes. The job download used to spell the bytes shape
+        inline; a second and third copy is how one door gets a fix the
+        others do not."""
+        if to_dir is not None:
+            return await self.download(path, to_dir, default_filename)
+        payload, headers = await self.request_bytes(path)
+        declared = headers.get('Content-Length')
+        if declared is not None and len(payload) != int(declared):
+            raise EvolveIncompleteDownloadError(int(declared), len(payload))
+        expected = headers.get(PACKAGE_DIGEST_HEADER)
+        if expected:
+            actual = hashlib.sha256(payload).hexdigest()
+            if actual != expected:
+                raise EvolveDigestMismatchError(expected, actual)
+        return payload
+
     def _request_sync(
         self,
         path: str,
@@ -7535,18 +7566,7 @@ class JobsClient:
         the file.
         """
         path = f'/api/jobs/{urllib.parse.quote(id)}/download'
-        if to is not None:
-            return await self._http.download(path, to, f'job-{id}-results.tar.gz')
-        payload, headers = await self._http.request_bytes(path)
-        declared = headers.get('Content-Length')
-        if declared is not None and len(payload) != int(declared):
-            raise EvolveIncompleteDownloadError(int(declared), len(payload))
-        expected = headers.get(PACKAGE_DIGEST_HEADER)
-        if expected:
-            actual = hashlib.sha256(payload).hexdigest()
-            if actual != expected:
-                raise EvolveDigestMismatchError(expected, actual)
-        return payload
+        return await self._http.download_archive(path, to, f'job-{id}-results.tar.gz')
 
     async def upload(
         self,
@@ -8165,6 +8185,42 @@ class AnalysesClient:
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
 
+    async def download(
+        self,
+        analysis_id: str,
+        *,
+        to: Optional[str] = None,
+    ):
+        """Download the analysis run as Harbor's WRAPPER-trial folder in one
+        ``.tar.gz`` — ``GET /api/analyses/{analysisId}/download``, the one
+        per-analysis door ON the contract (the list above is the other).
+
+        The archive extracts to one directory named as Harbor names the
+        wrapper trial (``analyze-<analyzed trial dir>__<7 chars>/``):
+        ``config.json``, ``lock.json``, ``result.json``, ``trial.log``,
+        ``exception.txt`` (an infrastructure failure only),
+        ``agent/claude-code.txt`` (Harbor's tee name for claude-code),
+        ``agent/stderr.log``, ``agent/trace-parsed.jsonl``, the captured
+        home at its real names with ``agent/agent-home.json`` beside it and
+        Harbor's copy at ``agent/sessions/``, ``verifier/test-stdout.txt``,
+        ``verifier/reward.txt`` and ``verifier/reward.json`` when the
+        validator ruled (reward 1 = a valid ``analysis.json``, 0 = it was
+        refused), and ``artifacts/manifest.json`` with
+        ``artifacts/analysis.json`` (the validated summary + checks) on a
+        completed run — absent artifacts are absent files; data the
+        platform does not hold is left out, never faked.
+
+        Returns the archive bytes — verified against the response's
+        Content-Length and, when the server states one, its digest — or,
+        when ``to`` (a directory) is given, streams straight to disk
+        (temp-then-rename, same verification) and returns the saved file
+        path; :meth:`JobsClient.download` states why there is no stream
+        shape here. ``404 analysis_not_found`` for an id you cannot read;
+        ``409 analysis_not_terminal`` while the run is queued or running.
+        """
+        path = f'/api/analyses/{urllib.parse.quote(analysis_id)}/download'
+        return await self._http.download_archive(path, to, f'analysis-{analysis_id}.tar.gz')
+
 
 class ChecksClient:
     """Client for task quality checks — Harbor's ``harbor check <PATH>``,
@@ -8410,6 +8466,46 @@ class ChecksClient:
                 raise TimeoutError(f'watch({check_id!r}) timed out after {timeout_s}s')
             delay = poll_interval_s if changed else min(delay * 2, MAX_WATCH_DELAY_SEC)
             await asyncio.sleep(_bounded(delay, deadline))
+
+    async def download(
+        self,
+        id: str,
+        *,
+        to: Optional[str] = None,
+    ):
+        """Download in one ``.tar.gz`` (``GET /api/checks/{checkId}/download``,
+        on the contract) EITHER the whole check — pass the CHECK id: the
+        archive extracts to ``check-<id>/``, Harbor's check job folder, with
+        ``check_report.json`` (their CheckReport: ``results``, one per task —
+        ``task_name``, the flat ``checks``, ``cost_usd``, ``error`` — plus
+        ``total_cost_usd``) and one wrapper-trial folder per task check,
+        named as Harbor names a trial (``check-<task>__<7 chars>/``) — OR
+        one task check's folder alone: pass the TASK CHECK id
+        (``check['results'][i]['id']``). Each folder is Harbor's TrialPaths
+        for the checker's run: ``config.json``, ``lock.json``,
+        ``result.json``, ``trial.log``, ``exception.txt`` (an infrastructure
+        failure only), ``agent/claude-code.txt``, ``agent/stderr.log``,
+        ``agent/trace-parsed.jsonl``, the captured home at its real names
+        with ``agent/agent-home.json`` and Harbor's copy at
+        ``agent/sessions/``, ``verifier/test-stdout.txt``,
+        ``verifier/reward.txt`` and ``verifier/reward.json`` when the
+        validator ruled (reward 1 = a valid ``check-result.json``, 0 = it was
+        refused), ``artifacts/manifest.json`` and
+        ``artifacts/check-result.json`` (the validated flat checks) on a
+        completed run — absent artifacts are absent files; data the
+        platform does not hold is left out, never faked.
+
+        Returns the archive bytes — verified against the response's
+        Content-Length and, when the server states one, its digest — or,
+        when ``to`` (a directory) is given, streams straight to disk
+        (temp-then-rename, same verification) and returns the saved file
+        path; :meth:`JobsClient.download` states why there is no stream
+        shape. An id that is neither a check nor a task check you can read
+        is ``404 check_not_found`` naming both forms; an unsettled check or
+        task check is ``409 check_not_terminal``.
+        """
+        path = f'/api/checks/{urllib.parse.quote(id)}/download'
+        return await self._http.download_archive(path, to, f'check-{id}.tar.gz')
 
 
 class AuthClient:

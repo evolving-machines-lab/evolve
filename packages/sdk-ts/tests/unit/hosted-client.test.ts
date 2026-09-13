@@ -3938,6 +3938,65 @@ async function testDownloadJobStream() {
   }
 }
 
+async function testDownloadCheckAndAnalysis() {
+  console.log("\n--- checks().download() / analyses().download() ride the two contract doors with the job download's dance ---");
+  installMockFetch();
+  const tmpDir = join(tmpdir(), `hosted-rubric-download-${Date.now()}`);
+  try {
+    const checkArchive = gzipSync(Buffer.from("check-chk-1/check_report.json"));
+    setMockResponse("/api/checks/chk-1/download", {
+      status: 200,
+      body: null,
+      bodyBytes: checkArchive,
+      headers: { "Content-Disposition": 'attachment; filename="check-chk-1.tar.gz"' },
+    });
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+    const buf = await c.download("chk-1");
+    assertEqual(buf.equals(checkArchive), true, "the check archive's bytes, as a Buffer");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/checks/chk-1/download"), "hits the check download door");
+    // A task check id rides the SAME door: the server resolves the species.
+    const taskArchive = gzipSync(Buffer.from("check-hello-world__abc1234/result.json"));
+    setMockResponse("/api/checks/tc-1/download", {
+      status: 200,
+      body: null,
+      bodyBytes: taskArchive,
+      headers: { "Content-Disposition": 'attachment; filename="check-hello-world__abc1234.tar.gz"' },
+    });
+    const saved = await c.download("tc-1", { to: tmpDir });
+    assert(saved.endsWith("check-hello-world__abc1234.tar.gz"), "the file is named by the server's Content-Disposition — the folder's Harbor name");
+    assertEqual((await readFile(saved)).equals(taskArchive), true, "file bytes match the archive");
+
+    const analysisArchive = gzipSync(Buffer.from("analyze-fix-bug__1a2b3c4__9f8e7d6/result.json"));
+    setMockResponse("/api/analyses/an-1/download", {
+      status: 200,
+      body: null,
+      bodyBytes: analysisArchive,
+      headers: { "Content-Disposition": 'attachment; filename="analyze-fix-bug__1a2b3c4__9f8e7d6.tar.gz"' },
+    });
+    const a = analyses({ apiKey: "test-key", baseUrl: BASE });
+    const stream = await a.download("an-1", { stream: true });
+    assert(typeof (stream as ReadableStream).getReader === "function", "the stream shape, for the analysis door too");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/analyses/an-1/download"), "hits the analysis download door");
+
+    // The typed refusals reach the caller as EvolveApiError with the code.
+    setMockResponse("/api/checks/nope/download", {
+      status: 404,
+      body: { error: { code: "check_not_found", message: "'nope' is not a check (no check_report.json) or a task check (no trial.log) — pass a check id (evolve check list) to download the whole check, or one task check's id (results[].id on evolve check show) for that task's folder" } },
+    });
+    let refused: unknown = null;
+    try {
+      await c.download("nope");
+    } catch (error) {
+      refused = error;
+    }
+    assert(refused instanceof EvolveApiError && refused.code === "check_not_found", "neither form: the typed check_not_found");
+    assert((refused as EvolveApiError).message.includes("or a task check"), "the sentence names both forms");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
 async function testDownloadJobIntegrityChecks() {
   console.log("\n--- download() REFUSES truncated or digest-mismatched archives ---");
   installMockFetch();
@@ -7422,6 +7481,7 @@ async function main() {
   await testDownloadJobBuffer();
   await testDownloadJobToFile();
   await testDownloadJobStream();
+  await testDownloadCheckAndAnalysis();
   await testDownloadJobIntegrityChecks();
   await testDownloadJobTerminalRequired();
   await testUploadJobDirectory();

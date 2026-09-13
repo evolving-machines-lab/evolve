@@ -530,3 +530,44 @@ export async function extractTarGz(archivePath: string, destDir: string, root: s
   }
   return written;
 }
+
+/**
+ * The ONE top-level directory a downloaded .tar.gz holds — read from the
+ * archive's own headers before anything is written, for the doors whose
+ * root the client cannot spell in advance: a check download's root is
+ * `check-<id>/` for a check id but Harbor's trial name (`check-<task>__<7>/`)
+ * for a task check id, and an analysis download's is the wrapper trial's
+ * name — the server chooses, the archive says. Every entry is held to the
+ * same laws extractTarGz enforces (no absolute path, no `..`, no backslash,
+ * no empty name) and to ONE shared top segment; an archive with two roots
+ * or none is refused. Streams the headers only (entry bodies are skipped),
+ * so the archive is never resident in memory. The name returned is then
+ * the `root` extractTarGz is told to expect — the two reads agree by
+ * construction.
+ */
+export async function tarGzTopLevelName(archivePath: string): Promise<string> {
+  const ex = extract();
+  let root: string | null = null;
+  const consume = (async () => {
+    for await (const entry of ex) {
+      const name = entry.header.name;
+      const segments = name.split("/").filter((segment) => segment !== "" && segment !== ".");
+      if (name.startsWith("/") || name.includes("\\") || segments.length === 0 || segments.some((s) => s === "..")) {
+        throw new Error(`refusing to extract "${name}": the path escapes the target directory`);
+      }
+      if (root === null) root = segments[0];
+      else if (segments[0] !== root) {
+        throw new Error(`refusing to extract "${name}": the archive holds more than one top-level directory (${root}/)`);
+      }
+      entry.resume();
+    }
+  })();
+  try {
+    await Promise.all([pipeline(createReadStream(archivePath), createGunzip(), ex), consume]);
+  } catch (error) {
+    ex.destroy();
+    throw error;
+  }
+  if (root === null) throw new Error("refusing to extract: the archive holds no entries");
+  return root;
+}

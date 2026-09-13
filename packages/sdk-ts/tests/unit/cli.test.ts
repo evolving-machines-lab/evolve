@@ -5003,6 +5003,10 @@ async function testTrialStop() {
 function analysisVerdictFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "an-1",
+    // The provenance trio every wire TrialAnalysis carries (the run it judged).
+    trial_id: "run-1",
+    job_id: "job-1",
+    task_name: "roy-polymorph-cn",
     status: "failed",
     model_name: "glm-5.3-flash",
     rubric: CLI_RUBRIC,
@@ -5369,77 +5373,149 @@ async function testAnalysisDownloadStreamRefusesOtherSpecies() {
 }
 
 async function testAnalysisDownloadSave() {
-  console.log("\n--- runCli: analysis download saves the analysis tree + evolve.json; --overwrite gates ---");
+  console.log("\n--- runCli: analysis download saves the SERVER's wrapper-trial folder + evolve.json; --overwrite gates ---");
   installMockFetch();
   const tmpDir = await mkdtemp(join(tmpdir(), "evolve-analysis-dl-"));
   try {
-    // Substring matching: selector patterns first, the bare events door last.
+    // The server's archive: Harbor's wrapper-trial folder, the root the
+    // server named (the CLI reads it off the archive, never guesses it).
+    const root = "analyze-roy-polymorph-cn__1a2b3c4__9f8e7d6";
+    setMockResponse("/api/analyses/an-1/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([
+        { name: `${root}/config.json`, content: '{"trial_name":"' + root + '"}' },
+        { name: `${root}/result.json`, content: '{"x_evolve":{"analysisId":"an-1"}}' },
+        { name: `${root}/agent/claude-code.txt`, content: "analyzer out" },
+        { name: `${root}/artifacts/analysis.json`, content: '{"summary":"Legitimate solve.","checks":{}}' },
+      ]),
+      headers: { "Content-Disposition": `attachment; filename="${root}.tar.gz"` },
+    });
     setMockResponse("/artifacts?what=analysis", {
       status: 200,
-      body: {
-        analysis: analysisVerdictFixture({
-          id: "an-1",
-          status: "completed",
-          summary: "Legitimate solve.",
-          checks: { reward_hacking: { outcome: "pass", explanation: "ok" } },
-          failure: null,
-        }),
-      },
-    });
-    setMockResponse("/artifacts?what=trace-stdout", { status: 200, body: { log: "analyzer out" } });
-    setMockResponse("/artifacts?what=trace-stderr", { status: 200, body: { log: null } });
-    setMockResponse("/artifacts?what=agent-home", {
-      status: 200,
-      body: { files: { "/root/.claude/history.jsonl": "{}" } },
-    });
-    setMockResponse("/api/traces/trials/an-1/events", {
-      status: 200,
-      body: analysisEventsFixture([{ update: { sessionUpdate: "tool_call" } }]),
+      body: { analysis: analysisVerdictFixture({ id: "an-1", status: "completed", summary: "Legitimate solve.", checks: {}, failure: null }) },
     });
     const { io, out, err } = captureIO();
     const code = await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], io);
     assertEqual(code, 0, "exit 0");
     assertEqual(err, [], "nothing on stderr");
-    const target = join(tmpDir, "an-1");
-    const verdict = JSON.parse(await readFile(join(target, "analysis.json"), "utf-8"));
-    assertEqual(verdict.id, "an-1", "analysis.json is the verdict document at the run's root");
+    const target = join(tmpDir, root);
+    assert(out.some((l) => l.includes(`Saved ${target}`)), "the saved path is the server's Harbor-named folder");
+    assertEqual(await readFile(join(target, "agent", "claude-code.txt"), "utf-8"), "analyzer out", "the archive's files land verbatim");
     assertEqual(
-      await readFile(join(target, "agent", "stdout.log"), "utf-8"),
-      "analyzer out",
-      "the analyzer's raw stdout is agent/stdout.log"
+      JSON.parse(await readFile(join(target, "artifacts", "analysis.json"), "utf-8")).summary,
+      "Legitimate solve.",
+      "the deliverable sits under artifacts/, where Harbor's wrapper trial keeps it"
     );
-    const parsed = await readFile(join(target, "agent", "trace-parsed.jsonl"), "utf-8");
-    assert(parsed.includes('"type":"tool_call"'), "the parsed transcript lands in agent/trace-parsed.jsonl");
-    assertEqual(
-      await readFile(join(target, "agent", ".claude", "history.jsonl"), "utf-8"),
-      "{}",
-      "the analyzer's home lands at its real name under agent/ (the default layout copies nothing)"
-    );
+    assert(!existsSync(join(target, "analysis.json")), "no verdict document at the folder's root: the tree is the server's, not a second assembly");
     const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
     assertEqual(evolve.analysis_id, "an-1", "evolve.json names the analysis");
     assertEqual(evolve.analyzed_trial_id, "run-1", "evolve.json names the analyzed trial");
-    assertEqual(evolve.provider, "daytona", "evolve.json names the ANALYZER's provider");
-    let missingThrew = false;
-    try {
-      await readFile(join(target, "agent", "stderr.log"), "utf-8");
-    } catch {
-      missingThrew = true;
-    }
-    assert(missingThrew, "an unstored artifact writes no file");
+    assertEqual(evolve.gateway.cost_usd, 0.0366, "evolve.json restates the verdict's meter");
 
     const refused = captureIO();
-    assertEqual(
-      await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], refused.io),
-      1,
-      "an existing target refuses without --overwrite"
-    );
+    assertEqual(await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], refused.io), 1, "an existing folder refuses without --overwrite");
     assert(refused.err[0].includes("--overwrite"), "the refusal names the flag that unlocks it");
+    await writeFile(join(target, "stale.txt"), "old");
     const overwrite = captureIO();
+    assertEqual(await runCli(["analysis", "download", "an-1", "-o", tmpDir, "--overwrite", ...AUTH], overwrite.io), 0, "--overwrite replaces the existing download");
+    assert(!existsSync(join(target, "stale.txt")), "--overwrite replaces the folder, never merges into it");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testCheckDownloadSave() {
+  console.log("\n--- runCli: check download takes EITHER id — a check id saves Harbor's check job folder, a task check id one task's folder; neither is the typed two-forms refusal ---");
+  installMockFetch();
+  const tmpDir = await mkdtemp(join(tmpdir(), "evolve-check-dl-"));
+  try {
+    const alpha = "check-alpha__1111111";
+    const beta = "check-beta__2222222";
+    const checkBody = wireCheck({
+      status: "completed",
+      cost_usd: 0.01,
+      results: [
+        { ...(wireCheck().results as Record<string, unknown>[])[0], id: "tc-a", task_name: "alpha", status: "completed", cost_usd: 0.01 },
+        { ...(wireCheck().results as Record<string, unknown>[])[0], id: "tc-b", task_name: "beta", status: "failed", failure: { phase: "invalid_result", message: "missing criterion: typos" } },
+      ],
+    });
+    setMockResponse("/api/checks/chk-1/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([
+        { name: "check-chk-1/check_report.json", content: '{"results":[],"total_cost_usd":0.01}' },
+        { name: `check-chk-1/${alpha}/result.json`, content: '{"x_evolve":{"taskCheckId":"tc-a","checkId":"chk-1"}}' },
+        { name: `check-chk-1/${alpha}/artifacts/check-result.json`, content: "{}" },
+        { name: `check-chk-1/${beta}/result.json`, content: '{"x_evolve":{"taskCheckId":"tc-b","checkId":"chk-1"}}' },
+        { name: `check-chk-1/${beta}/verifier/reward.txt`, content: "0\n" },
+      ]),
+      headers: { "Content-Disposition": 'attachment; filename="check-chk-1.tar.gz"' },
+    });
+    setMockResponse("/api/checks/chk-1", { status: 200, body: checkBody });
+
+    // THE CHECK ID: the whole check under check-<id>/, evolve.json at the root and in every task folder.
+    const whole = captureIO();
+    assertEqual(await runCli(["check", "download", "chk-1", "-o", tmpDir, "--json", ...AUTH], whole.io), 0, "a check id exits 0");
+    const summary = JSON.parse(whole.out[0]) as { path: string; files: number };
+    assertEqual(summary.path, join(tmpDir, "check-chk-1"), "the folder is check-<id>/, the archive's own root");
+    assertEqual(summary.files, 8, "5 archive files + 3 evolve.json records");
     assertEqual(
-      await runCli(["analysis", "download", "an-1", "-o", tmpDir, "--overwrite", ...AUTH], overwrite.io),
-      0,
-      "--overwrite replaces the existing download"
+      JSON.parse(await readFile(join(tmpDir, "check-chk-1", "check_report.json"), "utf-8")).total_cost_usd,
+      0.01,
+      "check_report.json is the server's, verbatim"
     );
+    const checkRecord = JSON.parse(await readFile(join(tmpDir, "check-chk-1", "evolve.json"), "utf-8"));
+    assertEqual(checkRecord.check_id, "chk-1", "the check-level evolve.json names the check");
+    assertEqual(checkRecord.gateway.cost_usd, 0.01, "…and Harbor's total");
+    const alphaRecord = JSON.parse(await readFile(join(tmpDir, "check-chk-1", alpha, "evolve.json"), "utf-8"));
+    assertEqual(alphaRecord.task_check_id, "tc-a", "each task folder's evolve.json is matched by its result.json's x_evolve");
+    assertEqual(alphaRecord.gateway.cost_usd, 0.01, "…with that task's cost");
+    const betaRecord = JSON.parse(await readFile(join(tmpDir, "check-chk-1", beta, "evolve.json"), "utf-8"));
+    assertEqual(betaRecord.status, "failed", "…and its status");
+    assert(fetchCalls.some((c) => c.url.endsWith("/api/checks/chk-1")), "the records come from ONE read of the contract's check door");
+    assert(!fetchCalls.some((c) => c.url.includes("/api/traces/")), "no feed read: the folder is the server's, the record the check body's");
+
+    // THE TASK CHECK ID: the same door, that task's folder alone, at the archive's root.
+    setMockResponse("/api/checks/tc-b/download", {
+      status: 200,
+      body: null,
+      bodyBytes: await gzipTarArchive([
+        { name: `${beta}/result.json`, content: '{"x_evolve":{"taskCheckId":"tc-b","checkId":"chk-1"}}' },
+        { name: `${beta}/trial.log`, content: "task=check-beta\n" },
+      ]),
+      headers: { "Content-Disposition": `attachment; filename="${beta}.tar.gz"` },
+    });
+    const one = captureIO();
+    assertEqual(await runCli(["check", "download", "tc-b", "-o", tmpDir, ...AUTH], one.io), 0, "a task check id exits 0");
+    assert(one.out.some((l) => l.includes(`Saved ${join(tmpDir, beta)} (3 files)`)), "the folder is the task's Harbor trial name, read off the archive");
+    assert(!existsSync(join(tmpDir, beta, "check_report.json")), "one task's folder carries no check_report.json");
+    const oneRecord = JSON.parse(await readFile(join(tmpDir, beta, "evolve.json"), "utf-8"));
+    assertEqual(oneRecord.task_check_id, "tc-b", "the task folder's evolve.json, from the check body its result.json names");
+    assertEqual(oneRecord.check_id, "chk-1", "…walks back to the check");
+
+    // NEITHER: the server's typed 404 naming both forms reaches stderr, exit 1, nothing written.
+    setMockResponse("/api/checks/nope/download", {
+      status: 404,
+      body: {
+        error: {
+          code: "check_not_found",
+          message:
+            "'nope' is not a check (no check_report.json) or a task check (no trial.log) — pass a check id (evolve check list) to download the whole check, or one task check's id (results[].id on evolve check show) for that task's folder",
+        },
+      },
+    });
+    const neither = captureIO();
+    assertEqual(await runCli(["check", "download", "nope", "-o", tmpDir, ...AUTH], neither.io), 1, "neither form exits 1");
+    assert(neither.err.some((l) => l.includes("is not a check (no check_report.json) or a task check (no trial.log)")), "the two-forms sentence, Harbor's shape, reaches stderr");
+    assert(!existsSync(join(tmpDir, "nope")), "nothing is written for a refused id");
+
+    // A CHECK ID at --stream: --stream is per task check; the feed's bare 404 becomes the two-forms hint.
+    setMockResponse("/api/traces/trials/chk-1/artifacts?what=task-check", { status: 404, body: { error: { code: "trial_not_found", message: "Trial not found: chk-1" } } });
+    const streamed = captureIO();
+    assertEqual(await runCli(["check", "download", "chk-1", "--stream", "trace-stdout", ...AUTH], streamed.io), 1, "a check id at --stream exits 1");
+    assert(streamed.err[0].includes("is not a task check") && streamed.err[0].includes("drop --stream"), "the refusal points at the save mode by check id");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();
@@ -8930,6 +9006,7 @@ async function main() {
   await testCheckDatasetAndTaskVerbs();
   await testAnalysisDownloadStreamRefusesOtherSpecies();
   await testAnalysisDownloadSave();
+  await testCheckDownloadSave();
   await testAnalysisDownloadUsageErrors();
   await testDatasetListAndShow();
   await testDatasetProvenanceAndPinNotice();

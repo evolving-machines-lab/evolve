@@ -62,7 +62,8 @@ import { join } from "node:path";
 import zlib, { gunzipSync, gzipSync } from "node:zlib";
 import { extract } from "tar-stream";
 
-import { crc32Fallback, shouldStore, tarGzipDirectory, tarGzipDirectoryToFile } from "../../src/hosted/tar.ts";
+import { crc32Fallback, shouldStore, tarGzTopLevelName, tarGzipDirectory, tarGzipDirectoryToFile } from "../../src/hosted/tar.ts";
+import { pack as packTar } from "tar-stream";
 
 /** Pack via the streaming engine and read the archive back for inspection. */
 async function pack(root: string): Promise<Buffer> {
@@ -595,6 +596,48 @@ async function testMissingDirectoryRejects(): Promise<void> {
   }
 }
 
+/** A .tar.gz of the named entries on disk, for the root reader. */
+async function archiveOf(names: string[]): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), "hosted-tar-root-"));
+  const out = join(dir, "a.tar.gz");
+  const tar = packTar();
+  for (const name of names) tar.entry({ name, type: "file" }, "x");
+  tar.finalize();
+  const chunks: Buffer[] = [];
+  for await (const chunk of tar) chunks.push(Buffer.from(chunk));
+  writeFileSync(out, gzipSync(Buffer.concat(chunks)));
+  return out;
+}
+
+async function testTopLevelName(): Promise<void> {
+  console.log("\n[16] tarGzTopLevelName — the one root a server archive announces");
+  assertEqual(
+    await tarGzTopLevelName(await archiveOf(["check-chk-1/check_report.json", "check-chk-1/check-hello-world__abc1234/result.json"])),
+    "check-chk-1",
+    "the shared top segment is the root"
+  );
+  assertEqual(
+    await tarGzTopLevelName(await archiveOf(["analyze-fix-bug__1a2b3c4__9f8e7d6/config.json"])),
+    "analyze-fix-bug__1a2b3c4__9f8e7d6",
+    "a single-folder archive names that folder"
+  );
+  for (const [names, reason] of [
+    [["a/x", "b/y"], "two top-level directories"],
+    [["a/x", "a/../y"], "a .. climb"],
+    [["/abs/x"], "an absolute path"],
+    [["a\\x"], "a backslash"],
+    [[], "no entries"],
+  ] as [string[], string][]) {
+    let refused = false;
+    try {
+      await tarGzTopLevelName(await archiveOf(names));
+    } catch (e) {
+      refused = (e as Error).message.startsWith("refusing to extract");
+    }
+    assert(refused, `${reason} is refused before a byte is written`);
+  }
+}
+
 // =============================================================================
 // RUNNER
 // =============================================================================
@@ -614,6 +657,7 @@ async function main(): Promise<void> {
   await testBufferWrapper();
   await testEmptyDirectory();
   await testMissingDirectoryRejects();
+  await testTopLevelName();
   await testMixedCorpusRoundTrips();
   await testIncompressibleCorpusPacksFast();
   testCrc32FallbackMatchesNative();

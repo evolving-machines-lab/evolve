@@ -1,5 +1,5 @@
 {
-  "$comment": "The hosted evals API's error-code vocabulary, checked in so two repos that share no test runner can be held to one list. The contract owns it: the ErrorCode enum in spec/openapi.yaml is the only place a code may be added. This file is that enum's shadow, and the tests keep everyone honest — the server regenerates these exact bytes and diffs them, the TypeScript SDK asserts HOSTED_ERROR_CODES equals codes[], and the Python SDK asserts both its tuple and its Literal do. Adding a code therefore means: spec enum, this file, both SDK lists.",
+  "$comment": "The hosted evals API's error-code vocabulary, checked in so two repos that share no test runner can be held to one list. The contract owns it: the ErrorCode enum in spec/openapi.yaml is the only place a code may be added. This file is that enum's shadow, and the tests keep everyone honest \u2014 the server regenerates these exact bytes and diffs them, the TypeScript SDK asserts HOSTED_ERROR_CODES equals codes[], and the Python SDK asserts both its tuple and its Literal do. Adding a code therefore means: spec enum, this file, both SDK lists.",
   "codes": [
     "missing_authorization",
     "invalid_api_key",
@@ -81,7 +81,10 @@
     "no_regradable_trials",
     "invalid_rubric",
     "analysis_already_running",
+    "analysis_not_found",
+    "analysis_not_terminal",
     "check_not_found",
+    "check_not_terminal",
     "no_checkable_tasks",
     "check_too_large",
     "too_many_concurrent_check_uploads",
