@@ -575,6 +575,13 @@ export {
   type UploadJobOptions,
   type UploadProvenance,
   type TrialUploadProvenance,
+  // The upload's task linkage (the ingest's own, on Harbor's task hash).
+  TASK_LINKED_BY,
+  TASK_LINK_REASONS,
+  type TaskLinkedBy,
+  type TaskLinkReason,
+  type TrialTaskLink,
+  type JobTaskLink,
   type JobDeleteResult,
   // Remote inspection: job-wide grep, the per-trial file tree, and the
   // client-side Harbor-tree assembly behind trial/analysis/job download —

@@ -51,6 +51,7 @@ from typing import (
     Literal,
     NoReturn,
     Optional,
+    Tuple,
     TypedDict,
     Union,
     get_args,
@@ -1285,6 +1286,32 @@ class UploadProvenance:
     #: The aggregated REPORTED figures, or None on jobs ingested before the
     #: field existed.
     reported_totals: Optional[ReportedTotals]
+    #: One row per task of the uploaded job, in archive order
+    #: (:class:`JobTaskLink`): how many of its trials linked to a stored
+    #: task — and so analyze with the task folder — and why the rest did
+    #: not. None only on jobs ingested before the link law existed.
+    task_links: Optional[List['JobTaskLink']] = None
+
+
+@dataclass
+class JobTaskLink:
+    """One task of an uploaded job, rolled up (spec ``JobTaskLink``): its
+    trial count, how many linked to a stored task (``n_linked`` analyze with
+    the task folder, ``n_unlinked`` without), the rule that linked them
+    (:class:`TrialTaskLink` ``linked_by``, or ``'none'`` when no trial of
+    the task linked), the ``name@version`` refs they linked to (sorted;
+    normally one), the unlinked trials per reason, and the refs an
+    ambiguous hash matched."""
+    #: The platform task key (the leaf of a registry-qualified name).
+    task_name: str
+    n_trials: int
+    n_linked: int
+    n_unlinked: int
+    linked_by: str
+    datasets: List[str] = field(default_factory=list)
+    #: Unlinked trials per reason (``TrialTaskLink.link_reason`` words → counts).
+    link_reasons: Dict[str, int] = field(default_factory=dict)
+    candidates: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -2266,6 +2293,37 @@ class TrialUploadProvenance:
     original_task_name: str
     #: The uploaded figures, or None when the archive carried none.
     reported_agent_result: Optional[ReportedAgentResult]
+    #: How this trial linked to a stored task, or why not. None only on
+    #: trials ingested before the link law existed (never guessed).
+    link: Optional['TrialTaskLink'] = None
+
+
+@dataclass
+class TrialTaskLink:
+    """How THIS uploaded trial linked to a stored task, or why not (spec
+    ``TrialTaskLink``). ``linked_by`` is the ONE rule the ingest ran for the
+    job: ``'dataset_flag'`` (the ``dataset`` hint, by task name — the
+    override), ``'job_dataset_record'`` (the job's own config.json named a
+    dataset the caller can see; linked by Harbor's task hash inside it),
+    ``'task_hash'`` (nothing named; exactly one visible dataset carries the
+    hash), or ``'none'`` — and then ``link_reason`` says why:
+    ``'hash_mismatch'``, ``'task_not_in_dataset'``, ``'no_dataset_named'``,
+    ``'dataset_ambiguous'`` (``candidates`` names the datasets; the hint
+    decides), ``'no_hash_match'``, ``'no_task_digest'``. A linked trial
+    analyzes with the task folder in ``/app/task``; an unlinked one
+    without it."""
+    linked_by: str
+    #: Set exactly when ``linked_by`` is ``'none'``.
+    link_reason: Optional[str]
+    #: The linked dataset's name; None when not linked.
+    dataset: Optional[str]
+    #: The linked dataset version's label; None when not linked.
+    version: Optional[str]
+    #: The trial's lock.json ``task.digest`` (``sha256:<hex>``), or None
+    #: when the archive carried none.
+    task_digest: Optional[str]
+    #: The ``name@version`` refs an ambiguous hash matched; [] otherwise.
+    candidates: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -3145,6 +3203,13 @@ class JobImport:
     #: One entry per skipped trial, in archive order, from COMPLETED on
     #: ([] when none). None until COMPLETED.
     skipped_trials: Optional[List[JobImportSkippedTrial]] = None
+    #: The ingested job's per-task task-linkage roll-up — the same rows the
+    #: job serves as ``upload.task_links``, so a watcher learns from the
+    #: import alone which tasks will analyze with their task folder and why
+    #: the rest will not. None until COMPLETED, None again when the job is
+    #: gone (like ``job_id``), and None on a job ingested before the link
+    #: law existed.
+    task_links: Optional[List[JobTaskLink]] = None
     failure: Optional[JobImportFailure] = None
     #: None until the worker's first report (a QUEUED import).
     progress: Optional[JobImportProgress] = None
@@ -3710,6 +3775,98 @@ def _map_upload_provenance(data: Any) -> Optional[UploadProvenance]:
         original_job_name=original_name if isinstance(original_name, str) else None,
         uploaded_at=uploaded_at,
         reported_totals=reported_totals,
+        task_links=_map_task_links(data.get('task_links')),
+    )
+
+
+#: The contract's ``TaskLinkedBy`` enum (spec/openapi.yaml), in its order.
+TASK_LINKED_BY: Tuple[str, ...] = ('dataset_flag', 'job_dataset_record', 'task_hash', 'none')
+#: The contract's ``TaskLinkReason`` enum (spec/openapi.yaml), in its order.
+TASK_LINK_REASONS: Tuple[str, ...] = (
+    'hash_mismatch',
+    'task_not_in_dataset',
+    'no_dataset_named',
+    'dataset_ambiguous',
+    'no_hash_match',
+    'no_task_digest',
+)
+
+
+def _string_list(value: Any) -> Optional[List[str]]:
+    if not isinstance(value, list) or not all(isinstance(member, str) for member in value):
+        return None
+    return list(value)
+
+
+def _genuine_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _map_task_links(raw: Any) -> Optional[List[JobTaskLink]]:
+    """The per-task link roll-up (spec ``JobTaskLink[]``), defensively:
+    absent (a pre-feature upload, or an older server) and malformed both
+    read None — and one malformed row nulls the WHOLE list, because a
+    shorter list would be a false count of the job's tasks. The counts
+    must be genuine integers, the rule a member of the contract's enum,
+    every reason key a member too."""
+    if not isinstance(raw, list):
+        return None
+    out: List[JobTaskLink] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        task_name = entry.get('task_name')
+        linked_by = entry.get('linked_by')
+        counts = (entry.get('n_trials'), entry.get('n_linked'), entry.get('n_unlinked'))
+        if not isinstance(task_name, str) or linked_by not in TASK_LINKED_BY:
+            return None
+        if not all(_genuine_int(count) and count >= 0 for count in counts):
+            return None
+        datasets = _string_list(entry.get('datasets'))
+        candidates = _string_list(entry.get('candidates'))
+        reasons_raw = entry.get('link_reasons')
+        if datasets is None or candidates is None or not isinstance(reasons_raw, dict):
+            return None
+        reasons: Dict[str, int] = {}
+        for reason, count in reasons_raw.items():
+            if reason not in TASK_LINK_REASONS or not _genuine_int(count):
+                return None
+            reasons[reason] = count
+        out.append(JobTaskLink(
+            task_name=task_name,
+            n_trials=counts[0],
+            n_linked=counts[1],
+            n_unlinked=counts[2],
+            linked_by=linked_by,
+            datasets=datasets,
+            link_reasons=reasons,
+            candidates=candidates,
+        ))
+    return out
+
+
+def _map_trial_task_link(raw: Any) -> Optional[TrialTaskLink]:
+    """One trial's link fact (spec ``TrialTaskLink``), defensively: absent
+    (a pre-feature trial, or an older server) and malformed both read None
+    — never a fabricated link."""
+    if not isinstance(raw, dict):
+        return None
+    linked_by = raw.get('linked_by')
+    reason = raw.get('link_reason')
+    if linked_by not in TASK_LINKED_BY:
+        return None
+    if reason is not None and reason not in TASK_LINK_REASONS:
+        return None
+    candidates = _string_list(raw.get('candidates')) if 'candidates' in raw else []
+    if candidates is None:
+        return None
+    return TrialTaskLink(
+        linked_by=linked_by,
+        link_reason=reason,
+        dataset=raw.get('dataset') if isinstance(raw.get('dataset'), str) else None,
+        version=raw.get('version') if isinstance(raw.get('version'), str) else None,
+        task_digest=raw.get('task_digest') if isinstance(raw.get('task_digest'), str) else None,
+        candidates=candidates,
     )
 
 
@@ -4150,6 +4307,7 @@ def _map_trial_upload_provenance(data: Any) -> Optional[TrialUploadProvenance]:
             if isinstance(reported, dict)
             else None
         ),
+        link=_map_trial_task_link(data.get('link')),
     )
 
 
@@ -4439,6 +4597,7 @@ def _map_job_import(data: Dict[str, Any]) -> JobImport:
             if isinstance(data.get('n_trials_skipped'), int) else None
         ),
         skipped_trials=_map_job_import_skipped_trials(data.get('skipped_trials')),
+        task_links=_map_task_links(data.get('task_links')),
         failure=failure,
         progress=_map_job_import_progress(data.get('progress')),
         created_at=data.get('created_at') if isinstance(data.get('created_at'), str) else None,

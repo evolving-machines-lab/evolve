@@ -4539,6 +4539,7 @@ async function testUploadProvenanceMappingEdges() {
         uploaded_at: "2026-08-28T10:00:00.000Z",
         // Absent totals (a pre-field ingest) read null, never invented.
         reported_totals: null,
+        task_links: null,
       },
       "null originals pass through as null"
     );
@@ -4559,6 +4560,7 @@ async function testUploadProvenanceMappingEdges() {
         original_job_name: null,
         uploaded_at: "2026-08-28T10:00:00.000Z",
         reported_totals: null,
+        task_links: null,
       },
       "a non-string original_job_name reads null while the rest maps"
     );
@@ -4638,9 +4640,59 @@ async function testUploadExecutionHonesty() {
           n_output_tokens: 800,
           cost_usd: 1.25,
         },
+        // A pre-link-law trial (no `link` on the wire) reads null, never a guessed rule.
+        link: null,
       },
       "the trial provenance echo maps verbatim, reported figures included"
     );
+    // The link fact (spec TrialTaskLink): mapped as the contract states it;
+    // a rule or reason outside the closed enums voids it whole.
+    const linkedTrial = (link: unknown) => ({
+      id: "run-link",
+      job_id: "eval-up1",
+      task_name: "hello-world",
+      status: "SCORED",
+      upload: { original_trial_name: "trial-1", original_task_name: "hello-world", reported_agent_result: null, link },
+    });
+    setMockResponse("/api/trials/run-link", {
+      status: 200,
+      body: linkedTrial({ linked_by: "task_hash", link_reason: null, dataset: "terminal-bench-4", version: "4.0", task_digest: `sha256:${"a".repeat(64)}`, candidates: [] }),
+    });
+    assertEqual(
+      (await t.get("run-link")).upload?.link,
+      { linked_by: "task_hash", link_reason: null, dataset: "terminal-bench-4", version: "4.0", task_digest: `sha256:${"a".repeat(64)}`, candidates: [] },
+      "a linked trial maps its rule, dataset, version and digest"
+    );
+    setMockResponse("/api/trials/run-link", {
+      status: 200,
+      body: linkedTrial({ linked_by: "none", link_reason: "dataset_ambiguous", dataset: null, version: null, task_digest: null, candidates: ["tb-fork@1.0", "terminal-bench-4@4.0"] }),
+    });
+    assertEqual(
+      (await t.get("run-link")).upload?.link,
+      { linked_by: "none", link_reason: "dataset_ambiguous", dataset: null, version: null, task_digest: null, candidates: ["tb-fork@1.0", "terminal-bench-4@4.0"] },
+      "an unlinked trial maps its typed reason and the ambiguous candidates"
+    );
+    setMockResponse("/api/trials/run-link", { status: 200, body: linkedTrial({ linked_by: "sideways", link_reason: null }) });
+    assertEqual((await t.get("run-link")).upload?.link, null, "a rule outside the contract's enum voids the link whole");
+    setMockResponse("/api/trials/run-link", { status: 200, body: linkedTrial({ linked_by: "none", link_reason: "because" }) });
+    assertEqual((await t.get("run-link")).upload?.link, null, "a reason outside the contract's enum voids the link whole");
+
+    // The job's per-task roll-up (spec JobTaskLink[]): counts must be
+    // genuine integers, rules and reasons members of the enums, and one
+    // malformed row nulls the whole list — never a short list of tasks.
+    const rollup = [
+      { task_name: "ok-task", n_trials: 2, n_linked: 2, n_unlinked: 0, linked_by: "job_dataset_record", datasets: ["tb@4.0"], link_reasons: {}, candidates: [] },
+      { task_name: "foo-task", n_trials: 1, n_linked: 0, n_unlinked: 1, linked_by: "none", datasets: [], link_reasons: { hash_mismatch: 1 }, candidates: [] },
+    ];
+    setMockResponse("/api/jobs/eval-links", { status: 200, body: uploadedJobBody({ id: "eval-links", upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-09-14T10:00:00.000Z", reported_totals: null, task_links: rollup } }) });
+    assertEqual((await e.get("eval-links")).upload?.task_links, rollup, "the roll-up maps verbatim");
+    setMockResponse("/api/jobs/eval-links", { status: 200, body: uploadedJobBody({ id: "eval-links", upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-09-14T10:00:00.000Z", reported_totals: null, task_links: [rollup[0], { task_name: "x" }] } }) });
+    assertEqual((await e.get("eval-links")).upload?.task_links, null, "one malformed row nulls the whole list");
+    setMockResponse("/api/jobs/eval-links", { status: 200, body: uploadedJobBody({ id: "eval-links", upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-09-14T10:00:00.000Z", reported_totals: null, task_links: [{ ...rollup[1], link_reasons: { because: 1 } }] } }) });
+    assertEqual((await e.get("eval-links")).upload?.task_links, null, "a reason key outside the enum nulls the list");
+    setMockResponse("/api/jobs/eval-links", { status: 200, body: uploadedJobBody({ id: "eval-links", upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-09-14T10:00:00.000Z", reported_totals: null, task_links: [{ ...rollup[0], n_linked: 1.5 }] } }) });
+    assertEqual((await e.get("eval-links")).upload?.task_links, null, "a fractional count nulls the list");
+    assertEqual((await e.get("eval-up1")).upload?.task_links, null, "a pre-link-law job (no task_links on the wire) reads null");
     // The claim never leaks into the platform-metered fields beside it.
     assertEqual(run.agent_result, null, "agent_result stays null — the meter never saw the run");
     assertEqual(run.usage, null, "usage stays null");
