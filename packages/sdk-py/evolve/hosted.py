@@ -7418,10 +7418,13 @@ class JobsClient:
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
-        or duplicate criteria, bounds), ``invalid_input`` (off-roster model,
-        an empty or oversize prompt, an effort outside the vocabulary, or a
-        provider outside the lineup — the message names the roster, the
-        bound or the legal values),
+        or duplicate criteria, or a rubric the row store cannot hold —
+        PostgreSQL's jsonb ceiling, named), ``invalid_input`` (off-roster
+        model, an empty or NUL-bearing prompt or one past the row store's
+        1 GB field ceiling, an effort outside the vocabulary, or a provider
+        outside the lineup — the message names the roster, the ceiling or
+        the legal values; a body past what the server can parse is a 413
+        ``invalid_input`` naming the heap reading),
         ``analysis_already_running`` (one wave at a time),
         ``no_analyzable_trials`` (every trial CANCELLED, or no trial on the
         side of the reward filter).
