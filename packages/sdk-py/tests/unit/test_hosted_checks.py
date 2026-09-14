@@ -283,8 +283,8 @@ class TestChecksRead:
             with pytest.raises(EvolveDigestMismatchError):
                 await checks_factory(CONFIG).download('chk-1')
         message = (
-            "'nope' is not a check (no check_report.json) or a task check (no trial.log) — pass a check id "
-            "(evolve check list) to download the whole check, or one task check's id (results[].id on evolve "
+            "'nope' is neither a check id nor a task check id you can read — pass a check id "
+            "(evolve check list) for the whole check, or one task check's id (results[].id on evolve "
             "check show) for that task's folder"
         )
         import io
@@ -301,7 +301,7 @@ class TestChecksRead:
                 await checks_factory(CONFIG).download('nope')
         assert refused.value.status == 404
         assert refused.value.code == 'check_not_found'
-        assert 'or a task check' in str(refused.value)
+        assert 'nor a task check id' in str(refused.value)
 
     def test_the_facade_exposes_checks(self):
         client = hosted(CONFIG)

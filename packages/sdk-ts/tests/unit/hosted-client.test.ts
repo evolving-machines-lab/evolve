@@ -3981,7 +3981,7 @@ async function testDownloadCheckAndAnalysis() {
     // The typed refusals reach the caller as EvolveApiError with the code.
     setMockResponse("/api/checks/nope/download", {
       status: 404,
-      body: { error: { code: "check_not_found", message: "'nope' is not a check (no check_report.json) or a task check (no trial.log) — pass a check id (evolve check list) to download the whole check, or one task check's id (results[].id on evolve check show) for that task's folder" } },
+      body: { error: { code: "check_not_found", message: "'nope' is neither a check id nor a task check id you can read — pass a check id (evolve check list) for the whole check, or one task check's id (results[].id on evolve check show) for that task's folder" } },
     });
     let refused: unknown = null;
     try {
@@ -3990,7 +3990,7 @@ async function testDownloadCheckAndAnalysis() {
       refused = error;
     }
     assert(refused instanceof EvolveApiError && refused.code === "check_not_found", "neither form: the typed check_not_found");
-    assert((refused as EvolveApiError).message.includes("or a task check"), "the sentence names both forms");
+    assert((refused as EvolveApiError).message.includes("nor a task check id"), "the sentence names both forms");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     restoreFetch();

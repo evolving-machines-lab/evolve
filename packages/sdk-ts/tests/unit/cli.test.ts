@@ -5502,13 +5502,13 @@ async function testCheckDownloadSave() {
         error: {
           code: "check_not_found",
           message:
-            "'nope' is not a check (no check_report.json) or a task check (no trial.log) — pass a check id (evolve check list) to download the whole check, or one task check's id (results[].id on evolve check show) for that task's folder",
+            "'nope' is neither a check id nor a task check id you can read — pass a check id (evolve check list) for the whole check, or one task check's id (results[].id on evolve check show) for that task's folder",
         },
       },
     });
     const neither = captureIO();
     assertEqual(await runCli(["check", "download", "nope", "-o", tmpDir, ...AUTH], neither.io), 1, "neither form exits 1");
-    assert(neither.err.some((l) => l.includes("is not a check (no check_report.json) or a task check (no trial.log)")), "the two-forms sentence, Harbor's shape, reaches stderr");
+    assert(neither.err.some((l) => l.includes("is neither a check id nor a task check id you can read")), "the two-forms sentence reaches stderr");
     assert(!existsSync(join(tmpDir, "nope")), "nothing is written for a refused id");
 
     // A CHECK ID at --stream: --stream is per task check; the feed's bare 404 becomes the two-forms hint.

@@ -5147,7 +5147,7 @@ async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
     fetch: (to) => client.download(id, { to }),
     outputDir: (inv.flags["output-dir"] as string | undefined) ?? "checks",
     scratchPrefix: "evolve-check-download-",
-    enrich: async (targetDir, root) => {
+    enrich: async (targetDir) => {
       const { readdir } = await import("node:fs/promises");
       const { join } = await import("node:path");
       const userId = await callerUserId(inv);
@@ -5174,7 +5174,6 @@ async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
         await writeRecord(join(dir, "evolve.json"), taskCheckEvolveRecord(task, check, userId));
         written.push(wholeCheck ? `${dir.slice(targetDir.length + 1)}/evolve.json` : "evolve.json");
       }
-      void root;
       return written;
     },
   });
@@ -5219,7 +5218,7 @@ async function saveArchive(
     fetch: (to: string) => Promise<string>;
     outputDir: string;
     scratchPrefix: string;
-    enrich: (targetDir: string, root: string) => Promise<string[]>;
+    enrich: (targetDir: string) => Promise<string[]>;
   }
 ): Promise<number> {
   const { mkdtemp, rm } = await import("node:fs/promises");
@@ -5244,7 +5243,7 @@ async function saveArchive(
       await rm(targetDir, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
-    files.push(...(await opts.enrich(targetDir, root)));
+    files.push(...(await opts.enrich(targetDir)));
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ path: targetDir, files: files.length }));
     } else {
