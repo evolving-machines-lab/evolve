@@ -1,10 +1,6 @@
 import { posix } from "path";
 import type { FileMap, SandboxInstance } from "./types";
 
-const MAX_ARTIFACT_FILES = 256;
-const MAX_ARTIFACT_FILE_BYTES = 100 * 1024 * 1024;
-const MAX_ARTIFACT_TOTAL_BYTES = 500 * 1024 * 1024;
-
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -50,16 +46,25 @@ export function decodeFindListing(stdout: string): string[] {
  * TEXT-ONLY contract: contents are returned as strings. ASCII-armored formats
  * (git patches incl. `--binary` hunks, JSON, logs) are safe; raw binary files
  * are not and need a bytes path if ever required.
+ *
+ * NO CEILING OF THE SDK'S OWN on how many paths, how many files, or how many
+ * bytes a collection carries (2026-09-14; the former 256 paths / 100 MiB per
+ * file / 500 MiB total were numbers nobody had derived — Harbor's artifact
+ * download is a plain copy of every listed path). The one bound that remains
+ * is physical and the runtime's: each file is read whole through
+ * `sandbox.files.read` into one string, so a file past V8's string ceiling
+ * (`buffer.constants.MAX_STRING_LENGTH`) fails in the read with the
+ * runtime's own error, and the map holds every collected file in memory at
+ * once — a caller collecting more than its process can hold sees the
+ * process's own limit, never a made-up one.
  */
 export async function collectSandboxArtifacts(
   sandbox: SandboxInstance,
   workingDirectory: string,
   paths: string[],
 ): Promise<FileMap> {
-  if (paths.length === 0 || paths.length > MAX_ARTIFACT_FILES) {
-    throw new Error(
-      `collectArtifacts() requires between 1 and ${MAX_ARTIFACT_FILES} paths.`,
-    );
+  if (paths.length === 0) {
+    throw new Error("collectArtifacts() requires at least one path.");
   }
 
   const roots = paths.map((input) => {
@@ -117,26 +122,13 @@ export async function collectSandboxArtifacts(
   }
 
   const filesByPath = new Map<string, number>();
-  let totalBytes = 0;
   for (let index = 0; index < fields.length; index += 2) {
     const fullPath = fields[index];
     const sizeBytes = Number(fields[index + 1]);
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
       throw new Error(`Sandbox returned an invalid artifact size: ${fullPath}`);
     }
-    if (sizeBytes > MAX_ARTIFACT_FILE_BYTES) {
-      throw new Error(`Artifact exceeds ${MAX_ARTIFACT_FILE_BYTES} bytes: ${fullPath}`);
-    }
-    if (!filesByPath.has(fullPath)) {
-      filesByPath.set(fullPath, sizeBytes);
-      totalBytes += sizeBytes;
-    }
-  }
-  if (filesByPath.size > MAX_ARTIFACT_FILES) {
-    throw new Error(`Artifact collection exceeds ${MAX_ARTIFACT_FILES} files.`);
-  }
-  if (totalBytes > MAX_ARTIFACT_TOTAL_BYTES) {
-    throw new Error(`Artifact collection exceeds ${MAX_ARTIFACT_TOTAL_BYTES} bytes.`);
+    if (!filesByPath.has(fullPath)) filesByPath.set(fullPath, sizeBytes);
   }
 
   const files: FileMap = {};
