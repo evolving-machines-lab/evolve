@@ -289,3 +289,102 @@ def test_trial_mapper_defends_every_dishonest_shape() -> None:
     assert odd.agent_result is None
     assert odd.usage is None
     assert odd.spend_source is None
+
+
+# ---------------------------------------------------------------------------
+# The task linkage (lane/auto-link-uploads-2026-09-14): the two link shapes
+# pinned to their spec schemas, the two provenance shapes' new members in
+# spec order, and the mappers' defenses.
+# ---------------------------------------------------------------------------
+
+from evolve import JobTaskLink, TrialTaskLink  # noqa: E402
+from evolve.hosted import (  # noqa: E402
+    TASK_LINK_REASONS,
+    TASK_LINKED_BY,
+    _map_job_import,
+    _map_task_links,
+    _map_trial_task_link,
+)
+
+
+def _spec_enum(schema_name: str) -> 'list[str]':
+    """The members of one string-enum schema, parsed from the spec's own
+    committed formatting (`enum: [a, b, …]`, possibly wrapped over lines);
+    non-vacuous so a renamed schema fails loudly."""
+    text = SPEC_PATH.read_text()
+    block = re.search(rf'\n    {re.escape(schema_name)}:\n(.*?)(?=\n    \S)', text, re.S)
+    assert block is not None, f'spec schema {schema_name} not found'
+    enum = re.search(r'enum: \[(.*?)\]', block.group(1), re.S)
+    assert enum is not None, f'no enum on spec schema {schema_name}'
+    members = [member.strip() for member in enum.group(1).replace('\n', ' ').split(',') if member.strip()]
+    assert members, f'vacuous parse: no enum members on {schema_name}'
+    return members
+
+
+def test_task_link_shapes_equal_their_spec_schemas() -> None:
+    assert list(TrialTaskLink.__annotations__) == _spec_schema_properties('TrialTaskLink')
+    assert list(JobTaskLink.__annotations__) == _spec_schema_properties('JobTaskLink')
+
+
+def test_task_link_vocabularies_equal_the_spec_enums() -> None:
+    assert list(TASK_LINKED_BY) == _spec_enum('TaskLinkedBy')
+    assert list(TASK_LINK_REASONS) == _spec_enum('TaskLinkReason')
+
+
+def test_trial_link_mapper_reads_the_contract_and_defends_it() -> None:
+    digest = 'sha256:' + 'a' * 64
+    linked = _map_trial(_wire_trial(upload={
+        'original_trial_name': 'trial-1',
+        'original_task_name': 'hello-world',
+        'reported_agent_result': None,
+        'link': {'linked_by': 'task_hash', 'link_reason': None, 'dataset': 'terminal-bench-4',
+                 'version': '4.0', 'task_digest': digest, 'candidates': []},
+    }))
+    assert linked.upload.link == TrialTaskLink(
+        linked_by='task_hash', link_reason=None, dataset='terminal-bench-4', version='4.0',
+        task_digest=digest, candidates=[],
+    )
+    ambiguous = _map_trial_task_link({
+        'linked_by': 'none', 'link_reason': 'dataset_ambiguous', 'dataset': None, 'version': None,
+        'task_digest': digest, 'candidates': ['tb-fork@1.0', 'terminal-bench-4@4.0'],
+    })
+    assert ambiguous.link_reason == 'dataset_ambiguous'
+    assert ambiguous.candidates == ['tb-fork@1.0', 'terminal-bench-4@4.0']
+    # A pre-link-law trial (no `link`), and every dishonest shape, read None.
+    assert _map_trial(_wire_trial(upload={'original_trial_name': 't', 'original_task_name': 't'})).upload.link is None
+    assert _map_trial_task_link({'linked_by': 'sideways', 'link_reason': None}) is None
+    assert _map_trial_task_link({'linked_by': 'none', 'link_reason': 'because'}) is None
+    assert _map_trial_task_link({'linked_by': 'none', 'link_reason': None, 'candidates': [1]}) is None
+    assert _map_trial_task_link('linked') is None
+
+
+def test_task_links_mapper_reads_the_contract_and_defends_it() -> None:
+    rollup = [
+        {'task_name': 'ok-task', 'n_trials': 2, 'n_linked': 2, 'n_unlinked': 0, 'linked_by': 'job_dataset_record',
+         'datasets': ['tb@4.0'], 'link_reasons': {}, 'candidates': []},
+        {'task_name': 'foo-task', 'n_trials': 1, 'n_linked': 0, 'n_unlinked': 1, 'linked_by': 'none',
+         'datasets': [], 'link_reasons': {'hash_mismatch': 1}, 'candidates': []},
+    ]
+    job = _map_job(_wire_job(upload={
+        'original_job_id': None, 'original_job_name': None, 'uploaded_at': 'x', 'reported_totals': None,
+        'task_links': rollup,
+    }))
+    assert job.upload.task_links == [
+        JobTaskLink(task_name='ok-task', n_trials=2, n_linked=2, n_unlinked=0, linked_by='job_dataset_record',
+                    datasets=['tb@4.0'], link_reasons={}, candidates=[]),
+        JobTaskLink(task_name='foo-task', n_trials=1, n_linked=0, n_unlinked=1, linked_by='none',
+                    datasets=[], link_reasons={'hash_mismatch': 1}, candidates=[]),
+    ]
+    # One malformed row nulls the WHOLE list — never a short count of tasks.
+    assert _map_task_links([rollup[0], {'task_name': 'x'}]) is None
+    assert _map_task_links([{**rollup[1], 'link_reasons': {'because': 1}}]) is None
+    assert _map_task_links([{**rollup[0], 'n_linked': 1.5}]) is None
+    assert _map_task_links([{**rollup[0], 'n_linked': True}]) is None
+    assert _map_task_links([{**rollup[0], 'linked_by': 'sideways'}]) is None
+    assert _map_task_links(None) is None
+    # A pre-link-law job (no task_links on the wire) reads None.
+    assert _map_job(_wire_job(upload={'original_job_id': None, 'original_job_name': None, 'uploaded_at': 'x'})).upload.task_links is None
+    # The import serves the same roll-up.
+    imported = _map_job_import({'id': 'imp-1', 'status': 'COMPLETED', 'task_links': rollup})
+    assert [row.task_name for row in imported.task_links] == ['ok-task', 'foo-task']
+    assert _map_job_import({'id': 'imp-1', 'status': 'QUEUED'}).task_links is None

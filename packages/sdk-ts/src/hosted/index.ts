@@ -157,7 +157,9 @@ import type {
   JobImportProgress,
   JobImportSkippedTrial,
   JobImportSource,
+  JobTaskLink,
   ListJobImportsOptions,
+  TrialTaskLink,
   WatchJobImportOptions,
   UpstreamStatus,
   UsageReading,
@@ -179,6 +181,8 @@ export {
   JOB_LIST_SCOPES,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
+  TASK_LINKED_BY,
+  TASK_LINK_REASONS,
   GATEWAY_TRACE_SEQ_BASE,
   gatewayUsageOf,
   isHostedErrorCode,
@@ -377,7 +381,11 @@ export type {
   JobImportProgress,
   JobImportSkippedTrial,
   JobImportSource,
+  JobTaskLink,
   ListJobImportsOptions,
+  TaskLinkedBy,
+  TaskLinkReason,
+  TrialTaskLink,
   WatchJobImportOptions,
   UploadProvenance,
   UpstreamStatus,
@@ -390,12 +398,16 @@ export type {
 } from "./types";
 import {
   GATEWAY_TRACE_SEQ_BASE,
+  TASK_LINKED_BY,
+  TASK_LINK_REASONS,
   isHostedErrorCode,
   mapStoredAt,
   mapUsageReading,
   type Awaitable,
   type CapabilityDocument,
   type HostedErrorCode,
+  type TaskLinkReason,
+  type TaskLinkedBy,
 } from "./types";
 
 // The client-side Harbor-tree assembly behind `evolve trial download` and
@@ -1010,6 +1022,76 @@ function mapUploadProvenance(raw: unknown): Job["upload"] {
       typeof blob.original_job_name === "string" ? blob.original_job_name : null,
     uploaded_at: blob.uploaded_at,
     reported_totals: reportedTotals,
+    task_links: mapTaskLinks(blob.task_links),
+  };
+}
+
+const isTaskLinkedBy = (value: unknown): value is TaskLinkedBy =>
+  typeof value === "string" && (TASK_LINKED_BY as readonly string[]).includes(value);
+const isTaskLinkReason = (value: unknown): value is TaskLinkReason =>
+  typeof value === "string" && (TASK_LINK_REASONS as readonly string[]).includes(value);
+const stringList = (value: unknown): string[] | null =>
+  Array.isArray(value) && value.every((member) => typeof member === "string") ? [...value] : null;
+
+/**
+ * The per-task link roll-up (spec JobTaskLink[]), defensively: absent (a
+ * pre-feature upload, or an older server) and malformed both read null —
+ * and one malformed row nulls the WHOLE list, because a shorter list would
+ * be a false count of the job's tasks. The counts must be genuine integers,
+ * the rule a member of the contract's enum, every reason key a member too.
+ */
+function mapTaskLinks(raw: unknown): JobTaskLink[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: JobTaskLink[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.task_name !== "string" || !isTaskLinkedBy(row.linked_by)) return null;
+    const counts = [row.n_trials, row.n_linked, row.n_unlinked];
+    if (!counts.every((count) => Number.isInteger(count) && (count as number) >= 0)) return null;
+    const datasets = stringList(row.datasets);
+    const candidates = stringList(row.candidates);
+    if (datasets === null || candidates === null) return null;
+    if (!row.link_reasons || typeof row.link_reasons !== "object" || Array.isArray(row.link_reasons)) return null;
+    const reasons: Partial<Record<TaskLinkReason, number>> = {};
+    for (const [reason, count] of Object.entries(row.link_reasons as Record<string, unknown>)) {
+      if (!isTaskLinkReason(reason) || !Number.isInteger(count)) return null;
+      reasons[reason] = count as number;
+    }
+    out.push({
+      task_name: row.task_name,
+      n_trials: row.n_trials as number,
+      n_linked: row.n_linked as number,
+      n_unlinked: row.n_unlinked as number,
+      linked_by: row.linked_by,
+      datasets,
+      link_reasons: reasons,
+      candidates,
+    });
+  }
+  return out;
+}
+
+/**
+ * One trial's link fact (spec TrialTaskLink), defensively: absent (a
+ * pre-feature trial, or an older server) and malformed both read null —
+ * never a fabricated link. `linked_by` must be a member of the contract's
+ * enum, `link_reason` one of its enum or null, `candidates` strings.
+ */
+function mapTrialTaskLink(raw: unknown): TrialTaskLink | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const blob = raw as Record<string, unknown>;
+  if (!isTaskLinkedBy(blob.linked_by)) return null;
+  if (blob.link_reason !== null && blob.link_reason !== undefined && !isTaskLinkReason(blob.link_reason)) return null;
+  const candidates = blob.candidates === undefined ? [] : stringList(blob.candidates);
+  if (candidates === null) return null;
+  return {
+    linked_by: blob.linked_by,
+    link_reason: isTaskLinkReason(blob.link_reason) ? blob.link_reason : null,
+    dataset: typeof blob.dataset === "string" ? blob.dataset : null,
+    version: typeof blob.version === "string" ? blob.version : null,
+    task_digest: typeof blob.task_digest === "string" ? blob.task_digest : null,
+    candidates,
   };
 }
 
@@ -1257,6 +1339,7 @@ function mapTrialUploadProvenance(raw: unknown): Trial["upload"] {
             cost_usd: reportedNumber((reported as Record<string, unknown>).cost_usd),
           }
         : null,
+    link: mapTrialTaskLink(blob.link),
   };
 }
 
@@ -1311,6 +1394,7 @@ function mapJobImport(raw: Record<string, unknown>): JobImport {
     n_trials_uploaded: (raw.n_trials_uploaded as number | null) ?? null,
     n_trials_skipped: (raw.n_trials_skipped as number | null) ?? null,
     skipped_trials: Array.isArray(raw.skipped_trials) ? (raw.skipped_trials as JobImportSkippedTrial[]) : null,
+    task_links: mapTaskLinks(raw.task_links),
     failure: (raw.failure as JobImportFailure | null) ?? null,
     progress: (raw.progress as JobImportProgress | null) ?? null,
   };

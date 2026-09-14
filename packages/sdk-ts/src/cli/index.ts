@@ -80,6 +80,7 @@ import type {
   JobImport,
   JobImportProgress,
   JobImportSkippedTrial,
+  JobTaskLink,
   DatasetImportProgress,
   DatasetPreflight,
   DatasetSelector,
@@ -112,7 +113,7 @@ import type {
   DatasetVersionSource,
   UsageReading,
 } from "../hosted/types";
-import { gatewayUsageOf } from "../hosted/types";
+import { gatewayUsageOf, TaskLinkReason } from "../hosted/types";
 import {
   managedSecrets,
   type ManagedSecretMetadata,
@@ -3206,7 +3207,7 @@ function columnsHelpRequested<T>(
   return true;
 }
 
-function jobLines(e: Job): string[] {
+function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   // Row order mirrors the input contract: datasets, agents, size, attempts,
   // concurrency, spend caps.
   const rows: string[][] = [
@@ -3340,6 +3341,22 @@ function jobLines(e: Job): string[] {
     if (reportedTokens.length > 0) {
       rows.push(["reported tokens", reportedTokens.join(" · ")]);
     }
+  }
+  // The task-folder fact of an uploaded job, one row: how many trials
+  // linked to a stored task (upload.task_links) — nothing on a pre-feature
+  // record (null) or a trial-less one. The upload follow passes
+  // taskLinksRow: false because it prints the per-task lines (taskLinkLines)
+  // right after: one statement per surface.
+  if ((opts.taskLinksRow ?? true) && e.upload?.task_links && e.upload.task_links.length > 0) {
+    const links = e.upload.task_links;
+    const nLinked = links.reduce((sum, row) => sum + row.n_linked, 0);
+    const nTrials = links.reduce((sum, row) => sum + row.n_trials, 0);
+    const refs = Array.from(new Set(links.flatMap((row) => row.datasets)));
+    rows.push([
+      "task links",
+      `${nLinked} of ${nTrials} ${nTrials === 1 ? "trial" : "trials"} linked` + (refs.length > 0 ? ` to ${refs.join(", ")}` : "") +
+        (nLinked < nTrials ? ` — ${nTrials - nLinked} without the task folder` : ""),
+    ]);
   }
   // The trace-analysis aggregate, only when the job has ever been analyzed —
   // null means never, and absence of analysis is stated as absence, not a
@@ -4719,6 +4736,22 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   // and returns (their cli/hosted_jobs.py run_hosted_launch), and the wait
   // is a separate poll (their hub.py status_cmd: "polling this command is
   // the point of --json"). --watch is that poll, opted in.
+  //
+  // BEFORE IT FIRES, the task-folder warning for an UPLOADED job whose
+  // trials did not all link to a stored task (upload.task_links, the
+  // ingest's link law): per task, on stderr in both modes — the analyses
+  // of those trials run without /app/task, and the user hears it here, not
+  // after the spend. One GET; a native job (no upload) says nothing.
+  const target = await client.get(id);
+  if ((target.upload?.task_links ?? []).some((row) => row.n_unlinked > 0)) {
+    for (const line of taskLinkLines(target.upload?.task_links ?? null)) io.err(line);
+  } else if (target.upload !== null && target.upload !== undefined && target.upload.task_links === null) {
+    // An upload from before task linking existed carries no link record
+    // (the wire's null, never inferred): the user hears that the task
+    // folder's presence is unknown here, and that each analysis row will
+    // record it (task_absent_reason).
+    io.err(PRE_LINK_LAW_UPLOAD_LINE);
+  }
   const accepted = await client.analyze(id, req);
   if (!watch) {
     if (json) {
@@ -5386,7 +5419,91 @@ function jobImportLines(imported: JobImport): string[] {
   if (imported.n_trials_skipped !== null) rows.push(["skipped", String(imported.n_trials_skipped)]);
   if (imported.progress !== null) rows.push(["phase", imported.progress.phase]);
   if (imported.failure !== null) rows.push(["failure", `${imported.failure.code}: ${imported.failure.message}`]);
-  return [...table(rows), ...skippedTrialLines(imported.skipped_trials)];
+  return [...table(rows), ...skippedTrialLines(imported.skipped_trials), ...taskLinkLines(imported.task_links)];
+}
+
+/**
+ * The plain words for each typed reason a trial did not link to a stored
+ * task (the contract's TaskLinkReason) — presentation only; the vocabulary
+ * is the wire's, and the CLI decides nothing here. MIRROR: the dashboard's
+ * TASK_LINK_REASON_WORDS (swarm_dashboard lib/evals-ui/jobs.ts) spells the
+ * same six sentences; a wording change moves both.
+ */
+const TASK_LINK_REASON_WORDS: Record<TaskLinkReason, string> = {
+  hash_mismatch: "hash mismatch",
+  task_not_in_dataset: "task not in the dataset",
+  no_dataset_named: "no dataset named",
+  dataset_ambiguous: "same task in two datasets",
+  no_hash_match: "no task with this hash",
+  no_task_digest: "no task digest in the archive",
+};
+
+/** What `analyze` says before it fires on a job uploaded before task linking existed (upload.task_links null on the wire). */
+const PRE_LINK_LAW_UPLOAD_LINE =
+  "uploaded before task linking existed: whether its trials carry the task folder is unknown here; each analysis row records it (task_absent_reason)";
+
+/** The `dataset` hint's own words, and the hash link's — how a linked task was matched. */
+function taskLinkHow(linkedBy: string): string {
+  return linkedBy === "dataset_flag" ? "by task name, -d" : "task hashes equal";
+}
+
+/**
+ * WHAT THE USER HEARS ABOUT THE TASK FOLDER, per task — the same lines on
+ * the upload follow, on `analyze` before it fires, and on `job import`:
+ * from the wire's own roll-up (upload.task_links / the import's task_links,
+ * the ingest's link law), rendered and never decided here.
+ *
+ *   linked 58 of 60 trials to terminal-bench-4@4.0 (task hashes equal);
+ *   not linked: foo-task (2 trials, hash mismatch), bar-task (1 trial, task
+ *   not in the dataset) — analyses of those trials run without the task
+ *   folder; link explicitly: evolve upload <dir> -d <name[@version]>
+ *
+ * A job with no link at all: "no dataset matched (…reason…); analyses of
+ * this job will run without the task folder — link explicitly with -d".
+ * Nothing on a pre-feature record (task_links null) or a trial-less job:
+ * the wire states nothing, so neither does this.
+ */
+function taskLinkLines(taskLinks: JobTaskLink[] | null): string[] {
+  if (taskLinks === null || taskLinks.length === 0) return [];
+  const nTrials = taskLinks.reduce((sum, row) => sum + row.n_trials, 0);
+  const nLinked = taskLinks.reduce((sum, row) => sum + row.n_linked, 0);
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const reasonsOf = (row: JobTaskLink): string =>
+    Object.entries(row.link_reasons)
+      .map(([reason, count]) => `${TASK_LINK_REASON_WORDS[reason as TaskLinkReason] ?? reason}${Object.keys(row.link_reasons).length > 1 ? ` ${count}` : ""}`)
+      .join(", ") + (row.candidates.length > 0 ? ` [${row.candidates.join(", ")}]` : "");
+  const unlinked = taskLinks.filter((row) => row.n_unlinked > 0);
+  if (nLinked === 0) {
+    const reasons = Array.from(new Set(unlinked.flatMap((row) => Object.keys(row.link_reasons))))
+      .map((reason) => TASK_LINK_REASON_WORDS[reason as TaskLinkReason] ?? reason)
+      .join(", ");
+    const candidates = Array.from(new Set(unlinked.flatMap((row) => row.candidates)));
+    return [
+      `no dataset matched (${reasons}${candidates.length > 0 ? `: ${candidates.join(", ")}` : ""}); ` +
+        "analyses of this job will run without the task folder — link explicitly with -d",
+    ];
+  }
+  // Linked trials per dataset ref (normally one), the rule named once.
+  const byRef = new Map<string, number>();
+  let how = "";
+  for (const row of taskLinks) {
+    if (row.n_linked === 0) continue;
+    how = taskLinkHow(row.linked_by);
+    for (const ref of row.datasets) byRef.set(ref, (byRef.get(ref) ?? 0) + row.n_linked);
+  }
+  const refs = Array.from(byRef.entries());
+  const where =
+    refs.length === 1
+      ? refs[0][0]
+      : refs.map(([ref, count]) => `${ref} (${count})`).join(", ");
+  const lines = [`linked ${nLinked} of ${plural(nTrials, "trial")} to ${where} (${how})`];
+  if (unlinked.length > 0) {
+    lines.push(
+      `not linked: ${unlinked.map((row) => `${row.task_name} (${plural(row.n_unlinked, "trial")}, ${reasonsOf(row)})`).join(", ")} — ` +
+        "analyses of those trials run without the task folder; link explicitly: evolve upload <dir> -d <name[@version]>",
+    );
+  }
+  return lines;
 }
 
 /**
@@ -5461,12 +5578,23 @@ async function followJobImport(
     io.err(`Skipped ${final.n_trials_skipped} trial(s) — see: evolve job import ${final.id}`);
     for (const line of skippedTrialLines(final.skipped_trials)) io.err(line);
   }
+  // The task-folder statement, per task (taskLinkLines): a trial that did
+  // not link to a stored task is never silent either — on stdout in human
+  // mode with the record, on stderr under --json (the document carries the
+  // same facts as upload.task_links).
+  const links = taskLinkLines(job.upload?.task_links ?? null);
+  const unlinked = (job.upload?.task_links ?? []).some((row) => row.n_unlinked > 0);
   if (json) {
+    if (unlinked) for (const line of links) io.err(line);
     io.out(JSON.stringify(job));
     return 0;
   }
   io.out("");
-  for (const line of jobLines(job)) io.out(line);
+  for (const line of jobLines(job, { taskLinksRow: false })) io.out(line);
+  if (links.length > 0) {
+    io.out("");
+    for (const line of links) io.out(line);
+  }
   io.out("");
   io.out(`Analyze it with: evolve analyze ${job.id}`);
   return 0;

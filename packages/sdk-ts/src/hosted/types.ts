@@ -1169,6 +1169,87 @@ export interface UploadProvenance {
     n_output_tokens: number | null;
     n_trials_reporting: number;
   } | null;
+  /**
+   * One row per task of the uploaded job, in archive order (spec
+   * JobTaskLink): how many of its trials linked to a stored task — and so
+   * analyze with the task folder in `/app/task` — to which dataset version,
+   * and why the rest did not. Null only on jobs ingested before the link
+   * law existed (not backfillable, never guessed).
+   */
+  task_links: JobTaskLink[] | null;
+}
+
+/**
+ * How an uploaded trial was linked to a stored task — the ONE rule the
+ * ingest ran for its job (spec TaskLinkedBy): `dataset_flag` (the `-d`
+ * dataset, by task name — the override), `job_dataset_record` (the job's
+ * own config.json named a dataset the caller can see; linked by Harbor's
+ * task hash inside it), `task_hash` (nothing named; exactly one visible
+ * dataset carries the hash), or `none` (not linked — `TaskLinkReason` says
+ * why).
+ */
+export const TASK_LINKED_BY = ["dataset_flag", "job_dataset_record", "task_hash", "none"] as const;
+export type TaskLinkedBy = (typeof TASK_LINKED_BY)[number];
+
+/**
+ * Why an uploaded trial was NOT linked to a stored task (spec
+ * TaskLinkReason) — its analyses run without the task folder:
+ * `hash_mismatch` (the named dataset holds the task name, but with different
+ * bytes), `task_not_in_dataset` (the named version holds neither the name
+ * nor the hash), `no_dataset_named` (nothing named and no lock digest —
+ * nothing to match on), `dataset_ambiguous` (the same bytes are published in
+ * two or more datasets; `candidates` names them, `-d` decides),
+ * `no_hash_match` (no visible task carries the trial's digest),
+ * `no_task_digest` (a dataset was named but the trial's archive carries no
+ * lock digest; a name alone never links without `-d`).
+ */
+export const TASK_LINK_REASONS = [
+  "hash_mismatch",
+  "task_not_in_dataset",
+  "no_dataset_named",
+  "dataset_ambiguous",
+  "no_hash_match",
+  "no_task_digest",
+] as const;
+export type TaskLinkReason = (typeof TASK_LINK_REASONS)[number];
+
+/**
+ * How THIS uploaded trial linked to a stored task, or why not (spec
+ * TrialTaskLink). A linked trial names its `dataset` and `version`; an
+ * unlinked one carries `link_reason`. `task_digest` is the trial's own
+ * lock.json `task.digest` when its archive carried one (Harbor's
+ * `sha256:<hex>`); `candidates` the `name@version` refs an ambiguous hash
+ * matched ([] otherwise).
+ */
+export interface TrialTaskLink {
+  linked_by: TaskLinkedBy;
+  /** Set exactly when `linked_by` is `none`. */
+  link_reason: TaskLinkReason | null;
+  dataset: string | null;
+  version: string | null;
+  task_digest: string | null;
+  candidates: string[];
+}
+
+/**
+ * One task of an uploaded job, rolled up (spec JobTaskLink): its trial
+ * count, how many linked (`n_linked` analyze with the task folder,
+ * `n_unlinked` without), the rule that linked them, the `name@version` refs
+ * they linked to (sorted; normally one), the unlinked trials per reason, and
+ * the refs an ambiguous hash matched.
+ */
+export interface JobTaskLink {
+  /** The platform task key (the leaf of a registry-qualified name). */
+  task_name: string;
+  n_trials: number;
+  n_linked: number;
+  n_unlinked: number;
+  /** The job's link rule when any trial of the task linked, else `none`. */
+  linked_by: TaskLinkedBy;
+  datasets: string[];
+  /** Unlinked trials per `TaskLinkReason`. */
+  link_reasons: Partial<Record<TaskLinkReason, number>>;
+  candidates: string[];
 }
 
 /**
@@ -1764,6 +1845,11 @@ export interface TrialUploadProvenance {
     n_output_tokens: number | null;
     cost_usd: number | null;
   } | null;
+  /**
+   * How this trial linked to a stored task, or why not. Null only on trials
+   * ingested before the link law existed (not backfillable, never guessed).
+   */
+  link: TrialTaskLink | null;
 }
 
 /**
@@ -3521,6 +3607,15 @@ export interface JobImport {
   n_trials_skipped: number | null;
   /** One entry per skipped trial, in archive order, from COMPLETED on ([] when none). Null until COMPLETED. */
   skipped_trials: JobImportSkippedTrial[] | null;
+  /**
+   * The ingested job's per-task task-linkage roll-up — the same rows the
+   * job serves as `upload.task_links`, read from the job, so a watcher
+   * learns from the import alone which tasks will analyze with their task
+   * folder and why the rest will not. Null until COMPLETED, null again when
+   * the job is gone (like `job_id`), and null on a job ingested before the
+   * link law existed.
+   */
+  task_links: JobTaskLink[] | null;
   failure: JobImportFailure | null;
   /** Null until the worker's first report (a QUEUED import). */
   progress: JobImportProgress | null;

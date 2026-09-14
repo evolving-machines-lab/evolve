@@ -82,6 +82,8 @@ import {
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   JOB_LIST_SCOPES,
+  TASK_LINKED_BY,
+  TASK_LINK_REASONS,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -795,6 +797,43 @@ assert(
   JSON.stringify(declaredSignatures) === JSON.stringify(specSignatures)
     ? `InfraFailureSignature is the spec's enum, byte-exactly (${specSignatures.join(", ")})`
     : `signatures drifted: SDK [${declaredSignatures.join(", ")}] vs spec [${specSignatures.join(", ")}]`
+);
+
+// -----------------------------------------------------------------------------
+// 10. TASK-LINK VOCABULARIES — how an uploaded trial linked to a stored task
+// (TaskLinkedBy) and why it did not (TaskLinkReason). The runtime lists the
+// mappers read (mapTaskLinks / mapTrialTaskLink null a whole list on one
+// unknown member) are held to the contract's enums member for member, in
+// order; the Python gate pins TASK_LINKED_BY / TASK_LINK_REASONS the same way
+// (test_hosted_upload_typing.py). The published unions derive from the lists
+// (`(typeof TASK_LINKED_BY)[number]`), asserted through the source so a
+// hand-rewritten literal union cannot quietly replace the derivation.
+// -----------------------------------------------------------------------------
+
+const specTaskLinkedBy = inlineEnum("TaskLinkedBy");
+const specTaskLinkReasons = inlineEnum("TaskLinkReason");
+
+assert(specTaskLinkedBy.length >= 4, `the spec's TaskLinkedBy enum parsed (${specTaskLinkedBy.length} members)`);
+assert(specTaskLinkReasons.length >= 5, `the spec's TaskLinkReason enum parsed (${specTaskLinkReasons.length} members)`);
+assert(
+  JSON.stringify([...TASK_LINKED_BY]) === JSON.stringify(specTaskLinkedBy),
+  JSON.stringify([...TASK_LINKED_BY]) === JSON.stringify(specTaskLinkedBy)
+    ? `TASK_LINKED_BY is the spec's TaskLinkedBy enum, byte-exactly (${specTaskLinkedBy.join(", ")})`
+    : `task link rules drifted: SDK [${TASK_LINKED_BY.join(", ")}] vs spec [${specTaskLinkedBy.join(", ")}]`
+);
+assert(
+  JSON.stringify([...TASK_LINK_REASONS]) === JSON.stringify(specTaskLinkReasons),
+  JSON.stringify([...TASK_LINK_REASONS]) === JSON.stringify(specTaskLinkReasons)
+    ? `TASK_LINK_REASONS is the spec's TaskLinkReason enum, byte-exactly (${specTaskLinkReasons.join(", ")})`
+    : `task link reasons drifted: SDK [${TASK_LINK_REASONS.join(", ")}] vs spec [${specTaskLinkReasons.join(", ")}]`
+);
+assert(
+  /export type TaskLinkedBy = \(typeof TASK_LINKED_BY\)\[number\];/.test(TYPES_SOURCE),
+  "TaskLinkedBy derives from TASK_LINKED_BY (no shadow union)"
+);
+assert(
+  /export type TaskLinkReason = \(typeof TASK_LINK_REASONS\)\[number\];/.test(TYPES_SOURCE),
+  "TaskLinkReason derives from TASK_LINK_REASONS (no shadow union)"
 );
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

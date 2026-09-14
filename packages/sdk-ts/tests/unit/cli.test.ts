@@ -3900,6 +3900,9 @@ async function testAnalyzeVerbReturnsAtOnce() {
       checks: {},
     });
     setMockResponse("/api/jobs/eval-1/analyze", { status: 202, body: pendingJob });
+    // The task-folder pre-flight reads the job once before the POST (a
+    // native job: nothing to warn about).
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: pendingJob });
     const { io, out } = captureIO();
     const code = await runCli(["analyze", "eval-1", "-m", "glm-5.3", ...AUTH], io);
     assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
@@ -3937,8 +3940,8 @@ async function testAnalyzeVerbReturnsAtOnce() {
     );
     assertEqual(
       fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
-      0,
-      "no job read: the verb does not follow the wave"
+      1,
+      "one job read — the task-folder pre-flight — and no follow of the wave"
     );
     assert(
       !fetchCalls.some((c) => c.url.includes("/api/jobs/eval-1/trials")),
@@ -3971,8 +3974,8 @@ async function testAnalyzeVerbReturnsAtOnce() {
     assertEqual(body.stats.analysis.n_pending, 3, "the queued batch rides stats.analysis");
     assertEqual(
       fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
-      0,
-      "--json alone reads the job zero times"
+      1,
+      "--json alone reads the job exactly once — the task-folder pre-flight — and never polls"
     );
   } finally {
     restoreFetch();
@@ -3983,8 +3986,9 @@ async function testAnalyzeVerbWatchFollows() {
   console.log("\n--- runCli: analyze --watch follows the wave, renders the settled table ---");
   installMockFetch();
   const baseFetch = globalThis.fetch;
-  // The wave settles between the first and second job read, so the follow is
-  // proven to POLL rather than to read once.
+  // Read 1 is the verb's task-folder pre-flight; the wave settles between
+  // the follow's first and second reads, so the follow is proven to POLL
+  // rather than to read once.
   let jobReads = 0;
   const pendingJob = analyzedWireJob({
     n_completed: 0,
@@ -4004,7 +4008,7 @@ async function testAnalyzeVerbWatchFollows() {
     const urlStr = url.toString();
     if (urlStr === `${BASE}/api/jobs/eval-1`) {
       jobReads++;
-      return buildMockResponse({ status: 200, body: jobReads === 1 ? pendingJob : settledJob });
+      return buildMockResponse({ status: 200, body: jobReads <= 2 ? pendingJob : settledJob });
     }
     return baseFetch(url as any, init);
   };
@@ -4040,7 +4044,7 @@ async function testAnalyzeVerbWatchFollows() {
       { model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
       "-m/-e/-p/--effort ride the body as model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
     );
-    assert(jobReads >= 2, "follows the wave by polling the job");
+    assert(jobReads >= 3, "follows the wave by polling the job (past the pre-flight read)");
     assert(
       out.some((l) => l.includes("1 completed") && l.includes("0 pending")),
       "prints the settled tally"
@@ -4134,6 +4138,7 @@ async function testAnalyzeRefusalSurfacesVerbatim() {
         },
       },
     });
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob() });
     const { io, err } = captureIO();
     const code = await runCli(["analyze", "eval-1", ...AUTH], io);
     assertEqual(code, 1, "exit 1 on the typed refusal");
@@ -7467,8 +7472,54 @@ function uploadedWireJob(): Record<string, unknown> {
         n_output_tokens: 1600,
         n_trials_reporting: 1,
       },
+      // The ingest's link law: both trials linked by -d (the override).
+      task_links: [
+        { task_name: "hello-world", n_trials: 2, n_linked: 2, n_unlinked: 0, linked_by: "dataset_flag", datasets: ["deep-swe@1.1"], link_reasons: {}, candidates: [] },
+      ],
     },
     finished_at: "2026-08-28T10:00:00.000Z",
+  });
+}
+
+/** An uploaded job whose trials linked by Harbor's task hash — 58 of 60, two tasks left out, typed. */
+function partlyLinkedWireJob(id = "eval-part"): Record<string, unknown> {
+  return wireJob({
+    id,
+    status: "COMPLETED",
+    sandbox_provider: null,
+    n_total_trials: 60,
+    trials: { total: 60, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 60 } },
+    upload: {
+      original_job_id: "orig-part",
+      original_job_name: null,
+      uploaded_at: "2026-09-14T10:00:00.000Z",
+      reported_totals: null,
+      task_links: [
+        { task_name: "ok-task", n_trials: 57, n_linked: 57, n_unlinked: 0, linked_by: "job_dataset_record", datasets: ["terminal-bench-4@4.0"], link_reasons: {}, candidates: [] },
+        { task_name: "foo-task", n_trials: 2, n_linked: 0, n_unlinked: 2, linked_by: "none", datasets: [], link_reasons: { hash_mismatch: 2 }, candidates: [] },
+        { task_name: "bar-task", n_trials: 1, n_linked: 0, n_unlinked: 1, linked_by: "none", datasets: [], link_reasons: { task_not_in_dataset: 1 }, candidates: [] },
+      ],
+    },
+    finished_at: "2026-09-14T10:00:00.000Z",
+  });
+}
+
+/** An uploaded job nothing linked — a job run from local paths, its hashes unknown here. */
+function unlinkedWireJob(id = "eval-none"): Record<string, unknown> {
+  return wireJob({
+    id,
+    status: "COMPLETED",
+    sandbox_provider: null,
+    upload: {
+      original_job_id: "orig-none",
+      original_job_name: null,
+      uploaded_at: "2026-09-14T10:00:00.000Z",
+      reported_totals: null,
+      task_links: [
+        { task_name: "local-task", n_trials: 2, n_linked: 0, n_unlinked: 2, linked_by: "none", datasets: [], link_reasons: { no_hash_match: 2 }, candidates: [] },
+      ],
+    },
+    finished_at: "2026-09-14T10:00:00.000Z",
   });
 }
 
@@ -7544,6 +7595,13 @@ async function testUploadVerb() {
       "the spent slot renders `reported $X.XX (N/M trials reporting)`"
     );
     assert(out[out.length - 1].includes("evolve analyze eval-up1"), "the next-step hint is analyze");
+    // The task-folder statement, from the wire's own roll-up: every trial
+    // linked by the -d name rule, said once, before the analyze hint.
+    assert(
+      out.some((l) => l === "linked 2 of 2 trials to deep-swe@1.1 (by task name, -d)"),
+      "the follow prints the linked sentence from upload.task_links"
+    );
+    assert(!out.some((l) => l.includes("not linked")), "nothing was left unlinked, so no not-linked line");
 
     // --no-wait: the import is the answer; the follow-up command names the watch.
     const noWait = captureIO();
@@ -7673,6 +7731,135 @@ async function testUploadVerbJsonAndGate() {
     assertEqual(await runCli(["upload", "--help"], help.io), 0, "upload --help exits 0");
     assert(help.out.join("\n").includes("Usage: evolve upload"), "help documents evolve upload");
     assert(help.out.join("\n").includes("--no-wait"), "help documents --no-wait");
+  } finally {
+    await server.close();
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * THE THREE MESSAGES, per task (the owner's ask 2026-09-14): the upload
+ * follow, `evolve analyze` before it fires, and `evolve job import` — each
+ * rendered from the wire's own roll-up (upload.task_links / the import's
+ * task_links), never decided client-side; the words are the brief's.
+ */
+async function testTaskLinkMessages() {
+  console.log("\n--- runCli: the task-folder messages — upload follow, analyze pre-flight, job import ---");
+  installMockFetch();
+  const server = await startUploadCaptureServer();
+  const dir = await mkdtemp(join(tmpdir(), "evolve-upload-cli-links-"));
+  const jobDir = join(dir, "job");
+  try {
+    await writeCliJobDir(jobDir);
+    const LINKED = "linked 57 of 60 trials to terminal-bench-4@4.0 (task hashes equal)";
+    const NOT_LINKED =
+      "not linked: foo-task (2 trials, hash mismatch), bar-task (1 trial, task not in the dataset) — " +
+      "analyses of those trials run without the task folder; link explicitly: evolve upload <dir> -d <name[@version]>";
+    const NONE =
+      "no dataset matched (no task with this hash); analyses of this job will run without the task folder — link explicitly with -d";
+    const PRE_LINK =
+      "uploaded before task linking existed: whether its trials carry the task folder is unknown here; each analysis row records it (task_absent_reason)";
+
+    // (i) The upload follow, human mode: both lines on stdout with the record.
+    server.setReply(202, wireJobImport({ id: "imp-p" }));
+    setMockResponse("/api/jobs/imports/imp-p", {
+      status: 200,
+      body: wireJobImport({ id: "imp-p", status: "COMPLETED", job_id: "eval-part", n_trials_uploaded: 60, n_trials_skipped: 0, skipped_trials: [] }),
+    });
+    setMockResponse("/api/jobs/eval-part", { status: 200, body: partlyLinkedWireJob() });
+    const human = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--api-key", "test-key", "--base-url", server.base], human.io), 0, "exit 0");
+    assert(human.out.includes(LINKED), "the follow prints the linked sentence, per dataset, the rule named");
+    assert(human.out.includes(NOT_LINKED), "the follow names every unlinked task with its trial count and typed reason, in plain words");
+    assertEqual(human.err, [], "human mode keeps stdout for the story");
+    // One statement per surface: the follow carries the per-task lines, so
+    // the one-row `task links` summary is NOT printed there — it rides
+    // `job show`, which prints no per-task lines.
+    assert(!human.out.some((l) => l.startsWith("task links")), "the follow does not repeat the link fact as a table row");
+    const shown = captureIO();
+    assertEqual(await runCli(["job", "show", "eval-part", ...AUTH], shown.io), 0, "job show exits 0");
+    assert(shown.out.some((l) => l.startsWith("task links") && l.includes("57 of 60 trials linked to terminal-bench-4@4.0") && l.includes("3 without the task folder")), "job show's one-row summary rides the record");
+    assert(!shown.out.includes(LINKED) && !shown.out.includes(NOT_LINKED), "job show states the link fact once, as the row");
+    // --json: the document carries upload.task_links; the not-linked line
+    // goes to stderr so a script's stdout stays the one Job document.
+    const machine = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--json", "--api-key", "test-key", "--base-url", server.base], machine.io), 0, "--json exits 0");
+    const doc = JSON.parse(machine.out[0]) as { upload: { task_links: { task_name: string; n_unlinked: number }[] } };
+    assertEqual(doc.upload.task_links.map((row) => [row.task_name, row.n_unlinked]), [["ok-task", 0], ["foo-task", 2], ["bar-task", 1]], "--json carries task_links verbatim");
+    assert(machine.err.includes(NOT_LINKED), "--json still says on stderr which trials analyze without the task folder");
+
+    // A job with no link at all: the one typed sentence.
+    server.setReply(202, wireJobImport({ id: "imp-n" }));
+    setMockResponse("/api/jobs/imports/imp-n", {
+      status: 200,
+      body: wireJobImport({ id: "imp-n", status: "COMPLETED", job_id: "eval-none", n_trials_uploaded: 2, n_trials_skipped: 0, skipped_trials: [] }),
+    });
+    setMockResponse("/api/jobs/eval-none", { status: 200, body: unlinkedWireJob() });
+    const none = captureIO();
+    assertEqual(await runCli(["upload", jobDir, "--api-key", "test-key", "--base-url", server.base], none.io), 0, "exit 0 — an unlinked job is still a record");
+    assert(none.out.includes(NONE), "the no-link sentence names the reason and the -d way out");
+    assert(!none.out.some((l) => l.startsWith("linked ")), "no linked line when nothing linked");
+
+    // (ii) analyze: the same warning per task on stderr BEFORE the POST, in
+    // both modes; a fully linked job and a native job say nothing.
+    setMockResponse("/api/jobs/eval-part/analyze", { status: 202, body: partlyLinkedWireJob() });
+    const pre = captureIO();
+    assertEqual(await runCli(["analyze", "eval-part", ...AUTH], pre.io), 0, "analyze exits 0 on the 202");
+    assertEqual(pre.err, [LINKED, NOT_LINKED], "analyze warns per task on stderr before it fires");
+    const getIndex = fetchCalls.findIndex((c) => c.url === `${BASE}/api/jobs/eval-part` && (c.init?.method ?? "GET") === "GET");
+    const postIndex = fetchCalls.findIndex((c) => c.url.endsWith("/api/jobs/eval-part/analyze"));
+    assert(getIndex >= 0 && postIndex > getIndex, "the job is read before the analyze POST fires");
+    const preJson = captureIO();
+    assertEqual(await runCli(["analyze", "eval-part", "--json", ...AUTH], preJson.io), 0, "--json exits 0");
+    assertEqual(preJson.err, [LINKED, NOT_LINKED], "--json warns on stderr too; stdout stays the document");
+    assertEqual(JSON.parse(preJson.out[0]).id, "eval-part", "--json prints the accepted job");
+    setMockResponse("/api/jobs/eval-none/analyze", { status: 202, body: unlinkedWireJob() });
+    const preNone = captureIO();
+    await runCli(["analyze", "eval-none", ...AUTH], preNone.io);
+    assertEqual(preNone.err, [NONE], "a job with no link warns with the no-link sentence");
+    setMockResponse("/api/jobs/eval-up1", { status: 200, body: uploadedWireJob() });
+    setMockResponse("/api/jobs/eval-up1/analyze", { status: 202, body: uploadedWireJob() });
+    const quiet = captureIO();
+    await runCli(["analyze", "eval-up1", ...AUTH], quiet.io);
+    assertEqual(quiet.err, [], "a fully linked upload warns about nothing");
+    // An upload from before task linking existed: no task_links on the wire
+    // (the client reads null) — the one pre-law sentence, on stderr, once.
+    const { task_links: _omitted, ...preLawUpload } = uploadedWireJob().upload as Record<string, unknown>;
+    setMockResponse("/api/jobs/eval-prelaw", { status: 200, body: wireJob({ id: "eval-prelaw", status: "COMPLETED", sandbox_provider: null, upload: preLawUpload }) });
+    setMockResponse("/api/jobs/eval-prelaw/analyze", { status: 202, body: wireJob({ id: "eval-prelaw", status: "COMPLETED", sandbox_provider: null, upload: preLawUpload }) });
+    const preLaw = captureIO();
+    await runCli(["analyze", "eval-prelaw", ...AUTH], preLaw.io);
+    assertEqual(preLaw.err, [PRE_LINK], "an upload from before task linking existed says the link status is unknown here, once");
+    setMockResponse("/api/jobs/eval-native", { status: 200, body: wireJob({ id: "eval-native", status: "COMPLETED" }) });
+    setMockResponse("/api/jobs/eval-native/analyze", { status: 202, body: wireJob({ id: "eval-native", status: "COMPLETED" }) });
+    const native = captureIO();
+    await runCli(["analyze", "eval-native", ...AUTH], native.io);
+    assertEqual(native.err, [], "a native job (no upload) says nothing about task folders");
+
+    // (iii) job import: the import row carries the same roll-up.
+    setMockResponse("/api/jobs/imports/imp-p", {
+      status: 200,
+      body: wireJobImport({
+        id: "imp-p",
+        status: "COMPLETED",
+        job_id: "eval-part",
+        n_trials_uploaded: 60,
+        n_trials_skipped: 0,
+        skipped_trials: [],
+        task_links: (partlyLinkedWireJob().upload as { task_links: unknown }).task_links,
+      }),
+    });
+    const show = captureIO();
+    assertEqual(await runCli(["job", "import", "imp-p", ...AUTH], show.io), 0, "job import exits 0");
+    assert(show.out.includes(LINKED) && show.out.includes(NOT_LINKED), "job import prints the per-task lines from the import's task_links");
+    const showJson = captureIO();
+    await runCli(["job", "import", "imp-p", "--json", ...AUTH], showJson.io);
+    assertEqual((JSON.parse(showJson.out[0]) as { task_links: unknown[] }).task_links.length, 3, "--json carries the import's task_links");
+    // A pre-feature import (task_links null) prints no link line at all.
+    const legacy = captureIO();
+    await runCli(["job", "import", "imp-a", ...AUTH], legacy.io);
+    assert(!legacy.out.some((l) => l.startsWith("linked ") || l.startsWith("no dataset matched")), "null task_links: nothing is said, nothing is guessed");
   } finally {
     await server.close();
     restoreFetch();
@@ -9040,6 +9227,7 @@ async function main() {
   await testJobShowSkillLocks();
   await testLocalSkillUploadNoticeOnStart();
   await testUploadVerb();
+  await testTaskLinkMessages();
   await testJobImportVerbs();
   await testUploadVerbJsonAndGate();
   await testAuthStatus();
