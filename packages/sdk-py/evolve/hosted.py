@@ -1478,7 +1478,7 @@ class JobRetryConfigInput(TypedDict, total=False):
     wait_multiplier: float
     #: Minimum wait in seconds between retries (default 1.0).
     min_wait_sec: float
-    #: Maximum wait in seconds between retries (default 60.0; platform cap 3600).
+    #: Maximum wait in seconds between retries (default 60.0; Harbor's field, no ceiling).
     max_wait_sec: float
 
 
@@ -6798,8 +6798,14 @@ class JobsClient:
         ``environment_build_timeout_multiplier`` — overrides it for that
         phase. The task itself is never rewritten. Every multiplier must be
         a finite number greater than 0 — Harbor's own rule and nothing
-        more; no ceiling — and a zero, negative or non-finite value is
-        refused at create with a typed message naming the rule.
+        more; no ceiling of the platform's — and a zero, negative or
+        non-finite value is refused at create with a typed message naming
+        the rule. The one real bound is the runtime's timer ceiling
+        (2,147,483,647 ms, about 24.86 days — Node sets a longer timer to
+        1 ms): every selected task's declared timeout x its phase's
+        effective multiplier is checked at create and a product past it is
+        refused ``invalid_input`` on the field that set the multiplier,
+        naming the task, the phase, the product and the source.
         ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
         verbatim; the server owns acceptance (refused where unsupported,

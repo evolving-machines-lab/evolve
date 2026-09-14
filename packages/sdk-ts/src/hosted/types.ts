@@ -463,7 +463,7 @@ export interface RetryConfigInput {
   wait_multiplier?: number;
   /** Minimum wait in seconds between retries (default 1.0). */
   min_wait_sec?: number;
-  /** Maximum wait in seconds between retries (default 60.0; platform cap 3600). */
+  /** Maximum wait in seconds between retries (default 60.0; Harbor's field, no ceiling). */
   max_wait_sec?: number;
 }
 
@@ -733,9 +733,15 @@ export interface JobCreate {
    * timeout is armed; the task itself is never rewritten, so the same task
    * runs unstretched in every other job. Values below 1 shrink, as in
    * Harbor. Every multiplier must be a finite number greater than 0 —
-   * Harbor's own rule and nothing more; no ceiling — and a zero, negative
-   * or non-finite value is refused with a typed `invalid_input` naming the
-   * rule, never silently clamped. Default 1.0.
+   * Harbor's own rule and nothing more; no ceiling of the platform's — and
+   * a zero, negative or non-finite value is refused with a typed
+   * `invalid_input` naming the rule, never silently clamped. The one real
+   * bound is the runtime's timer ceiling (2,147,483,647 ms, about 24.86
+   * days — Node sets a longer timer to 1 ms): every selected task's
+   * declared timeout x its phase's effective multiplier is checked at
+   * create and a product past it is refused `invalid_input` on the field
+   * that set the multiplier, naming the task, the phase, the product and
+   * the source. Default 1.0.
    */
   timeout_multiplier?: number;
   /** Multiplier for the agent execution timeout (overrides timeout_multiplier). */
