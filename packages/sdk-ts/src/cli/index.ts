@@ -367,7 +367,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     kind: "number",
     value: "<x>",
     help:
-      "Multiplier for task timeouts (default 1.0; > 0, server ceiling on GET /api/meta). " +
+      "Multiplier for task timeouts (default 1.0; any finite number > 0 — no ceiling of the platform's; a task timeout x multiplier past the runtime's timer ceiling is refused at create). " +
       "Multiplies each task's DECLARED timeouts for this job only — the task is never rewritten",
   },
   "agent-timeout-multiplier": {
@@ -2806,8 +2806,9 @@ export function buildJobInput(
   // cli/jobs.py:378-424), flat on the body exactly as their JobConfig
   // carries them. The config file's fields are the base and each flag
   // overrides ITS field; omitted entirely, the server applies 1.0 to every
-  // phase. The server owns the ceiling refusal — a client-side bound would
-  // just be a second copy of the published limit that could drift.
+  // phase. The server refuses only a product past the runtime's timer
+  // ceiling (typed at create, naming the task and the phase) — no published
+  // limit exists for a client to mirror.
   const timeoutMultipliers: Partial<JobCreate> = {};
   for (const [flag, field] of [
     ["timeout-multiplier", "timeout_multiplier"],
