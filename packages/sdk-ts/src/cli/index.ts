@@ -3207,7 +3207,7 @@ function columnsHelpRequested<T>(
   return true;
 }
 
-function jobLines(e: Job): string[] {
+function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   // Row order mirrors the input contract: datasets, agents, size, attempts,
   // concurrency, spend caps.
   const rows: string[][] = [
@@ -3343,10 +3343,11 @@ function jobLines(e: Job): string[] {
     }
   }
   // The task-folder fact of an uploaded job, one row: how many trials
-  // linked to a stored task (upload.task_links) — the per-task lines print
-  // on the upload follow and on `job import`; nothing on a pre-feature
-  // record (null) or a trial-less one.
-  if (e.upload?.task_links && e.upload.task_links.length > 0) {
+  // linked to a stored task (upload.task_links) — nothing on a pre-feature
+  // record (null) or a trial-less one. The upload follow passes
+  // taskLinksRow: false because it prints the per-task lines (taskLinkLines)
+  // right after: one statement per surface.
+  if ((opts.taskLinksRow ?? true) && e.upload?.task_links && e.upload.task_links.length > 0) {
     const links = e.upload.task_links;
     const nLinked = links.reduce((sum, row) => sum + row.n_linked, 0);
     const nTrials = links.reduce((sum, row) => sum + row.n_trials, 0);
@@ -5418,7 +5419,9 @@ function jobImportLines(imported: JobImport): string[] {
 /**
  * The plain words for each typed reason a trial did not link to a stored
  * task (the contract's TaskLinkReason) — presentation only; the vocabulary
- * is the wire's, and the CLI decides nothing here.
+ * is the wire's, and the CLI decides nothing here. MIRROR: the dashboard's
+ * TASK_LINK_REASON_WORDS (swarm_dashboard lib/evals-ui/jobs.ts) spells the
+ * same six sentences; a wording change moves both.
  */
 const TASK_LINK_REASON_WORDS: Record<string, string> = {
   hash_mismatch: "hash mismatch",
@@ -5577,7 +5580,7 @@ async function followJobImport(
     return 0;
   }
   io.out("");
-  for (const line of jobLines(job)) io.out(line);
+  for (const line of jobLines(job, { taskLinksRow: false })) io.out(line);
   if (links.length > 0) {
     io.out("");
     for (const line of links) io.out(line);
