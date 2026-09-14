@@ -398,14 +398,15 @@ import {
   type HostedErrorCode,
 } from "./types";
 
-// The client-side Harbor-tree assembly behind `evolve trial download` /
-// `evolve analysis download` / `evolve job download` — pure functions,
-// re-exported so callers can materialize the same trees the CLI writes.
+// The client-side Harbor-tree assembly behind `evolve trial download` and
+// the evolve.json records every download adds (`evolve job download`,
+// `evolve analysis download`, `evolve check download` — the last two
+// extract the SERVER's wrapper-trial folders) — pure functions,
+// re-exported so callers can materialize the same files the CLI writes.
 export {
   analysisEvolveRecord,
-  assembleAnalysisTree,
-  assembleTaskCheckTree,
   assembleTrialTree,
+  checkEvolveRecord,
   taskCheckEvolveRecord,
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
@@ -415,9 +416,7 @@ export {
   placeHomeObject,
   jobEvolveRecord,
   trialEvolveRecord,
-  type AnalysisTreeParts,
   type HarnessTrialLayout,
-  type TaskCheckTreeParts,
   type TrialTreeParts,
 } from "./trial-tree";
 
@@ -1964,6 +1963,35 @@ async function downloadToDir(res: Response, dir: string, fallback: string): Prom
   return filePath;
 }
 
+/**
+ * ONE archive download for the three tar doors — the job's results archive,
+ * a check's job folder, an analysis's wrapper-trial folder — in the three
+ * delivery shapes: the raw stream (the one shape the caller verifies
+ * themselves), a file under `to` (downloadToDir — temp-then-rename, the
+ * truncation and digest checks), or a verified Buffer. The job download
+ * used to spell this inline; a second and third copy is how one door gets
+ * a fix the others do not.
+ */
+async function downloadArchive(
+  cfg: ResolvedConfig,
+  path: string,
+  options: DownloadJobOptions | undefined,
+  fallbackFilename: string
+): Promise<Buffer | string | ReadableStream<Uint8Array>> {
+  const res = await request(cfg, path);
+  if (options?.stream) {
+    if (!res.body) throw new Error("Download response has no body");
+    return res.body as ReadableStream<Uint8Array>;
+  }
+  if (options?.to) {
+    return downloadToDir(res, options.to, fallbackFilename);
+  }
+  const bytes = Buffer.from(await res.arrayBuffer());
+  assertCompleteBody(res, bytes.length);
+  await verifyPackageDigest(res, bytes);
+  return bytes;
+}
+
 // =============================================================================
 // DATASETS CLIENT
 // =============================================================================
@@ -3176,23 +3204,8 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     download: (async (
       id: string,
       options?: DownloadJobOptions
-    ): Promise<Buffer | string | ReadableStream<Uint8Array>> => {
-      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/download`);
-      if (options?.stream) {
-        if (!res.body) throw new Error("Download response has no body");
-        return res.body as ReadableStream<Uint8Array>;
-      }
-      if (options?.to) {
-        // The same hardened path as the dataset package download — this shape
-        // used to skip both the truncation and the digest check while the
-        // package path twelve lines away did the full dance.
-        return downloadToDir(res, options.to, `job-${id}-results.tar.gz`);
-      }
-      const bytes = Buffer.from(await res.arrayBuffer());
-      assertCompleteBody(res, bytes.length);
-      await verifyPackageDigest(res, bytes);
-      return bytes;
-    }) as JobsClient["download"],
+    ): Promise<Buffer | string | ReadableStream<Uint8Array>> =>
+      downloadArchive(cfg, `/api/jobs/${encodeURIComponent(id)}/download`, options, `job-${id}-results.tar.gz`)) as JobsClient["download"],
 
     async upload(
       source: string | { archive_url: string },
@@ -3725,6 +3738,20 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
     },
 
     artifact: getArtifact,
+
+    // The contract's one per-analysis door: the run as Harbor's wrapper-trial
+    // folder (AnalysesClient.download states the layout; the server's
+    // lib/evaluations/trial-tree.ts rubricRunTreeEntries builds it).
+    download: (async (
+      analysisId: string,
+      options?: DownloadJobOptions
+    ): Promise<Buffer | string | ReadableStream<Uint8Array>> =>
+      downloadArchive(
+        cfg,
+        `/api/analyses/${encodeURIComponent(analysisId)}/download`,
+        options,
+        `analysis-${analysisId}.tar.gz`
+      )) as AnalysesClient["download"],
   };
 }
 
@@ -3935,6 +3962,16 @@ export function checks(config?: HostedClientConfig): ChecksClient {
     },
 
     artifact: getTaskCheckArtifact,
+
+    // The contract's download door, EITHER id: a check id (check-<id>/ with
+    // check_report.json and every task's folder) or a task check id (that
+    // folder alone) — the server resolves the species, so no client-side
+    // guess and one typed refusal naming both forms (ChecksClient.download).
+    download: (async (
+      id: string,
+      options?: DownloadJobOptions
+    ): Promise<Buffer | string | ReadableStream<Uint8Array>> =>
+      downloadArchive(cfg, `/api/checks/${encodeURIComponent(id)}/download`, options, `check-${id}.tar.gz`)) as ChecksClient["download"],
 
     async watch(checkId: string, options?: WatchCheckOptions): Promise<Check> {
       // The analysis watch's poll shape (jobs().watchAnalysis): the interval

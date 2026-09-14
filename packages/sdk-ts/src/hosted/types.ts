@@ -3369,7 +3369,7 @@ export interface DownloadDatasetOptions {
   stream?: boolean;
 }
 
-/** Delivery options for jobs().download() */
+/** Delivery options for jobs().download() — and for checks().download() / analyses().download(), the same three shapes. */
 export interface DownloadJobOptions {
   /** Directory to save the archive into (returns the file path) */
   to?: string;
@@ -4233,6 +4233,32 @@ export interface AnalysesClient {
     stream: Exclude<AnalysisArtifactStream, "agent-home">
   ): Promise<string | null>;
   artifact(analysisId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
+  /**
+   * Download the analysis run as Harbor's WRAPPER-trial folder in one
+   * `.tar.gz` (`GET /api/analyses/{analysisId}/download` — on the
+   * contract, unlike the three feed reads above). The archive extracts to
+   * one directory named as Harbor names the wrapper trial
+   * (`analyze-<analyzed trial dir>__<7 chars>/`): config.json, lock.json,
+   * result.json, trial.log, exception.txt (an infrastructure failure only),
+   * agent/claude-code.txt (Harbor's tee name for claude-code),
+   * agent/stderr.log, agent/trace-parsed.jsonl, the captured home at its
+   * real names with agent/agent-home.json beside it and Harbor's copy at
+   * agent/sessions/, verifier/{test-stdout.txt,reward.txt,reward.json}
+   * when the validator ruled (reward 1 = a valid analysis.json, 0 = it was
+   * refused), and artifacts/manifest.json with artifacts/analysis.json (the
+   * validated {summary, checks}) on a completed run — absent artifacts are
+   * absent files; data the platform does not hold is left out, never
+   * faked. Same three delivery shapes and the same integrity checks as
+   * jobs().download(). 404 `analysis_not_found` for an id you cannot read;
+   * 409 `analysis_not_terminal` while the run is queued or running.
+   */
+  download(analysisId: string): Promise<Buffer>;
+  download(analysisId: string, options: { to: string }): Promise<string>;
+  download(analysisId: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  download(
+    analysisId: string,
+    options?: DownloadJobOptions
+  ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
 }
 
 // =============================================================================
@@ -4481,6 +4507,36 @@ export interface ChecksClient {
    */
   artifact(taskCheckId: string, stream: Exclude<AnalysisArtifactStream, "agent-home">): Promise<string | null>;
   artifact(taskCheckId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
+  /**
+   * Download in one `.tar.gz` (`GET /api/checks/{checkId}/download`, on
+   * the contract) EITHER the whole check — pass the CHECK id: the archive
+   * extracts to `check-<id>/`, Harbor's check job folder, with
+   * `check_report.json` (their CheckReport: `results`, one per task —
+   * task_name, the flat checks, cost_usd, error — plus total_cost_usd) and
+   * one wrapper-trial folder per task check, named as Harbor names a trial
+   * (`check-<task>__<7 chars>/`) — OR one task check's folder alone: pass
+   * the TASK CHECK id (`Check.results[].id`). Each folder is Harbor's
+   * TrialPaths for the checker's run: config.json, lock.json, result.json,
+   * trial.log, exception.txt (an infrastructure failure only),
+   * agent/claude-code.txt, agent/stderr.log, agent/trace-parsed.jsonl, the
+   * captured home at its real names with agent/agent-home.json and Harbor's
+   * copy at agent/sessions/, verifier/{test-stdout.txt,reward.txt,
+   * reward.json} when the validator ruled (reward 1 = a valid
+   * check-result.json, 0 = it was refused), artifacts/manifest.json and
+   * artifacts/check-result.json (the validated flat checks) on a completed
+   * run — absent artifacts are absent files; data the platform does not
+   * hold is left out, never faked. Same three delivery shapes and integrity
+   * checks as jobs().download(). An id that is neither a check nor a task
+   * check you can read is 404 `check_not_found` naming both forms; an
+   * unsettled check or task check is 409 `check_not_terminal`.
+   */
+  download(id: string): Promise<Buffer>;
+  download(id: string, options: { to: string }): Promise<string>;
+  download(id: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  download(
+    id: string,
+    options?: DownloadJobOptions
+  ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
 }
 
 /** A key descriptor. The secret is never returned. */
@@ -4727,17 +4783,27 @@ export const HOSTED_ERROR_CODES = [
   // trial (every trial CANCELLED).
   "invalid_rubric",
   "analysis_already_running",
+  // The contract's per-analysis door (GET /api/analyses/{analysisId}/
+  // download): an analysis the caller cannot read or that never existed
+  // (404); one still queued or running (409 — its Harbor wrapper-trial
+  // folder exists only once the run settled).
+  "analysis_not_found",
+  "analysis_not_terminal",
   // Check (POST /api/checks, Harbor's `harbor check` hosted): a check the
-  // caller cannot read or that never existed (404); an archive with no task
-  // directory, or a selection the globs and the cap emptied (400); more task
-  // directories selected than one check may hold (422, details carry
-  // task_count and max_tasks — narrow with the globs or cap with n_tasks);
-  // the server already spooling its bound of concurrent check archives
-  // (429, details carry max_concurrent, refused before the first uploaded
-  // byte; retry when one finishes — the check-door sibling of
-  // too_many_concurrent_skill_uploads above, not rate_limited for the same
-  // reason).
+  // caller cannot read or that never existed (404 — on the download door,
+  // where the id may also be one task check's, neither form resolving; the
+  // message names both forms); the check or the task check not yet settled
+  // on the download door (409, the job download's own law); an archive
+  // with no task directory, or a selection the globs and the cap emptied
+  // (400); more task directories selected than one check may hold (422,
+  // details carry task_count and max_tasks — narrow with the globs or cap
+  // with n_tasks); the server already spooling its bound of concurrent
+  // check archives (429, details carry max_concurrent, refused before the
+  // first uploaded byte; retry when one finishes — the check-door sibling
+  // of too_many_concurrent_skill_uploads above, not rate_limited for the
+  // same reason).
   "check_not_found",
+  "check_not_terminal",
   "no_checkable_tasks",
   "check_too_large",
   "too_many_concurrent_check_uploads",

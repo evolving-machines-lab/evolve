@@ -8,6 +8,8 @@ the contract's two GETs, and ``watch()`` polls to ``completed`` with the
 analysis watch's backoff shape. Mocked urlopen, real tar bytes.
 """
 
+import gzip
+import hashlib
 import inspect
 import json
 from unittest.mock import patch
@@ -16,6 +18,7 @@ import pytest
 
 from evolve import (
     EvolveAPIError,
+    EvolveDigestMismatchError,
     HostedClientConfig,
     checks as checks_factory,
     hosted,
@@ -241,6 +244,64 @@ class TestChecksRead:
         assert final['status'] == 'completed'
         assert seen == ['queued', 'completed']
         assert len(fake.requests) == 2
+
+    @pytest.mark.asyncio
+    async def test_download_takes_either_id_on_the_one_door_and_verifies_the_bytes(self, tmp_path):
+        """checks().download() rides GET /api/checks/{id}/download for a
+        check id AND a task check id alike (the server resolves the
+        species), in the job download's two shapes with its integrity
+        dance; the file is named by the server's Content-Disposition —
+        the folder's Harbor name."""
+        archive = gzip.compress(b'check-chk-1/check_report.json')
+        headers = {
+            'Content-Disposition': 'attachment; filename="check-chk-1.tar.gz"',
+            'Content-Length': str(len(archive)),
+            'x-package-sha256': hashlib.sha256(archive).hexdigest(),
+        }
+        task_archive = gzip.compress(b'check-hello-world__abc1234/result.json')
+        task_headers = {
+            'Content-Disposition': 'attachment; filename="check-hello-world__abc1234.tar.gz"',
+            'Content-Length': str(len(task_archive)),
+        }
+        fake = FakeUrlopen([
+            ('/api/checks/chk-1/download', archive, headers),
+            ('/api/checks/tc-1/download', task_archive, task_headers),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = checks_factory(CONFIG)
+            payload = await client.download('chk-1')
+            path = await client.download('tc-1', to=str(tmp_path))
+        assert payload == archive
+        assert path.endswith('check-hello-world__abc1234.tar.gz')
+        with open(path, 'rb') as f:
+            assert f.read() == task_archive
+
+    @pytest.mark.asyncio
+    async def test_download_refuses_a_digest_mismatch_and_surfaces_the_two_forms_refusal(self):
+        archive = gzip.compress(b'{}')
+        with patch('evolve._http.urlopen', FakeUrlopen([('/download', archive, {'x-package-sha256': 'f' * 64})])):
+            with pytest.raises(EvolveDigestMismatchError):
+                await checks_factory(CONFIG).download('chk-1')
+        message = (
+            "'nope' is neither a check id nor a task check id you can read — pass a check id "
+            "(evolve check list) for the whole check, or one task check's id (results[].id on evolve "
+            "check show) for that task's folder"
+        )
+        import io
+        import urllib.error
+
+        def raise_not_found(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, 'Not Found', {},
+                io.BytesIO(json.dumps({'error': {'code': 'check_not_found', 'message': message}}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', raise_not_found):
+            with pytest.raises(EvolveAPIError) as refused:
+                await checks_factory(CONFIG).download('nope')
+        assert refused.value.status == 404
+        assert refused.value.code == 'check_not_found'
+        assert 'nor a task check id' in str(refused.value)
 
     def test_the_facade_exposes_checks(self):
         client = hosted(CONFIG)
