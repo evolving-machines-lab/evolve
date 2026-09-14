@@ -113,7 +113,7 @@ import type {
   DatasetVersionSource,
   UsageReading,
 } from "../hosted/types";
-import { gatewayUsageOf } from "../hosted/types";
+import { gatewayUsageOf, TaskLinkReason } from "../hosted/types";
 import {
   managedSecrets,
   type ManagedSecretMetadata,
@@ -3354,7 +3354,7 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
     const refs = Array.from(new Set(links.flatMap((row) => row.datasets)));
     rows.push([
       "task links",
-      `${nLinked} of ${nTrials} trial(s) linked` + (refs.length > 0 ? ` to ${refs.join(", ")}` : "") +
+      `${nLinked} of ${nTrials} ${nTrials === 1 ? "trial" : "trials"} linked` + (refs.length > 0 ? ` to ${refs.join(", ")}` : "") +
         (nLinked < nTrials ? ` — ${nTrials - nLinked} without the task folder` : ""),
     ]);
   }
@@ -5429,11 +5429,7 @@ function jobImportLines(imported: JobImport): string[] {
  * TASK_LINK_REASON_WORDS (swarm_dashboard lib/evals-ui/jobs.ts) spells the
  * same six sentences; a wording change moves both.
  */
-/** What `analyze` says before it fires on a job uploaded before task linking existed (upload.task_links null on the wire). */
-const PRE_LINK_LAW_UPLOAD_LINE =
-  "uploaded before task linking existed: whether its trials carry the task folder is unknown here; each analysis row records it (task_absent_reason)";
-
-const TASK_LINK_REASON_WORDS: Record<string, string> = {
+const TASK_LINK_REASON_WORDS: Record<TaskLinkReason, string> = {
   hash_mismatch: "hash mismatch",
   task_not_in_dataset: "task not in the dataset",
   no_dataset_named: "no dataset named",
@@ -5441,6 +5437,10 @@ const TASK_LINK_REASON_WORDS: Record<string, string> = {
   no_hash_match: "no task with this hash",
   no_task_digest: "no task digest in the archive",
 };
+
+/** What `analyze` says before it fires on a job uploaded before task linking existed (upload.task_links null on the wire). */
+const PRE_LINK_LAW_UPLOAD_LINE =
+  "uploaded before task linking existed: whether its trials carry the task folder is unknown here; each analysis row records it (task_absent_reason)";
 
 /** The `dataset` hint's own words, and the hash link's — how a linked task was matched. */
 function taskLinkHow(linkedBy: string): string {
@@ -5470,12 +5470,12 @@ function taskLinkLines(taskLinks: JobTaskLink[] | null): string[] {
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   const reasonsOf = (row: JobTaskLink): string =>
     Object.entries(row.link_reasons)
-      .map(([reason, count]) => `${TASK_LINK_REASON_WORDS[reason] ?? reason}${Object.keys(row.link_reasons).length > 1 ? ` ${count}` : ""}`)
+      .map(([reason, count]) => `${TASK_LINK_REASON_WORDS[reason as TaskLinkReason] ?? reason}${Object.keys(row.link_reasons).length > 1 ? ` ${count}` : ""}`)
       .join(", ") + (row.candidates.length > 0 ? ` [${row.candidates.join(", ")}]` : "");
   const unlinked = taskLinks.filter((row) => row.n_unlinked > 0);
   if (nLinked === 0) {
     const reasons = Array.from(new Set(unlinked.flatMap((row) => Object.keys(row.link_reasons))))
-      .map((reason) => TASK_LINK_REASON_WORDS[reason] ?? reason)
+      .map((reason) => TASK_LINK_REASON_WORDS[reason as TaskLinkReason] ?? reason)
       .join(", ");
     const candidates = Array.from(new Set(unlinked.flatMap((row) => row.candidates)));
     return [

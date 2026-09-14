@@ -7779,7 +7779,7 @@ async function testTaskLinkMessages() {
     assert(!human.out.some((l) => l.startsWith("task links")), "the follow does not repeat the link fact as a table row");
     const shown = captureIO();
     assertEqual(await runCli(["job", "show", "eval-part", ...AUTH], shown.io), 0, "job show exits 0");
-    assert(shown.out.some((l) => l.startsWith("task links") && l.includes("57 of 60 trial(s) linked to terminal-bench-4@4.0") && l.includes("3 without the task folder")), "job show's one-row summary rides the record");
+    assert(shown.out.some((l) => l.startsWith("task links") && l.includes("57 of 60 trials linked to terminal-bench-4@4.0") && l.includes("3 without the task folder")), "job show's one-row summary rides the record");
     assert(!shown.out.includes(LINKED) && !shown.out.includes(NOT_LINKED), "job show states the link fact once, as the row");
     // --json: the document carries upload.task_links; the not-linked line
     // goes to stderr so a script's stdout stays the one Job document.
