@@ -23,9 +23,9 @@
 
 import {
   AGENT_HOME_MANIFEST_FILENAME,
-  assembleAnalysisTree,
-  assembleTaskCheckTree,
+  analysisEvolveRecord,
   assembleTrialTree,
+  checkEvolveRecord,
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
   harnessTrialLayout,
@@ -33,11 +33,11 @@ import {
   homeRelativePath,
   jobEvolveRecord,
   placeHomeObject,
+  taskCheckEvolveRecord,
   trialEvolveRecord,
-  type AnalysisTreeParts,
   type TrialTreeParts,
 } from "../../src/hosted/trial-tree";
-import type { Job, Trial } from "../../src/hosted/types";
+import type { Check, Job, TaskCheck, Trial, TrialAnalysis } from "../../src/hosted/types";
 
 let passed = 0;
 let failed = 0;
@@ -554,147 +554,129 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
-// The analysis tree (evolve analysis download)
+// The rubric runs' evolve.json (evolve analysis download / evolve check
+// download) — the FOLDER is the server's wrapper-trial tree, extracted; this
+// side adds only these records (B121).
 // -----------------------------------------------------------------------------
-function fixtureAnalysisParts(): AnalysisTreeParts {
-  return {
-    analysis: {
-      id: "an-1",
-      status: "completed",
-      model_name: "glm-5.3-flash",
-      rubric: { criteria: [{ name: "reward_hacking", description: "d", guidance: "g" }] },
-      summary: "The agent solved the task legitimately.",
-      checks: { reward_hacking: { outcome: "pass", explanation: "no tampering" } },
-      estimated_cost_usd: 0.0412,
-      usage: {
-        provisional: false,
-        spent_usd: 0.0412,
-        input_tokens: 1000,
-        cached_input_tokens: 400,
-        cache_write_tokens: 0,
-        output_tokens: 200,
-        as_of: "2026-08-30T22:24:22.619Z",
-      },
-      failure: null,
-      created_at: "2026-08-30T21:50:09.010Z",
-      finished_at: "2026-08-30T22:24:22.619Z",
-    },
-    transcript: {
-      id: "an-1",
+const ANALYSIS: TrialAnalysis = {
+  id: "an-1",
+  trial_id: "run-1",
+  job_id: "job-1",
+  task_name: "fix-bug",
+  status: "completed",
+  model_name: "glm-5.3-flash",
+  reasoning_effort: "high",
+  rubric: { criteria: [{ name: "reward_hacking", description: "d", guidance: "g" }] },
+  prompt: null,
+  summary: "The agent solved the task legitimately.",
+  checks: { reward_hacking: { outcome: "pass", explanation: "no tampering" } },
+  estimated_cost_usd: 0.0412,
+  usage: {
+    provisional: false,
+    spent_usd: 0.0412,
+    input_tokens: 1000,
+    cached_input_tokens: 400,
+    cache_write_tokens: 0,
+    output_tokens: 200,
+    as_of: "2026-08-30T22:24:22.619Z",
+  },
+  failure: null,
+  created_at: "2026-08-30T21:50:09.010Z",
+  finished_at: "2026-08-30T22:24:22.619Z",
+};
+
+const TASK_CHECK: TaskCheck = {
+  id: "tc-1",
+  check_id: "chk-1",
+  task_name: "hello-world",
+  status: "completed",
+  checks: { typos: { outcome: "pass", explanation: "none" } },
+  cost_usd: 0.004,
+  attempts: 1,
+  failure: null,
+  created_at: "2026-09-09T10:00:00.000Z",
+  finished_at: "2026-09-09T10:05:00.000Z",
+};
+
+const CHECK: Check = {
+  id: "chk-1",
+  status: "completed",
+  source: { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" },
+  model_name: "glm-5.3-flash",
+  reasoning_effort: "max",
+  rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }] },
+  prompt: null,
+  sandbox_provider: "e2b",
+  n_concurrent: null,
+  include_task_names: [],
+  exclude_task_names: [],
+  n_tasks: null,
+  results: [TASK_CHECK],
+  cost_usd: 0.004,
+  created_at: "2026-09-09T10:00:00.000Z",
+  finished_at: "2026-09-09T10:05:00.000Z",
+};
+
+{
+  const record = analysisEvolveRecord(ANALYSIS, "user-1");
+  assertEqual(
+    record,
+    {
+      analysis_id: "an-1",
       analyzed_trial_id: "run-1",
       job_id: "job-1",
       task_name: "fix-bug",
-      sandbox_provider: "daytona",
-      sandbox_id: "box-9",
+      user_id: "user-1",
+      status: "completed",
       model_name: "glm-5.3-flash",
-      is_ended: true,
-      total: 2,
-      events: [
-        { seq: 0, type: "unknown", data: { _prompt: { text: "analyze" } } },
-        { seq: 1, type: "tool_call", data: { update: { sessionUpdate: "tool_call" } } },
-      ],
+      gateway: { cost_usd: 0.0412, n_input_tokens: 1000, n_cache_tokens: 400, n_output_tokens: 200 },
     },
-    stdout: "analyzer out",
-    stderr: null,
-    home: { "/root/.claude/session.jsonl": "{}" },
-    userId: "user-1",
-  };
+    "the analysis record: the analyzed run, the user, the analyzer's one-home meter restated"
+  );
+  const unmetered = analysisEvolveRecord({ ...ANALYSIS, usage: null, estimated_cost_usd: null }, null);
+  assertEqual(
+    (unmetered.gateway as Record<string, unknown>),
+    { cost_usd: null, n_input_tokens: null, n_cache_tokens: null, n_output_tokens: null },
+    "a meter that never answered is null throughout, never zero"
+  );
 }
 
 {
-  const files = assembleAnalysisTree(fixtureAnalysisParts());
+  const record = taskCheckEvolveRecord(TASK_CHECK, CHECK, "user-1");
   assertEqual(
-    Object.keys(files).sort(),
-    [
-      "agent/.claude/session.jsonl",
-      "agent/stdout.log",
-      "agent/trace-parsed.jsonl",
-      "analysis.json",
-      "evolve.json",
-    ],
-    "the analysis tree: verdict at the run's root, analyzer streams in agent/ (the default layout), no trial-only files"
-  );
-  const verdict = JSON.parse(files["analysis.json"]) as Record<string, unknown>;
-  assertEqual(verdict.id, "an-1", "analysis.json is the wire verdict document");
-  assertEqual(
-    (verdict.checks as Record<string, unknown>).reward_hacking,
-    { outcome: "pass", explanation: "no tampering" },
-    "checks ride verbatim");
-  assert(!("agent/stderr.log" in files), "an absent artifact is an absent file");
-  assertEqual(
-    files["agent/trace-parsed.jsonl"],
-    `${JSON.stringify({ seq: 0, type: "unknown", data: { _prompt: { text: "analyze" } } })}\n` +
-      `${JSON.stringify({ seq: 1, type: "tool_call", data: { update: { sessionUpdate: "tool_call" } } })}\n`,
-    "the parsed trace is one JSONL line per event, TraceEvent shape"
-  );
-  const record = JSON.parse(files["evolve.json"]) as Record<string, unknown>;
-  assertEqual(record.analysis_id, "an-1", "evolve.json names the analysis");
-  assertEqual(record.analyzed_trial_id, "run-1", "…and the analyzed trial");
-  assertEqual(record.provider, "daytona", "…and the ANALYZER's own provider");
-  assertEqual(
-    record.gateway,
-    { cost_usd: 0.0412, n_input_tokens: 1000, n_cache_tokens: 400, n_output_tokens: 200 },
-    "the meter restates the verdict's one-home usage reading"
-  );
-  assertEqual(
-    JSON.stringify(assembleAnalysisTree(fixtureAnalysisParts())),
-    JSON.stringify(files),
-    "deterministic — same parts, same bytes"
-  );
-}
-
-// THE TASK CHECK TREE — the analysis tree's assembly (one builder, owner
-// ruling 2026-09-09) with the checker's own verdict name: check-result.json
-// (Harbor's checker.py:37 RESULT_FILENAME) at the root, the same agent/
-// slots, an evolve.json carrying the check record and the dataset ref.
-{
-  const parts = {
-    taskCheck: {
-      id: "tc-1",
-      check_id: "chk-1",
-      task_name: "hello-world",
-      status: "completed" as const,
-      checks: { typos: { outcome: "pass" as const, explanation: "none" } },
-      cost_usd: 0.004,
-      attempts: 1,
-      failure: null,
-      created_at: "2026-09-09T10:00:00.000Z",
-      finished_at: "2026-09-09T10:05:00.000Z",
-    },
-    transcript: {
-      id: "tc-1",
+    record,
+    {
+      task_check_id: "tc-1",
       check_id: "chk-1",
       dataset: "harbor-examples@1.0",
       task_name: "hello-world",
+      user_id: "user-1",
+      provider: "e2b",
+      status: "completed",
       model_name: "glm-5.3-flash",
-      sandbox_provider: "e2b",
-      sandbox_id: "box-2",
-      is_ended: true,
-      total: 1,
-      events: [{ seq: 0, type: "unknown", data: { _prompt: { text: "check" } } }],
+      gateway: { cost_usd: 0.004 },
     },
-    stdout: "checker out",
-    stderr: null,
-    home: { "/root/.claude/session.jsonl": "{}" },
-    userId: "user-1",
-  };
-  const files = assembleTaskCheckTree(parts);
-  assertEqual(
-    Object.keys(files).sort(),
-    ["agent/.claude/session.jsonl", "agent/stdout.log", "agent/trace-parsed.jsonl", "check-result.json", "evolve.json"],
-    "the task check tree: check-result.json at the run's root, the checker's streams in agent/, no trial-only files"
+    "the task check record: the check, the dataset the task came from, the policy's provider and model, the result's cost"
   );
-  const verdict = JSON.parse(files["check-result.json"]) as Record<string, unknown>;
-  assertEqual(verdict.id, "tc-1", "check-result.json is the wire TaskCheck");
-  assertEqual((verdict.checks as Record<string, unknown>).typos, { outcome: "pass", explanation: "none" }, "checks ride verbatim");
-  assert(!("agent/stderr.log" in files), "an absent artifact is an absent file");
-  const record = JSON.parse(files["evolve.json"]) as Record<string, unknown>;
-  assertEqual(record.task_check_id, "tc-1", "evolve.json names the task check");
-  assertEqual(record.check_id, "chk-1", "…and the check record");
-  assertEqual(record.dataset, "harbor-examples@1.0", "…and the dataset the task came from");
-  assertEqual(record.provider, "e2b", "…and the CHECKER's own provider");
-  assertEqual(record.gateway, { cost_usd: 0.004 }, "the meter restates the result's cost");
-  assertEqual(JSON.stringify(assembleTaskCheckTree(parts)), JSON.stringify(files), "deterministic — same parts, same bytes");
+  const archiveForm = taskCheckEvolveRecord(TASK_CHECK, { ...CHECK, source: { type: "archive", sha256: "ab".repeat(32), bytes: 1234, dataset: null } }, null);
+  assertEqual(archiveForm.dataset, null, "an uploaded archive has no dataset");
+}
+
+{
+  const record = checkEvolveRecord(CHECK, "user-1");
+  assertEqual(
+    record,
+    {
+      check_id: "chk-1",
+      user_id: "user-1",
+      source: CHECK.source,
+      provider: "e2b",
+      status: "completed",
+      model_name: "glm-5.3-flash",
+      gateway: { cost_usd: 0.004 },
+    },
+    "the check-level record beside check_report.json: the source, the policy's provider and model, Harbor's total"
+  );
 }
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);

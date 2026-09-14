@@ -581,9 +581,8 @@ export {
   // with the per-harness table and the home placement rule it applies (the
   // server's registry, mirrored), so the server's suite can pin its mirror.
   analysisEvolveRecord,
-  assembleAnalysisTree,
-  assembleTaskCheckTree,
   assembleTrialTree,
+  checkEvolveRecord,
   DEFAULT_HARNESS_TRIAL_LAYOUT,
   HARNESS_TRIAL_LAYOUTS,
   harnessTrialLayout,
@@ -593,9 +592,7 @@ export {
   jobEvolveRecord,
   taskCheckEvolveRecord,
   trialEvolveRecord,
-  type AnalysisTreeParts,
   type HarnessTrialLayout,
-  type TaskCheckTreeParts,
   type TrialTreeParts,
   // Analysis runs off the traces feed (deliberately off-contract — see
   // AnalysesClient): the verdict, the analyzer's transcript, its artifacts.

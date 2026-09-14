@@ -38,10 +38,10 @@ import {
   TRIAL_STATUSES,
   agents,
   analyses,
-  assembleAnalysisTree,
-  assembleTaskCheckTree,
+  analysisEvolveRecord,
   assembleTrialTree,
   auth,
+  checkEvolveRecord,
   checks,
   datasets,
   jobEvolveRecord,
@@ -51,6 +51,7 @@ import {
   jobSpend,
   skills,
   type SpendStatement,
+  taskCheckEvolveRecord,
   trialAgentCost,
   trialEvolveRecord,
   trialJudgeCost,
@@ -733,15 +734,17 @@ const GROUPS: Record<string, GroupSpec> = {
       },
       download: {
         summary:
-          "Save an analysis run whole (verdict + analyzer artifacts + evolve.json), or stream one artifact",
+          "Save an analysis run as Harbor's wrapper-trial folder (+ evolve.json), or stream one artifact",
         flags: {
           "output-dir": {
             kind: "string",
             short: "o",
             value: "<dir>",
-            help: "Directory to save under (default: analyses/); files land in <dir>/<analysis-id>/",
+            help:
+              "Directory to save under (default: analyses/); the run lands in " +
+              "<dir>/analyze-<analyzed trial>__<7 chars>/ — Harbor's own trial name, read from the archive",
           },
-          overwrite: { kind: "boolean", help: "Replace an existing <dir>/<analysis-id>/" },
+          overwrite: { kind: "boolean", help: "Replace an existing folder of the same name" },
           stream: {
             kind: "string",
             value: "<artifact>",
@@ -816,20 +819,23 @@ const GROUPS: Record<string, GroupSpec> = {
       },
       download: {
         summary:
-          "Save one task check whole (check-result.json + checker artifacts + evolve.json), or stream one artifact",
+          "Save a check as Harbor's check job folder (check_report.json + one folder per task) by its check id, " +
+          "one task check's folder by its task check id, or stream one task check's artifact",
         flags: {
           "output-dir": {
             kind: "string",
             short: "o",
             value: "<dir>",
-            help: "Directory to save under (default: checks/); files land in <dir>/<task-check-id>/",
+            help:
+              "Directory to save under (default: checks/); a check id lands in <dir>/check-<id>/, a task check id in " +
+              "<dir>/check-<task>__<7 chars>/ — Harbor's own trial name, read from the archive",
           },
-          overwrite: { kind: "boolean", help: "Replace an existing <dir>/<task-check-id>/" },
+          overwrite: { kind: "boolean", help: "Replace an existing folder of the same name" },
           stream: {
             kind: "string",
             value: "<artifact>",
             help:
-              "Print ONE artifact to stdout instead of saving: task-check (the result " +
+              "Print ONE artifact of a TASK CHECK to stdout instead of saving: task-check (the result " +
               "document) | trace-parsed | trace-stdout | trace-stderr | agent-home",
           },
           since: {
@@ -840,8 +846,8 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 1,
         maxPositionals: 1,
-        positionalUsage: "<task-check-id>",
-        example: "evolve check download 7c1d2e3f-… --stream trace-stdout",
+        positionalUsage: "<check-id | task-check-id>",
+        example: "evolve check download 3f9a1c2e-… -o checks/",
       },
     },
   },
@@ -5029,10 +5035,44 @@ async function cmdCheckTrace(inv: Invocation, io: CliIO): Promise<number> {
 const TASK_CHECK_STREAM_ARTIFACTS = ["task-check", "trace-parsed", ...ANALYSIS_ARTIFACT_STREAMS] as const;
 type TaskCheckStreamArtifact = (typeof TASK_CHECK_STREAM_ARTIFACTS)[number];
 
-/** `evolve check download` — the analysis download verb's laws, on a task check (cmdAnalysisDownload states each). */
+/**
+ * The task check behind a `check download --stream` read: the feed's
+ * task-check door answers a check id (or any id it does not know) with a
+ * bare 404 `trial_not_found`; --stream is per task check, so that answer
+ * becomes the same two-forms sentence the server's download door speaks —
+ * the whole check is the save mode's, by the check id.
+ */
+async function streamedTaskCheck(client: ReturnType<typeof checks>, id: string): Promise<TaskCheck> {
+  try {
+    return await client.task(id);
+  } catch (error) {
+    if (error instanceof EvolveApiError && error.status === 404) {
+      throw new Error(
+        `'${id}' is not a task check — --stream reads one task check's artifacts (results[].id on ` +
+          "`evolve check show`); to save the whole check by its check id, drop --stream"
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * `evolve check download <check-id | task-check-id>` — the analysis download
+ * verb's laws (cmdAnalysisDownload states each) on the check surface: save
+ * mode takes EITHER id and fetches the server's Harbor folder (a check id:
+ * `check-<id>/` with check_report.json and every task's wrapper-trial
+ * folder; a task check id: that folder alone); --stream reads one task
+ * check's stored artifacts off the feed doors, as before.
+ */
 async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = checks(clientConfig(inv));
-  const taskCheckId = inv.positionals[0];
+  // EITHER a check id (save mode: the whole check) OR a task check id (save
+  // mode: that task's folder; --stream: that task's artifacts). Save mode
+  // hands the id to the server, which resolves the species and refuses an
+  // id that is neither with one typed sentence naming both forms
+  // (check_not_found); --stream is per task check by construction.
+  const id = inv.positionals[0];
+  const taskCheckId = id;
   const json = inv.flags.json === true;
   const stream = inv.flags.stream as string | undefined;
 
@@ -5051,7 +5091,7 @@ async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
       // The result document itself — the same object the feed's &format=log
       // form downloads under Harbor's check-result.json name. --json keeps
       // the wire's {task_check} envelope, like {log} below.
-      const taskCheck = await client.task(taskCheckId);
+      const taskCheck = await streamedTaskCheck(client, taskCheckId);
       io.out(json ? JSON.stringify({ task_check: taskCheck }) : JSON.stringify(taskCheck, null, 2));
       return 0;
     }
@@ -5063,6 +5103,10 @@ async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
       if (!json && transcript.events.length === 0) io.out("No trace events.");
       return 0;
     }
+    // The stored selectors resolve the task-check door first (the SDK's
+    // species gate); resolve it here once so a check id typed at --stream
+    // gets the two-forms sentence instead of the feed's bare 404.
+    await streamedTaskCheck(client, taskCheckId);
     if (stream === "agent-home") {
       const files = await client.artifact(taskCheckId, stream);
       if (files === null) {
@@ -5088,41 +5132,127 @@ async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
     return 0;
   }
 
-  // Save mode: the run as the task-check tree under <output-dir>/<task-check-id>/
-  // — check-result.json at the root, the checker's streams and home under
-  // agent/, plus evolve.json (assembleTaskCheckTree states the layout).
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const { join, dirname } = await import("node:path");
-  const targetDir = join((inv.flags["output-dir"] as string | undefined) ?? "checks", taskCheckId);
-  if (existsSync(targetDir) && inv.flags.overwrite !== true) {
-    throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
-  }
-  // The result resolves FIRST: its door refuses a non-task-check id typed,
-  // so the wrong species dies before any artifact byte is fetched.
-  const taskCheck = await client.task(taskCheckId);
-  const files = assembleTaskCheckTree({
-    taskCheck,
-    transcript: await client.transcript(taskCheckId),
-    stdout: await client.artifact(taskCheckId, "trace-stdout"),
-    stderr: await client.artifact(taskCheckId, "trace-stderr"),
-    home: await client.artifact(taskCheckId, "agent-home"),
-    userId: await callerUserId(inv),
+  // Save mode: the SERVER's archive off the contract's download door
+  // (checks().download) — for a check id Harbor's check job folder
+  // `check-<id>/` (check_report.json + one wrapper-trial folder per task),
+  // for a task check id that task's folder alone `check-<task>__<7>/`. The
+  // server resolves the id and the archive names its own root, so the CLI
+  // reads the root off the archive before writing a byte (tarGzTopLevelName)
+  // and extracts under it (the job download's guards). Then the one
+  // enrichment every download adds: evolve.json — the check's record at the
+  // check root, the task's in every task folder, each folder matched by the
+  // task check id its result.json's x_evolve names, the bodies read once
+  // from the contract's check door.
+  const saved = await saveArchive(inv, io, {
+    fetch: (to) => client.download(id, { to }),
+    outputDir: (inv.flags["output-dir"] as string | undefined) ?? "checks",
+    scratchPrefix: "evolve-check-download-",
+    enrich: async (targetDir) => {
+      const { readdir } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const userId = await callerUserId(inv);
+      const wholeCheck = existsSync(join(targetDir, "check_report.json"));
+      const taskDirs = wholeCheck
+        ? (await readdir(targetDir, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => join(targetDir, e.name))
+        : [targetDir];
+      const identities = new Map<string, { taskCheckId: string; checkId: string }>();
+      for (const dir of taskDirs) {
+        const identity = await rubricRunIdentity(dir);
+        if (identity !== null) identities.set(dir, identity);
+      }
+      const checkId = wholeCheck ? id : identities.get(targetDir)?.checkId;
+      if (checkId === undefined) return [];
+      const check = await client.get(checkId);
+      const written: string[] = [];
+      if (wholeCheck) {
+        await writeRecord(join(targetDir, "evolve.json"), checkEvolveRecord(check, userId));
+        written.push("evolve.json");
+      }
+      for (const [dir, identity] of identities) {
+        const task = check.results.find((r) => r.id === identity.taskCheckId);
+        if (task === undefined) continue;
+        await writeRecord(join(dir, "evolve.json"), taskCheckEvolveRecord(task, check, userId));
+        written.push(wholeCheck ? `${dir.slice(targetDir.length + 1)}/evolve.json` : "evolve.json");
+      }
+      return written;
+    },
   });
-  await mkdir(targetDir, { recursive: true });
-  const saved: string[] = [];
-  for (const path of Object.keys(files).sort()) {
-    const target = join(targetDir, ...path.split("/"));
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, files[path]);
-    saved.push(path);
-    if (!json) io.out(path);
+  return saved;
+}
+
+/** One rubric-run folder's identity, read off its result.json `x_evolve` (the server's builder names both ids); null when the folder is not one. */
+async function rubricRunIdentity(dir: string): Promise<{ taskCheckId: string; checkId: string } | null> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  try {
+    const result = JSON.parse(await readFile(join(dir, "result.json"), "utf8")) as {
+      x_evolve?: { taskCheckId?: unknown; checkId?: unknown };
+    };
+    const taskCheckId = result.x_evolve?.taskCheckId;
+    const checkId = result.x_evolve?.checkId;
+    return typeof taskCheckId === "string" && typeof checkId === "string" ? { taskCheckId, checkId } : null;
+  } catch {
+    return null;
   }
-  if (json) {
-    io.out(JSON.stringify({ path: targetDir, saved }));
-  } else {
-    io.out(`Saved ${targetDir}`);
+}
+
+/** One JSON spelling for every evolve.json the downloads write: 2-space, trailing newline. */
+async function writeRecord(path: string, record: Record<string, unknown>): Promise<void> {
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(path, JSON.stringify(record, null, 2) + "\n");
+}
+
+/**
+ * THE ARCHIVE SAVE the rubric-run downloads share: fetch the server's
+ * .tar.gz to a scratch file, read its one root off its own headers, refuse
+ * an existing folder unless --overwrite (replaced only once the archive has
+ * fully arrived and verified — a failed download never costs the previous
+ * copy), extract under the announced root with the job download's guards
+ * (a half-extracted tree never survives), run the caller's evolve.json
+ * enrichment, and print the outcome in the job download's two shapes.
+ */
+async function saveArchive(
+  inv: Invocation,
+  io: CliIO,
+  opts: {
+    fetch: (to: string) => Promise<string>;
+    outputDir: string;
+    scratchPrefix: string;
+    enrich: (targetDir: string) => Promise<string[]>;
   }
-  return 0;
+): Promise<number> {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { extractTarGz, tarGzTopLevelName } = await import("../hosted/tar");
+  const scratch = await mkdtemp(join(tmpdir(), opts.scratchPrefix));
+  try {
+    const archivePath = await opts.fetch(scratch);
+    const root = await tarGzTopLevelName(archivePath);
+    const targetDir = join(opts.outputDir, root);
+    if (existsSync(targetDir)) {
+      if (inv.flags.overwrite !== true) {
+        throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
+      }
+      await rm(targetDir, { recursive: true, force: true });
+    }
+    let files: string[];
+    try {
+      files = await extractTarGz(archivePath, opts.outputDir, root);
+    } catch (error) {
+      await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+    files.push(...(await opts.enrich(targetDir)));
+    if (inv.flags.json === true) {
+      io.out(JSON.stringify({ path: targetDir, files: files.length }));
+    } else {
+      io.out(`Saved ${targetDir} (${files.length} files)`);
+    }
+    return 0;
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
@@ -5843,44 +5973,23 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
     return 0;
   }
 
-  // Save mode: the run as the analysis tree under <output-dir>/<analysis-id>/
-  // — analysis.json at the run's root, the analyzer's streams and home under
-  // agent/, plus evolve.json (the platform record: the analyzed trial/job/
-  // task, the analyzer's box, its meter). The assembly is the SDK's
-  // (assembleAnalysisTree); absent artifacts are absent files.
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const { join, dirname } = await import("node:path");
-  const targetDir = join((inv.flags["output-dir"] as string | undefined) ?? "analyses", analysisId);
-  if (existsSync(targetDir) && inv.flags.overwrite !== true) {
-    throw new Error(`${targetDir} already exists (pass --overwrite to replace it)`);
-  }
-  // The verdict resolves FIRST: its door refuses a non-analysis id typed (a
-  // trial id answers "analysis.json belongs to an analysis run"), so the
-  // wrong species dies before any artifact byte is fetched.
-  const analysis = await client.get(analysisId);
-  const files = assembleAnalysisTree({
-    analysis,
-    transcript: await client.transcript(analysisId),
-    stdout: await client.artifact(analysisId, "trace-stdout"),
-    stderr: await client.artifact(analysisId, "trace-stderr"),
-    home: await client.artifact(analysisId, "agent-home"),
-    userId: await callerUserId(inv),
+  // Save mode: the SERVER's archive off the contract's download door
+  // (analyses().download) — Harbor's wrapper-trial folder for the analyzer's
+  // run, `analyze-<analyzed trial>__<7>/`, the root read off the archive
+  // itself (saveArchive) — plus the one enrichment every download adds:
+  // evolve.json, the platform record Harbor's layout has no slot for
+  // (analysisEvolveRecord over the verdict the feed serves).
+  return saveArchive(inv, io, {
+    fetch: (to) => client.download(analysisId, { to }),
+    outputDir: (inv.flags["output-dir"] as string | undefined) ?? "analyses",
+    scratchPrefix: "evolve-analysis-download-",
+    enrich: async (targetDir) => {
+      const { join } = await import("node:path");
+      const analysis = await client.get(analysisId);
+      await writeRecord(join(targetDir, "evolve.json"), analysisEvolveRecord(analysis, await callerUserId(inv)));
+      return ["evolve.json"];
+    },
   });
-  await mkdir(targetDir, { recursive: true });
-  const saved: string[] = [];
-  for (const path of Object.keys(files).sort()) {
-    const target = join(targetDir, ...path.split("/"));
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, files[path]);
-    saved.push(path);
-    if (!json) io.out(path);
-  }
-  if (json) {
-    io.out(JSON.stringify({ path: targetDir, saved }));
-  } else {
-    io.out(`Saved ${targetDir}`);
-  }
-  return 0;
 }
 
 /**

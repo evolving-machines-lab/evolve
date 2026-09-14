@@ -1,7 +1,10 @@
 /**
  * Client-side materialization of one trial as Harbor's trial tree — the pure
- * assembly behind `evolve trial download` (and the evolve.json builders
- * `evolve job download` enriches the server archive with).
+ * assembly behind `evolve trial download` — and the evolve.json builders
+ * every download enriches its tree with (`evolve job download`, `evolve
+ * analysis download`, `evolve check download`: the last two extract the
+ * SERVER's wrapper-trial folders and add only these records, the last
+ * section).
  *
  * THE LAYOUT IS HARBOR'S, AND IT IS THE SERVER'S: every file below sits at
  * the same path the server's job archive puts it (spec downloadJob; the
@@ -79,15 +82,7 @@
  * clients, writing to the caller, so the assembly is testable byte for byte.
  */
 import { trialAgentCost } from "./money";
-import type {
-  AnalysisTranscript,
-  Job,
-  TaskCheck,
-  TaskCheckTranscript,
-  TraceEvent,
-  Trial,
-  TrialAnalysis,
-} from "./types";
+import type { Check, Job, TaskCheck, TraceEvent, Trial, TrialAnalysis } from "./types";
 
 /** Everything the assembly consumes — fetched by the caller via the clients. */
 export interface TrialTreeParts {
@@ -441,44 +436,38 @@ export function assembleTrialTree(parts: TrialTreeParts): Record<string, string>
 }
 
 // =============================================================================
-// ANALYSIS TREE — one analyzer run, materialized (evolve analysis download)
+// THE RUBRIC RUNS' evolve.json — an analysis run and a task check (evolve
+// analysis download / evolve check download)
 // =============================================================================
-
-/** Everything the analysis assembly consumes — fetched via analyses(). */
-export interface AnalysisTreeParts {
-  /** analyses().get(id) — the verdict document. */
-  analysis: TrialAnalysis;
-  /** analyses().transcript(id) — identity facts + the drained events. */
-  transcript: AnalysisTranscript;
-  /** analyses().artifact(id, "trace-stdout") / ("trace-stderr") */
-  stdout: string | null;
-  stderr: string | null;
-  /** analyses().artifact(id, "agent-home") — true sandbox paths. */
-  home: Record<string, string> | null;
-  /** The caller's USER id (auth().status() user_id); null when unknown. */
-  userId: string | null;
-}
+//
+// The FOLDER of a rubric run is the SERVER's (owner ruling 2026-09-11, B121):
+// `evolve analysis download` and `evolve check download` fetch Harbor's
+// wrapper-trial folder as one archive from the contract's download doors
+// (analyses().download, checks().download — swarm_dashboard lib/evaluations/
+// trial-tree.ts rubricRunTreeEntries, the ONE builder the job download
+// shares) and extract it; this side never assembles that tree a second
+// time. What the CLI adds after extracting is the same enrichment `evolve
+// job download` adds: evolve.json, the platform record Harbor's layout has
+// no slot for — one per run folder, and one at a check's root. The records
+// are built here from the wire bodies the CLI already holds, so a reader
+// of every download finds the same file family. The run's box (provider,
+// sandbox id), its status and its meter also ride the folder's own
+// result.json under `x_evolve`; evolve.json restates the identity facts
+// and the money the way the trial's record does.
 
 /**
- * The analysis's evolve.json — the platform record Harbor's AnalyzeResult has
- * no slot for: which run this analysis read (the analyzed trial, its job, its
- * task), where the ANALYZER's own box ran, which user downloaded it, and the
- * analyzer's own meter. The money and token figures restate the verdict's own
- * `usage` reading (the one-home rule) rather than inventing a second meter.
+ * The analysis run's evolve.json: which run this analysis read (the
+ * analyzed trial, its job, its task), the analyzer's model and status,
+ * which user downloaded it, and the analyzer's own meter — the verdict's
+ * one-home `usage` reading restated (never a second meter).
  */
-export function analysisEvolveRecord(
-  analysis: TrialAnalysis,
-  transcript: AnalysisTranscript,
-  userId: string | null
-): Record<string, unknown> {
+export function analysisEvolveRecord(analysis: TrialAnalysis, userId: string | null): Record<string, unknown> {
   return {
     analysis_id: analysis.id,
-    analyzed_trial_id: transcript.analyzed_trial_id,
-    job_id: transcript.job_id,
-    task_name: transcript.task_name,
+    analyzed_trial_id: analysis.trial_id,
+    job_id: analysis.job_id,
+    task_name: analysis.task_name,
     user_id: userId,
-    provider: transcript.sandbox_provider,
-    sandbox_id: transcript.sandbox_id,
     status: analysis.status,
     model_name: analysis.model_name,
     gateway: {
@@ -491,127 +480,45 @@ export function analysisEvolveRecord(
 }
 
 /**
- * THE ONE RUBRIC-RUN TREE — an analysis run and a task check materialize
- * through this one assembly (owner ruling 2026-09-09: a task check is
- * downloadable like an analysis; never a second tree builder). Deterministic
- * like assembleTrialTree.
- *
- * The layout reuses the trial tree's own slot names, because the rubric
- * agent is itself an agent run and the store keys its artifacts identically:
- *
- *   <verdict file>            the verdict document at the run's root — the
- *                             wire's TrialAnalysis as analysis.json (Harbor's
- *                             name for the per-trial artifact, their
- *                             analyzer.py:414-424 / cli/analyze.py:357) or
- *                             the wire's TaskCheck as check-result.json
- *                             (Harbor's name for the checker's deliverable,
- *                             checker.py:37 RESULT_FILENAME) — the same
- *                             object the feed's verdict door serves and its
- *                             &format=log form downloads; here it sits at the
- *                             run's own root, because this tree IS the run
- *   agent/stdout.log          the agent process's raw streams, when stored
- *   agent/stderr.log          (the wire names no harness for a rubric run,
- *                             so the default layout applies: stdout.log)
- *   agent/trace-parsed.jsonl  the run's parsed event trace
- *   agent/.claude/…           the CLI's home folder at its real names
- *   agent/agent-home.json     (homeRelativePath; the default layout copies
- *                             nothing), the capture record beside it
- *   evolve.json               the platform record (the run's evolve record)
- *
- * Absent artifacts are absent files — never empty placeholders. No
- * config.json/result.json/verifier/: those are trial-tree facts a rubric run
- * does not have, and inventing them would fake a species.
- */
-function assembleRubricRunTree(parts: {
-  verdictFile: string;
-  verdict: unknown;
-  events: TraceEvent[];
-  stdout: string | null;
-  stderr: string | null;
-  home: Record<string, string> | null;
-  evolveRecord: Record<string, unknown>;
-}): Record<string, string> {
-  const files: Record<string, string> = {};
-
-  files[parts.verdictFile] = record(parts.verdict);
-  if (parts.stdout !== null) files["agent/stdout.log"] = parts.stdout;
-  if (parts.stderr !== null) files["agent/stderr.log"] = parts.stderr;
-  if (parts.events.length > 0) {
-    files["agent/trace-parsed.jsonl"] = parts.events.map((event) => JSON.stringify(event)).join("\n") + "\n";
-  }
-  if (parts.home !== null) Object.assign(files, placeHome(DEFAULT_HARNESS_TRIAL_LAYOUT, parts.home));
-
-  files["evolve.json"] = record(parts.evolveRecord);
-  return files;
-}
-
-/** Assemble one analysis run as {relative-path: content} — the pure assembly behind `evolve analysis download` (assembleRubricRunTree states the layout). */
-export function assembleAnalysisTree(parts: AnalysisTreeParts): Record<string, string> {
-  return assembleRubricRunTree({
-    verdictFile: "analysis.json",
-    verdict: parts.analysis,
-    events: parts.transcript.events,
-    stdout: parts.stdout,
-    stderr: parts.stderr,
-    home: parts.home,
-    evolveRecord: analysisEvolveRecord(parts.analysis, parts.transcript, parts.userId),
-  });
-}
-
-// =============================================================================
-// TASK CHECK TREE — one task check, materialized (evolve check download)
-// =============================================================================
-
-/** Everything the task-check assembly consumes — fetched via checks(). */
-export interface TaskCheckTreeParts {
-  /** checks().task(id) — the result document. */
-  taskCheck: TaskCheck;
-  /** checks().transcript(id) — identity facts + the drained events. */
-  transcript: TaskCheckTranscript;
-  /** checks().artifact(id, "trace-stdout") / ("trace-stderr") */
-  stdout: string | null;
-  stderr: string | null;
-  /** checks().artifact(id, "agent-home") — true sandbox paths. */
-  home: Record<string, string> | null;
-  /** The caller's USER id (auth().status() user_id); null when unknown. */
-  userId: string | null;
-}
-
-/**
- * The task check's evolve.json — the platform record Harbor's
- * QualityCheckResult has no slot for: the check record this result belongs
- * to, the dataset the task came from (the dataset form), where the CHECKER's
- * own box ran, which user downloaded it, and the checker's own meter (the
- * analysis record's shape, the check's facts).
+ * The task check's evolve.json: the check record this result belongs to,
+ * the dataset the task came from (the dataset form; null for an uploaded
+ * archive), the policy's provider and model, the task's status, which user
+ * downloaded it, and the checker's own meter (the result's cost_usd —
+ * Harbor's own field, the wire's one figure).
  */
 export function taskCheckEvolveRecord(
   taskCheck: TaskCheck,
-  transcript: TaskCheckTranscript,
+  check: Check,
   userId: string | null
 ): Record<string, unknown> {
   return {
     task_check_id: taskCheck.id,
-    check_id: taskCheck.check_id,
-    dataset: transcript.dataset,
+    check_id: check.id,
+    dataset: check.source.dataset,
     task_name: taskCheck.task_name,
     user_id: userId,
-    provider: transcript.sandbox_provider,
-    sandbox_id: transcript.sandbox_id,
+    provider: check.sandbox_provider,
     status: taskCheck.status,
-    model_name: transcript.model_name,
+    model_name: check.model_name,
     gateway: { cost_usd: taskCheck.cost_usd },
   };
 }
 
-/** Assemble one task check as {relative-path: content} — the pure assembly behind `evolve check download` (assembleRubricRunTree states the layout). */
-export function assembleTaskCheckTree(parts: TaskCheckTreeParts): Record<string, string> {
-  return assembleRubricRunTree({
-    verdictFile: "check-result.json",
-    verdict: parts.taskCheck,
-    events: parts.transcript.events,
-    stdout: parts.stdout,
-    stderr: parts.stderr,
-    home: parts.home,
-    evolveRecord: taskCheckEvolveRecord(parts.taskCheck, parts.transcript, parts.userId),
-  });
+/**
+ * The check-level evolve.json `evolve check download <check id>` writes
+ * beside check_report.json — the job-level record's shape on the check:
+ * its source, the frozen policy's provider and model, the report's total
+ * (Harbor's total_cost_usd, null when nothing was measured), and which user
+ * downloaded it.
+ */
+export function checkEvolveRecord(check: Check, userId: string | null): Record<string, unknown> {
+  return {
+    check_id: check.id,
+    user_id: userId,
+    source: check.source,
+    provider: check.sandbox_provider,
+    status: check.status,
+    model_name: check.model_name,
+    gateway: { cost_usd: check.cost_usd },
+  };
 }

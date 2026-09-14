@@ -4419,6 +4419,46 @@ ANALYSIS_ROW = {
 
 
 class TestAnalyses:
+    @pytest.mark.asyncio
+    async def test_download_rides_the_contract_door_and_verifies_the_bytes(self, tmp_path):
+        """analyses().download() — GET /api/analyses/{analysisId}/download,
+        the one per-analysis door ON the contract: the wrapper-trial folder
+        as bytes or streamed to a file named by the server (the folder's
+        Harbor name), with the job download's integrity dance."""
+        archive = gzip.compress(b'analyze-fix-bug__1a2b3c4__9f8e7d6/result.json')
+        headers = {
+            'Content-Disposition': 'attachment; filename="analyze-fix-bug__1a2b3c4__9f8e7d6.tar.gz"',
+            'Content-Length': str(len(archive)),
+            'x-package-sha256': hashlib.sha256(archive).hexdigest(),
+        }
+        fake = FakeUrlopen([('/api/analyses/an-1/download', archive, headers)])
+        with patch('evolve._http.urlopen', fake):
+            client = analyses_factory(CONFIG)
+            payload = await client.download('an-1')
+            path = await client.download('an-1', to=str(tmp_path))
+        assert payload == archive
+        assert path.endswith('analyze-fix-bug__1a2b3c4__9f8e7d6.tar.gz')
+        with open(path, 'rb') as f:
+            assert f.read() == archive
+        # The typed refusals are the door's own codes.
+        import io
+        import urllib.error
+
+        def raise_not_terminal(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 409, 'Conflict', {},
+                io.BytesIO(json.dumps({'error': {
+                    'code': 'analysis_not_terminal',
+                    'message': 'Analysis an-1 is running; download requires a settled run (COMPLETED or FAILED)',
+                }}).encode('utf-8')),
+            )
+
+        with patch('evolve._http.urlopen', raise_not_terminal):
+            with pytest.raises(EvolveAPIError) as refused:
+                await analyses_factory(CONFIG).download('an-1')
+        assert refused.value.status == 409
+        assert refused.value.code == 'analysis_not_terminal'
+
     """``analyses().list()`` — the catalog of trace-analysis runs
     (GET /api/analyses). The TypeScript SDK's ``analyses().list()`` twin."""
 

@@ -214,11 +214,17 @@ OPERATION_TO_METHOD = {
     # (verdict, transcript, artifacts) ride the traces feed, which the
     # contract does not declare; this SDK speaks the contract's one door.
     'listAnalyses': (AnalysesClient, 'list'),
+    # The one per-analysis door ON the contract: the run as Harbor's
+    # wrapper-trial folder (B121).
+    'downloadAnalysis': (AnalysesClient, 'download'),
     # Checks — Harbor's `harbor check`, hosted: the upload-and-start verb,
-    # the catalog, the report by id (watch() is the poll over get()).
+    # the catalog, the report by id (watch() is the poll over get()), and
+    # the download — a check as Harbor's check job folder, or one task
+    # check's folder, by either id (B121).
     'createCheck': (ChecksClient, 'create'),
     'listChecks': (ChecksClient, 'list'),
     'getCheck': (ChecksClient, 'get'),
+    'downloadCheck': (ChecksClient, 'download'),
     # Datasets
     'listDatasets': (DatasetsClient, 'list'),
     'getDataset': (DatasetsClient, 'get'),

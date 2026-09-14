@@ -258,11 +258,17 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   // (verdict, transcript, artifacts) ride the traces feed, which the
   // contract does not declare (docs: "not part of the OpenAPI contract").
   listAnalyses: "analyses.list",
+  // The one per-analysis door ON the contract: the run as Harbor's
+  // wrapper-trial folder (B121).
+  downloadAnalysis: "analyses.download",
   // Checks — Harbor's `harbor check`, hosted: the upload-and-start verb,
-  // the catalog, the report by id (checks.watch is the poll over getCheck).
+  // the catalog, the report by id (checks.watch is the poll over getCheck),
+  // and the download — a check as Harbor's check job folder, or one task
+  // check's folder, by either id (B121).
   createCheck: "checks.create",
   listChecks: "checks.list",
   getCheck: "checks.get",
+  downloadCheck: "checks.download",
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
