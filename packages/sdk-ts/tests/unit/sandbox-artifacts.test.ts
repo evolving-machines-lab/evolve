@@ -294,6 +294,50 @@ async function testCollectMalformed(): Promise<void> {
   );
 }
 
+async function testNoInventedCeilings(): Promise<void> {
+  console.log("\n[7] collectSandboxArtifacts() — no ceiling of the SDK's own (2026-09-14)");
+
+  // 300 declared paths, one file each: the former 256-path refusal is gone.
+  const workdir = "/workspace";
+  const many: Array<[string, number]> = [];
+  const contents: Record<string, string> = {};
+  const declared: string[] = [];
+  for (let i = 0; i < 300; i++) {
+    const rel = `out/f${i}.txt`;
+    many.push([`${workdir}/${rel}`, 1]);
+    contents[`${workdir}/${rel}`] = "x";
+    declared.push(rel);
+  }
+  {
+    const { sandbox, reads } = makeSandbox({ listingStdout: boxListing(many), contents });
+    const files = await collectSandboxArtifacts(sandbox, workdir, declared);
+    assert(Object.keys(files).length === 300, "300 declared paths collect all 300 files (no 256 refusal)");
+    assert(reads.length === 300, "every one of the 300 files is read");
+  }
+
+  // Sizes past the former 100 MiB per-file and 500 MiB total figures: the
+  // listing's sizes are what the box reports; the read is what the runtime
+  // can hold. Contents stay small here — the figures were on the LISTING.
+  const big: Array<[string, number]> = [
+    [`${workdir}/out/patch.diff`, 150 * 1024 * 1024],
+    [`${workdir}/out/dump.sql`, 400 * 1024 * 1024],
+  ];
+  {
+    const { sandbox } = makeSandbox({
+      listingStdout: boxListing(big),
+      contents: { [`${workdir}/out/patch.diff`]: "p", [`${workdir}/out/dump.sql`]: "d" },
+    });
+    const files = await collectSandboxArtifacts(sandbox, workdir, ["out"]);
+    assertEqual(Object.keys(files).sort(), ["out/dump.sql", "out/patch.diff"], "a 150 MiB file and a 550 MiB total collect (no per-file or total refusal)");
+  }
+
+  await assertThrows(
+    () => collectSandboxArtifacts(makeSandbox({ listingStdout: boxListing([]), contents: {} }).sandbox, workdir, []),
+    "at least one path",
+    "zero declared paths is still refused (a caller error, not a ceiling)",
+  );
+}
+
 // =============================================================================
 // RUNNER
 // =============================================================================
@@ -307,6 +351,7 @@ async function main(): Promise<void> {
   await testCollectUnderNulStrip();
   await testCollectEmpty();
   await testCollectMalformed();
+  await testNoInventedCeilings();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

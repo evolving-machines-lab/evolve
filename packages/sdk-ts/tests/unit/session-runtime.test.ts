@@ -2220,13 +2220,19 @@ async function testCredentialSealAndArtifactCollection(): Promise<void> {
         : "",
       stderr: "",
     });
-    let oversizedThrew = false;
+    // No ceiling of the SDK's own on a file's size (2026-09-14): a listing past
+    // the former 100 MiB figure is collected like any other; only the runtime's
+    // own limits can refuse it, and a refusal is never the old "Artifact exceeds".
+    let oversizedRefusedByTheOldCap = false;
+    let oversizedCollected = false;
     try {
-      await kit.collectArtifacts(["patch.diff"]);
+      const collected = await kit.collectArtifacts(["patch.diff"]);
+      oversizedCollected = "patch.diff" in collected;
     } catch (error) {
-      oversizedThrew = String(error).includes("Artifact exceeds");
+      oversizedRefusedByTheOldCap = String(error).includes("Artifact exceeds");
     }
-    assert(oversizedThrew, "artifact collection rejects oversized files before download");
+    assert(!oversizedRefusedByTheOldCap, "artifact collection no longer refuses a file for its listed size");
+    assert(oversizedCollected, "a file listed past the former 100 MiB figure is collected");
 
     assert(kit.isSealed(), "isSealed() reports true after sealing");
 

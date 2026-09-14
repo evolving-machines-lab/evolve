@@ -246,7 +246,6 @@ HostedErrorCode = Literal[
     'agent_config_unsupported',
     'agent_config_key_refused',
     'agent_preset_unsupported',
-    'job_too_large',
     'provider_unsupported',
     'job_not_found',
     'job_not_terminal',
@@ -274,9 +273,7 @@ HostedErrorCode = Literal[
     # the message names both forms); the check or the task check not yet
     # settled on the download door (409, the job download's own law); an
     # archive with no task directory, or a selection the globs and the cap
-    # emptied (400); more task directories selected than one check may hold
-    # (422, details carry task_count and max_tasks — narrow with the globs
-    # or cap with n_tasks); the server already spooling its bound of
+    # emptied (400); the server already spooling its bound of
     # concurrent check archives (429, details carry max_concurrent, refused
     # before the first uploaded byte; retry when one finishes — the
     # check-door sibling of too_many_concurrent_skill_uploads above, not
@@ -284,7 +281,6 @@ HostedErrorCode = Literal[
     'check_not_found',
     'check_not_terminal',
     'no_checkable_tasks',
-    'check_too_large',
     'too_many_concurrent_check_uploads',
     'no_analyzable_trials',
     # Job upload (POST /api/jobs/upload): the archive is not a Harbor job
@@ -297,10 +293,12 @@ HostedErrorCode = Literal[
     # (409; analyze is deliberately not among the refusers).
     'not_a_job_dir',
     'invalid_trial',
-    # One trial's artifact is over a stated per-trial bound (the per-file
-    # cap, the session-tree cap). Never an HTTP answer and never the import's
-    # failure: the trial is SKIPPED and this code names why, on the import's
-    # skipped_trials entries — the rest of the archive lands.
+    # One trial's artifact is over a physical bound named in the record (the
+    # store's single-PutObject ceiling on a verbatim file; the heap the worker
+    # can still commit for the trajectory's parse and the agent/ home tree).
+    # Never an HTTP answer and never the import's failure: the trial is
+    # SKIPPED and this code names why, on the import's skipped_trials
+    # entries — the rest of the archive lands.
     'trial_too_large',
     'upload_too_large',
     'job_uploaded',
@@ -1480,7 +1478,7 @@ class JobRetryConfigInput(TypedDict, total=False):
     wait_multiplier: float
     #: Minimum wait in seconds between retries (default 1.0).
     min_wait_sec: float
-    #: Maximum wait in seconds between retries (default 60.0; platform cap 3600).
+    #: Maximum wait in seconds between retries (default 60.0; Harbor's field, no ceiling).
     max_wait_sec: float
 
 
@@ -1597,9 +1595,9 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: Stored AS GIVEN and FROZEN into each analysis, like the rubric.
     #: Omitted = the built-in prompt (``None`` on the resolved echo and on
     #: the analysis). Present, it must be non-empty plain text (no NUL
-    #: character) of at most 32,000 characters — refused ``invalid_input``
-    #: naming ``analyze.prompt`` and the bound. The CLI reads the file for
-    #: you: ``evolve analyze -p prompt.txt``.
+    #: character) of ANY length — stored whole, never truncated (no
+    #: invented number, owner 2026-09-13). The CLI reads the file for you:
+    #: ``evolve analyze -p prompt.txt``.
     prompt: str
     #: Reasoning effort the analyzer runs at — the platform's
     #: ``agents[].reasoning_effort`` vocabulary applied to the analyzer,
@@ -3090,9 +3088,9 @@ class JobImportFailure:
     ones the upload door once answered synchronously — ``invalid_archive``,
     ``upload_too_large``, ``not_a_job_dir``, ``job_already_uploaded``
     (``details['existing_job_id']``), the dataset-hint codes,
-    ``job_too_large``, ``invalid_trial`` (``details['trial']``) — plus the
-    platform's own ``import_failed`` and ``import_lease_expired``. A trial
-    over a per-trial artifact bound is not a failure: it is skipped
+    ``invalid_trial`` (``details['trial']``) — plus the platform's own
+    ``import_failed`` and ``import_lease_expired``. A trial over a physical
+    per-trial bound is not a failure: it is skipped
     (:class:`JobImportSkippedTrial`) and the import completes."""
     code: str
     message: str
@@ -3103,15 +3101,16 @@ class JobImportFailure:
 class JobImportSkippedTrial:
     """One trial a job import LEFT OUT, typed (spec ``JobImportSkippedTrial``):
     the failure-envelope grammar plus the trial directory it names.
-    ``trial_too_large`` is the one cause — the named ``details['file']`` is
-    over the per-file cap, or the ``agent/`` subtrees (``file`` spelled
-    ``agent/``) total over the session-tree cap (``limits['uploads']`` on
-    the capability document), or
-    ``agent/trajectory.json`` would cost more heap to parse than the
-    per-trial bound (its structure counted from the bytes, never parsed);
-    ``details`` carry the ``bytes`` measured and the ``max_bytes`` bound.
-    The rest of the archive lands; a skipped trial contributes nothing to
-    the job."""
+    ``trial_too_large`` is the one cause, every bound physical and named in
+    the message: the named ``details['file']`` is a verbatim artifact over
+    what the store's single PutObject can land (S3's 5 GiB), or
+    ``agent/trajectory.json`` — with the ``agent/`` home tree counted in —
+    would cost more heap to parse than the worker can still commit at that
+    moment (V8's live reading; its structure counted from the bytes, never
+    parsed), or the ``agent/`` tree alone (``file`` spelled ``agent/``) is
+    over that reading; ``details`` carry the ``bytes`` measured and the
+    ``max_bytes`` reading. The rest of the archive lands; a skipped trial
+    contributes nothing to the job."""
     trial: str
     code: str
     message: str
@@ -6798,10 +6797,15 @@ class JobsClient:
         ``agent_setup_timeout_multiplier``,
         ``environment_build_timeout_multiplier`` — overrides it for that
         phase. The task itself is never rewritten. Every multiplier must be
-        greater than 0 and at most the published ceiling
-        (``limits['job']['max_timeout_multiplier']`` on the capability
-        document; 10 unless the fleet changes it) — an absurd value is
-        refused at create with a typed message naming the bound.
+        a finite number greater than 0 — Harbor's own rule and nothing
+        more; no ceiling of the platform's — and a zero, negative or
+        non-finite value is refused at create with a typed message naming
+        the rule. The one real bound is the runtime's timer ceiling
+        (2,147,483,647 ms, about 24.86 days — Node sets a longer timer to
+        1 ms): every selected task's declared timeout x its phase's
+        effective multiplier is checked at create and a product past it is
+        refused ``invalid_input`` on the field that set the multiplier,
+        naming the task, the phase, the product and the source.
         ``agent_env`` / ``verifier_env`` are
         pass-through slots injected into every agent / verifier run — sent
         verbatim; the server owns acceptance (refused where unsupported,
@@ -7414,10 +7418,13 @@ class JobsClient:
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
-        or duplicate criteria, bounds), ``invalid_input`` (off-roster model,
-        an empty or oversize prompt, an effort outside the vocabulary, or a
-        provider outside the lineup — the message names the roster, the
-        bound or the legal values),
+        or duplicate criteria, or a rubric the row store cannot hold —
+        PostgreSQL's jsonb ceiling, named), ``invalid_input`` (off-roster
+        model, an empty or NUL-bearing prompt or one past the row store's
+        1 GB field ceiling, an effort outside the vocabulary, or a provider
+        outside the lineup — the message names the roster, the ceiling or
+        the legal values; a body past what the server can parse is a 413
+        ``invalid_input`` naming the heap reading),
         ``analysis_already_running`` (one wave at a time),
         ``no_analyzable_trials`` (every trial CANCELLED, or no trial on the
         side of the reward filter).
@@ -7606,9 +7613,10 @@ class JobsClient:
         transfer reading ``(sent_bytes, total_bytes)``; ``on_registered``
         receives the import id BEFORE the first byte moves when the archive
         rides the resumable door, so a watcher can attach mid-transfer. The
-        caps live on ``GET /api/meta`` under ``limits['uploads']``
-        (``job_archive_bytes`` — 8 GiB — ``job_trials``,
-        ``job_trial_file_bytes``, ``job_trial_session_bytes``).
+        one ceiling on an archive is what the object store can land
+        (``GET /api/meta`` ``limits['uploads']['job_archive_bytes']``,
+        published with its source) — no trial-count, per-file or per-tree
+        cap exists (no invented number, owner 2026-09-13).
         """
         if (dir_or_archive is None) == (archive_url is None):
             raise ValueError(
@@ -8312,11 +8320,10 @@ class ChecksClient:
         readable gzipped tar, an unsafe entry, or past a listing bound),
         ``no_checkable_tasks`` (no task directory in the archive, or the
         globs and the cap selected none — Harbor's "No valid task
-        directories found"), ``check_too_large`` (more than 1,000 task
-        directories selected — narrow the globs or set ``n_tasks``;
-        ``details`` carry ``task_count`` and ``max_tasks``),
-        ``upload_too_large`` (over
-        ``limits['uploads']['check_archive_bytes']``),
+        directories found"; there is no task-count ceiling),
+        ``upload_too_large`` (over the physical ceiling read at the request
+        — what the store can land, or the server's spool disk — the
+        refusal naming which),
         ``too_many_concurrent_check_uploads`` (the server is already
         spooling its bound of check archives — retry when one finishes).
         The dataset form resolves under the job-create door's own refusals:
