@@ -4692,6 +4692,8 @@ async function testUploadExecutionHonesty() {
     assertEqual((await e.get("eval-links")).upload?.task_links, null, "a reason key outside the enum nulls the list");
     setMockResponse("/api/jobs/eval-links", { status: 200, body: uploadedJobBody({ id: "eval-links", upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-09-14T10:00:00.000Z", reported_totals: null, task_links: [{ ...rollup[0], n_linked: 1.5 }] } }) });
     assertEqual((await e.get("eval-links")).upload?.task_links, null, "a fractional count nulls the list");
+    setMockResponse("/api/jobs/eval-links", { status: 200, body: uploadedJobBody({ id: "eval-links", upload: { original_job_id: null, original_job_name: null, uploaded_at: "2026-09-14T10:00:00.000Z", reported_totals: null, task_links: [{ ...rollup[0], linked_by: "sideways" }] } }) });
+    assertEqual((await e.get("eval-links")).upload?.task_links, null, "a rule outside the contract's enum nulls the list");
     assertEqual((await e.get("eval-up1")).upload?.task_links, null, "a pre-link-law job (no task_links on the wire) reads null");
     // The claim never leaks into the platform-metered fields beside it.
     assertEqual(run.agent_result, null, "agent_result stays null — the meter never saw the run");

@@ -4745,6 +4745,12 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const target = await client.get(id);
   if ((target.upload?.task_links ?? []).some((row) => row.n_unlinked > 0)) {
     for (const line of taskLinkLines(target.upload?.task_links ?? null)) io.err(line);
+  } else if (target.upload !== null && target.upload !== undefined && target.upload.task_links === null) {
+    // An upload from before task linking existed carries no link record
+    // (the wire's null, never inferred): the user hears that the task
+    // folder's presence is unknown here, and that each analysis row will
+    // record it (task_absent_reason).
+    io.err(PRE_LINK_LAW_UPLOAD_LINE);
   }
   const accepted = await client.analyze(id, req);
   if (!watch) {
@@ -5423,6 +5429,10 @@ function jobImportLines(imported: JobImport): string[] {
  * TASK_LINK_REASON_WORDS (swarm_dashboard lib/evals-ui/jobs.ts) spells the
  * same six sentences; a wording change moves both.
  */
+/** What `analyze` says before it fires on a job uploaded before task linking existed (upload.task_links null on the wire). */
+const PRE_LINK_LAW_UPLOAD_LINE =
+  "uploaded before task linking existed: whether its trials carry the task folder is unknown here; each analysis row records it (task_absent_reason)";
+
 const TASK_LINK_REASON_WORDS: Record<string, string> = {
   hash_mismatch: "hash mismatch",
   task_not_in_dataset: "task not in the dataset",

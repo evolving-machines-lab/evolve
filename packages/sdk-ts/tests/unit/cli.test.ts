@@ -7758,6 +7758,8 @@ async function testTaskLinkMessages() {
       "analyses of those trials run without the task folder; link explicitly: evolve upload <dir> -d <name[@version]>";
     const NONE =
       "no dataset matched (no task with this hash); analyses of this job will run without the task folder — link explicitly with -d";
+    const PRE_LINK =
+      "uploaded before task linking existed: whether its trials carry the task folder is unknown here; each analysis row records it (task_absent_reason)";
 
     // (i) The upload follow, human mode: both lines on stdout with the record.
     server.setReply(202, wireJobImport({ id: "imp-p" }));
@@ -7821,6 +7823,14 @@ async function testTaskLinkMessages() {
     const quiet = captureIO();
     await runCli(["analyze", "eval-up1", ...AUTH], quiet.io);
     assertEqual(quiet.err, [], "a fully linked upload warns about nothing");
+    // An upload from before task linking existed: no task_links on the wire
+    // (the client reads null) — the one pre-law sentence, on stderr, once.
+    const { task_links: _omitted, ...preLawUpload } = uploadedWireJob().upload as Record<string, unknown>;
+    setMockResponse("/api/jobs/eval-prelaw", { status: 200, body: wireJob({ id: "eval-prelaw", status: "COMPLETED", sandbox_provider: null, upload: preLawUpload }) });
+    setMockResponse("/api/jobs/eval-prelaw/analyze", { status: 202, body: wireJob({ id: "eval-prelaw", status: "COMPLETED", sandbox_provider: null, upload: preLawUpload }) });
+    const preLaw = captureIO();
+    await runCli(["analyze", "eval-prelaw", ...AUTH], preLaw.io);
+    assertEqual(preLaw.err, [PRE_LINK], "an upload from before task linking existed says the link status is unknown here, once");
     setMockResponse("/api/jobs/eval-native", { status: 200, body: wireJob({ id: "eval-native", status: "COMPLETED" }) });
     setMockResponse("/api/jobs/eval-native/analyze", { status: 202, body: wireJob({ id: "eval-native", status: "COMPLETED" }) });
     const native = captureIO();
