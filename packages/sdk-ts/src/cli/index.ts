@@ -2432,8 +2432,9 @@ function loadAgentConfigFile(
  * `prompt_path.read_text()`). Read verbatim, no parsing: the tokens
  * (`{trial_path}`, `{task_section}`, `{criteria_guidance}`) are rendered
  * server-side. Ruled here: the file must be readable and non-empty; the
- * server owns the bound (32,000 characters) and refuses it typed
- * (`invalid_input` naming `analyze.prompt`).
+ * server stores it whole at any length (no invented number) and refuses
+ * only an empty or NUL-bearing one typed (`invalid_input` naming
+ * `analyze.prompt`).
  */
 export function loadPromptFile(
   path: string,

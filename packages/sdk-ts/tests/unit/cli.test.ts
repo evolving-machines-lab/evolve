@@ -1067,13 +1067,22 @@ async function testConfigFileMerge() {
         `job_name: "${"x".repeat(201)}"\ndatasets: [{name: deep-swe}]\nagents: [{name: claude, model_name: opus}]`,
         ["must be at most 200 characters"],
       ],
-      [
-        "nine-arms",
-        "datasets: [{name: deep-swe}]\nagents:\n" +
-          Array.from({ length: 9 }, (_, i) => `  - {name: a${i}, model_name: m}`).join("\n"),
-        ["takes at most 8 entries", "[spec: JobCreate.agents]"],
-      ],
     ];
+    // No fan-out ceiling in the contract (no invented number, owner
+    // 2026-09-13): a nine-arm config — refused "takes at most 8 entries"
+    // under the old JobCreate.agents maxItems — now builds; the spec's
+    // shape still rules the arms' keys.
+    {
+      const nineArms = join(dir, "spec-nine-arms.yaml");
+      await writeFile(
+        nineArms,
+        "datasets: [{name: deep-swe}]\nagents:\n" +
+          Array.from({ length: 9 }, (_, i) => `  - {name: a${i}, model_name: m}`).join("\n") +
+          "\n",
+      );
+      const built = buildJobInput(parseArgs(["job", "start", "-c", nineArms]));
+      assert(built.agents.length === 9, "a nine-arm config builds — no agent-count ceiling in the contract");
+    }
     for (const [name, body, needles] of specCases) {
       const casePath = join(dir, `spec-${name}.yaml`);
       await writeFile(casePath, `${body}\n`);

@@ -463,7 +463,7 @@ class TestFrontDoor:
                     'description': 'x',
                 }
             },
-            'limits': {'job': {'max_trials': 10000}},
+            'limits': {'job': {'n_concurrent_trials': {'default': 4, 'max': 150}}},
             'import_warning_codes': ['no_solutions_archived'],
             'error_codes': ['invalid_input'],
         }
