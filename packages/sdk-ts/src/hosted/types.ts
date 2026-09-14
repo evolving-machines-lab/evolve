@@ -463,7 +463,7 @@ export interface RetryConfigInput {
   wait_multiplier?: number;
   /** Minimum wait in seconds between retries (default 1.0). */
   min_wait_sec?: number;
-  /** Maximum wait in seconds between retries (default 60.0; platform cap 3600). */
+  /** Maximum wait in seconds between retries (default 60.0; Harbor's field, no ceiling). */
   max_wait_sec?: number;
 }
 
@@ -580,9 +580,9 @@ export interface AnalyzeConfigInput {
    * deliverable. Stored AS GIVEN and FROZEN into each analysis the config
    * enqueues, like the rubric. Omitted = the built-in prompt (`null` on the
    * resolved echo and on the analysis). Present, it must be non-empty plain
-   * text (no NUL character) of at most 32,000 characters — refused
-   * `invalid_input` naming `analyze.prompt` and the bound, never truncated. The CLI reads the file
-   * for you: `evolve analyze -p prompt.txt`.
+   * text (no NUL character) of ANY length — stored whole, never truncated
+   * (no invented number, owner 2026-09-13). The CLI reads the file for
+   * you: `evolve analyze -p prompt.txt`.
    */
   prompt?: string;
   /**
@@ -732,11 +732,16 @@ export interface JobCreate {
    * worker multiplies each TASK-DECLARED timeout at the point that phase's
    * timeout is armed; the task itself is never rewritten, so the same task
    * runs unstretched in every other job. Values below 1 shrink, as in
-   * Harbor. Every multiplier must be greater than 0 and at most the
-   * published ceiling (`limits.job.max_timeout_multiplier` on GET /api/meta;
-   * 10 unless the fleet changes it) — an absurd value is refused with a
-   * typed `invalid_input` naming the bound, never silently clamped.
-   * Default 1.0.
+   * Harbor. Every multiplier must be a finite number greater than 0 —
+   * Harbor's own rule and nothing more; no ceiling of the platform's — and
+   * a zero, negative or non-finite value is refused with a typed
+   * `invalid_input` naming the rule, never silently clamped. The one real
+   * bound is the runtime's timer ceiling (2,147,483,647 ms, about 24.86
+   * days — Node sets a longer timer to 1 ms): every selected task's
+   * declared timeout x its phase's effective multiplier is checked at
+   * create and a product past it is refused `invalid_input` on the field
+   * that set the multiplier, naming the task, the phase, the product and
+   * the source. Default 1.0.
    */
   timeout_multiplier?: number;
   /** Multiplier for the agent execution timeout (overrides timeout_multiplier). */
@@ -3450,11 +3455,11 @@ export interface JobImportProgress {
  * Why a job import FAILED (spec JobImportFailure). The codes are the ones
  * the upload door once answered synchronously — `invalid_archive`,
  * `upload_too_large`, `not_a_job_dir`, `job_already_uploaded` (details name
- * `existing_job_id`), the dataset-hint codes, `job_too_large`,
- * `invalid_trial` (details name the `trial`) — plus the platform's own
- * `import_failed` and `import_lease_expired`. A trial over a per-trial
- * artifact bound is not a failure: it is skipped (JobImportSkippedTrial)
- * and the import completes.
+ * `existing_job_id`), the dataset-hint codes, `invalid_trial` (details
+ * name the `trial`) — plus the platform's own `import_failed` and
+ * `import_lease_expired`. A trial over a physical per-trial bound is not a
+ * failure: it is skipped (JobImportSkippedTrial) and the import
+ * completes.
  */
 export interface JobImportFailure {
   code: string;
@@ -3465,14 +3470,16 @@ export interface JobImportFailure {
 /**
  * One trial a job import LEFT OUT, typed (spec JobImportSkippedTrial): the
  * failure-envelope grammar plus the trial directory it names.
- * `trial_too_large` is the one cause — the named `file` is over the
- * per-file cap, or the `agent/` subtrees (`file` spelled `agent/`) total
- * over the session-tree cap (`limits.uploads` on the capability document),
- * or `agent/trajectory.json`
- * would cost more heap to parse than the per-trial bound (its structure
- * counted from the bytes, never parsed); `details` carry the `bytes`
- * measured and the `max_bytes` bound. The rest of the archive lands; a
- * skipped trial contributes nothing to the job.
+ * `trial_too_large` is the one cause, every bound physical and named in
+ * the message: the named `file` is a verbatim artifact over what the
+ * store's single PutObject can land (S3's 5 GiB), or
+ * `agent/trajectory.json` — with the `agent/` home tree counted in — would
+ * cost more heap to parse than the worker can still commit at that moment
+ * (V8's live reading; its structure counted from the bytes, never parsed),
+ * or the `agent/` tree alone (`file` spelled `agent/`) is over that
+ * reading; `details` carry the `bytes` measured and the `max_bytes`
+ * reading. The rest of the archive lands; a skipped trial contributes
+ * nothing to the job.
  */
 export interface JobImportSkippedTrial {
   trial: string;
@@ -3924,9 +3931,10 @@ export interface JobsClient {
    * synchronously — `not_a_job_dir`, `invalid_trial`, `job_already_uploaded`
    * naming the existing job, ...). Follow it with watchImport(). `dataset`
    * links the uploaded trials to a published dataset version by task name.
-   * The caps live on `GET /api/meta` under `limits.uploads`
-   * (`job_archive_bytes` — 8 GiB — `job_trials`, `job_trial_file_bytes`,
-   * `job_trial_session_bytes`).
+   * The one ceiling on an archive is what the object store can land
+   * (`GET /api/meta` `limits.uploads.job_archive_bytes`, published with
+   * its source) — no trial-count, per-file or per-tree cap exists (no
+   * invented number, owner 2026-09-13).
    */
   upload(source: string | { archive_url: string }, options?: UploadJobOptions): Promise<JobImport>;
   /** One job import by id — owner-only (`job_import_not_found`, 404, for anyone else's). */
@@ -4767,7 +4775,6 @@ export const HOSTED_ERROR_CODES = [
   "agent_config_unsupported",
   "agent_config_key_refused",
   "agent_preset_unsupported",
-  "job_too_large",
   "provider_unsupported",
   "job_not_found",
   "job_not_terminal",
@@ -4795,9 +4802,7 @@ export const HOSTED_ERROR_CODES = [
   // message names both forms); the check or the task check not yet settled
   // on the download door (409, the job download's own law); an archive
   // with no task directory, or a selection the globs and the cap emptied
-  // (400); more task directories selected than one check may hold (422,
-  // details carry task_count and max_tasks — narrow with the globs or cap
-  // with n_tasks); the server already spooling its bound of concurrent
+  // (400); the server already spooling its bound of concurrent
   // check archives (429, details carry max_concurrent, refused before the
   // first uploaded byte; retry when one finishes — the check-door sibling
   // of too_many_concurrent_skill_uploads above, not rate_limited for the
@@ -4805,23 +4810,26 @@ export const HOSTED_ERROR_CODES = [
   "check_not_found",
   "check_not_terminal",
   "no_checkable_tasks",
-  "check_too_large",
   "too_many_concurrent_check_uploads",
   "no_analyzable_trials",
   // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
   // directory (no result.json / config.json at its root, or they do not
   // parse); one trial directory that cannot be ingested (the refusal names
-  // the trial and the reason, 422); the archive over the byte cap (413,
-  // distinct from import_too_large — that one belongs to dataset corpora);
+  // the trial and the reason, 422); the archive over a physical ceiling
+  // named in the refusal — what the store can land (413) or the worker's
+  // free disk at extraction (distinct from import_too_large — that one
+  // belongs to dataset corpora);
   // and a run-lifecycle verb (resume / retry / regrade) on an UPLOADED job —
   // a terminal record of a run that happened elsewhere, never runnable here
   // (409; analyze is deliberately not among the refusers).
   "not_a_job_dir",
   "invalid_trial",
-  // One trial's artifact is over a stated per-trial bound (the per-file
-  // cap, the session-tree cap). Never an HTTP answer and never the import's
-  // failure: the trial is SKIPPED and this code names why, on the import's
-  // skipped_trials entries — the rest of the archive lands.
+  // One trial's artifact is over a physical bound named in the record (the
+  // store's single-PutObject ceiling on a verbatim file; the heap the worker
+  // can still commit for the trajectory's parse and the agent/ home tree).
+  // Never an HTTP answer and never the import's failure: the trial is
+  // SKIPPED and this code names why, on the import's skipped_trials
+  // entries — the rest of the archive lands.
   "trial_too_large",
   "upload_too_large",
   "job_uploaded",
@@ -5081,10 +5089,14 @@ export interface CapabilityDocument {
     models: { alias: string; model_id: string; default_reasoning_effort: string }[];
   };
   limits: {
+    /**
+     * What a client must know to send a good job: the concurrency bound
+     * and the fleet defaults. No fan-out ceiling is published because none
+     * exists (no invented number, owner 2026-09-13): `n_attempts`, the
+     * agent count, the trial matrix, `retry.max_retries` and every timeout
+     * multiplier are unbounded, as in Harbor.
+     */
     job: {
-      max_n_attempts: number;
-      max_agents: number;
-      max_trials: number;
       n_concurrent_trials: { default: number; max: number };
       default_max_trial_spend_usd: number;
       /**
@@ -5093,8 +5105,6 @@ export interface CapabilityDocument {
        * infrastructure errors retry automatically).
        */
       default_max_retries: number;
-      /** The most retries a request may ask for. */
-      max_retries_ceiling: number;
       default_sandbox_provider: string;
       default_sizing: { cpus: number; memory_mb: number; storage_mb: number };
       /** Every agent must name a model; the server applies no default. */
@@ -5116,23 +5126,24 @@ export interface CapabilityDocument {
       dataset_tasks: { default: number; max: number };
       trace_events: { default: number; max: number };
     };
+    /**
+     * The ONE physical ceiling on an uploaded dataset, job or check archive
+     * — what the object store can land (S3's 10,000 parts of the store
+     * move's part size; the local store's free disk in local mode) —
+     * published with its source. No archive cap, trial-count cap, per-file
+     * or per-tree cap of the platform's exists (owner 2026-09-13).
+     */
     uploads: {
       dataset_archive_bytes: number;
+      /** The same ceiling, for a job archive. */
+      job_archive_bytes: number;
+      /** Where the archive ceiling was read from — S3's multipart limits, or the local store's statfs reading. */
+      archive_bytes_source: string;
       agent_tarball_bytes: number;
       /** Compressed cap on one uploaded skill tarball (`skill_too_large` past it). */
       skill_archive_bytes: number;
       /** Uploaded-skill records one caller may hold (`skill_limit_reached` past it). */
       skill_uploads_per_user: number;
-      /** Compressed cap on one uploaded job archive (`upload_too_large` past it). */
-      job_archive_bytes: number;
-      /** Compressed cap on one check archive (POST /api/checks; `upload_too_large` past it). */
-      check_archive_bytes: number;
-      /** Most trials one uploaded job archive may carry (`job_too_large` past it). */
-      job_trials: number;
-      /** Per-file cap on the trial artifacts an upload stores (a trial with a file past it is skipped, `trial_too_large` on the import). */
-      job_trial_file_bytes: number;
-      /** Total cap on one trial's `agent/` subtrees — its session home: the home at its real names (`agent/.claude/`, `agent/.codex/`, `agent/.kimi-code/`, …) and Harbor's copies (`agent/sessions/`, `agent/qwen-sessions/`, `agent/opencode/`) (a trial past it is skipped the same way). */
-      job_trial_session_bytes: number;
     };
     dataset_names: {
       pattern: string;
