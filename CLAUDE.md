@@ -55,7 +55,7 @@ evolve/
 │   ├── docker/                  # Docker image (Dockerfile, build.ts)
 │   ├── build.sh                 # Master build script
 │   └── README.md
-├── skills/                      # Agent skills (41 total) — CI-OWNED MIRROR of docs/
+├── skills/                      # Agent skills — `evolve/` is a CI-owned mirror of docs/; others are hand-written
 │   ├── pdf, docx, pptx, xlsx   # Document processing
 │   ├── agent-browser, dev-browser, webapp-testing  # Browser automation
 │   ├── frontend-design, shadcn-webapp-design, web-design-guidelines  # Design
@@ -63,6 +63,7 @@ evolve/
 │   ├── skill-creator, skill-share, template-skill  # Skill tooling
 │   ├── remotion, slides-as-code, canvas-design  # Media & presentations
 │   ├── mcp-builder              # MCP server builder
+│   ├── harbor-job-upload        # Compress + upload a Harbor job (hand-written)
 │   └── ...                      # content-research, lead-research, invoice, image-enhancer, etc.
 ├── cookbooks/                   # Example applications
 │   ├── typescript/
@@ -107,5 +108,5 @@ EVOLVE_OPENAPI_SPEC_PATH=/path/to/swarm_dashboard/spec/openapi.yaml npm run test
 
 ### Documentation rules
 
-- **`docs/` is the only place documentation is edited.** `skills/` and `.claude/skills/` are mirrors regenerated on push by `.github/workflows/sync-docs-to-skill.yml`. Hand-editing a mirror gets overwritten and loses the change.
+- **`docs/` is the only place the `evolve` skill's documentation is edited.** `skills/evolve/` and `.claude/skills/evolve/` are mirrors regenerated on push by `.github/workflows/sync-docs-to-skill.yml`. Hand-editing either gets overwritten and loses the change. The workflow copies **only** into those two directories — a hand-written skill in its own directory (e.g. `skills/harbor-job-upload/`) is never touched, and is edited in place.
 - **`docs/typescript/` and `docs/python/` are exact mirrors of each other.** Same sections, same order, same facts, same caveats — only the code differs. A change to one chapter is not finished until the other says the same thing.
