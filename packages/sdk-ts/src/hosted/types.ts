@@ -4481,7 +4481,7 @@ export interface TaskCheck {
   /** One entry per rubric criterion, keys exactly the frozen criteria. Null until completed. */
   checks: Record<string, AnalysisCheck> | null;
   cost_usd: number | null;
-  /** 1, or 2 when the one automatic re-run fired (a run that produced no valid check-result.json, the missing file included). */
+  /** 1, or 2 when the one automatic re-run fired (a run that produced no valid check-result.json, the missing file included, is re-run once — the analyze verb's hosted rule; a run cut by its budget is not that class: it settles `failed` with phase `timeout` at once and is never re-run). */
   attempts: number;
   /** Non-null exactly when status is `failed`. */
   failure: AnalysisFailure | null;
