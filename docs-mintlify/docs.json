@@ -14,7 +14,7 @@
     "href": "https://evolvingmachines.ai"
   },
   "appearance": {
-    "default": "dark"
+    "default": "light"
   },
   "background": {
     "color": {
@@ -43,7 +43,12 @@
         "type": "github",
         "href": "https://github.com/evolving-machines-lab/evolve"
       }
-    ]
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Dashboard",
+      "href": "https://dashboard.evolvingmachines.ai"
+    }
   },
   "footer": {
     "socials": {

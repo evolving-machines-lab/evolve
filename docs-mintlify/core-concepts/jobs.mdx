@@ -1,12 +1,12 @@
 ---
 title: "Jobs"
-description: "Start, watch, read, and derive jobs."
+description: "Start a job, watch it, read its results, and derive new jobs from it."
 ---
 
 A job runs every task of its datasets with every agent arm, a fixed number of attempts each. Start one with `evolve run`. It is the short form of `evolve job start`, and both take the same flags.
 
 ```bash
-evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -k 2 --watch
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch
 ```
 
 `-d` names a dataset and may repeat: one job can span several. `-a` names the agent. `-m` names the model and may repeat too. Each model is one arm, so two models against one agent run every task twice. `-k` is the number of attempts per task and arm (default 1). `-n` is how many trials run in parallel (default 4). `--job-name` gives the job a label; omitted, the server generates one.
@@ -14,7 +14,7 @@ evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -k 2 --watch
 ## Narrow the task set
 
 ```bash
-evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -i 'auth-*' -x 'auth-legacy' -l 20 --watch
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -i 'auth-*' -x 'auth-legacy' -l 20 --watch
 ```
 
 `-i` and `-x` are include and exclude globs over task names, applied to every dataset. `-l` caps the task count of each dataset after the filters.
@@ -58,7 +58,7 @@ evolve job regrade <job-id> --task tricky-task
 
 ```bash
 evolve job cancel <job-id>
-evolve job stop <job-id> --dataset terminal-bench-4
+evolve job stop <job-id> --dataset deep-swe
 evolve job delete <job-id> --yes
 ```
 
@@ -76,12 +76,11 @@ The results unpack as the standard job directory, `results/job-<id>/`: the job's
 
 Put the job in a file and run it with `-c`. The file is YAML or JSON with the same field names the SDK's `jobs().start()` takes. Flags on the command line override the file's fields. `--print-config` prints the resolved job body as JSON and exits without running anything.
 
-```yaml
-# nightly.yaml
+```yaml nightly.yaml
 datasets:
-  - name: terminal-bench-4
-    version: "4.0"
-  - name: harbor-examples
+  - name: deep-swe
+    version: "1.1"
+  - name: frontier-swe
 agents:
   - name: codex
     model_name: gpt-5.5
@@ -96,4 +95,6 @@ evolve run -c nightly.yaml --print-config
 evolve run -c nightly.yaml --watch
 ```
 
-Every flag is in the [run reference](/cli-reference/run).
+<Card title="run reference" icon="terminal" href="/cli-reference/run">
+  Every flag of `evolve run`.
+</Card>

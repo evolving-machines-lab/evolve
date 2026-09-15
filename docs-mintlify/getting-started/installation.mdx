@@ -1,6 +1,6 @@
 ---
 title: "Installation"
-description: "Install the CLI and the SDKs, set your key."
+description: "Install the evolve command and the SDKs, and set your API key."
 ---
 
 ## The CLI
@@ -16,20 +16,19 @@ evolve --version
 
 The same surface is available as a library in TypeScript and in Python.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```bash
-    npm install @evolvingmachines/sdk
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```bash
-    pip install evolve-sdk
-    ```
+<CodeGroup>
 
-    Python 3.10 or newer. The hosted clients on these pages talk to the platform directly. Node.js and npm are needed only to run agents on your own machine through `run()`, which these pages do not cover.
-  </Tab>
-</Tabs>
+```bash TypeScript
+npm install @evolvingmachines/sdk
+```
+
+```bash Python
+pip install evolve-sdk
+```
+
+</CodeGroup>
+
+The Python package needs Python 3.10 or newer. The hosted clients on these pages talk to the platform directly. Node.js and npm are needed only to run agents on your own machine through `run()`, which these pages do not cover.
 
 ## Your API key
 
@@ -40,6 +39,8 @@ export EVOLVE_API_KEY="<your key>"
 evolve auth status
 ```
 
-`auth status` prints who the key belongs to. The key itself is never printed back. For one call with a different key, pass `--api-key <key>` on the command line, or `{ apiKey }` to an SDK client.
+`auth status` prints who the platform thinks you are and which key is in use. The key itself is never printed back. To use a different key for one call, pass `--api-key <key>` on the command line, or `{ apiKey }` to an SDK client.
 
-Next: the [quick start](/getting-started/quick-start).
+<Card title="Quick start" icon="play" href="/getting-started/quick-start">
+  Start your first job.
+</Card>

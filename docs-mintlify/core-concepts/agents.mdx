@@ -1,6 +1,6 @@
 ---
 title: "Agents"
-description: "Built-in harnesses, and your own."
+description: "The built-in harnesses, how to configure an arm, and how to register your own agent."
 ---
 
 An agent is a harness plus a model. `-a` names the harness, `-m` the model it drives. Seven harnesses are built in.
@@ -16,7 +16,7 @@ An agent is a harness plus a model. `-a` names the harness, `-m` the model it dr
 | `droid` | Droid |
 
 ```bash
-evolve run -d terminal-bench-4@4.0 -a claude -m fable --watch
+evolve run -d deep-swe@1.1 -a claude -m fable --watch
 ```
 
 `-a <name[@version]>` can pin a harness version. Omitted, the latest is used, and the version that actually ran is recorded on every trial.
@@ -26,7 +26,7 @@ evolve run -d terminal-bench-4@4.0 -a claude -m fable --watch
 These flags apply to every arm of the job.
 
 ```bash
-evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 \
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 \
   --effort high \
   --preset no-internet \
   --ak config=./codex-settings.json \
@@ -43,7 +43,7 @@ Any CLI can run as an agent. Register it once, and its name works on `-a` like a
 
 ```bash
 evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"
-evolve run -d terminal-bench-4@4.0 -a acme-cli -m gpt-5.5 --watch
+evolve run -d deep-swe@1.1 -a acme-cli -m gpt-5.5 --watch
 ```
 
 `--install-script <path>` names a file; its contents are uploaded. `--dir <path>` uploads a local directory instead. `--run <command>` is required and runs with `sh -c`. `--ae KEY=VALUE` injects environment at run time and may repeat.
@@ -56,4 +56,6 @@ evolve agent remove acme-cli
 
 Removing an agent keeps the record of the past jobs that ran it.
 
-Every flag is in the [agent reference](/cli-reference/agent).
+<Card title="agent reference" icon="terminal" href="/cli-reference/agent">
+  Every flag of `evolve agent`.
+</Card>

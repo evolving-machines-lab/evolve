@@ -60,14 +60,49 @@ samp {
 
 /* The active item's bar: 3px of the accent. */
 #navigation-items a.border-primary {
-  border-left-width: 3px;
   border-left-color: #b026ff;
 }
 
-/* Pagination: two equal halves, nothing truncated. */
+/* Pagination: a visible frame, a divider between the halves, two equal
+   halves, nothing truncated. Hover lightens the border only. */
+#pagination {
+  background: #ffffff;
+  border: 1px solid #00000026;
+  padding: 0;
+}
+
+#pagination:hover {
+  border-color: #00000040;
+}
+
+.dark #pagination {
+  background: #141414;
+  border-color: #ffffff2e;
+}
+
+.dark #pagination:hover {
+  border-color: #ffffff47;
+}
+
 #pagination a {
   flex: 1 1 50%;
   min-width: 0;
+}
+
+#pagination a:hover {
+  background: transparent;
+}
+
+#pagination a[rel="next"] {
+  border-left: 1px solid #00000026;
+}
+
+.dark #pagination a[rel="next"] {
+  border-left-color: #ffffff2e;
+}
+
+#pagination a[rel="prev"] + a[rel="next"] {
+  margin-left: 0;
 }
 
 #pagination .truncate {
@@ -83,4 +118,74 @@ samp {
   width: 100%;
   height: auto;
   max-width: none;
+}
+
+/* Navbar links and the Dashboard button, top right. */
+#sidebar > ul {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: auto;
+  left: auto;
+  width: auto;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0 1.5rem;
+  border-top: 0;
+  background: transparent;
+  z-index: 30;
+}
+
+#sidebar > ul > li {
+  padding: 0;
+  margin: 0;
+}
+
+/* GitHub: the icon only, muted. */
+#sidebar > ul a[href^="https://github.com/"] {
+  color: #737373;
+}
+
+#sidebar > ul a[href^="https://github.com/"]:hover {
+  color: #191919;
+}
+
+.dark #sidebar > ul a[href^="https://github.com/"] {
+  color: #8c8c8c;
+}
+
+.dark #sidebar > ul a[href^="https://github.com/"]:hover {
+  color: #f7f6f5;
+}
+
+#sidebar > ul a[href^="https://github.com/"] span,
+#sidebar > ul a[href^="https://github.com/"] > div > div + div {
+  display: none;
+}
+
+#sidebar > ul a[href^="https://github.com/"] svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* Dashboard: solid purple, white label, square. */
+#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"],
+#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+  display: inline-flex;
+  align-items: center;
+  height: 2rem;
+  padding: 0 0.875rem;
+  background: #b026ff;
+  color: #ffffff;
+  font-weight: 500;
+}
+
+#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] span {
+  color: #ffffff;
+}
+
+#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] svg {
+  display: none;
 }

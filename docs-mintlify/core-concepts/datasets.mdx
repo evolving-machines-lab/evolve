@@ -1,18 +1,18 @@
 ---
 title: "Datasets"
-description: "The catalog, and publishing your own."
+description: "The catalog, and publishing your own dataset."
 ---
 
-A dataset is a named, versioned folder of [tasks](/core-concepts/tasks) in the catalog. `name@version` names one version. A bare name means the dataset's active version.
+A dataset is a named, versioned folder of [tasks](/core-concepts/tasks) in the catalog. You name a version as `name@version`. A bare name means the dataset's active version.
 
 ## Browse the catalog
 
 ```bash
 evolve dataset list
-evolve dataset show terminal-bench-4@4.0
+evolve dataset show deep-swe@1.1
 ```
 
-`dataset list` prints every dataset you can run: the platform's public datasets and your own. `--search <text>` filters by name and description. `dataset show` prints one version's tasks, their timeouts, and which sandbox providers can run each.
+`dataset list` prints every dataset you can run: the platform's public datasets and your own. `--search <text>` filters by name and description. `dataset show` prints one dataset's versions, its tasks with their timeouts, and for each task which sandbox providers can run it.
 
 ## Publish your own
 
@@ -24,34 +24,32 @@ evolve dataset check ./my-swe
 
 Then publish from a local directory, from a git repository, or from a source the server fetches itself.
 
-### From a local directory
+<Tabs>
+  <Tab title="Local directory">
+    ```bash
+    evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
+    ```
 
-```bash
-evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
-```
+    When the folder carries a `dataset.toml` manifest, `--name` and `--version` come from it and may be omitted.
+  </Tab>
+  <Tab title="Git repository">
+    ```bash
+    evolve dataset publish --git https://github.com/acme/my-swe.git --ref v1.0.0 \
+      --name my-swe --version 1.0 --watch
+    ```
 
-When the folder carries a `dataset.toml` manifest, `--name` and `--version` come from it and may be omitted.
+    `--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is refused. `--path <subfolder>` imports one folder of a larger repository.
+  </Tab>
+  <Tab title="Fetchable source">
+    ```bash
+    evolve dataset publish --from hub:cookbook/hello-world --watch
+    ```
 
-### From a git repository
+    `--from` takes a public https tarball URL, or `hub:org/name[@ref]` for a public package on the Harbor hub. For a hub package the name and version default to the package's own.
+  </Tab>
+</Tabs>
 
-```bash
-evolve dataset publish --git https://github.com/acme/my-swe.git --ref v1.0.0 \
-  --name my-swe --version 1.0 --watch
-```
-
-`--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is refused. `--path <subfolder>` imports one folder of a larger repository.
-
-### From a fetchable source
-
-```bash
-evolve dataset publish --from hub:cookbook/hello-world --watch
-```
-
-`--from` takes a public https tarball URL, or `hub:org/name[@ref]` for a public package on the Harbor hub. For a hub package the name and version default to the package's own.
-
-### Following the publish
-
-`--watch` follows the publish until the version is READY or FAILED. Each task builds on its own, so one broken task does not block the others, and `--watch` ends with how many built. If the terminal is gone, `evolve dataset watch <name>` re-attaches to the same follow, from any machine. `--skip-preflight` uploads without the check; a task the check would have refused then fails at import.
+`--watch` follows the publish until the version is READY or FAILED. Each task builds on its own, so one broken task does not block the others; `--watch` ends with how many built. If the terminal is gone, `evolve dataset watch <name>` re-attaches to the same follow, from any machine. `--skip-preflight` uploads without the check; a task the check would have refused then fails at import instead.
 
 ## Versions
 
@@ -67,4 +65,6 @@ The owner of a dataset can download the original package back:
 evolve dataset download my-swe@1.0 -o corpora/
 ```
 
-Every flag is in the [dataset reference](/cli-reference/dataset).
+<Card title="dataset reference" icon="terminal" href="/cli-reference/dataset">
+  Every flag of `evolve dataset`.
+</Card>

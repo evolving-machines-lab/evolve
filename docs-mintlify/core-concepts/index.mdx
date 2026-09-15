@@ -1,10 +1,9 @@
 ---
 title: "Core concepts"
-description: "The flow from dataset to results."
+description: "How a dataset becomes trials, rewards, analyses and results."
 ---
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontSize": "18px", "fontFamily": "Google Sans Flex, sans-serif", "primaryColor": "#1a1a1a", "primaryTextColor": "#f7f6f5", "primaryBorderColor": "#B026FF", "lineColor": "#B026FF", "edgeLabelBackground": "#0a0a0a"}, "flowchart": {"nodeSpacing": 40, "rankSpacing": 60, "padding": 12}}}%%
 flowchart LR
   D[Dataset: a folder of tasks] --> J[Job: arms of harness x model x sandbox provider]
   J --> T[Trials: one task, one arm, its own sandbox]

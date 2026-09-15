@@ -1,6 +1,6 @@
 ---
 title: "Analyze"
-description: "Judge every trace against a rubric."
+description: "Judge every trial's trace against a rubric, on the platform."
 ---
 
 An analysis reads a settled trial's whole record, the trace and the task, and rules on every criterion of a rubric. It runs on the platform, one analyzer run per trial. Ask for it on a finished job:
@@ -12,15 +12,14 @@ evolve analyze <job-id> --watch
 Or arm it when you start the job, so each trial is analyzed the moment it settles:
 
 ```bash
-evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 --analyze --watch
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --analyze --watch
 ```
 
 ## Rubrics and prompts
 
 The default rubric has seven criteria, `score_is_earned` first. Bring your own as TOML, YAML or JSON in the shape below and, if you want, your own prompt for the analyzer.
 
-```toml
-# rubric.toml
+```toml rubric.toml
 [[criteria]]
 name = "score_is_earned"
 description = "The reward reflects work the agent actually did."
@@ -64,4 +63,6 @@ evolve analysis download <analysis-id> --stream analysis
 
 `analysis show` prints the verdict document. Every analysis verb also accepts a trial id, which names that trial's latest analysis. `analysis trace` prints the analyzer's own transcript. `analysis download` saves the run as a trial folder, or streams one artifact: `analysis`, `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
 
-Every flag is in the [analyze](/cli-reference/analyze) and [analysis](/cli-reference/analysis) references.
+<Card title="analyze reference" icon="terminal" href="/cli-reference/analyze">
+  Every flag of `evolve analyze` and `evolve analysis`.
+</Card>

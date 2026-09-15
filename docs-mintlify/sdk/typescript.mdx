@@ -1,6 +1,6 @@
 ---
 title: "TypeScript SDK"
-description: "Start, wait, read, download in TypeScript."
+description: "Start a job, wait for it, read the result, and download it from TypeScript."
 ---
 
 ```bash
@@ -19,7 +19,7 @@ const evals = jobs();
 
 ```ts
 const job = await evals.start({
-  datasets: [{ name: "terminal-bench-4", version: "4.0", n_tasks: 5 }],
+  datasets: [{ name: "deep-swe", version: "1.1", n_tasks: 5 }],
   agents: [{ name: "codex", model_name: "gpt-5.5" }],
   n_attempts: 1,
   n_concurrent_trials: 4,
@@ -111,7 +111,7 @@ for await (const dataset of catalog.list()) {
   console.log(dataset.name, dataset.active_version?.version);
 }
 
-const version = await catalog.get("terminal-bench-4@4.0");
+const version = await catalog.get("deep-swe@1.1");
 ```
 
 ## Everything else
@@ -125,5 +125,3 @@ const evolve = hosted({ apiKey: process.env.EVOLVE_API_KEY });
 const doc = await evolve.meta();
 const job = await evolve.jobs.start({ /* … */ });
 ```
-
-Every method, with its declared signature, is in the [SDK reference](/sdk-reference).

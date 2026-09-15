@@ -1,7 +1,9 @@
 ---
 title: "evolve trial"
-description: "Inspect, download, and act on trials."
+description: "Inspect, download, and act on single trials."
 ---
+
+import GlobalOptions from '/snippets/global-options.mdx';
 
 ```bash
 evolve trial <command> [options]
@@ -25,11 +27,25 @@ evolve trial trace <trial-id> [options]
 
 Print a trial's parsed trace, filtered server-side.
 
-- `--type <event-type>`: Only events of exactly this type.
-- `--grep <pattern>`: Only events matching this case-insensitive regex over type and content. A plain string is a plain substring.
-- `--tail <n>`: Only the last N matching events.
-- `--cursor <seq>`: Resume after this sequence number.
-- `-l, --limit <n>`: Events per page fetch. Default 200, max 1000.
+<ParamField path="--type" type="event-type">
+  Only events of exactly this type.
+</ParamField>
+
+<ParamField path="--grep" type="pattern">
+  Only events matching this case-insensitive regex over type and content. A plain string is a plain substring.
+</ParamField>
+
+<ParamField path="--tail" type="n">
+  Only the last N matching events.
+</ParamField>
+
+<ParamField path="--cursor" type="seq">
+  Resume after this sequence number.
+</ParamField>
+
+<ParamField path="-l, --limit" type="n" default="200">
+  Events per page fetch. Max 1000.
+</ParamField>
 
 ```bash
 evolve trial trace d1a10c4e-… --grep 'permission denied' --tail 50
@@ -43,11 +59,25 @@ evolve trial download <trial-id> [options]
 
 Save a trial as its trial tree plus `evolve.json`, or stream one artifact to stdout. The two modes are exclusive.
 
-- `-o, --output-dir <dir>`: Directory to save under. Default `trials/`. Files land in `<dir>/<trial-id>/`.
-- `--overwrite`: Replace an existing `<dir>/<trial-id>/`.
-- `--stream <artifact>`: Print one artifact to stdout instead of saving: `trace-parsed`, `verifier`, `trace-stdout`, `trace-stderr`, `trace-atif` (the ATIF trajectory), `trajectory` (reserved: the harness-native session file) or `agent-home`.
-- `--cursor <seq>`: With `--stream trace-parsed`: resume after this sequence number.
-- `--limit <n>`: With `--stream trace-parsed`: max events per page.
+<ParamField path="-o, --output-dir" type="dir" default="trials/">
+  Directory to save under. Files land in `<dir>/<trial-id>/`.
+</ParamField>
+
+<ParamField path="--overwrite">
+  Replace an existing `<dir>/<trial-id>/`.
+</ParamField>
+
+<ParamField path="--stream" type="artifact">
+  Print one artifact to stdout instead of saving: `trace-parsed`, `verifier`, `trace-stdout`, `trace-stderr`, `trace-atif` (the ATIF trajectory), `trajectory` (reserved: the harness-native session file) or `agent-home`.
+</ParamField>
+
+<ParamField path="--cursor" type="seq">
+  With `--stream trace-parsed`: resume after this sequence number.
+</ParamField>
+
+<ParamField path="--limit" type="n">
+  With `--stream trace-parsed`: max events per page.
+</ParamField>
 
 ```bash
 evolve trial download d1a10c4e-… --stream trace-stdout
@@ -76,3 +106,5 @@ evolve trial stop <trial-id> [trial-id...]
 ```
 
 Stop in-flight trials without cancelling their job.
+
+<GlobalOptions />
