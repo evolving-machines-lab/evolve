@@ -1,5 +1,39 @@
 @import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap");
 
+/* The website's serif, self-hosted: book for text, medium for emphasis. */
+@font-face {
+  font-family: "STK Bureau Serif";
+  src: url("/fonts/stk-bureau-serif-book.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "STK Bureau Serif";
+  src: url("/fonts/stk-bureau-serif-medium.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* The website's pairing: sans headings and navigation (docs.json), serif body, regular weights.
+   Maple renders body paragraphs as bare spans under #content, so those are named beside p. */
+#content > span,
+#content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
+  font-family: "STK Bureau Serif", Georgia, serif;
+  color: #000000;
+}
+
+.dark #content > span,
+.dark #content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
+  color: #f7f6f5;
+}
+
+#content-area :is(h1, h2, h3, h4) {
+  font-weight: 400;
+}
+
 code,
 kbd,
 pre,
@@ -7,7 +41,31 @@ samp {
   font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+/* Links take the accent. */
 #content-area a.link {
   color: #b026ff;
   text-decoration-color: #b026ff;
+}
+
+.dark #content-area a.link {
+  color: #c45cff;
+  text-decoration-color: #c45cff;
+}
+
+/* Square corners: the owner's rule. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+/* The sidebar is the website's surface, one step off the page, with a hairline. */
+#sidebar {
+  background: #ffffff;
+  border-right: 1px solid #0000000f;
+}
+
+.dark #sidebar {
+  background: #141414;
+  border-right-color: #ffffff1a;
 }

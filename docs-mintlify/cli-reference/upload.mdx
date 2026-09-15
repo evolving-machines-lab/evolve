@@ -3,8 +3,6 @@ title: "evolve upload"
 description: "Upload a Harbor job directory as a finished job."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
-
 ```bash
 evolve upload <job_dir> [options]
 ```
@@ -17,19 +15,11 @@ evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1
 
 ## Options
 
-<ParamField path="-d, --dataset" type="name[@version]">
-  Link the uploaded trials to a published dataset version by task name.
-</ParamField>
+- `-d, --dataset <name[@version]>`: Link the uploaded trials to a published dataset version by task name.
+- `--from <url>`: A public https URL of the job archive (`.tar.gz`) that the server fetches itself, instead of `<job_dir>`. No local bytes.
+- `--no-wait`: Return after the import is accepted, with the import id, instead of following it to the job. Re-attach with `evolve job import <id> --watch`.
 
-<ParamField path="--from" type="url">
-  A public https URL of the job archive (`.tar.gz`) that the server fetches itself, instead of `<job_dir>`. No local bytes.
-</ParamField>
-
-<ParamField path="--no-wait">
-  Return after the import is accepted, with the import id, instead of following it to the job. Re-attach with `evolve job import <id> --watch`.
-</ParamField>
-
-<GlobalOptions />
+Every command also takes the [global options](/cli-reference#global-options).
 
 ## Following an import
 

@@ -3,12 +3,11 @@ title: "evolve skill"
 description: "Upload and manage platform-stored skills."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
-import ListFlags from '/snippets/list-flags.mdx';
-
 ```bash
 evolve skill <command> [options]
 ```
+
+Every command below takes the [global options](/cli-reference#global-options).
 
 ## skill list
 
@@ -16,9 +15,7 @@ evolve skill <command> [options]
 evolve skill list [options]
 ```
 
-List your uploaded skills, newest first.
-
-<ListFlags />
+List your uploaded skills, newest first. Takes the [listing flags](/cli-reference#listing-flags).
 
 ## skill upload
 
@@ -47,5 +44,3 @@ evolve skill delete <id>
 ```
 
 Delete an uploaded skill record. Past jobs keep their locks. Refused (`skill_in_use`, 409) while a running job references it.
-
-<GlobalOptions />

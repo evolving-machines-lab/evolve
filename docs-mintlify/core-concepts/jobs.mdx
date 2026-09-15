@@ -76,7 +76,8 @@ The results unpack as the standard Harbor job directory, `results/job-<id>/`: th
 
 Put the job in a file and run it with `-c`. The file is YAML or JSON with the same field names the SDK's `jobs().start()` takes. Flags on the command line override the file's fields. `--print-config` prints the resolved job body as JSON and exits without running anything.
 
-```yaml nightly.yaml
+```yaml
+# nightly.yaml
 datasets:
   - name: deep-swe
     version: "1.1"
@@ -95,6 +96,4 @@ evolve run -c nightly.yaml --print-config
 evolve run -c nightly.yaml --watch
 ```
 
-<Card title="run reference" icon="terminal" href="/cli-reference/run">
-  Every flag of `evolve run`.
-</Card>
+Every flag is in the [run reference](/cli-reference/run).

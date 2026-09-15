@@ -5,76 +5,61 @@ description: "Start your first job, watch it run, and download a trial."
 
 A trial is one agent's attempt at one task. A job is a set of trials: the tasks of one or more datasets, run by one or more agents. This page takes you from an empty terminal to a downloaded trial.
 
-<Steps>
-  <Step title="Install the CLI and set your key">
-    ```bash
-    npm install -g @evolvingmachines/sdk
-    export EVOLVE_API_KEY="<your key>"
-    evolve auth status
-    ```
+## Install the CLI and set your key
 
-    See [installation](/getting-started/installation) for the SDKs and where the key comes from.
-  </Step>
+```bash
+npm install -g @evolvingmachines/sdk
+export EVOLVE_API_KEY="<your key>"
+evolve auth status
+```
 
-  <Step title="Pick a dataset">
-    The catalog lists every dataset you can run, with its versions.
+See [installation](/getting-started/installation) for the SDKs and where the key comes from.
 
-    ```bash
-    evolve dataset list
-    evolve dataset show deep-swe@1.1
-    ```
+## Pick a dataset
 
-    `dataset show` prints the version's tasks and, for each task, which sandbox providers can run it.
-  </Step>
+The catalog lists every dataset you can run, with its versions.
 
-  <Step title="Start a job and watch it">
-    Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes; `-l 5` caps the run at five tasks so the first job is small.
+```bash
+evolve dataset list
+evolve dataset show deep-swe@1.1
+```
 
-    ```bash
-    evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -l 5 --watch
-    ```
+`dataset show` prints the version's tasks and, for each task, which sandbox providers can run it.
 
-    The final block prints the job id, the status of every trial, and what the trials spent. Without `--watch` the command returns the id at once and the job keeps running.
-  </Step>
+## Start a job and watch it
 
-  <Step title="Read the result">
-    ```bash
-    evolve job show <job-id>
-    evolve job trials <job-id>
-    evolve trial show <trial-id>
-    ```
+Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes. `-l 5` caps the run at five tasks, so the first job is small.
 
-    `job show` is the whole job: every trial's status, the rewards, the spend. `job trials` lists the trials one per line with their ids. `trial show` is one trial in full, with its reward and, when it failed, why.
-  </Step>
+```bash
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -l 5 --watch
+```
 
-  <Step title="Download the trial">
-    A trial downloads as Harbor's trial tree: the trajectory, the agent's stdout and stderr, the verifier log, and the reward.
+The final block prints the job id, the status of every trial, and what the trials spent. Without `--watch` the command returns the id at once and the job keeps running.
 
-    ```bash
-    evolve trial download <trial-id> -o trials/
-    ```
+## Read the result
 
-    To read one artifact without saving anything, stream it instead.
+```bash
+evolve job show <job-id>
+evolve job trials <job-id>
+evolve trial show <trial-id>
+```
 
-    ```bash
-    evolve trial download <trial-id> --stream verifier
-    ```
-  </Step>
-</Steps>
+`job show` is the whole job: every trial's status, the rewards, the spend. `job trials` lists the trials one per line with their ids. `trial show` is one trial in full, with its reward and, when it failed, why.
+
+## Download the trial
+
+A trial downloads as Harbor's trial tree: the trajectory, the agent's stdout and stderr, the verifier log, and the reward.
+
+```bash
+evolve trial download <trial-id> -o trials/
+```
+
+To read one artifact without saving anything, stream it instead.
+
+```bash
+evolve trial download <trial-id> --stream verifier
+```
 
 ## Next
 
-<CardGroup cols={2}>
-  <Card title="Jobs" icon="list-checks" href="/core-concepts/jobs">
-    Attempts, concurrency, retries, spend caps, and what to do with a finished job.
-  </Card>
-  <Card title="Analyze" icon="search" href="/core-concepts/analyze">
-    Judge every trial's trace against a rubric with `--analyze`.
-  </Card>
-  <Card title="Agents" icon="bot" href="/core-concepts/agents">
-    The seven built-in harnesses, and how to bring your own.
-  </Card>
-  <Card title="CLI reference" icon="terminal" href="/cli-reference/run">
-    Every flag of `evolve run`.
-  </Card>
-</CardGroup>
+[Jobs](/core-concepts/jobs) covers attempts, concurrency, retries, spend caps, and what to do with a finished job. [Analyze](/core-concepts/analyze) judges every trial's trace against a rubric with `--analyze`. [Agents](/core-concepts/agents) lists the seven built-in harnesses and how to bring your own. The [run reference](/cli-reference/run) has every flag of `evolve run`.

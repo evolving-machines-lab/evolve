@@ -3,12 +3,11 @@ title: "evolve session"
 description: "List and inspect managed-agent sessions."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
-import ListFlags from '/snippets/list-flags.mdx';
-
 ```bash
 evolve session <command> [options]
 ```
+
+Every command below takes the [global options](/cli-reference#global-options).
 
 ## session list
 
@@ -16,21 +15,11 @@ evolve session <command> [options]
 evolve session list [options]
 ```
 
-List your sessions, newest first.
+List your sessions, newest first. Takes the [listing flags](/cli-reference#listing-flags), plus:
 
-<ListFlags />
-
-<ParamField path="--state" type="live | ended">
-  Only live, or only ended, sessions.
-</ParamField>
-
-<ParamField path="--agent" type="name">
-  Only sessions of this agent harness. Exact match.
-</ParamField>
-
-<ParamField path="--tag-prefix" type="prefix">
-  Only sessions whose tag starts with this prefix.
-</ParamField>
+- `--state <live|ended>`: Only live, or only ended, sessions.
+- `--agent <name>`: Only sessions of this agent harness. Exact match.
+- `--tag-prefix <prefix>`: Only sessions whose tag starts with this prefix.
 
 ```bash
 evolve session list --state ended --tag-prefix qa- -q
@@ -43,5 +32,3 @@ evolve session show <session-id>
 ```
 
 Show one session in full.
-
-<GlobalOptions />

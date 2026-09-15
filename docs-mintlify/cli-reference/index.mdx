@@ -37,46 +37,18 @@ The `evolve` command starts jobs and reads everything back. Every verb accepts `
 
 These work on every command.
 
-<ParamField path="--json">
-  Machine-readable JSON output.
-</ParamField>
-
-<ParamField path="--api-key" type="key">
-  API key. Defaults to `$EVOLVE_API_KEY`.
-</ParamField>
-
-<ParamField path="--base-url" type="url">
-  API base URL. Defaults to the Evolve dashboard API.
-</ParamField>
-
-<ParamField path="-v, --version">
-  Print the CLI version.
-</ParamField>
+- `--json`: Machine-readable JSON output.
+- `--api-key <key>`: API key. Defaults to `$EVOLVE_API_KEY`.
+- `--base-url <url>`: API base URL. Defaults to the Evolve dashboard API.
+- `-v, --version`: Print the CLI version.
 
 ## Listing flags
 
 Every `list` command, and `job trials`, `job tasks` and `job imports`, share one set of paging and formatting flags.
 
-<ParamField path="-l, --limit" type="n">
-  Page size.
-</ParamField>
-
-<ParamField path="--cursor" type="c">
-  Resume from a page cursor.
-</ParamField>
-
-<ParamField path="--columns" type="keys | all | help">
-  Choose and order columns, comma-separated. `help` lists the keys.
-</ParamField>
-
-<ParamField path="-q, --quiet">
-  Print only ids, one per line, for piping.
-</ParamField>
-
-<ParamField path="--no-trunc">
-  Full cell content instead of one-line truncation.
-</ParamField>
-
-<ParamField path="--no-headers">
-  Omit the header row in piped (TSV) output.
-</ParamField>
+- `-l, --limit <n>`: Page size.
+- `--cursor <c>`: Resume from a page cursor.
+- `--columns <keys|all|help>`: Choose and order columns, comma-separated. `help` lists the keys.
+- `-q, --quiet`: Print only ids, one per line, for piping.
+- `--no-trunc`: Full cell content instead of one-line truncation.
+- `--no-headers`: Omit the header row in piped (TSV) output.

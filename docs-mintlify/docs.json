@@ -1,11 +1,11 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Evolve",
-  "theme": "luma",
+  "theme": "maple",
   "colors": {
-    "primary": "#191919",
-    "light": "#f7f6f5",
-    "dark": "#191919"
+    "primary": "#B026FF",
+    "light": "#C45CFF",
+    "dark": "#B026FF"
   },
   "favicon": "/favicon.png",
   "logo": {
@@ -14,7 +14,7 @@
     "href": "https://evolvingmachines.ai"
   },
   "appearance": {
-    "default": "system"
+    "default": "dark"
   },
   "background": {
     "color": {
@@ -23,14 +23,29 @@
     }
   },
   "fonts": {
-    "family": "Inter"
+    "family": "NB International Pro",
+    "weight": 400,
+    "source": "/fonts/nb-international-pro-regular.woff2",
+    "format": "woff2",
+    "heading": {
+      "family": "NB International Pro",
+      "weight": 400,
+      "source": "/fonts/nb-international-pro-regular.woff2",
+      "format": "woff2"
+    },
+    "body": {
+      "family": "STK Bureau Serif",
+      "weight": 400,
+      "source": "/fonts/stk-bureau-serif-book.woff2",
+      "format": "woff2"
+    }
   },
   "icons": {
     "library": "lucide"
   },
   "styling": {
     "eyebrows": "breadcrumbs",
-    "codeblocks": "system"
+    "codeblocks": "dark"
   },
   "navbar": {
     "links": [
