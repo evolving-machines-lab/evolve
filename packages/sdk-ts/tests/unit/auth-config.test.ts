@@ -160,6 +160,41 @@ async function runTests(): Promise<void> {
       "openrouter/anthropic/claude-fable-5.1",
       "OpenCode Fable alias keeps provider-prefixed OpenRouter model"
     );
+
+    // Droid 0.182.0 refuses the 5.1 ids ("Invalid model", 2026-09-15), so its
+    // roster deliberately keeps Fable 5 until the pinned Droid accepts 5.1.
+    const droidFable = AGENT_REGISTRY.droid.models.find((model) => model.alias === "claude-fable-5");
+    assertEqual(droidFable?.modelId, "claude-fable-5", "Droid roster keeps claude-fable-5");
+    assert(
+      !AGENT_REGISTRY.droid.models.some((model) => /fable-5[.-]1/.test(model.alias)),
+      "Droid roster carries no Fable 5.1 id until Droid accepts one"
+    );
+  }
+
+  console.log("Registry: GPT-6 Astra");
+
+  {
+    const codex = AGENT_REGISTRY.codex;
+    const astra = codex.models.find((model) => model.alias === "gpt-6-astra");
+    assertEqual(codex.defaultModel, "gpt-5.6-sol", "Codex default stays gpt-5.6-sol");
+    assert(astra !== undefined, "Codex registry includes gpt-6-astra");
+    assertEqual(astra?.modelId, "gpt-6-astra", "gpt-6-astra maps to itself");
+
+    const opencodeAstra = AGENT_REGISTRY.opencode.models.find(
+      (model) => model.alias === "openrouter/openai/gpt-6-astra"
+    );
+    assert(opencodeAstra !== undefined, "OpenCode registry includes OpenRouter Astra alias");
+    assertEqual(
+      opencodeAstra?.modelId,
+      "openrouter/openai/gpt-6-astra",
+      "OpenCode Astra alias keeps provider-prefixed OpenRouter model"
+    );
+
+    // Droid 0.182.0 refuses gpt-6-astra ("Invalid model", 2026-09-15).
+    assert(
+      !AGENT_REGISTRY.droid.models.some((model) => model.alias.includes("astra")),
+      "Droid roster carries no Astra id until Droid accepts one"
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────

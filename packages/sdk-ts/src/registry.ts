@@ -521,7 +521,16 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // vendor-side default change cannot move results.
     defaultReasoningEffort: "high",
     models: [
-      { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Newest frontier flagship" },
+      // GPT-6 Astra (released 2026-09-03). Vendor doc, read 2026-09-15
+      // (platform.openai.com/docs/models/gpt-6-astra): "Model ID: gpt-6-astra
+      // ... our most capable model, built for the hardest end-to-end work";
+      // reasoning.effort low/medium/high/xhigh/max; 1,050,000 context. Codex
+      // CLI carries it from 0.153.0 (developers.openai.com/codex/changelog:
+      // 0.153.0 and 0.153.1 on 2026-09-03 added the GPT-6-Astra catalog and
+      // API configuration; 0.153.4 made it Codex's own bundled default). The
+      // Evolve default stays gpt-5.6-sol (owner's word 2026-09-15).
+      { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Newest frontier flagship" },
+      { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Previous frontier flagship" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Balances intelligence and cost" },
       { alias: "gpt-5.6-luna", modelId: "gpt-5.6-luna", description: "High-volume, cost-sensitive tier" },
       { alias: "gpt-5.5", modelId: "gpt-5.5", description: "Previous frontier model" },
@@ -772,6 +781,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
+      // GPT-6 Astra under OpenRouter's id (openrouter.ai/api/v1/models, read
+      // 2026-09-15: openai/gpt-6-astra, listed at OpenAI's own rate).
+      { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
@@ -858,6 +870,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
       { alias: "claude-sonnet-5", modelId: "claude-sonnet-5", description: "Factory-managed Claude Sonnet 5" },
       { alias: "claude-haiku-4-5", modelId: "claude-haiku-4-5-20251001", description: "Factory-managed Claude Haiku 4.5" },
+      // GPT-6 Astra is absent here on purpose: Droid 0.182.0 refuses it
+      // (`droid exec -m gpt-6-astra --list-tools` answers "Invalid model",
+      // 2026-09-15) although docs.factory.ai/models.md already lists it for a
+      // newer Droid. Add the row when the pinned Droid accepts the id.
       { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Factory-managed GPT-5.6 Sol" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Factory-managed GPT-5.6 Terra" },
       { alias: "gpt-5.6-luna", modelId: "gpt-5.6-luna", description: "Factory-managed GPT-5.6 Luna" },
