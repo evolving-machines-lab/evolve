@@ -1483,9 +1483,11 @@ export interface AnalysisFailure {
    * Which part failed: `invalid_result` (the analyzer ran but its
    * analysis.json failed validation — the message preserves every validator
    * reason, one per line), `inputs` (the trial tree or task content could not
-   * be assembled), or an infrastructure stage of the analyzer run
-   * (`mint_key`, `boot`, `harness_install`, `agent`, `artifact_read`,
-   * `lease_expired`, ...).
+   * be assembled), `timeout` (the analyzer's run budget ran out with no
+   * analysis.json written — never re-run: a timeout is deterministic; the
+   * message names the budget, the seconds used and the exit code), or an
+   * infrastructure stage of the analyzer run (`mint_key`, `boot`,
+   * `harness_install`, `agent`, `artifact_read`, `lease_expired`, ...).
    */
   phase: string;
   message: string;
@@ -1561,9 +1563,11 @@ export interface TrialAnalysis {
    * producing a valid analysis.json (the missing file included) is re-run
    * at most once — same model, same frozen rubric, fresh sandbox — and a
    * second failure of that class settles `failed` with phase
-   * `invalid_result`, both attempts recorded. Infrastructure failures never
-   * auto re-run. When the re-run fired, `estimated_cost_usd` and the token
-   * totals cover BOTH attempts. Absent on servers predating the field.
+   * `invalid_result`, both attempts recorded. A run cut by its budget is
+   * not that class: it settles `failed` with phase `timeout` at once and is
+   * never re-run. Infrastructure failures never auto re-run. When the
+   * re-run fired, `estimated_cost_usd` and the token totals cover BOTH
+   * attempts. Absent on servers predating the field.
    */
   attempts?: number;
   /** Non-null exactly when status is `failed`. */
