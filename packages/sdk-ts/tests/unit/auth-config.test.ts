@@ -149,15 +149,15 @@ async function runTests(): Promise<void> {
     const fable = claude.models.find((model) => model.alias === "fable");
     assertEqual(claude.defaultModel, "opus", "Claude default stays opus");
     assert(fable !== undefined, "Claude registry includes fable alias");
-    assertEqual(fable?.modelId, "claude-fable-5", "fable maps to claude-fable-5");
+    assertEqual(fable?.modelId, "claude-fable-5-1", "fable maps to claude-fable-5-1");
 
     const opencodeFable = AGENT_REGISTRY.opencode.models.find(
-      (model) => model.alias === "openrouter/anthropic/claude-fable-5"
+      (model) => model.alias === "openrouter/anthropic/claude-fable-5.1"
     );
     assert(opencodeFable !== undefined, "OpenCode registry includes OpenRouter Fable alias");
     assertEqual(
       opencodeFable?.modelId,
-      "openrouter/anthropic/claude-fable-5",
+      "openrouter/anthropic/claude-fable-5.1",
       "OpenCode Fable alias keeps provider-prefixed OpenRouter model"
     );
   }

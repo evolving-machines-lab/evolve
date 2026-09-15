@@ -9222,7 +9222,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
     id: "sess-1",
     tag: "qa-round-7",
     agent: "claude",
-    model: "claude-fable-5",
+    model: "claude-fable-5-1",
     provider: "daytona",
     sandboxId: "box-1",
     isEnded: true,
@@ -9264,8 +9264,8 @@ async function testSessionListAndShow() {
     const piped = captureIO(false);
     assertEqual(await runCli(["session", "list", ...AUTH], piped.io), 0, "list exits 0");
     assertEqual(piped.out[0], "ID\tTAG\tAGENT\tMODEL\tSTATE\tCOST\tCREATED", "the default columns, as TSV");
-    assert(piped.out[1].startsWith("sess-1\tqa-round-7\tclaude\tclaude-fable-5\tended\t$0.42\t"), "an ended session's row");
-    assert(piped.out[2].startsWith("sess-2\tqa-round-8\tclaude\tclaude-fable-5\tlive\t-\t"), "a live session with no cost yet shows -");
+    assert(piped.out[1].startsWith("sess-1\tqa-round-7\tclaude\tclaude-fable-5-1\tended\t$0.42\t"), "an ended session's row");
+    assert(piped.out[2].startsWith("sess-2\tqa-round-8\tclaude\tclaude-fable-5-1\tlive\t-\t"), "a live session with no cost yet shows -");
     const url = new URL(fetchCalls[fetchCalls.length - 1].url);
     assertEqual(url.pathname, "/api/sessions", "one GET on the sessions list");
     assertEqual(url.searchParams.get("paginated"), "true", "the SDK's cursor form");

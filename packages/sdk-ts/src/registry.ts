@@ -408,7 +408,21 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // default for all of them — stamped explicitly via --effort.
     defaultReasoningEffort: "high",
     models: [
-      { alias: "fable", modelId: "claude-fable-5", description: "Highest capability, long-horizon agentic work" },
+      // The alias rides to Claude Code verbatim (resolveCommandModel applies
+      // only gatewayModelAliases, never this modelId), so Claude Code's own
+      // version resolves it. This modelId records that resolution — the wire
+      // name the platform's per-arm gateway key must admit (swarm_dashboard
+      // resolveGatewayModelScope reads it from harness-capabilities.json).
+      // Vendor doc (code.claude.com/docs/en/model-config, read 2026-09-15):
+      // "Unless you set ANTHROPIC_DEFAULT_FABLE_MODEL, the `fable` alias
+      // resolves to Fable 5.1, except in Claude apps gateway sessions, where
+      // `fable` and `best` resolve to Fable 5", and "Fable 5.1 requires
+      // Claude Code v2.1.257 or later" — an older Claude Code still answers
+      // the alias with claude-fable-5 (measured 2026-09-15: the evolve-all
+      // image carried 2.1.233 and served claude-fable-5 for `fable`). The
+      // gateway keeps its claude-fable-5 entry, so that id still rides
+      // explicitly; it is no longer the Fable of record.
+      { alias: "fable", modelId: "claude-fable-5-1", description: "Highest capability, long-horizon agentic work" },
       { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-5", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
@@ -751,7 +765,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
-      { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable via OpenRouter" },
+      // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models,
+      // read 2026-09-15: anthropic/claude-fable-5.1). anthropic/claude-fable-5
+      // is still served there and rides explicitly, beyond the table.
+      { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
@@ -831,6 +848,12 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // so results cannot drift on a vendor-side change.
     defaultReasoningEffort: "high",
     models: [
+      // Fable 5 stays here on purpose: Droid 0.182.0 refuses the 5.1 ids
+      // (`droid exec -m claude-fable-5.1 --list-tools` and the dashed form
+      // both answer "Invalid model", 2026-09-15; its built-in list carries
+      // claude-fable-5 only), although docs.factory.ai/models.md already
+      // lists `claude-fable-5.1` for a newer Droid. Move this row when the
+      // pinned Droid accepts the id.
       { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Factory-managed Claude Fable 5" },
       { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
       { alias: "claude-sonnet-5", modelId: "claude-sonnet-5", description: "Factory-managed Claude Sonnet 5" },
