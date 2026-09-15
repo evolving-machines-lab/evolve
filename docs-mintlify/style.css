@@ -91,100 +91,99 @@ samp {
   color: #f7f6f5aa;
 }
 
-/* The sidebar paints above the tab bar's glass, so the cluster at its top
-   right (below) is never blurred by it. The two never overlap. */
-#sidebar {
-  z-index: 25;
-}
-
 /* The sidebar's scroll area keeps room under its last item. */
 #sidebar-content > div {
   padding-bottom: 4.5rem;
 }
 
-/* Navbar links and the Dashboard button, top right. */
+/* Navbar links and the Dashboard button live on the tab bar: topbar.js
+   copies Maple's sidebar-bottom list (#sidebar > ul) into the tab bar's own
+   container as #topbar-cluster; the original is hidden. */
 #sidebar > ul {
-  position: fixed;
-  top: 0;
+  display: none;
+}
+
+#navbar-transition-maple {
   right: 0;
-  bottom: auto;
-  left: auto;
   width: auto;
-  height: 3rem;
+}
+
+#topbar-cluster {
   display: flex;
   align-items: center;
   gap: 1.25rem;
-  padding: 0 1.5rem;
-  border-top: 0;
-  background: transparent;
-  z-index: 30;
+  height: 100%;
+  margin-left: auto;
+  padding: 0;
+  list-style: none;
 }
 
-#sidebar > ul > li {
+#topbar-cluster > li {
   padding: 0;
   margin: 0;
 }
 
 /* GitHub: the icon only, muted. */
-#sidebar > ul a[href^="https://github.com/"] {
+#topbar-cluster a[href^="https://github.com/"] {
   color: #737373;
 }
 
-#sidebar > ul a[href^="https://github.com/"]:hover {
+#topbar-cluster a[href^="https://github.com/"]:hover {
   color: #191919;
 }
 
-.dark #sidebar > ul a[href^="https://github.com/"] {
+.dark #topbar-cluster a[href^="https://github.com/"] {
   color: #8c8c8c;
 }
 
-.dark #sidebar > ul a[href^="https://github.com/"]:hover {
+.dark #topbar-cluster a[href^="https://github.com/"]:hover {
   color: #f7f6f5;
 }
 
-#sidebar > ul a[href^="https://github.com/"] span,
-#sidebar > ul a[href^="https://github.com/"] > div > div + div {
+#topbar-cluster a[href^="https://github.com/"] span,
+#topbar-cluster a[href^="https://github.com/"] > div > div + div {
   display: none;
 }
 
-#sidebar > ul a[href^="https://github.com/"] svg {
+#topbar-cluster a[href^="https://github.com/"] svg {
   width: 1.25rem;
   height: 1.25rem;
 }
 
 /* Dashboard: the website's primary button, square. */
-#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] {
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] {
   display: inline-flex;
   align-items: center;
   height: 2rem;
   padding: 0 0.875rem;
   background: #191919;
   color: #f7f6f5;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
-#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"]:hover {
   background: #000000;
 }
 
-#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] span {
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] span {
   color: #f7f6f5;
 }
 
-.dark #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] {
+.dark #topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] {
   background: #f7f6f5;
   color: #0a0a0a;
 }
 
-.dark #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+.dark #topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"]:hover {
   background: #ffffff;
 }
 
-.dark #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] span {
+.dark #topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] span {
   color: #0a0a0a;
 }
 
-#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] svg {
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] svg {
   display: none;
 }
 
