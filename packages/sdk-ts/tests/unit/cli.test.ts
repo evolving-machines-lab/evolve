@@ -11,7 +11,8 @@
  * shared list output precedence (--json / -q / TSV / TTY table, --columns,
  * --no-trunc, --no-headers), and one mocked end-to-end pass over every verb:
  * job start/--watch/list/show/trials/tasks/compare/cancel/resume/regrade/
- * download, trial show/download/regrade/stop, analysis show/trace/download,
+ * download, trial show/download/regrade/stop, analysis show/trace/download
+ * (by analysis id or trial id), id prefixes on every noun,
  * dataset
  * list/show/publish/download/activate, agent list/show/add/remove, auth
  * status. Exit codes: 0/1/2 pinned throughout.
@@ -5053,6 +5054,269 @@ async function testTrialStop() {
   }
 }
 
+/**
+ * ONE prefix law for EVERY id a verb takes. The nine read verbs that used to
+ * hand a prefix to the server and get its 404 — check show|trace|download,
+ * trial show|trace|download|retry|regrade|stop, session show, job import —
+ * resolve it exactly as the job verbs do, each against its own noun's list
+ * (a task check's ids come off the check list's results; a trial's off every
+ * job's trial pages). The analysis verbs also take a TRIAL id, meaning the
+ * trial's latest analysis, with one precedence: an analysis id (or prefix)
+ * names that run; a trial id (or prefix) names its latest analysis; a prefix
+ * both nouns own is refused, naming both.
+ */
+async function testIdPrefixLawEveryNoun() {
+  console.log("\n--- runCli: id prefixes resolve on every noun; the analysis verbs take a trial id ---");
+  const page = <T>(items: T[]) => ({ items, nextCursor: null, hasMore: false });
+  const taskCheck = (id: string, checkId: string) => ({
+    ...(wireCheck().results as Record<string, unknown>[])[0],
+    id,
+    check_id: checkId,
+  });
+
+  // CHECKS — check ids and task-check ids both come off the check list.
+  const checkA = "c0ffee00-aaaa-2222-3333-444455556666";
+  const checkB = "c0ffee00-bbbb-2222-3333-444455556666";
+  const taskA = "7a5c0000-aaaa-2222-3333-444455556666";
+  const taskB = "7a5c0000-bbbb-2222-3333-444455556666";
+  // A check and a task check that share a prefix: the download verb takes either.
+  const checkC = "5a3e0000-cccc-2222-3333-444455556666";
+  const taskC = "5a3e0000-dddd-2222-3333-444455556666";
+  installMockFetch();
+  try {
+    const checkBodyA = wireCheck({ id: checkA, results: [taskCheck(taskA, checkA)] });
+    setMockResponse(`/api/checks/${checkA}`, { status: 200, body: checkBodyA });
+    setMockResponse(`/api/traces/trials/${taskA}/events`, {
+      status: 200,
+      body: { session: { id: taskA, kind: "check", type: "trial", tag: "hello-world", checkId: checkA }, events: [], total: 0 },
+    });
+    setMockResponse(`/api/traces/trials/${taskA}/artifacts?what=task-check`, { status: 200, body: { task_check: taskCheck(taskA, checkA) } });
+    setMockResponse(`/api/traces/trials/${taskA}/artifacts?what=trace-stdout`, { status: 200, body: { log: "checker stdout" } });
+    setMockResponse("/api/checks", {
+      status: 200,
+      body: page([
+        checkBodyA,
+        wireCheck({ id: checkB, results: [taskCheck(taskB, checkB)] }),
+        wireCheck({ id: checkC, results: [taskCheck(taskC, checkC)] }),
+      ]),
+    });
+
+    const show = captureIO();
+    assertEqual(await runCli(["check", "show", "c0ffee00-aaaa", ...AUTH], show.io), 0, "check show resolves a unique check prefix");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith(`/api/checks/${checkA}`), "the wire carries the FULL check id");
+
+    const ambiguous = captureIO();
+    assertEqual(await runCli(["check", "show", "c0ffee00", ...AUTH], ambiguous.io), 2, "a prefix two checks share is a usage error");
+    assert(ambiguous.err.some((l) => l.includes("matches 2 checks")), "the refusal counts the checks");
+
+    const short = captureIO();
+    const before = fetchCalls.length;
+    assertEqual(await runCli(["check", "show", "c0ffee", ...AUTH], short.io), 2, "a too-short prefix is a usage error");
+    assert(short.err.some((l) => l.includes("too short to name a check")), "the refusal names the noun");
+    assertEqual(fetchCalls.length, before, "and makes no request");
+
+    const unknown = captureIO();
+    assertEqual(await runCli(["check", "show", "ffffffff-0000", ...AUTH], unknown.io), 2, "a prefix no check has refuses");
+    assert(unknown.err.some((l) => l.includes('no check id starts with "ffffffff-0000"')), "the refusal names the prefix and the noun");
+
+    const trace = captureIO();
+    assertEqual(await runCli(["check", "trace", "7a5c0000-aaaa", "--json", ...AUTH], trace.io), 0, "check trace resolves a task-check prefix off the check list's results");
+    assert(fetchCalls.some((c) => c.url.includes(`/api/traces/trials/${taskA}/events`)), "the wire carries the FULL task check id");
+
+    const streamed = captureIO();
+    assertEqual(
+      await runCli(["check", "download", "7a5c0000-aaaa", "--stream", "trace-stdout", ...AUTH], streamed.io),
+      0,
+      "check download --stream resolves a task-check prefix"
+    );
+    assertEqual(streamed.out, ["checker stdout"], "and streams that task check's artifact");
+
+    const either = captureIO();
+    assertEqual(await runCli(["check", "download", "5a3e0000", "-o", "x", ...AUTH], either.io), 2, "a prefix a check AND a task check share is ambiguous in save mode");
+    assert(
+      either.err.some((l) => l.includes("1 check and 1 task check") && l.includes(`check ${checkC}`) && l.includes(`task check ${taskC}`)),
+      "the refusal names both nouns and both ids"
+    );
+
+    const wrongNoun = captureIO();
+    assertEqual(await runCli(["check", "download", "c0ffee00-aaaa", "--stream", "trace-stdout", ...AUTH], wrongNoun.io), 2, "a check prefix under --stream resolves among task checks alone");
+    assert(wrongNoun.err.some((l) => l.includes('no task check id starts with "c0ffee00-aaaa"')), "and refuses by the task-check noun");
+  } finally {
+    restoreFetch();
+  }
+
+  // TRIALS — no list of their own: every job's trial pages, one read per job.
+  const jobX = "0b000001-1111-2222-3333-444455556666";
+  const jobY = "0b000002-1111-2222-3333-444455556666";
+  const trialA = "d1a10000-aaaa-2222-3333-444455556666";
+  const trialB = "d1a10000-bbbb-2222-3333-444455556666";
+  installMockFetch();
+  try {
+    setMockResponse(`/api/trials/${trialA}/retry`, { status: 202, body: wireJob({ id: "retry-1" }) });
+    setMockResponse(`/api/trials/${trialA}`, { status: 200, body: trialFixture({ id: trialA, job_id: jobX, status: "SCORED", reward: 1 }) });
+    setMockResponse("/api/trials/stop", { status: 200, body: { stopped: [], stopped_analyses: [], already_terminal: [trialA, trialB], not_found: [] } });
+    setMockResponse(`/api/jobs/${jobX}/trials`, { status: 200, body: page([trialFixture({ id: trialA, job_id: jobX })]) });
+    setMockResponse(`/api/jobs/${jobY}/trials`, { status: 200, body: page([trialFixture({ id: trialB, job_id: jobY })]) });
+    setMockResponse("/api/jobs", { status: 200, body: page([wireJob({ id: jobX }), wireJob({ id: jobY })]) });
+
+    const show = captureIO();
+    assertEqual(await runCli(["trial", "show", "d1a10000-aaaa", ...AUTH], show.io), 0, "trial show resolves a unique trial prefix");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith(`/api/trials/${trialA}`), "the wire carries the FULL trial id");
+    assert(
+      fetchCalls.some((c) => c.url.includes(`/api/jobs/${jobX}/trials`)) && fetchCalls.some((c) => c.url.includes(`/api/jobs/${jobY}/trials`)),
+      "the index walks every job's trials"
+    );
+
+    const ambiguous = captureIO();
+    assertEqual(await runCli(["trial", "show", "d1a10000", ...AUTH], ambiguous.io), 2, "a prefix two trials share (across jobs) is a usage error");
+    assert(ambiguous.err.some((l) => l.includes("matches 2 trials")), "the refusal counts the trials");
+
+    const retry = captureIO();
+    assertEqual(await runCli(["trial", "retry", "d1a10000-aaaa", "--json", ...AUTH], retry.io), 0, "trial retry resolves a prefix");
+    assert(fetchCalls.some((c) => c.url.endsWith(`/api/trials/${trialA}/retry`)), "and posts to the FULL id");
+
+    const stop = captureIO();
+    const reads = fetchCalls.length;
+    assertEqual(await runCli(["trial", "stop", "d1a10000-aaaa", "d1a10000-bbbb", ...AUTH], stop.io), 0, "trial stop resolves every prefix");
+    const stopCall = fetchCalls[fetchCalls.length - 1];
+    assertEqual(JSON.parse(stopCall.init?.body as string), { trial_ids: [trialA, trialB] }, "and posts the FULL ids");
+    assertEqual(
+      fetchCalls.slice(reads).filter((c) => c.url.includes("/trials?") || c.url.includes("/api/jobs?")).length,
+      3,
+      "ONE walk for both ids: the job list once, each job's trials once"
+    );
+
+    const short = captureIO();
+    assertEqual(await runCli(["trial", "show", "d1a1", ...AUTH], short.io), 2, "a too-short trial prefix is a usage error");
+    assert(short.err.some((l) => l.includes("too short to name a trial")), "the refusal names the noun");
+  } finally {
+    restoreFetch();
+  }
+
+  // SESSIONS and JOB IMPORTS — each off its own list.
+  const sessA = "5e550000-aaaa-2222-3333-444455556666";
+  const sessB = "5e550000-bbbb-2222-3333-444455556666";
+  installMockFetch();
+  try {
+    setMockResponse(`/api/sessions/${sessA}`, { status: 200, body: wireSession({ id: sessA }) });
+    setMockResponse("/api/sessions", { status: 200, body: page([wireSession({ id: sessA }), wireSession({ id: sessB })]) });
+    const show = captureIO();
+    assertEqual(await runCli(["session", "show", "5e550000-aaaa", ...AUTH], show.io), 0, "session show resolves a unique session prefix");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith(`/api/sessions/${sessA}`), "the wire carries the FULL session id");
+    const listCall = fetchCalls.find((c) => c.url.includes("/api/sessions?"));
+    assert(listCall !== undefined && !new URL(listCall.url).searchParams.has("state"), "the session index walks live AND ended sessions");
+    const ambiguous = captureIO();
+    assertEqual(await runCli(["session", "show", "5e550000", ...AUTH], ambiguous.io), 2, "a prefix two sessions share is a usage error");
+    assert(ambiguous.err.some((l) => l.includes("matches 2 sessions")), "the refusal counts the sessions");
+  } finally {
+    restoreFetch();
+  }
+
+  const impA = "1e0e0000-aaaa-2222-3333-444455556666";
+  const impB = "1e0e0000-bbbb-2222-3333-444455556666";
+  installMockFetch();
+  try {
+    setMockResponse(`/api/jobs/imports/${impA}`, { status: 200, body: wireJobImport({ id: impA }) });
+    setMockResponse("/api/jobs/imports", { status: 200, body: page([wireJobImport({ id: impA }), wireJobImport({ id: impB })]) });
+    const show = captureIO();
+    assertEqual(await runCli(["job", "import", "1e0e0000-aaaa", "--json", ...AUTH], show.io), 0, "job import resolves a unique import prefix");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith(`/api/jobs/imports/${impA}`), "the wire carries the FULL import id");
+    const short = captureIO();
+    assertEqual(await runCli(["job", "import", "1e0e", ...AUTH], short.io), 2, "a too-short import prefix is a usage error");
+    assert(short.err.some((l) => l.includes("too short to name a job import")), "the refusal names the noun");
+  } finally {
+    restoreFetch();
+  }
+
+  // ANALYSES — an analysis id, or a trial id meaning the trial's latest analysis.
+  const anA = "a0a10000-aaaa-2222-3333-444455556666";
+  const trialT = "d1a10000-cccc-2222-3333-444455556666";
+  const trialN = "d1a10000-eeee-2222-3333-444455556666"; // analyzed by nobody
+  const anB = "beef0000-aaaa-2222-3333-444455556666";
+  const trialS = "beef0000-bbbb-2222-3333-444455556666"; // shares anB's prefix
+  const ghost = "00000000-0000-4000-8000-000000000000";
+  installMockFetch();
+  try {
+    const verdictA = analysisVerdictFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
+    const notAnAnalysis = { status: 400, body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" } };
+    setMockResponse(`/api/traces/trials/${anA}/artifacts?what=analysis`, { status: 200, body: { analysis: verdictA } });
+    setMockResponse(`/api/traces/trials/${anA}/events`, {
+      status: 200,
+      body: { session: { id: anA, kind: "analysis", type: "trial", tag: "t", analyzedTrialId: trialT, jobId: "job-1" }, events: [], total: 0 },
+    });
+    setMockResponse(`/api/traces/trials/${trialT}/artifacts?what=analysis`, notAnAnalysis);
+    setMockResponse(`/api/traces/trials/${trialN}/artifacts?what=analysis`, notAnAnalysis);
+    setMockResponse(`/api/traces/trials/${ghost}/artifacts?what=analysis`, {
+      status: 404,
+      body: { error: { code: "analysis_not_found", message: `Analysis not found: ${ghost}` } },
+    });
+    setMockResponse(`/api/trials/${trialT}`, {
+      status: 200,
+      body: trialFixture({ id: trialT, status: "SCORED", reward: 1, analysis: verdictA as unknown as Trial["analysis"] }),
+    });
+    setMockResponse(`/api/trials/${trialN}`, { status: 200, body: trialFixture({ id: trialN, job_id: "job-n", status: "SCORED", reward: 0, analysis: null }) });
+    setMockResponse("/api/analyses", {
+      status: 200,
+      body: page([verdictA, analysisVerdictFixture({ id: anB, trial_id: trialS })]),
+    });
+
+    // A FULL trial id: the verdict door refuses it typed, the trial's own row names its latest analysis.
+    const byTrial = captureIO();
+    assertEqual(await runCli(["analysis", "show", trialT, "--json", ...AUTH], byTrial.io), 0, "analysis show takes a full trial id");
+    assertEqual((JSON.parse(byTrial.out[0]) as { id: string }).id, anA, "and serves the trial's LATEST analysis (trial.analysis)");
+    assert(fetchCalls.some((c) => c.url.endsWith(`/api/trials/${trialT}`)), "read off the trial's own row");
+
+    // A full trial id on trace: the same resolution, then the analyzer's transcript.
+    const traceByTrial = captureIO();
+    assertEqual(await runCli(["analysis", "trace", trialT, "--json", ...AUTH], traceByTrial.io), 0, "analysis trace takes a full trial id");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes(`/api/traces/trials/${anA}/events`), "and reads the analysis's transcript");
+
+    // A full analysis id: the verdict door's yes is the answer, no trial read.
+    const byAnalysis = captureIO();
+    const before = fetchCalls.length;
+    assertEqual(await runCli(["analysis", "show", anA, ...AUTH], byAnalysis.io), 0, "a full analysis id names that run");
+    assert(!fetchCalls.slice(before).some((c) => c.url.includes("/api/trials/")), "without reading any trial");
+
+    // A trial PREFIX: resolved among the analysis list's trial_id column, then the trial's row.
+    const byTrialPrefix = captureIO();
+    assertEqual(await runCli(["analysis", "show", "d1a10000-cccc", "--json", ...AUTH], byTrialPrefix.io), 0, "a trial prefix resolves to the trial's latest analysis");
+    assertEqual((JSON.parse(byTrialPrefix.out[0]) as { id: string }).id, anA, "the verdict served is the trial's latest analysis");
+
+    // An analysis PREFIX: resolved among the analysis list's ids, no trial read.
+    const byAnalysisPrefix = captureIO();
+    const beforePrefix = fetchCalls.length;
+    assertEqual(await runCli(["analysis", "download", "a0a10000-aaaa", "--stream", "analysis", ...AUTH], byAnalysisPrefix.io), 0, "an analysis prefix names that run on download too");
+    assert(!fetchCalls.slice(beforePrefix).some((c) => c.url.includes("/api/trials/")), "without reading any trial");
+
+    // A prefix an analysis AND a trial own is ambiguous, both named.
+    const both = captureIO();
+    assertEqual(await runCli(["analysis", "show", "beef0000", ...AUTH], both.io), 2, "a prefix matching an analysis and a trial is a usage error");
+    assert(
+      both.err.some((l) => l.includes("1 analysis and 1 analyzed trial") && l.includes(`analysis ${anB}`) && l.includes(`analyzed trial ${trialS}`)),
+      "the refusal names both nouns and both ids"
+    );
+
+    // Too short, by the same floor, naming both nouns.
+    const short = captureIO();
+    assertEqual(await runCli(["analysis", "show", "a0a1", ...AUTH], short.io), 2, "a too-short analysis prefix is a usage error");
+    assert(short.err.some((l) => l.includes("too short to name an analysis or analyzed trial")), "the refusal names both nouns");
+
+    // A trial nobody analyzed: the trial's row says so, typed.
+    const none = captureIO();
+    assertEqual(await runCli(["analysis", "show", trialN, ...AUTH], none.io), 1, "a trial with no analysis exits 1");
+    assert(none.err.some((l) => l.includes(`trial ${trialN} has no analysis yet`)), "the refusal says which trial and why");
+
+    // An id nobody owns: the verdict door's own 404 — the analysis noun, whichever verb asked.
+    const miss = captureIO();
+    const beforeMiss = fetchCalls.length;
+    assertEqual(await runCli(["analysis", "trace", ghost, ...AUTH], miss.io), 1, "a full id no run owns exits 1");
+    assert(miss.err.some((l) => l.includes(`Analysis not found: ${ghost}`)), "with the server's analysis_not_found sentence");
+    assert(!fetchCalls.slice(beforeMiss).some((c) => c.url.includes("/api/trials/") || c.url.includes("/events")), "and no further door is read");
+  } finally {
+    restoreFetch();
+  }
+}
+
 // =============================================================================
 // ANALYSIS — show, trace, download (the traces-feed verbs)
 // =============================================================================
@@ -9217,6 +9481,7 @@ async function main() {
   await testJobStopAllTerminalIsHonest();
   await testJobStopReportsThePartialItAlreadySettled();
   await testJobIdPrefixLaw();
+  await testIdPrefixLawEveryNoun();
   await testRateLimitSurfacesCleanly();
   await testJobResume();
   await testJobRetry();
