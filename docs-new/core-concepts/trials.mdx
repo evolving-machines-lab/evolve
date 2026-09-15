@@ -1,0 +1,85 @@
+---
+title: "Trials"
+description: "One agent's attempt at one task: its record, its trace, and its artifacts."
+---
+
+A trial is one attempt of one task by one agent arm. Trial ids are global: every trial command takes the trial id alone, and the trial's record carries its job id.
+
+```bash
+evolve trial show <trial-id>
+```
+
+`trial show` prints the task, the agent and model, the status, the reward, the phase clocks, the tokens, what the trial spent and, when it failed, the exception. Spend prints as a plain amount once the meter has settled it, as `at least $X` while it is still a lower bound, and as `-` when nobody has measured it yet.
+
+## The trace
+
+Every trial records a parsed event trace: the instruction, each agent turn, every tool call and its result. Print it, filtered on the server.
+
+```bash
+evolve trial trace <trial-id>
+evolve trial trace <trial-id> --type <event-type>
+evolve trial trace <trial-id> --grep 'permission denied' --tail 50
+```
+
+`--type` keeps events of exactly one type. `--grep` is a case-insensitive regex over type and content. `--tail` keeps the last N matching events. To search every trial of a job in one pass:
+
+```bash
+evolve job grep <job-id> 'permission denied'
+```
+
+## Artifacts
+
+Beside the parsed trace, a trial keeps the raw record of its run. One vocabulary names the pieces everywhere.
+
+- `trace-parsed`: the parsed event trace
+- `trace-stdout`: the agent process's stdout, byte for byte
+- `trace-stderr`: the agent process's stderr
+- `trace-atif`: the normalized trajectory, in Harbor's ATIF format
+- `agent-home`: the text view of the agent's home folder, captured after the run
+- `verifier`: everything the scoring step printed
+- `trajectory`: reserved for the harness's own native session file, not served yet
+
+Stream one artifact to stdout:
+
+```bash
+evolve trial download <trial-id> --stream verifier
+```
+
+## Download the trial tree
+
+Without `--stream`, the trial is saved whole under `<dir>/<trial-id>/` in Harbor's trial tree layout, plus `evolve.json`.
+
+```bash
+evolve trial download <trial-id> -o trials/
+```
+
+```
+config.json               task and agent, in Harbor vocabulary
+result.json               status, reward, verifier verdict, exception, phase clocks
+agent/trajectory.json     the normalized ATIF trajectory
+agent/<harness>.txt       the harness's stdout stream (claude-code.txt, codex.txt, ...)
+agent/stderr.log          the harness's stderr stream
+agent/trace-parsed.jsonl  the parsed event trace
+agent/.claude/ ...        the captured agent home at its real names
+agent/agent-home.json     the capture record: every file's path, size and digest
+verifier/test-stdout.txt  the verifier log
+verifier/reward.json      the rewards map, when the verifier produced one
+exception.txt             when the trial carries an exception
+evolve.json               the platform's own record: cost, tokens, provider
+```
+
+An artifact the trial never recorded is an absent file, never an empty placeholder. `--overwrite` replaces an existing folder. The job archive from `evolve job download` holds the same tree per trial, plus what only the server can add: `lock.json`, `trial.log`, `artifacts/`, and the raw `verifier/reward.txt`.
+
+## Act on one trial
+
+```bash
+evolve trial retry <trial-id>
+evolve trial regrade <trial-id>
+evolve trial stop <trial-id> <trial-id>
+```
+
+`retry` runs a settled trial again, `regrade` re-runs only its verifier, and each produces a new job holding the one new trial. `stop` ends in-flight trials without cancelling their job.
+
+<Card title="trial reference" icon="terminal" href="/cli-reference/trial">
+  Every flag of `evolve trial`.
+</Card>

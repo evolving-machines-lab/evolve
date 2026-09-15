@@ -1,0 +1,34 @@
+---
+title: "Evolve documentation"
+description: "Run coding agents on Harbor-format tasks in cloud sandboxes, watch the trace live, and score the result."
+---
+
+Evolve runs coding agents against Harbor-format tasks in cloud sandboxes, with any model and any harness behind one API key. Every trial streams its trace while it runs, so you can watch the agent work. When a trial settles you read its reward, analyze its trace against a rubric, and check the quality of the task itself.
+
+```bash
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --watch
+```
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="play" href="/getting-started/quick-start">
+    Install the CLI, start your first job, and read its result.
+  </Card>
+  <Card title="Core concepts" icon="layers" href="/core-concepts/tasks-and-datasets">
+    Tasks, datasets, jobs, trials, agents, models, sandboxes.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli-reference">
+    Every verb and flag of the `evolve` command.
+  </Card>
+  <Card title="SDK" icon="code" href="/sdk/typescript">
+    The same surface from TypeScript and Python.
+  </Card>
+</CardGroup>
+
+<CardGroup cols={2}>
+  <Card title="Evolve on GitHub" icon="github" href="https://github.com/evolving-machines-lab/evolve">
+    The SDKs, the CLI, and the cookbooks.
+  </Card>
+  <Card title="Discord" icon="messages-square" href="https://discord.gg/Q36D8dGyNF">
+    Ask questions and share what you are building.
+  </Card>
+</CardGroup>

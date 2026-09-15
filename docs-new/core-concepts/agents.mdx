@@ -1,0 +1,61 @@
+---
+title: "Agents"
+description: "The built-in harnesses, how to configure an arm, and how to register your own agent."
+---
+
+An agent is a harness plus a model. `-a` names the harness, `-m` the model it drives. Seven harnesses are built in.
+
+| Name on `-a` | Harness |
+| --- | --- |
+| `claude` | Claude Code |
+| `codex` | Codex |
+| `gemini` | Gemini CLI |
+| `qwen` | Qwen Code |
+| `kimi` | Kimi Code |
+| `opencode` | OpenCode |
+| `droid` | Droid |
+
+```bash
+evolve run -d deep-swe@1.1 -a claude -m fable --watch
+```
+
+`-a <name[@version]>` can pin a harness version. Omitted, the latest is used, and the version that actually ran is recorded on every trial.
+
+## Configure the arm
+
+These flags apply to every arm of the job.
+
+```bash
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 \
+  --effort high \
+  --preset no-internet \
+  --ak config=./codex-settings.json \
+  --ae RUST_LOG=info
+```
+
+`--effort <value>` sets the reasoning effort. `--preset <name>` applies a named settings bundle: `no-internet` turns the vendor's server-side web tools off, `pinned-context` fixes the context window. `--ak config=<path|inline JSON>` becomes the harness's native settings file inside the sandbox; your document is the base and the platform's routing sits on top. `--ae KEY=VALUE` sets an environment variable for every agent run.
+
+An effort or preset a harness cannot honor is refused when the job is created, never silently skipped. So is a config key that touches billing, base URLs, routing or environment.
+
+## Register your own agent
+
+Any CLI can run as an agent. Register it once, and its name works on `-a` like a built-in.
+
+```bash
+evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"
+evolve run -d deep-swe@1.1 -a acme-cli -m gpt-5.5 --watch
+```
+
+`--install-script <path>` names a file; its contents are uploaded. `--dir <path>` uploads a local directory instead. `--run <command>` is required and runs with `sh -c`. `--ae KEY=VALUE` injects environment at run time and may repeat.
+
+```bash
+evolve agent list
+evolve agent show acme-cli
+evolve agent remove acme-cli
+```
+
+Removing an agent keeps the record of the past jobs that ran it.
+
+<Card title="agent reference" icon="terminal" href="/cli-reference/agent">
+  Every flag of `evolve agent`.
+</Card>

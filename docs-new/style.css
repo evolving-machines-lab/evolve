@@ -1,0 +1,14 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap");
+
+code,
+kbd,
+pre,
+samp {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+#content-area a:not([class]),
+#content-area .prose a {
+  color: #b026ff;
+  text-decoration-color: #b026ff;
+}

@@ -1,0 +1,48 @@
+---
+title: "Installation"
+description: "Install the evolve command and the SDKs."
+---
+
+## The CLI
+
+The `evolve` command ships inside the npm package `@evolvingmachines/sdk`. Install it globally and check the version.
+
+```bash
+npm install -g @evolvingmachines/sdk
+evolve --version
+```
+
+## The SDKs
+
+The same surface is available as a library in TypeScript and in Python.
+
+<CodeGroup>
+
+```bash TypeScript
+npm install @evolvingmachines/sdk
+```
+
+```bash Python
+pip install evolve-sdk
+```
+
+</CodeGroup>
+
+The Python package needs Python 3.10 or newer, and a Node.js runtime on your `PATH`. It runs the TypeScript SDK underneath and starts it with the `node` command.
+
+## Your API key
+
+Create an API key in the dashboard at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) and export it. Every command and every SDK client reads `EVOLVE_API_KEY`.
+
+```bash
+export EVOLVE_API_KEY="<your key>"
+evolve auth status
+```
+
+`auth status` prints who the platform thinks you are and which key is in use. The key itself is never printed back.
+
+To use a different key for one call, pass `--api-key <key>` on the command line, or `{ apiKey }` to an SDK client.
+
+<Card title="Quick start" icon="play" href="/getting-started/quick-start">
+  Start your first job.
+</Card>

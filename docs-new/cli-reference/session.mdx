@@ -1,0 +1,47 @@
+---
+title: "evolve session"
+description: "List and inspect managed-agent sessions."
+---
+
+import GlobalOptions from '/snippets/global-options.mdx';
+import ListFlags from '/snippets/list-flags.mdx';
+
+```bash
+evolve session <command> [options]
+```
+
+## session list
+
+```bash
+evolve session list [options]
+```
+
+List your sessions, newest first.
+
+<ListFlags />
+
+<ParamField path="--state" type="live | ended">
+  Only live, or only ended, sessions.
+</ParamField>
+
+<ParamField path="--agent" type="name">
+  Only sessions of this agent harness. Exact match.
+</ParamField>
+
+<ParamField path="--tag-prefix" type="prefix">
+  Only sessions whose tag starts with this prefix.
+</ParamField>
+
+```bash
+evolve session list --state ended --tag-prefix qa- -q
+```
+
+## session show
+
+```bash
+evolve session show <session-id>
+```
+
+Show one session in full.
+
+<GlobalOptions />

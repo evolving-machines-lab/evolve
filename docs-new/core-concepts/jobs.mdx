@@ -1,0 +1,100 @@
+---
+title: "Jobs"
+description: "Start a job, watch it, read its results, and derive new jobs from it."
+---
+
+A job runs every task of its datasets with every agent arm, a fixed number of attempts each. Start one with `evolve run`. It is the short form of `evolve job start`, and both take the same flags.
+
+```bash
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch
+```
+
+`-d` names a dataset and may repeat: one job can span several. `-a` names the agent. `-m` names the model and may repeat too. Each model is one arm, so two models against one agent run every task twice. `-k` is the number of attempts per task and arm (default 1). `-n` is how many trials run in parallel (default 4). `--job-name` gives the job a label; omitted, the server generates one.
+
+## Narrow the task set
+
+```bash
+evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -i 'auth-*' -x 'auth-legacy' -l 20 --watch
+```
+
+`-i` and `-x` are include and exclude globs over task names, applied to every dataset. `-l` caps the task count of each dataset after the filters.
+
+## Watch it
+
+`--watch` streams the job's events until it finishes: each trial as it starts, scores and settles, then the final block. `-q` keeps only the final block. Without `--watch` the command prints the job id and returns; read the job later with `evolve job show`.
+
+## Spend and retries
+
+Every trial runs under a model-spend cap, `--max-trial-spend <usd>`. Omitted, the server's default applies, $200. Trials that fail on infrastructure errors are retried automatically: `-r <n>` sets how many times, and `0` turns it off. `--retry-include` and `--retry-exclude` choose by exception type, and exclude wins. Each attempt carries the full trial cap.
+
+## Read the results
+
+```bash
+evolve job show <job-id>
+evolve job trials <job-id> --status FAILED,SCORING_ERROR
+evolve job tasks <job-id>
+evolve job compare <job-id> <job-id>
+evolve job list --search nightly
+```
+
+`job show` prints the whole job, with pass@k once every attempt has settled. `job trials` lists the trials, `--status` and `--dataset` narrow the list. `job tasks` is one row per task. `job compare` puts two to ten jobs side by side. `job list` is your jobs, newest first; `--scope shared` lists your organizations' jobs that teammates created.
+
+A trial is `QUEUED`, `RUNNING` or `SCORING` while it runs, and settles as `SCORED`, `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE` or `CANCELLED`. A job is `QUEUED`, `RUNNING`, `CANCELLING`, `COMPLETED`, `CANCELLED` or `FAILED`.
+
+## Derive a new job
+
+Every derived run is a new job linked to its source. The source is never changed.
+
+```bash
+evolve job retry <job-id> --failed-only
+evolve job retry <job-id> -t <trial-id> -t <trial-id>
+evolve job resume <job-id> -f InfrastructureError
+evolve job regrade <job-id> --task tricky-task
+```
+
+`retry` runs selected trials again: every trial, only the failed ones with `--failed-only` (`SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`), or exactly the ones named with `-t`. `resume` takes a finished job's failed or stopped trials and runs them; `-f <type>` picks failure types by exception type. `regrade` re-runs only the verifier of a finished job; `--status` and `--task` narrow the set.
+
+## Stop, cancel, delete
+
+```bash
+evolve job cancel <job-id>
+evolve job stop <job-id> --dataset deep-swe
+evolve job delete <job-id> --yes
+```
+
+`cancel` asks the whole job to stop. `stop` ends one dataset's live trials and leaves the job running. `delete` removes a job you created permanently: its trials, traces, analyses and stored files. Without `--yes` it asks first.
+
+## Download
+
+```bash
+evolve job download <job-id> -o results/
+```
+
+The results unpack as the standard Harbor job directory, `results/job-<id>/`: the job's `config.json`, `lock.json`, `result.json` and `job.log`, and one directory per trial. See [trials](/core-concepts/trials) for what each trial directory holds.
+
+## Config files
+
+Put the job in a file and run it with `-c`. The file is YAML or JSON with the same field names the SDK's `jobs().start()` takes. Flags on the command line override the file's fields. `--print-config` prints the resolved job body as JSON and exits without running anything.
+
+```yaml nightly.yaml
+datasets:
+  - name: deep-swe
+    version: "1.1"
+  - name: frontier-swe
+agents:
+  - name: codex
+    model_name: gpt-5.5
+  - name: claude
+    model_name: fable
+n_attempts: 2
+max_trial_spend_usd: 25
+```
+
+```bash
+evolve run -c nightly.yaml --print-config
+evolve run -c nightly.yaml --watch
+```
+
+<Card title="run reference" icon="terminal" href="/cli-reference/run">
+  Every flag of `evolve run`.
+</Card>
