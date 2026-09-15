@@ -1736,9 +1736,14 @@ class AnalysisFailure(TypedDict):
     absence and never a fake pass."""
     #: Which part failed: ``invalid_result`` (the analyzer ran but its
     #: analysis.json failed validation — the message preserves every
-    #: validator reason, one per line), ``inputs`` (the trial tree or task
-    #: content could not be assembled), or an infrastructure stage of the
-    #: analyzer run (``mint_key``, ``boot``, ``harness_install``, ``agent``,
+    #: validator reason, one per line; a run cut by its budget is
+    #: ``timeout`` instead), ``inputs`` (the trial tree or task content
+    #: could not be assembled), ``timeout`` (the analyzer's run budget ran
+    #: out with no valid analysis.json — the file missing, or a partial one
+    #: that failed validation, its reasons in the message — never re-run: a
+    #: timeout is deterministic; the message names the budget, the seconds
+    #: used and the exit code), or an infrastructure stage of the analyzer
+    #: run (``mint_key``, ``boot``, ``harness_install``, ``agent``,
     #: ``artifact_read``, ``lease_expired``, ...).
     phase: str
     message: str
@@ -1806,7 +1811,9 @@ class TrialAnalysis(TypedDict):
     #: included) is re-run at most once — same model, same frozen rubric,
     #: fresh sandbox — and a second failure of that class settles
     #: ``'failed'`` with phase ``'invalid_result'``, both attempts recorded.
-    #: Infrastructure failures never auto re-run. When the re-run fired,
+    #: A run cut by its budget is not that class: it settles ``'failed'``
+    #: with phase ``'timeout'`` at once and is never re-run. Infrastructure
+    #: failures never auto re-run. When the re-run fired,
     #: ``estimated_cost_usd`` and the token totals cover BOTH attempts.
     #: Absent on servers predating the field.
     attempts: int
