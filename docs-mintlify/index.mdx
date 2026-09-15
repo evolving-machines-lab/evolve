@@ -3,12 +3,11 @@ title: "Evolve documentation"
 description: "Any model, any harness, any sandbox, one API key. Every task versioned and checked, every trajectory analyzed."
 ---
 
-Evolve runs coding agents on evaluation tasks in cloud sandboxes and tells you exactly what happened.
+Evolve is hosted evaluation for coding agents: bring your own tasks or pick a public dataset, and run any model on any agent harness against them, in parallel, in cloud sandboxes. Each task is pinned to one versioned environment, so every run starts from the same place today or next month. Every trial returns its reward, its live trace, its files and its logs, with a quality verdict on any task before you spend on it and a judged analysis of any trajectory after.
 
-- **One API key.** Any model with `-m`, any agent harness with `-a`, any sandbox provider with `-e`.
+- **One API key.** Any model with `-m`, any agent harness with `-a`, any sandbox provider with `-e`; no provider keys to manage.
 - **Task quality control.** `evolve check` runs each task and judges it against a rubric before you spend a job on it.
-- **Versioned, reproducible rollouts.** Datasets are versioned and each task's image is built once per version and pinned, so every trial runs the same environment on any provider. A job runs its trials in parallel; you set how many.
-- **Full observability.** Every trial streams its trace live. Its files and artifacts are yours to read and download when it ends.
+- **Full observability.** Every trial streams its trace live; its files, artifacts, agent logs and sandbox logs are yours to read and download when it ends.
 - **Trace analysis after every trial.** `evolve analyze` judges every trial's trace against a rubric, cheap and scalable.
 
 ```bash
