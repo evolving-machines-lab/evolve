@@ -4443,7 +4443,7 @@ export interface AnalysesClient {
 export interface CheckConfigInput {
   /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
   model_name?: string;
-  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: Harbor's default check rubric. */
+  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (eleven criteria). */
   rubric?: Rubric;
   /** The prompt template — the TEXT of Harbor's `-p/--prompt` file. */
   prompt?: string;
@@ -4501,9 +4501,10 @@ export interface CheckSource {
 }
 
 /**
- * One task's quality check — Harbor's QualityCheckResult verbatim (their
+ * One task's quality check — Harbor's QualityCheckResult shape (their
  * cli/quality_checker/models.py:31-35: `task_name`, `checks` keyed by
- * criterion, `cost_usd`) plus the hosted provenance: its own id, the check
+ * criterion, `cost_usd`), its checks extended by the result schema and the
+ * derived `label` and `executed` beside them, plus the hosted provenance: its own id, the check
  * it belongs to, its lifecycle (the analysis ladder's four lowercase words),
  * the bounded attempt count, and a typed `failure` in place of Harbor's
  * `error` string (the TrialAnalysis rule).

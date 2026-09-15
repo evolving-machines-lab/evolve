@@ -1944,9 +1944,11 @@ class CheckSource(TypedDict):
 
 
 class TaskCheck(TypedDict):
-    """One task's quality check — Harbor's QualityCheckResult verbatim (their
+    """One task's quality check — Harbor's QualityCheckResult shape (their
     cli/quality_checker/models.py:31-35: ``task_name``, ``checks`` keyed by
-    criterion, ``cost_usd``) plus the hosted provenance: its own id, the
+    criterion, ``cost_usd``), its checks extended by the result schema and
+    the derived ``label`` and ``executed`` beside them, plus the hosted
+    provenance: its own id, the
     check it belongs to, its lifecycle (the analysis ladder's four lowercase
     words), the bounded attempt count, and a typed ``failure`` in place of
     Harbor's ``error`` string.
@@ -8528,8 +8530,8 @@ class ChecksClient:
         first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at its
-        per-model effort over Harbor's default check rubric, on the
-        platform's analysis default provider.
+        per-model effort over the platform's default check rubric (eleven
+        criteria), on the platform's analysis default provider.
 
         THE RESPONSE IS THE ACCEPTED CHECK (202): one ``results`` entry per
         task, each ``'queued'``; follow it with :meth:`watch` or poll
