@@ -4,14 +4,19 @@ description: "How a dataset becomes trials, rewards, analyses and results."
 ---
 
 ```mermaid
-flowchart LR
-  D[Dataset: a folder of tasks] --> J[Job: arms of harness x model x sandbox provider]
-  J --> T[Trials: one task, one arm, its own sandbox]
-  T --> A[Agent trajectory: live trace stream]
-  A --> V[Verifier]
-  V --> R[Reward and artifacts]
-  R --> AN[Analyze: trace analysis, verdicts]
-  D --> C[Check: task quality]
+%%{init: {"theme": "base", "themeVariables": {"fontSize": "18px", "fontFamily": "Google Sans Flex, sans-serif", "primaryColor": "#1a1a1a", "primaryTextColor": "#f7f6f5", "primaryBorderColor": "#B026FF", "lineColor": "#B026FF", "clusterBkg": "#80808014", "clusterBorder": "#80808059", "titleColor": "#8c8c8c"}, "flowchart": {"nodeSpacing": 32, "rankSpacing": 40, "padding": 12}}}%%
+flowchart TB
+  subgraph S[Set up]
+    D[Dataset: a folder of tasks] --> J[Job: arms of harness x model, one sandbox provider]
+    D --> C[Check: task quality]
+  end
+  subgraph RUN[Run]
+    T[Trials: one task, one arm, its own sandbox] --> A[Agent trajectory: live trace stream]
+    A --> V[Verifier]
+    V --> R[Reward and artifacts]
+    R --> AN[Analyze: trace analysis, verdicts]
+  end
+  J --> T
   R --> O[Results: dashboard, CLI, downloads]
   AN --> O
   C --> O
@@ -20,7 +25,7 @@ flowchart LR
 - **Dataset**: a named, versioned folder of tasks in the catalog. `name@version` names one version; a bare name means the active one.
 - **Task**: one directory with an instruction, an environment, and a verifier. See [tasks](/core-concepts/tasks).
 - **Job**: one run of every task of its datasets by every arm, a fixed number of attempts each. See [jobs](/core-concepts/jobs).
-- **Arm**: one harness driving one model, on one sandbox provider. A job with two models has two arms.
+- **Arm**: one harness driving one model, with its optional effort, preset, config and skills. A job with two models has two arms, and every arm runs on the job's one sandbox provider.
 - **Trial**: one attempt of one task by one arm, in its own sandbox. See [trials](/core-concepts/trials).
 - **Trajectory**: the trial's recorded trace, streamed live while it runs: the instruction, every agent turn, every tool call and its result.
 - **Verifier**: the task's test script. It runs after the agent and produces the reward.

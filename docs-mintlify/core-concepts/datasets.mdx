@@ -16,7 +16,7 @@ evolve dataset show deep-swe@1.1
 
 ## Publish your own
 
-Any folder of task directories can be published. What you publish is private to your account. Check it first: the pre-flight is a dry run that uploads nothing and writes nothing.
+Any folder of task directories can be published. What you publish is private to your organization. Check it first: the pre-flight is a dry run that uploads nothing and writes nothing.
 
 ```bash
 evolve dataset check ./my-swe
@@ -50,6 +50,31 @@ Then publish from a local directory, from a git repository, or from a source the
 </Tabs>
 
 `--watch` follows the publish until the version is READY or FAILED. Each task builds on its own, so one broken task does not block the others; `--watch` ends with how many built. If the terminal is gone, `evolve dataset watch <name>` re-attaches to the same follow, from any machine. `--skip-preflight` uploads without the check; a task the check would have refused then fails at import instead.
+
+## What happens when you publish
+
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontSize": "18px", "fontFamily": "Google Sans Flex, sans-serif", "primaryColor": "#1a1a1a", "primaryTextColor": "#f7f6f5", "primaryBorderColor": "#B026FF", "lineColor": "#B026FF"}, "flowchart": {"nodeSpacing": 32, "rankSpacing": 40, "padding": 12}}}%%
+flowchart TB
+  P[Pre-flight: every task.toml checked, nothing uploaded] --> U[Upload: the package is stored, the version is BUILDING]
+  U --> PA[Parse: every task directory is read]
+  PA --> B[Build: one image per task, pinned by digest in the registry]
+  B --> RD[READY when at least one task built, FAILED when none did]
+  RD --> F[First trial on a provider: the boot image is built and cached]
+  F --> L[Every later trial on that provider starts from the cache]
+```
+
+The pre-flight sends each task's `task.toml`, and the `dataset.toml` if there is one, to the server, which answers with a verdict per task and writes nothing. A refused task stops the publish before anything is uploaded.
+
+The upload is stored on the server, the new version is recorded as BUILDING, and the dataset is stamped as yours.
+
+The importer reads every task directory: first the shape of its `task.toml`, against a strict schema, then its meaning.
+
+Each task's `environment/` is built into an image, pushed to the platform's registry and pinned by its digest. Tasks build independently: one that fails any step is recorded FAILED with a typed reason, and the others keep building.
+
+The version lands READY when at least one task built, and FAILED only when none did. On your own dataset, READY also makes the version active, so the bare name runs it. A job refuses any version that is not READY.
+
+Nothing is built for any sandbox provider at publish. The first trial of a task on a provider builds that provider's boot image from the task image, once, and every later trial on that provider starts from the cache.
 
 ## Versions
 
