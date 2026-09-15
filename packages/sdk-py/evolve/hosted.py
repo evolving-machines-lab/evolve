@@ -7006,8 +7006,8 @@ class JobsClient:
         AnalyzeConfigInput): PRESENCE is the switch — each trial is analyzed
         server-side right after it settles (CANCELLED trials are skipped),
         ``{}`` means "all defaults" (openrouter/deepseek/deepseek-v4.1-flash
-        at its per-model
-        effort, Harbor's default rubric), and the response
+        at its per-model effort, the platform's default analyze rubric),
+        and the response
         echoes the RESOLVED policy as
         ``Job.analyze`` (:class:`AnalyzeConfig`); omitted, no embedded
         analysis runs and :meth:`analyze` remains the manual door. The five

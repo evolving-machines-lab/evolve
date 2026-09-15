@@ -3992,7 +3992,8 @@ export interface JobsClient {
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
    * (or `{}`) means the defaults: openrouter/deepseek/deepseek-v4.1-flash
-   * at its per-model effort over Harbor's default rubric. CANCELLED trials
+   * at its per-model effort over the platform's default analyze rubric.
+   * CANCELLED trials
    * are never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
