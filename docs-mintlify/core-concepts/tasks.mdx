@@ -62,7 +62,7 @@ timeout_sec = 600
 environment_mode = "shared"
 
 [environment]
-network_mode = "public"
+network_mode = "allowlist"
 allowed_hosts = ["pypi.org"]
 cpus = 2
 memory_mb = 4096
@@ -70,7 +70,7 @@ storage_mb = 10240
 ```
 
 - **Timeouts.** `agent.timeout_sec` and `verifier.timeout_sec`, in seconds. A task that declares none gets the platform's defaults; `evolve dataset show` prints the timeouts every task actually has. A job can stretch them with `--timeout-multiplier`.
-- **Network access.** `environment.network_mode` is `no-network` (the agent reaches nothing but its model), `allowlist` (only the hosts in `allowed_hosts`), or `public` (the open internet, and the default when omitted). The older spelling `allow_internet = false` means `no-network`, `true` means `public`.
+- **Network access.** `environment.network_mode` is `no-network` (the agent reaches nothing but its model), `allowlist` (only the hosts in `allowed_hosts`, which is accepted with this mode only), or `public` (the open internet, and the default when omitted). The older spelling `allow_internet = false` means `no-network`, `true` means `public`.
 - **Verifier mode.** `verifier.environment_mode` is `shared`, the verifier runs inside the agent's sandbox after the agent finishes, or `separate`, the verifier boots a fresh copy of the environment and judges only what the task lists under `artifacts`. A `[verifier.environment]` table implies `separate`.
 - **Resources.** `environment.cpus`, `memory_mb`, `storage_mb`, and `gpus` with `gpu_types`. Omitted, the sandbox provider's default sizing applies. A size above a provider's ceiling refuses on that provider, which `evolve dataset show` reports per task.
 - **Artifacts.** A top-level `artifacts = ["/app/out.json"]` list names the paths carried out of the agent's sandbox: into a separate verifier, and into the trial's stored artifacts.

@@ -12,6 +12,7 @@ Evolve runs coding agents against your tasks and tells you what happened. Improv
 - **Trace analysis after every run.** `evolve analyze` judges every trial's trace against a rubric, cheaply and at scale.
 
 ```bash
+export EVOLVE_API_KEY="<your key>"   # from https://dashboard.evolvingmachines.ai/api-keys
 evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --watch
 ```
 
