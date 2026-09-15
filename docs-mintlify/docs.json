@@ -66,6 +66,12 @@
     "options": ["copy", "view", "claude", "chatgpt"],
     "display": "header"
   },
+  "redirects": [
+    {
+      "source": "/core-concepts/tasks-and-datasets",
+      "destination": "/core-concepts/datasets"
+    }
+  ],
   "navigation": {
     "tabs": [
       {
@@ -82,7 +88,9 @@
           {
             "group": "Core concepts",
             "pages": [
-              "core-concepts/tasks-and-datasets",
+              "core-concepts/index",
+              "core-concepts/tasks",
+              "core-concepts/datasets",
               "core-concepts/jobs",
               "core-concepts/trials",
               "core-concepts/agents",
@@ -94,6 +102,16 @@
               "core-concepts/skills",
               "core-concepts/secrets",
               "core-concepts/upload"
+            ]
+          },
+          {
+            "group": "Dashboard",
+            "pages": [
+              "dashboard/datasets",
+              "dashboard/jobs",
+              "dashboard/trial-viewer",
+              "dashboard/checks",
+              "dashboard/traces"
             ]
           },
           {

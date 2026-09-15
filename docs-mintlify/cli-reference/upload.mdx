@@ -1,6 +1,6 @@
 ---
 title: "evolve upload"
-description: "Upload a Harbor job directory as a finished job."
+description: "Upload a job directory as a finished job."
 ---
 
 import GlobalOptions from '/snippets/global-options.mdx';
@@ -9,7 +9,7 @@ import GlobalOptions from '/snippets/global-options.mdx';
 evolve upload <job_dir> [options]
 ```
 
-Upload a Harbor job directory, its `.tar.gz`, or a public URL of one, as a terminal job. Harbor's `harbor upload`, in reverse. The command follows the import to the job.
+Upload a job directory in the Harbor job layout, its `.tar.gz`, or a public URL of one, as a terminal job. The command follows the import to the job.
 
 ```bash
 evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1

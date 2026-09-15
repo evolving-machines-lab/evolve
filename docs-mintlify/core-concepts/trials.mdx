@@ -9,7 +9,7 @@ A trial is one attempt of one task by one agent arm. Trial ids are global: every
 evolve trial show <trial-id>
 ```
 
-`trial show` prints the task, the agent and model, the status, the reward, the phase clocks, the tokens, what the trial spent and, when it failed, the exception. Spend prints as a plain amount once the meter has settled it, as `at least $X` while it is still a lower bound, and as `-` when nobody has measured it yet.
+`trial show` prints the task, the agent and model, the status, the reward, the tokens, what the trial spent and, when it failed, the exception. Spend prints as a plain amount once the meter has settled it, as `at least $X` while it is still a lower bound, and as `-` when nobody has measured it yet.
 
 ## The trace
 
@@ -34,7 +34,7 @@ Beside the parsed trace, a trial keeps the raw record of its run. One vocabulary
 - `trace-parsed`: the parsed event trace
 - `trace-stdout`: the agent process's stdout, byte for byte
 - `trace-stderr`: the agent process's stderr
-- `trace-atif`: the normalized trajectory, in Harbor's ATIF format
+- `trace-atif`: the normalized trajectory, in the ATIF format
 - `agent-home`: the text view of the agent's home folder, captured after the run
 - `verifier`: everything the scoring step printed
 - `trajectory`: reserved for the harness's own native session file, not served yet
@@ -47,14 +47,14 @@ evolve trial download <trial-id> --stream verifier
 
 ## Download the trial tree
 
-Without `--stream`, the trial is saved whole under `<dir>/<trial-id>/` in Harbor's trial tree layout, plus `evolve.json`.
+Without `--stream`, the trial is saved whole under `<dir>/<trial-id>/` in the trial tree layout, plus `evolve.json`.
 
 ```bash
 evolve trial download <trial-id> -o trials/
 ```
 
-```
-config.json               task and agent, in Harbor vocabulary
+```text
+config.json               task and agent
 result.json               status, reward, verifier verdict, exception, phase clocks
 agent/trajectory.json     the normalized ATIF trajectory
 agent/<harness>.txt       the harness's stdout stream (claude-code.txt, codex.txt, ...)

@@ -17,7 +17,7 @@ evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --analyze --watch
 
 ## Rubrics and prompts
 
-The default rubric has seven criteria, `score_is_earned` first. Bring your own as TOML, YAML or JSON in Harbor's shape and, if you want, your own prompt for the analyzer.
+The default rubric has seven criteria, `score_is_earned` first. Bring your own as TOML, YAML or JSON in the shape below and, if you want, your own prompt for the analyzer.
 
 ```toml rubric.toml
 [[criteria]]
@@ -61,7 +61,7 @@ evolve analysis download <analysis-id> -o analyses/
 evolve analysis download <analysis-id> --stream analysis
 ```
 
-`analysis show` prints the verdict document. Every analysis verb also accepts a trial id, which names that trial's latest analysis. `analysis trace` prints the analyzer's own transcript. `analysis download` saves the run as Harbor's wrapper-trial folder, or streams one artifact: `analysis`, `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
+`analysis show` prints the verdict document. Every analysis verb also accepts a trial id, which names that trial's latest analysis. `analysis trace` prints the analyzer's own transcript. `analysis download` saves the run as a trial folder, or streams one artifact: `analysis`, `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
 
 <Card title="analyze reference" icon="terminal" href="/cli-reference/analyze">
   Every flag of `evolve analyze` and `evolve analysis`.

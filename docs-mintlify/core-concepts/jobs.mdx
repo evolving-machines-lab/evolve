@@ -31,7 +31,7 @@ Every trial runs under a model-spend cap, `--max-trial-spend <usd>`. Omitted, th
 
 ```bash
 evolve job show <job-id>
-evolve job trials <job-id> --status FAILED,SCORING_ERROR
+evolve job trials <job-id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
 evolve job tasks <job-id>
 evolve job compare <job-id> <job-id>
 evolve job list --search nightly
@@ -70,7 +70,7 @@ evolve job delete <job-id> --yes
 evolve job download <job-id> -o results/
 ```
 
-The results unpack as the standard Harbor job directory, `results/job-<id>/`: the job's `config.json`, `lock.json`, `result.json` and `job.log`, and one directory per trial. See [trials](/core-concepts/trials) for what each trial directory holds.
+The results unpack as the standard job directory, `results/job-<id>/`: the job's `config.json`, `lock.json`, `result.json` and `job.log`, and one directory per trial. See [trials](/core-concepts/trials) for what each trial directory holds.
 
 ## Config files
 

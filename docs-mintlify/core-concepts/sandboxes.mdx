@@ -3,7 +3,11 @@ title: "Sandboxes"
 description: "Where trials run: e2b, daytona, or modal."
 ---
 
-Every trial runs in its own sandbox on one of three providers: `e2b`, `daytona` or `modal`. Pick the provider per job with `-e`. The default is `daytona`.
+Every trial runs in its own sandbox on one of three providers. Pick the provider per job with `-e`; the default is `daytona`.
+
+- `e2b`: [E2B](https://e2b.dev/docs)
+- `daytona`: [Daytona](https://www.daytona.io/docs), the default
+- `modal`: [Modal](https://modal.com/docs)
 
 ```bash
 evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -e modal --watch

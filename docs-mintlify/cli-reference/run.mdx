@@ -70,7 +70,7 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="--agent-kwarg, --ak" type="key=value">
-  Agent kwarg for every arm, in Harbor's grammar. Repeatable. The delivered key is `config`: `--ak 'config=<path|inline JSON>'` becomes the harness's native settings file, with your document as the base and the platform's routing on top. The server refuses unsupported kwargs, and config keys touching billing, base URL, routing or env.
+  Agent kwarg for every arm, as `key=value`. Repeatable. The delivered key is `config`: `--ak 'config=<path|inline JSON>'` becomes the harness's native settings file, with your document as the base and the platform's routing on top. The server refuses unsupported kwargs, and config keys touching billing, base URL, routing or env.
 </ParamField>
 
 <ParamField path="--skills, --skill" type="ref | path">
@@ -108,7 +108,7 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="--retry-exclude" type="exception">
-  Exception types not to retry on. Repeatable, and it wins over `--retry-include`. Defaults to Harbor's non-retryable set.
+  Exception types not to retry on. Repeatable, and it wins over `--retry-include`. Defaults to the platform's non-retryable set.
 </ParamField>
 
 ## Embedded analysis
@@ -122,11 +122,11 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="--analyze-rubric" type="path">
-  Rubric file for the analyzer: TOML, YAML or JSON in Harbor's `{criteria}` shape. Implies `--analyze`.
+  Rubric file for the analyzer: TOML, YAML or JSON in the `{criteria}` shape. Implies `--analyze`.
 </ParamField>
 
 <ParamField path="--analyze-prompt" type="path">
-  Prompt file for the analyzer, Harbor's `-p/--prompt`. Replaces the built-in prompt. Implies `--analyze`.
+  Prompt file for the analyzer. Replaces the built-in prompt. Implies `--analyze`.
 </ParamField>
 
 <ParamField path="--analyze-provider" type="provider">

@@ -1,0 +1,24 @@
+---
+title: "Trial viewer"
+description: "Read one trial's trace event by event, its tool calls, its spend, and download its artifacts."
+---
+
+Click a trial on a job's TRIALS tab, or a row on the Traces page, to open it.
+
+<Frame caption="A scored trial in the viewer">
+  <img src="/images/trial.png" alt="The trial viewer: a header with the task, agent, model, sandbox id, cost and status, a progress bar with previous and next event controls, an EVENTS list on the left, and the selected event's content on the right." />
+</Frame>
+
+The header names the run: its kind (EVAL for a trial, ANALYZE for an analysis), its task, its agent and model, its sandbox id, what it spent, and its status. BACK returns to where you came from. RETRY runs a settled trial again as a new one-trial job. STOP ends a trial that is still running. DOWNLOAD offers the parsed trace, the ATIF trajectory, the raw stdout and stderr, the agent's home folder, and, on an analysis or a check, the verdict document.
+
+Under the header, the reward and the event navigation: previous, next, and a progress bar you can drag. Type `/` to search the events.
+
+The EVENTS list runs down the left: the prompt, each assistant message and thought, each tool call and its result, and the gateway's own records: one per model call with its tokens and cost, and a run total at the end. Click an event to read it in full on the right. A running trial keeps appending events while you watch.
+
+<Frame caption="An analysis run, with the tools summary open">
+  <img src="/images/trial-analysis.png" alt="The trial viewer on an analysis run: a TOOLS summary with the number of calls, the success rate and a bar per tool, then the events list and the selected event's content." />
+</Frame>
+
+The TOOLS summary counts the run's tool calls, its success rate and how many failed, with a bar per tool. The gateway meter at the end of the run states the prompt, cached, cache-write and completion tokens and the cost in dollars.
+
+An analysis run is read the same way. Its events are the analyzer's own trace, and its verdict document is on the DOWNLOAD menu.

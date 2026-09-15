@@ -64,10 +64,10 @@ Print the analyzer's own parsed transcript.
 evolve analysis download <analysis-id | trial-id> [options]
 ```
 
-Save an analysis run as Harbor's wrapper-trial folder plus `evolve.json`, or stream one artifact.
+Save an analysis run as a trial folder plus `evolve.json`, or stream one artifact.
 
 <ParamField path="-o, --output-dir" type="dir" default="analyses/">
-  Directory to save under. The run lands in `<dir>/analyze-<analyzed trial>__<7 chars>/`, Harbor's own trial name, read from the archive.
+  Directory to save under. The run lands in `<dir>/analyze-<analyzed trial>__<7 chars>/`, the run's own folder name, read from the archive.
 </ParamField>
 
 <ParamField path="--overwrite">

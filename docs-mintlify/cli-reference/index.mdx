@@ -16,7 +16,7 @@ The `evolve` command starts jobs and reads everything back. Every verb accepts `
 | [`run`](/cli-reference/run) | Start a job. Add `--watch` to follow it. The short form of `job start`. |
 | [`analyze`](/cli-reference/analyze) | Analyze a finished job's trial traces against a rubric. |
 | [`check`](/cli-reference/check) | Check task quality against a rubric. |
-| [`upload`](/cli-reference/upload) | Upload a Harbor job directory as a finished job. |
+| [`upload`](/cli-reference/upload) | Upload a job directory as a finished job. |
 
 ## Command groups
 
@@ -55,7 +55,7 @@ These work on every command.
 
 ## Listing flags
 
-Every `list` command, and `job trials`, `job tasks` and `job imports`, share one set of paging and formatting flags.
+Every `list` command, and `job trials`, `job tasks` and `job imports`, share one set of paging and formatting flags. Two take only the formatting flags, not `-l` or `--cursor`: `auth org list` and `secrets list`.
 
 <ParamField path="-l, --limit" type="n">
   Page size.

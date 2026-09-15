@@ -26,11 +26,11 @@ evolve analyze 3e1f9a2c-… -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --
 </ParamField>
 
 <ParamField path="-r, --rubric" type="path">
-  Rubric file: TOML, YAML or JSON in Harbor's `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's analyze rubric, seven criteria with `score_is_earned` first.
+  Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's analyze rubric, seven criteria with `score_is_earned` first.
 </ParamField>
 
 <ParamField path="-p, --prompt" type="path">
-  Prompt file for the evaluator agent, Harbor's `-p/--prompt`. Its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
+  Prompt file for the evaluator agent. Its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
 </ParamField>
 
 <ParamField path="-e, --env" type="provider">

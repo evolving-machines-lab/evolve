@@ -10,7 +10,7 @@ import ListFlags from '/snippets/list-flags.mdx';
 evolve check [<path>] [options]
 ```
 
-Check task quality against a rubric, Harbor's `harbor check`, server-side. Add `--watch` to follow. `<path>` is one task directory or a directory of task directories; `-d` names a published dataset instead. One or the other, not both.
+Check task quality against a rubric, server-side. Add `--watch` to follow. `<path>` is one task directory or a directory of task directories; `-d` names a published dataset instead. One or the other, not both.
 
 ```bash
 evolve check ./tasks -i 'abs-*' -l 5 --watch
@@ -31,11 +31,11 @@ evolve check ./tasks -i 'abs-*' -l 5 --watch
 </ParamField>
 
 <ParamField path="-r, --rubric" type="path">
-  Rubric file: TOML, YAML or JSON in Harbor's `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's check rubric, eleven criteria.
+  Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's check rubric, eleven criteria.
 </ParamField>
 
 <ParamField path="-p, --prompt" type="path">
-  Prompt file for the evaluator agent, Harbor's `-p/--prompt`. Its text replaces the built-in check prompt, with `{task_path}`, `{file_tree}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
+  Prompt file for the evaluator agent. Its text replaces the built-in check prompt, with `{task_path}`, `{file_tree}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
 </ParamField>
 
 <ParamField path="-e, --env" type="provider">
@@ -100,7 +100,7 @@ evolve check list --status running
 evolve check show <check-id>
 ```
 
-Show one task quality check in full, Harbor's check report, with one result per task.
+Show one task quality check in full, with one result per task.
 
 ### check trace
 
@@ -120,10 +120,10 @@ Print the checker's own parsed transcript for one task check.
 evolve check download <check-id | task-check-id> [options]
 ```
 
-Save a check as Harbor's check job folder (`check_report.json` plus one folder per task) by its check id, one task check's folder by its task check id, or stream one task check's artifact.
+Save a check as a check folder (`check_report.json` plus one folder per task) by its check id, one task check's folder by its task check id, or stream one task check's artifact.
 
 <ParamField path="-o, --output-dir" type="dir" default="checks/">
-  Directory to save under. A check id lands in `<dir>/check-<id>/`, a task check id in `<dir>/check-<task>__<7 chars>/`, Harbor's own trial name.
+  Directory to save under. A check id lands in `<dir>/check-<id>/`, a task check id in `<dir>/check-<task>__<7 chars>/`, the run's own folder name.
 </ParamField>
 
 <ParamField path="--overwrite">
