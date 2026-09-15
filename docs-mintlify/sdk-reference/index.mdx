@@ -8,7 +8,7 @@ One client per noun, each built by a factory. Every factory reads `EVOLVE_API_KE
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    import { jobs, trials, datasets, analyses, checks, skills, agents, auth, orgs, sessions, hosted, meta } from "@evolvingmachines/sdk";
+    import { jobs, trials, datasets, analyses, checks, skills, agents, auth, orgs, hosted, meta } from "@evolvingmachines/sdk";
 
     interface HostedClientConfig {
       apiKey?: string;   // default: process.env.EVOLVE_API_KEY
@@ -30,7 +30,7 @@ One client per noun, each built by a factory. Every factory reads `EVOLVE_API_KE
   </Tab>
   <Tab title="Python">
     ```python
-    from evolve import jobs, trials, datasets, analyses, checks, skills, agents, auth, orgs, sessions, hosted, meta
+    from evolve import jobs, trials, datasets, analyses, checks, skills, agents, auth, orgs, hosted, meta
     from evolve import HostedClientConfig
 
     @dataclass
@@ -53,4 +53,4 @@ One client per noun, each built by a factory. Every factory reads `EVOLVE_API_KE
   </Tab>
 </Tabs>
 
-The config has no timeout setting. The sessions client has its own config, see [sessions](/sdk-reference/sessions).
+The config has no timeout setting.
