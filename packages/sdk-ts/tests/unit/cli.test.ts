@@ -5193,6 +5193,26 @@ async function testIdPrefixLawEveryNoun() {
     restoreFetch();
   }
 
+  // The walk meets the API's per-minute budget mid-way: refused typed, with the remedy, never retried into the same wall.
+  installMockFetch();
+  try {
+    setMockResponse(`/api/jobs/${jobX}/trials`, { status: 200, body: page([trialFixture({ id: trialA, job_id: jobX })]) });
+    setMockResponse(`/api/jobs/${jobY}/trials`, {
+      status: 429,
+      body: { error: { code: "rate_limited", message: "Rate limit exceeded", retryAfterSec: 30 } },
+    });
+    setMockResponse("/api/jobs", { status: 200, body: page([wireJob({ id: jobX }), wireJob({ id: jobY })]) });
+    const limited = captureIO();
+    assertEqual(await runCli(["trial", "show", "d1a10000-aaaa", ...AUTH], limited.io), 2, "a rate-limited trial walk is a usage error");
+    assert(
+      limited.err.some((l) => l.includes("2 jobs") && l.includes("refused the walk after 1") && l.includes("pass the full trial id")),
+      "the refusal counts the jobs, says how far the walk got and names the remedy"
+    );
+    assertEqual(fetchCalls.filter((c) => c.url.includes(`/api/jobs/${jobY}/trials`)).length, 1, "the refused page is read once, never retried");
+  } finally {
+    restoreFetch();
+  }
+
   // SESSIONS and JOB IMPORTS — each off its own list.
   const sessA = "5e550000-aaaa-2222-3333-444455556666";
   const sessB = "5e550000-bbbb-2222-3333-444455556666";
@@ -5232,6 +5252,9 @@ async function testIdPrefixLawEveryNoun() {
   const anA = "a0a10000-aaaa-2222-3333-444455556666";
   const trialT = "d1a10000-cccc-2222-3333-444455556666";
   const trialN = "d1a10000-eeee-2222-3333-444455556666"; // analyzed by nobody
+  const jobN = "0b000004-1111-2222-3333-444455556666";
+  const regradeR = "0e60ade0-aaaa-2222-3333-444455556666"; // a regrade result, served by the trial door under its own id
+  const regradeJob = "0b000005-1111-2222-3333-444455556666";
   const anB = "beef0000-aaaa-2222-3333-444455556666";
   const trialS = "beef0000-bbbb-2222-3333-444455556666"; // shares anB's prefix
   const ghost = "00000000-0000-4000-8000-000000000000";
@@ -5240,12 +5263,14 @@ async function testIdPrefixLawEveryNoun() {
     const verdictA = analysisVerdictFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
     const notAnAnalysis = { status: 400, body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" } };
     setMockResponse(`/api/traces/trials/${anA}/artifacts?what=analysis`, { status: 200, body: { analysis: verdictA } });
+    setMockResponse(`/api/traces/trials/${anA}/artifacts?what=trace-stdout`, { status: 200, body: { log: "analyzer stdout" } });
     setMockResponse(`/api/traces/trials/${anA}/events`, {
       status: 200,
       body: { session: { id: anA, kind: "analysis", type: "trial", tag: "t", analyzedTrialId: trialT, jobId: "job-1" }, events: [], total: 0 },
     });
     setMockResponse(`/api/traces/trials/${trialT}/artifacts?what=analysis`, notAnAnalysis);
     setMockResponse(`/api/traces/trials/${trialN}/artifacts?what=analysis`, notAnAnalysis);
+    setMockResponse(`/api/traces/trials/${regradeR}/artifacts?what=analysis`, notAnAnalysis);
     setMockResponse(`/api/traces/trials/${ghost}/artifacts?what=analysis`, {
       status: 404,
       body: { error: { code: "analysis_not_found", message: `Analysis not found: ${ghost}` } },
@@ -5254,7 +5279,11 @@ async function testIdPrefixLawEveryNoun() {
       status: 200,
       body: trialFixture({ id: trialT, status: "SCORED", reward: 1, analysis: verdictA as unknown as Trial["analysis"] }),
     });
-    setMockResponse(`/api/trials/${trialN}`, { status: 200, body: trialFixture({ id: trialN, job_id: "job-n", status: "SCORED", reward: 0, analysis: null }) });
+    setMockResponse(`/api/trials/${trialN}`, { status: 200, body: trialFixture({ id: trialN, job_id: jobN, status: "SCORED", reward: 0, analysis: null }) });
+    setMockResponse(`/api/jobs/${jobN}`, { status: 200, body: wireJob({ id: jobN }) });
+    // The trial door's regrade body: analysis null, job_id the regrade job (regrade.ts publicRegradeTrial).
+    setMockResponse(`/api/trials/${regradeR}`, { status: 200, body: trialFixture({ id: regradeR, job_id: regradeJob, status: "SCORED", reward: 1, analysis: null }) });
+    setMockResponse(`/api/jobs/${regradeJob}`, { status: 200, body: wireJob({ id: regradeJob, is_regrade: true }) });
     setMockResponse("/api/analyses", {
       status: 200,
       body: page([verdictA, analysisVerdictFixture({ id: anB, trial_id: trialS })]),
@@ -5262,20 +5291,34 @@ async function testIdPrefixLawEveryNoun() {
 
     // A FULL trial id: the verdict door refuses it typed, the trial's own row names its latest analysis.
     const byTrial = captureIO();
+    const beforeTrial = fetchCalls.length;
     assertEqual(await runCli(["analysis", "show", trialT, "--json", ...AUTH], byTrial.io), 0, "analysis show takes a full trial id");
     assertEqual((JSON.parse(byTrial.out[0]) as { id: string }).id, anA, "and serves the trial's LATEST analysis (trial.analysis)");
     assert(fetchCalls.some((c) => c.url.endsWith(`/api/trials/${trialT}`)), "read off the trial's own row");
+    assertEqual(fetchCalls.length - beforeTrial, 2, "TWO reads: the door's species answer and the trial row — the row's analysis IS the verdict, not read a third time");
 
     // A full trial id on trace: the same resolution, then the analyzer's transcript.
     const traceByTrial = captureIO();
     assertEqual(await runCli(["analysis", "trace", trialT, "--json", ...AUTH], traceByTrial.io), 0, "analysis trace takes a full trial id");
     assert(fetchCalls[fetchCalls.length - 1].url.includes(`/api/traces/trials/${anA}/events`), "and reads the analysis's transcript");
 
-    // A full analysis id: the verdict door's yes is the answer, no trial read.
+    // A full analysis id: the verdict door's yes is the answer, no trial read — and the answer is what show prints.
     const byAnalysis = captureIO();
     const before = fetchCalls.length;
     assertEqual(await runCli(["analysis", "show", anA, ...AUTH], byAnalysis.io), 0, "a full analysis id names that run");
     assert(!fetchCalls.slice(before).some((c) => c.url.includes("/api/trials/")), "without reading any trial");
+    assertEqual(fetchCalls.length - before, 1, "ONE read: the door's verdict is the document printed, never read twice");
+
+    // A full analysis id on a stream: the resolver's door read is the SDK's species proof — no second gate read.
+    const streamed = captureIO();
+    const beforeStream = fetchCalls.length;
+    assertEqual(await runCli(["analysis", "download", anA, "--stream", "trace-stdout", ...AUTH], streamed.io), 0, "a full analysis id streams an artifact");
+    assertEqual(streamed.out, ["analyzer stdout"], "the analyzer's own bytes");
+    assertEqual(
+      fetchCalls.slice(beforeStream).map((c) => new URL(c.url).search),
+      ["?what=analysis", "?what=trace-stdout"],
+      "TWO reads: the verdict door once (resolution and species proof are one read), then the stream"
+    );
 
     // A trial PREFIX: resolved among the analysis list's trial_id column, then the trial's row.
     const byTrialPrefix = captureIO();
@@ -5287,6 +5330,11 @@ async function testIdPrefixLawEveryNoun() {
     const beforePrefix = fetchCalls.length;
     assertEqual(await runCli(["analysis", "download", "a0a10000-aaaa", "--stream", "analysis", ...AUTH], byAnalysisPrefix.io), 0, "an analysis prefix names that run on download too");
     assert(!fetchCalls.slice(beforePrefix).some((c) => c.url.includes("/api/trials/")), "without reading any trial");
+    assertEqual(
+      fetchCalls.slice(beforePrefix).map((c) => new URL(c.url).pathname + new URL(c.url).search),
+      [`/api/analyses?limit=200`, `/api/traces/trials/${anA}/artifacts?what=analysis`],
+      "TWO reads: the index walk, then the verdict door once"
+    );
 
     // A prefix an analysis AND a trial own is ambiguous, both named.
     const both = captureIO();
@@ -5301,10 +5349,21 @@ async function testIdPrefixLawEveryNoun() {
     assertEqual(await runCli(["analysis", "show", "a0a1", ...AUTH], short.io), 2, "a too-short analysis prefix is a usage error");
     assert(short.err.some((l) => l.includes("too short to name an analysis or analyzed trial")), "the refusal names both nouns");
 
-    // A trial nobody analyzed: the trial's row says so, typed.
+    // A trial nobody analyzed: the trial's row says so, typed, with the remedy — once its job says it is no regrade.
     const none = captureIO();
     assertEqual(await runCli(["analysis", "show", trialN, ...AUTH], none.io), 1, "a trial with no analysis exits 1");
-    assert(none.err.some((l) => l.includes(`trial ${trialN} has no analysis yet`)), "the refusal says which trial and why");
+    assert(none.err.some((l) => l.includes(`trial ${trialN} has no analysis yet — run: evolve analyze ${jobN}`)), "the refusal says which trial, why, and the remedy");
+    assert(fetchCalls.some((c) => c.url.endsWith(`/api/jobs/${jobN}`)), "after reading the trial's job (is_regrade false)");
+
+    // A regrade result's id: the trial door serves it with analysis null, but it is never "not yet" —
+    // a regrade is never analyzed, and there is no analyze remedy to offer.
+    const regrade = captureIO();
+    assertEqual(await runCli(["analysis", "show", regradeR, ...AUTH], regrade.io), 1, "a regrade result's id exits 1");
+    assert(
+      regrade.err.some((l) => l.includes(`${regradeR} is a regrade result — a regrade is never analyzed; analyses belong to its source trial`)),
+      "the refusal states the true fact"
+    );
+    assert(!regrade.err.some((l) => l.includes("yet") || l.includes("evolve analyze")), "and never calls it a trial awaiting analysis");
 
     // An id nobody owns: the verdict door's own 404 — the analysis noun, whichever verb asked.
     const miss = captureIO();

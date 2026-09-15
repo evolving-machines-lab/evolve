@@ -449,7 +449,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<id> [id...]",
-        example: "evolve job show cme12ab34",
+        example: "evolve job show 3e1f9a2c-…",
       },
       trials: {
         summary: "List a job's trials",
@@ -461,7 +461,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job trials cme12ab34 --status FAILED,SCORING_ERROR",
+        example: "evolve job trials 3e1f9a2c-… --status FAILED,SCORING_ERROR",
       },
       tasks: {
         summary: "Per-task rollup of a job",
@@ -469,7 +469,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job tasks cme12ab34",
+        example: "evolve job tasks 3e1f9a2c-…",
       },
       compare: {
         summary: "Compare 2-10 jobs side by side",
@@ -477,7 +477,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 2,
         maxPositionals: 10,
         positionalUsage: "<id> <id> [...]",
-        example: "evolve job compare cme12ab34 cme56cd78",
+        example: "evolve job compare 3e1f9a2c-… 9b7d4e10-…",
       },
       cancel: {
         summary: "Request cancellation of a job",
@@ -485,7 +485,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job cancel cme12ab34",
+        example: "evolve job cancel 3e1f9a2c-…",
       },
       delete: {
         summary: "Permanently delete a job you created — trials, traces, analyses and stored files",
@@ -495,7 +495,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job delete cme12ab34 --yes",
+        example: "evolve job delete 3e1f9a2c-… --yes",
       },
       stop: {
         summary: "Stop one dataset's live trials without cancelling the job",
@@ -505,7 +505,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job stop cme12ab34 --dataset deep-swe",
+        example: "evolve job stop 3e1f9a2c-… --dataset deep-swe",
       },
       resume: {
         summary: "New linked job over a terminal job's failed or stopped trials",
@@ -522,7 +522,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job resume cme12ab34 -f InfrastructureError",
+        example: "evolve job resume 3e1f9a2c-… -f InfrastructureError",
       },
       retry: {
         summary: "New linked job re-running selected trials (all, failed-only, or named ids)",
@@ -545,7 +545,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job retry cme12ab34 --failed-only",
+        example: "evolve job retry 3e1f9a2c-… --failed-only",
       },
       regrade: {
         summary: "Verifier-only re-run of a terminal job (the result IS a job)",
@@ -556,7 +556,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job regrade cme12ab34 --task tricky-task",
+        example: "evolve job regrade 3e1f9a2c-… --task tricky-task",
       },
       imports: {
         summary: "List your job imports (uploads) newest first — how an import id is found again",
@@ -593,7 +593,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job download cme12ab34 -o results/",
+        example: "evolve job download 3e1f9a2c-… -o results/",
       },
       grep: {
         summary: "Search every trial's parsed trace in one server-side pass",
@@ -610,7 +610,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 2,
         maxPositionals: 2,
         positionalUsage: "<id> <pattern>",
-        example: "evolve job grep cme12ab34 'permission denied'",
+        example: "evolve job grep 3e1f9a2c-… 'permission denied'",
       },
     },
   },
@@ -623,7 +623,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial show cmt90ef12",
+        example: "evolve trial show d1a10c4e-…",
       },
       trace: {
         summary: "Print a trial's parsed trace, filtered server-side",
@@ -643,7 +643,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial trace cmt90ef12 --grep 'permission denied' --tail 50",
+        example: "evolve trial trace d1a10c4e-… --grep 'permission denied' --tail 50",
       },
       download: {
         summary: "Save a trial as Harbor's trial tree (plus evolve.json), or stream one artifact",
@@ -669,7 +669,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial download cmt90ef12 --stream trace-stdout",
+        example: "evolve trial download d1a10c4e-… --stream trace-stdout",
       },
       retry: {
         summary: "Run one settled trial again (the result IS a job)",
@@ -677,7 +677,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial retry cmt90ef12",
+        example: "evolve trial retry d1a10c4e-…",
       },
       regrade: {
         summary: "Verifier-only re-run of one trial (the result IS a job)",
@@ -685,7 +685,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial regrade cmt90ef12",
+        example: "evolve trial regrade d1a10c4e-…",
       },
       stop: {
         summary: "Stop in-flight trials without cancelling their job",
@@ -693,7 +693,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<trial-id> [trial-id...]",
-        example: "evolve trial stop cmt90ef12 cmt34gh56",
+        example: "evolve trial stop d1a10c4e-… d1a10f72-…",
       },
     },
   },
@@ -719,7 +719,7 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve analysis list --job cme12ab34 --status failed",
+        example: "evolve analysis list --job 3e1f9a2c-… --status failed",
       },
       show: {
         summary: "Show one analysis run in full (the verdict document)",
@@ -728,7 +728,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<analysis-id | trial-id>",
-        example: "evolve analysis show cma56ef12",
+        example: "evolve analysis show a0a1b2c3-…",
       },
       trace: {
         summary: "Print the analyzer's own parsed transcript",
@@ -745,7 +745,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<analysis-id | trial-id>",
-        example: "evolve analysis trace cma56ef12 --since 200",
+        example: "evolve analysis trace a0a1b2c3-… --since 200",
       },
       download: {
         summary:
@@ -777,7 +777,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<analysis-id | trial-id>",
-        example: "evolve analysis download cma56ef12 --stream trace-stdout",
+        example: "evolve analysis download a0a1b2c3-… --stream trace-stdout",
       },
     },
   },
@@ -1290,7 +1290,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
-    example: "evolve analyze cme12ab34 -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch",
+    example: "evolve analyze 3e1f9a2c-… -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch",
   },
   // Harbor's `check` is a top-level command too (their cli/main.py:163
   // binds check_command beside analyze); its flags are theirs
@@ -4300,6 +4300,16 @@ async function resolveId(inv: Invocation, noun: IdNoun, ref: string): Promise<st
 }
 
 /**
+ * What an analysis verb's positional resolved to: the analysis id the wire
+ * gets, and the verdict document when the resolution already read it (null
+ * = not read) — so `show` never spends a second read on the same door.
+ */
+interface AnalysisRef {
+  id: string;
+  analysis: TrialAnalysis | null;
+}
+
+/**
  * The analysis verbs' positional (ANALYSIS_REF_RULE, as their help states
  * it): an analysis id names that run; a trial id names the trial's LATEST
  * analysis — the one `trial show` prints on its analysis row, the trial's
@@ -4308,23 +4318,25 @@ async function resolveId(inv: Invocation, noun: IdNoun, ref: string): Promise<st
  * full id is not walked: the verdict door says which species it is — 200 is
  * the analysis itself; its typed 400 ("analysis.json belongs to an analysis
  * run") is the door resolving the id as another species, and the trial's
- * own row then says whether it has an analysis (a regrade outcome has none;
- * a task check is no trial, so the door's sentence stands); its 404
+ * own row then says whether it has an analysis (latestAnalysis; a task
+ * check is no trial, so the door's sentence stands); its 404
  * (analysis_not_found) means no species has the id — the refusal every
- * analysis verb inherits, whichever door it would have read next.
+ * analysis verb inherits, whichever door it would have read next. The
+ * verdict a resolution read rides back with the id: the door's 200 and the
+ * trial row's `analysis` are the same document (the server serializes both
+ * with one function), so whichever door answered, `show` prints it as is.
  */
 async function resolveAnalysisRef(
   inv: Invocation,
   client: ReturnType<typeof analyses>,
   ref: string
-): Promise<string> {
+): Promise<AnalysisRef> {
   const match = await resolveIdAmong(inv, ["analysis", "analyzed trial"], ref);
-  if (match.noun === "analysis") return match.id;
-  if (match.noun === "analyzed trial") return latestAnalysisId(await trials(clientConfig(inv)).get(match.id));
-  if (ref === undefined || !FULL_UUID_RE.test(ref)) return ref;
+  if (match.noun === "analysis") return { id: match.id, analysis: null };
+  if (match.noun === "analyzed trial") return latestAnalysis(inv, await trials(clientConfig(inv)).get(match.id));
+  if (ref === undefined || !FULL_UUID_RE.test(ref)) return { id: ref, analysis: null };
   try {
-    await client.get(ref);
-    return ref;
+    return { id: ref, analysis: await client.get(ref) };
   } catch (error) {
     if (!(error instanceof EvolveApiError) || error.status !== 400) throw error;
     let trial: Trial;
@@ -4334,13 +4346,32 @@ async function resolveAnalysisRef(
       if (trialError instanceof EvolveApiError && trialError.status === 404) throw error;
       throw trialError;
     }
-    return latestAnalysisId(trial);
+    return latestAnalysis(inv, trial);
   }
 }
 
-function latestAnalysisId(trial: Trial): string {
-  if (trial.analysis) return trial.analysis.id;
+/**
+ * The trial's latest analysis, or the true reason it has none. The trial
+ * door serves a regrade result under its own id with `analysis` null and
+ * the regrade job as its `job_id`; a regrade is never analyzed (analyses
+ * belong to its source trial), so it is not sent to `evolve analyze` — the
+ * job's `is_regrade` is the one contract fact that tells it from an
+ * ordinary trial nobody analyzed yet, read only on this refusal path.
+ */
+async function latestAnalysis(inv: Invocation, trial: Trial): Promise<AnalysisRef> {
+  if (trial.analysis) return { id: trial.analysis.id, analysis: trial.analysis };
+  const job = await jobs(clientConfig(inv)).get(trial.job_id);
+  if (job.is_regrade) {
+    throw new Error(
+      `${trial.id} is a regrade result — a regrade is never analyzed; analyses belong to its source trial`
+    );
+  }
   throw new Error(`trial ${trial.id} has no analysis yet — run: evolve analyze ${trial.job_id}`);
+}
+
+/** The verdict document: the one the resolution read, else one read of the verdict door. */
+function analysisVerdict(client: ReturnType<typeof analyses>, ref: AnalysisRef): Promise<TrialAnalysis> {
+  return ref.analysis !== null ? Promise.resolve(ref.analysis) : client.get(ref.id);
 }
 
 /** The one { limit, cursor } pair every paged command accepts. */
@@ -6230,7 +6261,7 @@ async function cmdAnalysisList(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdAnalysisShow(inv: Invocation, io: CliIO): Promise<number> {
   const client = analyses(clientConfig(inv));
-  const analysis = await client.get(await resolveAnalysisRef(inv, client, inv.positionals[0]));
+  const analysis = await analysisVerdict(client, await resolveAnalysisRef(inv, client, inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(analysis));
   } else {
@@ -6247,7 +6278,7 @@ async function cmdAnalysisTrace(inv: Invocation, io: CliIO): Promise<number> {
   // ride (client-side filtering would be opinion, not wire).
   const since = inv.flags.since as number | undefined;
   const transcript = await client.transcript(
-    await resolveAnalysisRef(inv, client, inv.positionals[0]),
+    (await resolveAnalysisRef(inv, client, inv.positionals[0])).id,
     since !== undefined ? { since } : undefined
   );
   for (const event of transcript.events) emitTraceEvent(io, json, event);
@@ -6287,7 +6318,8 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
   ) {
     throw new CliUsageError("--since pages the parsed events; it applies only to --stream trace-parsed");
   }
-  const analysisId = await resolveAnalysisRef(inv, client, inv.positionals[0]);
+  const ref = await resolveAnalysisRef(inv, client, inv.positionals[0]);
+  const analysisId = ref.id;
 
   if (stream !== undefined) {
     if (!ANALYSIS_STREAM_ARTIFACTS.includes(stream as AnalysisStreamArtifact)) {
@@ -6297,7 +6329,7 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
       // The verdict document itself — the same object the feed's
       // &format=log form downloads under Harbor's analysis.json name.
       // --json keeps the wire's {analysis} envelope, like {log} below.
-      const analysis = await client.get(analysisId);
+      const analysis = await analysisVerdict(client, ref);
       io.out(json ? JSON.stringify({ analysis }) : JSON.stringify(analysis, null, 2));
       return 0;
     }
@@ -6352,7 +6384,7 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
     scratchPrefix: "evolve-analysis-download-",
     enrich: async (targetDir) => {
       const { join } = await import("node:path");
-      const analysis = await client.get(analysisId);
+      const analysis = await analysisVerdict(client, ref);
       await writeRecord(join(targetDir, "evolve.json"), analysisEvolveRecord(analysis, await callerUserId(inv)));
       return ["evolve.json"];
     },
