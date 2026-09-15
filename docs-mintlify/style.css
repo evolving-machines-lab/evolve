@@ -276,3 +276,11 @@ samp {
 .dark #content svg[id^="mermaid"] .cluster-label text {
   fill: #8c8c8c;
 }
+
+/* The floating "Ask a question" bar at the bottom of the content column is
+   hidden (the owner's word, 2026-09-15); docs.json has no switch for it. The
+   assistant still opens from its entries beside the search box. */
+.chat-assistant-floating-input,
+div:has(> .chat-assistant-floating-input) {
+  display: none;
+}
