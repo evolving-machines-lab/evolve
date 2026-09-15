@@ -4347,10 +4347,12 @@ export interface AnalysesClient {
    * TrialAnalysis carrying the trial, job, and task it judged, so a
    * headless round is list → get each. `{ scope, job, status }` narrow it;
    * await the handle for one page, or `for await` it to walk every page.
-   * One boundary under `scope: "shared"` today: those rows list, but `get`,
-   * `transcript` and `artifact` refuse them (404 `Trial not found`) — the
-   * feed doors they ride open only to the job's creator (owner ruling on
-   * aligning those doors pending); `my` rows resolve on every read.
+   * Every row listed under either scope resolves on every read: the per-run
+   * doors open to the job's creator and to every member of its organization,
+   * the law jobs().get() and trials().get() follow. An id you may not read
+   * answers exactly as one that does not exist — `analysis_not_found` (404)
+   * from `get`, `artifact` and `download`; `transcript` alone rides the
+   * feed's species-blind events door, which answers `trial_not_found`.
    */
   list(options?: ListAnalysesOptions): AnalysisList;
   /**
@@ -4639,7 +4641,8 @@ export interface TaskCheckTranscript {
  * doors AnalysesClient's reads ride (its doc records the tension), under the
  * check's own access law — the creator and the owning organization's
  * members; an id you may not read is 404 `trial_not_found`, the code every
- * feed door speaks.
+ * door a task check rides speaks (the feed's ?what=analysis selector alone
+ * answers `analysis_not_found`).
  */
 export interface ChecksClient {
   /** Upload a task directory (or a directory of them), or name a published dataset, and start the check. Returns the accepted Check (202). */

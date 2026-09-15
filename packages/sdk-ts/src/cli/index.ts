@@ -150,6 +150,8 @@ interface FlagSpec {
 
 interface CommandSpec {
   summary: string;
+  /** A law the verb's own help states under its summary (the group table shows the summary alone). */
+  notes?: string;
   flags: Record<string, FlagSpec>;
   minPositionals: number;
   maxPositionals: number;
@@ -192,6 +194,15 @@ const SCOPE_FLAG: FlagSpec = {
   value: "<my|shared>",
   help: "Visibility scope: my (what you created, the default) | shared (your organizations' rows that teammates created)",
 };
+
+/**
+ * The precedence the three per-run analysis verbs state in their help — the
+ * CLI-side law resolveAnalysisRef implements.
+ */
+const ANALYSIS_REF_RULE =
+  "An analysis id (or its unambiguous prefix) names that run; a trial id (or prefix) names the trial's " +
+  "latest analysis — the one `trial show` prints on its analysis row; a prefix matching both an analysis " +
+  "and a trial is refused as ambiguous, naming both.";
 
 const JOB_START_FLAGS: Record<string, FlagSpec> = {
   config: {
@@ -438,7 +449,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<id> [id...]",
-        example: "evolve job show cme12ab34",
+        example: "evolve job show 3e1f9a2c-…",
       },
       trials: {
         summary: "List a job's trials",
@@ -450,7 +461,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job trials cme12ab34 --status FAILED,SCORING_ERROR",
+        example: "evolve job trials 3e1f9a2c-… --status FAILED,SCORING_ERROR",
       },
       tasks: {
         summary: "Per-task rollup of a job",
@@ -458,7 +469,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job tasks cme12ab34",
+        example: "evolve job tasks 3e1f9a2c-…",
       },
       compare: {
         summary: "Compare 2-10 jobs side by side",
@@ -466,7 +477,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 2,
         maxPositionals: 10,
         positionalUsage: "<id> <id> [...]",
-        example: "evolve job compare cme12ab34 cme56cd78",
+        example: "evolve job compare 3e1f9a2c-… 9b7d4e10-…",
       },
       cancel: {
         summary: "Request cancellation of a job",
@@ -474,7 +485,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job cancel cme12ab34",
+        example: "evolve job cancel 3e1f9a2c-…",
       },
       delete: {
         summary: "Permanently delete a job you created — trials, traces, analyses and stored files",
@@ -484,7 +495,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job delete cme12ab34 --yes",
+        example: "evolve job delete 3e1f9a2c-… --yes",
       },
       stop: {
         summary: "Stop one dataset's live trials without cancelling the job",
@@ -494,7 +505,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job stop cme12ab34 --dataset deep-swe",
+        example: "evolve job stop 3e1f9a2c-… --dataset deep-swe",
       },
       resume: {
         summary: "New linked job over a terminal job's failed or stopped trials",
@@ -511,7 +522,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job resume cme12ab34 -f InfrastructureError",
+        example: "evolve job resume 3e1f9a2c-… -f InfrastructureError",
       },
       retry: {
         summary: "New linked job re-running selected trials (all, failed-only, or named ids)",
@@ -534,7 +545,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job retry cme12ab34 --failed-only",
+        example: "evolve job retry 3e1f9a2c-… --failed-only",
       },
       regrade: {
         summary: "Verifier-only re-run of a terminal job (the result IS a job)",
@@ -545,7 +556,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job regrade cme12ab34 --task tricky-task",
+        example: "evolve job regrade 3e1f9a2c-… --task tricky-task",
       },
       imports: {
         summary: "List your job imports (uploads) newest first — how an import id is found again",
@@ -565,7 +576,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<import-id>",
-        example: "evolve job import 4f1c… --watch",
+        example: "evolve job import cmfl2q8r30001v4kx9zd1h7wa --watch",
       },
       download: {
         summary:
@@ -582,7 +593,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job download cme12ab34 -o results/",
+        example: "evolve job download 3e1f9a2c-… -o results/",
       },
       grep: {
         summary: "Search every trial's parsed trace in one server-side pass",
@@ -599,7 +610,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 2,
         maxPositionals: 2,
         positionalUsage: "<id> <pattern>",
-        example: "evolve job grep cme12ab34 'permission denied'",
+        example: "evolve job grep 3e1f9a2c-… 'permission denied'",
       },
     },
   },
@@ -612,7 +623,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial show cmt90ef12",
+        example: "evolve trial show d1a10c4e-…",
       },
       trace: {
         summary: "Print a trial's parsed trace, filtered server-side",
@@ -632,7 +643,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial trace cmt90ef12 --grep 'permission denied' --tail 50",
+        example: "evolve trial trace d1a10c4e-… --grep 'permission denied' --tail 50",
       },
       download: {
         summary: "Save a trial as Harbor's trial tree (plus evolve.json), or stream one artifact",
@@ -658,7 +669,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial download cmt90ef12 --stream trace-stdout",
+        example: "evolve trial download d1a10c4e-… --stream trace-stdout",
       },
       retry: {
         summary: "Run one settled trial again (the result IS a job)",
@@ -666,7 +677,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial retry cmt90ef12",
+        example: "evolve trial retry d1a10c4e-…",
       },
       regrade: {
         summary: "Verifier-only re-run of one trial (the result IS a job)",
@@ -674,7 +685,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial regrade cmt90ef12",
+        example: "evolve trial regrade d1a10c4e-…",
       },
       stop: {
         summary: "Stop in-flight trials without cancelling their job",
@@ -682,7 +693,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<trial-id> [trial-id...]",
-        example: "evolve trial stop cmt90ef12 cmt34gh56",
+        example: "evolve trial stop d1a10c4e-… d1a10f72-…",
       },
     },
   },
@@ -708,18 +719,20 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve analysis list --job cme12ab34 --status failed",
+        example: "evolve analysis list --job 3e1f9a2c-… --status failed",
       },
       show: {
         summary: "Show one analysis run in full (the verdict document)",
+        notes: ANALYSIS_REF_RULE,
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
-        positionalUsage: "<analysis-id>",
-        example: "evolve analysis show cma56ef12",
+        positionalUsage: "<analysis-id | trial-id>",
+        example: "evolve analysis show a0a1b2c3-…",
       },
       trace: {
         summary: "Print the analyzer's own parsed transcript",
+        notes: ANALYSIS_REF_RULE,
         flags: {
           since: {
             kind: "number",
@@ -731,12 +744,13 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 1,
         maxPositionals: 1,
-        positionalUsage: "<analysis-id>",
-        example: "evolve analysis trace cma56ef12 --since 200",
+        positionalUsage: "<analysis-id | trial-id>",
+        example: "evolve analysis trace a0a1b2c3-… --since 200",
       },
       download: {
         summary:
           "Save an analysis run as Harbor's wrapper-trial folder (+ evolve.json), or stream one artifact",
+        notes: ANALYSIS_REF_RULE,
         flags: {
           "output-dir": {
             kind: "string",
@@ -762,8 +776,8 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 1,
         maxPositionals: 1,
-        positionalUsage: "<analysis-id>",
-        example: "evolve analysis download cma56ef12 --stream trace-stdout",
+        positionalUsage: "<analysis-id | trial-id>",
+        example: "evolve analysis download a0a1b2c3-… --stream trace-stdout",
       },
     },
   },
@@ -1276,7 +1290,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
-    example: "evolve analyze cme12ab34 -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch",
+    example: "evolve analyze 3e1f9a2c-… -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch",
   },
   // Harbor's `check` is a top-level command too (their cli/main.py:163
   // binds check_command beside analyze); its flags are theirs
@@ -1478,6 +1492,7 @@ function commandHelp(command: string, spec: CommandSpec): string {
     "",
     spec.summary,
   ];
+  if (spec.notes !== undefined) lines.push("", spec.notes);
   if (Object.keys(spec.flags).length > 0) {
     lines.push("", "Options:", ...flagLines(spec.flags));
   }
@@ -4088,83 +4103,276 @@ function clientConfig(inv: Invocation): HostedClientConfig {
 }
 
 const FULL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const JOB_ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{7,34}$/i;
-const JOB_ID_PREFIX_MIN = 8;
+const ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{7,34}$/i;
+const ID_PREFIX_MIN = 8;
+/** The contract's page cap on every list an index walks (spec: max 200) — the fewest reads per walk. */
+const INDEX_PAGE = 200;
 
 /**
- * ONE walk of the caller's job list per invocation, not one per id.
- * `job compare <a> <b> <c>` resolves three prefixes and used to paginate the
- * whole list three times to answer a question one walk answers; the promise
- * is cached, so the ids are also read once when the resolutions overlap.
- * Per INVOCATION, never process-wide: a long-lived host importing runCli must
- * not answer a later command from an older list.
+ * The nouns whose ids a verb takes and a prefix may name. Each has ONE index:
+ * the ids that noun's own list serves the caller — the one bounded set a
+ * prefix can be checked against — every page walked, once per invocation.
+ * "analyzed trial" is the trial an analysis verb accepts in place of an
+ * analysis id: its ids are the analysis list's trial_id column, so a trial
+ * nobody analyzed is not in it — nothing those verbs could serve for it.
+ * A job import is NOT a noun here: its id is a cuid, not a uuid, so no hex
+ * prefix can name one — `job import` sends the id as typed.
  */
-const JOB_ID_INDEX = new WeakMap<Invocation, Promise<string[]>>();
+type IdNoun = "job" | "trial" | "analysis" | "analyzed trial" | "check" | "task check" | "session" | "skill";
 
-function jobIdIndex(inv: Invocation): Promise<string[]> {
-  const cached = JOB_ID_INDEX.get(inv);
-  if (cached) return cached;
-  const walk = (async () => {
-    const client = jobs(clientConfig(inv));
-    // The index walks the SCOPE the verb names: `analysis list --scope shared
-    // --job <prefix>` resolves the prefix among the teammates' jobs it is
-    // about to list, never among the caller's own — a prefix that could only
-    // ever match the wrong scope's jobs would refuse every time.
-    const scope = parseScopeFlag(inv);
-    const ids: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await client.list({
-        limit: 100,
-        ...(cursor ? { cursor } : {}),
-        ...(scope !== undefined ? { scope } : {}),
-      });
-      for (const job of page.items) ids.push(job.id);
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
-    return ids;
-  })();
-  JOB_ID_INDEX.set(inv, walk);
-  return walk;
+const ID_NOUN_PLURAL: Record<IdNoun, string> = {
+  job: "jobs",
+  trial: "trials",
+  analysis: "analyses",
+  "analyzed trial": "analyzed trials",
+  check: "checks",
+  "task check": "task checks",
+  session: "sessions",
+  skill: "skills",
+};
+
+/**
+ * ONE walk of a list per invocation, however many ids resolve against it —
+ * `job compare <a> <b> <c>` used to page the job list once per argument, and
+ * two nouns read off one list (a check and its task checks; an analysis and
+ * the trial it judged) share the pages. The promise is cached, so overlapping
+ * resolutions read it once. Per INVOCATION, never process-wide: a long-lived
+ * host importing runCli must not answer a later command from an older list.
+ */
+const LIST_WALKS = new WeakMap<Invocation, Map<string, Promise<unknown>>>();
+
+function walkOnce<T>(inv: Invocation, list: string, walk: () => Promise<T>): Promise<T> {
+  let walks = LIST_WALKS.get(inv);
+  if (walks === undefined) {
+    walks = new Map();
+    LIST_WALKS.set(inv, walks);
+  }
+  const cached = walks.get(list);
+  if (cached !== undefined) return cached as Promise<T>;
+  const started = walk();
+  walks.set(list, started);
+  return started;
+}
+
+/** Every row of a paged list handle — the SDK's for-await follows every cursor. */
+async function everyRow<T>(list: AsyncIterable<T>): Promise<T[]> {
+  const rows: T[] = [];
+  for await (const row of list) rows.push(row);
+  return rows;
 }
 
 /**
- * ONE prefix law for every job-id verb: a full uuid passes through untouched;
- * an id-shaped prefix of at least 8 characters is resolved against the
- * caller's own job list (every page) to the one job it names — zero or
- * several matches refuse loudly. The wire always carries the full id, so no
- * verb depends on server-side prefix leniency and no verb lacks it. (It used
- * to be per-verb luck: show/cancel accepted prefixes, regrade/trials 404'd.)
- * Anything not id-shaped passes through for the server to refuse by name.
- * Trial ids are NOT prefix-resolved — there is no bounded list to resolve
- * them against; trial verbs take full ids.
+ * An index walks the SCOPE the verb names: `analysis list --scope shared
+ * --job <prefix>` resolves the prefix among the teammates' jobs it is about
+ * to list, never among the caller's own — a prefix that could only ever match
+ * the wrong scope's rows would refuse every time. A verb without --scope walks
+ * the server's default, the caller's own rows.
  */
-async function resolveJobId(inv: Invocation, ref: string): Promise<string> {
-  if (ref === undefined || FULL_UUID_RE.test(ref)) return ref;
-  if (/^[0-9a-f][0-9a-f-]*$/i.test(ref) && ref.length < JOB_ID_PREFIX_MIN) {
+function indexScope(inv: Invocation): { scope?: JobListScope } {
+  const scope = parseScopeFlag(inv);
+  return scope !== undefined ? { scope } : {};
+}
+
+const jobRows = (inv: Invocation): Promise<Job[]> =>
+  walkOnce(inv, "jobs", () => everyRow(jobs(clientConfig(inv)).list({ limit: INDEX_PAGE, ...indexScope(inv) })));
+const analysisRows = (inv: Invocation): Promise<TrialAnalysis[]> =>
+  walkOnce(inv, "analyses", () =>
+    everyRow(analyses(clientConfig(inv)).list({ limit: INDEX_PAGE, ...indexScope(inv) }))
+  );
+const checkRows = (inv: Invocation): Promise<Check[]> =>
+  walkOnce(inv, "checks", () => everyRow(checks(clientConfig(inv)).list({ limit: INDEX_PAGE, ...indexScope(inv) })));
+
+/**
+ * Trials have no list of their own: the one bounded set is every trial of
+ * every job the scope lists, read job by job off each job's trial pages —
+ * one request per job, spent against the API's per-minute budget. When that
+ * budget refuses mid-walk the prefix is refused typed, with the remedy;
+ * retrying into the same wall would spend the budget again for nothing.
+ */
+async function trialIds(inv: Invocation): Promise<string[]> {
+  const client = jobs(clientConfig(inv));
+  const jobIds = (await jobRows(inv)).map((job) => job.id);
+  const ids: string[] = [];
+  let walked = 0;
+  for (const jobId of jobIds) {
+    try {
+      for await (const trial of client.trials(jobId, { limit: INDEX_PAGE })) ids.push(trial.id);
+    } catch (error) {
+      if (error instanceof EvolveApiError && error.code === "rate_limited") {
+        throw new CliUsageError(
+          `trial id prefixes resolve against every trial of your ${jobIds.length} jobs (one read per job); ` +
+            `the API's rate limit refused the walk after ${walked} — pass the full trial id ` +
+            "(evolve job trials <job> prints them)"
+        );
+      }
+      throw error;
+    }
+    walked += 1;
+  }
+  return ids;
+}
+
+async function sessionIds(inv: Invocation): Promise<string[]> {
+  const client = sessions(sessionsConfig(inv));
+  const ids: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await client.list({ limit: INDEX_PAGE, state: "all", ...(cursor !== undefined ? { cursor } : {}) });
+    for (const session of page.items) ids.push(session.id);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor !== undefined);
+  return ids;
+}
+
+const ID_INDEX: Record<IdNoun, (inv: Invocation) => Promise<string[]>> = {
+  job: async (inv) => (await jobRows(inv)).map((job) => job.id),
+  trial: trialIds,
+  analysis: async (inv) => (await analysisRows(inv)).map((analysis) => analysis.id),
+  "analyzed trial": async (inv) => (await analysisRows(inv)).map((analysis) => analysis.trial_id),
+  check: async (inv) => (await checkRows(inv)).map((check) => check.id),
+  "task check": async (inv) => (await checkRows(inv)).flatMap((check) => check.results.map((task) => task.id)),
+  session: sessionIds,
+  skill: async (inv) => (await everyRow(skills(clientConfig(inv)).list({ limit: INDEX_PAGE }))).map((skill) => skill.id),
+};
+
+const idIndex = (inv: Invocation, noun: IdNoun): Promise<string[]> =>
+  walkOnce(inv, `ids:${noun}`, () => ID_INDEX[noun](inv));
+
+/** "a job", "an analysis or analyzed trial", "a check or task check" — the nouns a refusal names. */
+function nounPhrase(nouns: readonly IdNoun[]): string {
+  return `${/^[aeiou]/.test(nouns[0]) ? "an" : "a"} ${nouns.join(" or ")}`;
+}
+
+/** What a ref resolved to; noun null = passed through unresolved (a full id, or not id-shaped). */
+interface IdMatch {
+  noun: IdNoun | null;
+  id: string;
+}
+
+/**
+ * ONE prefix law for every id a verb takes: a full uuid passes through
+ * untouched; an id-shaped prefix of at least 8 characters is resolved
+ * against the noun's index (every page) to the one row it names — zero or
+ * several matches refuse loudly, naming the noun. The wire always carries
+ * the full id, so no verb depends on server-side prefix leniency and no
+ * verb lacks it. (It used to be per-verb luck: the job verbs resolved, every
+ * other id-taking verb handed the prefix to the server and got its 404.)
+ * Anything not id-shaped passes through for the server to refuse by name. A
+ * verb whose positional may be either of two nouns (`check download`; the
+ * analysis verbs) resolves among both, and a prefix both own is ambiguous,
+ * the refusal naming each.
+ */
+async function resolveIdAmong(inv: Invocation, nouns: readonly IdNoun[], ref: string): Promise<IdMatch> {
+  if (ref === undefined || FULL_UUID_RE.test(ref)) return { noun: null, id: ref };
+  if (/^[0-9a-f][0-9a-f-]*$/i.test(ref) && ref.length < ID_PREFIX_MIN) {
     throw new CliUsageError(
-      `"${ref}" is too short to name a job — id prefixes need at least ${JOB_ID_PREFIX_MIN} characters`
+      `"${ref}" is too short to name ${nounPhrase(nouns)} — id prefixes need at least ${ID_PREFIX_MIN} characters`
     );
   }
-  if (!JOB_ID_PREFIX_RE.test(ref)) return ref;
+  if (!ID_PREFIX_RE.test(ref)) return { noun: null, id: ref };
   const prefix = ref.toLowerCase();
-  // A SET of ids, not a list: the cursor window shifts while paging (jobs are
-  // created newest-first), so one job can be read on two pages — counting it
-  // twice refused an unambiguous prefix as "ambiguous — it matches 2 jobs"
-  // naming the same id twice. Ambiguity is about distinct jobs.
-  const matches = new Set<string>();
-  for (const id of await jobIdIndex(inv)) {
-    if (id.startsWith(prefix)) matches.add(id);
+  const matches: { noun: IdNoun; id: string }[] = [];
+  for (const noun of nouns) {
+    // A SET of ids per noun, not a list: the cursor window shifts while
+    // paging (rows are created newest-first), so one row can be read on two
+    // pages — counting it twice refused an unambiguous prefix as "ambiguous
+    // — it matches 2 jobs" naming the same id twice. Ambiguity is about
+    // distinct rows.
+    const ids = new Set((await idIndex(inv, noun)).filter((id) => id.startsWith(prefix)));
+    for (const id of ids) matches.push({ noun, id });
   }
-  const ids = [...matches];
-  if (ids.length === 1) return ids[0];
-  if (ids.length === 0) {
-    throw new CliUsageError(`no job id starts with "${ref}"`);
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) {
+    throw new CliUsageError(`no ${nouns.join(" or ")} id starts with "${ref}"`);
   }
+  const counts = nouns
+    .map((noun) => ({ noun, n: matches.filter((m) => m.noun === noun).length }))
+    .filter(({ n }) => n > 0)
+    .map(({ noun, n }) => `${n} ${n === 1 ? noun : ID_NOUN_PLURAL[noun]}`);
+  const named = matches.slice(0, 5).map((m) => (nouns.length > 1 ? `${m.noun} ${m.id}` : m.id));
   throw new CliUsageError(
-    `"${ref}" is ambiguous — it matches ${ids.length} jobs: ` +
-      `${ids.slice(0, 5).join(", ")}${ids.length > 5 ? ", …" : ""}`
+    `"${ref}" is ambiguous — it matches ${counts.join(" and ")}: ${named.join(", ")}${matches.length > 5 ? ", …" : ""}`
   );
+}
+
+/** The one-noun form of the law: the id the verb sends, resolved or passed through. */
+async function resolveId(inv: Invocation, noun: IdNoun, ref: string): Promise<string> {
+  return (await resolveIdAmong(inv, [noun], ref)).id;
+}
+
+/**
+ * What an analysis verb's positional resolved to: the analysis id the wire
+ * gets, and the verdict document when the resolution already read it (null
+ * = not read) — so `show` never spends a second read on the same door.
+ */
+interface AnalysisRef {
+  id: string;
+  analysis: TrialAnalysis | null;
+}
+
+/**
+ * The analysis verbs' positional (ANALYSIS_REF_RULE, as their help states
+ * it): an analysis id names that run; a trial id names the trial's LATEST
+ * analysis — the one `trial show` prints on its analysis row, the trial's
+ * own Trial.analysis field. A prefix resolves among analysis ids and
+ * analyzed trials' ids by the one prefix law, ambiguity named across both. A
+ * full id is not walked: the verdict door says which species it is — 200 is
+ * the analysis itself; its typed 400 ("analysis.json belongs to an analysis
+ * run") is the door resolving the id as another species, and the trial's
+ * own row then says whether it has an analysis (latestAnalysis; a task
+ * check is no trial, so the door's sentence stands); its 404
+ * (analysis_not_found) means no species has the id — the refusal every
+ * analysis verb inherits, whichever door it would have read next. The
+ * verdict a resolution read rides back with the id: the door's 200 and the
+ * trial row's `analysis` are the same document (the server serializes both
+ * with one function), so whichever door answered, `show` prints it as is.
+ */
+async function resolveAnalysisRef(
+  inv: Invocation,
+  client: ReturnType<typeof analyses>,
+  ref: string
+): Promise<AnalysisRef> {
+  const match = await resolveIdAmong(inv, ["analysis", "analyzed trial"], ref);
+  if (match.noun === "analysis") return { id: match.id, analysis: null };
+  if (match.noun === "analyzed trial") return latestAnalysis(inv, await trials(clientConfig(inv)).get(match.id));
+  if (ref === undefined || !FULL_UUID_RE.test(ref)) return { id: ref, analysis: null };
+  try {
+    return { id: ref, analysis: await client.get(ref) };
+  } catch (error) {
+    if (!(error instanceof EvolveApiError) || error.status !== 400) throw error;
+    let trial: Trial;
+    try {
+      trial = await trials(clientConfig(inv)).get(ref);
+    } catch (trialError) {
+      if (trialError instanceof EvolveApiError && trialError.status === 404) throw error;
+      throw trialError;
+    }
+    return latestAnalysis(inv, trial);
+  }
+}
+
+/**
+ * The trial's latest analysis, or the true reason it has none. The trial
+ * door serves a regrade result under its own id with `analysis` null and
+ * the regrade job as its `job_id`; a regrade is never analyzed (analyses
+ * belong to its source trial), so it is not sent to `evolve analyze` — the
+ * job's `is_regrade` is the one contract fact that tells it from an
+ * ordinary trial nobody analyzed yet, read only on this refusal path.
+ */
+async function latestAnalysis(inv: Invocation, trial: Trial): Promise<AnalysisRef> {
+  if (trial.analysis) return { id: trial.analysis.id, analysis: trial.analysis };
+  const job = await jobs(clientConfig(inv)).get(trial.job_id);
+  if (job.is_regrade) {
+    throw new Error(
+      `${trial.id} is a regrade result — a regrade is never analyzed; analyses belong to its source trial`
+    );
+  }
+  throw new Error(`trial ${trial.id} has no analysis yet — run: evolve analyze ${trial.job_id}`);
+}
+
+/** The verdict document: the one the resolution read, else one read of the verdict door. */
+function analysisVerdict(client: ReturnType<typeof analyses>, ref: AnalysisRef): Promise<TrialAnalysis> {
+  return ref.analysis !== null ? Promise.resolve(ref.analysis) : client.get(ref.id);
 }
 
 /** The one { limit, cursor } pair every paged command accepts. */
@@ -4359,7 +4567,7 @@ async function cmdJobShow(inv: Invocation, io: CliIO): Promise<number> {
   // ONE document: the job object for one id, an array for several.
   const bodies: Job[] = [];
   for (const id of inv.positionals) {
-    bodies.push(await client.get(await resolveJobId(inv, id)));
+    bodies.push(await client.get(await resolveId(inv, "job", id)));
   }
   if (inv.flags.json === true) {
     io.out(JSON.stringify(bodies.length === 1 ? bodies[0] : bodies));
@@ -4377,7 +4585,7 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const status = parseStatusFilter(inv);
   const dataset = inv.flags.dataset as string | undefined;
-  const page = await client.trials(await resolveJobId(inv, inv.positionals[0]), {
+  const page = await client.trials(await resolveId(inv, "job", inv.positionals[0]), {
     ...(status !== undefined ? { status } : {}),
     ...(dataset !== undefined ? { dataset } : {}),
     ...pageOptions(inv),
@@ -4403,7 +4611,7 @@ async function cmdJobTrials(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdJobTasks(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, TASK_ROLLUP_COLUMNS)) return 0;
   const client = jobs(clientConfig(inv));
-  const page = await client.tasks(await resolveJobId(inv, inv.positionals[0]), pageOptions(inv));
+  const page = await client.tasks(await resolveId(inv, "job", inv.positionals[0]), pageOptions(inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
     return 0;
@@ -4462,7 +4670,7 @@ function comparisonLines(comparison: CompareResponse): string[] {
 async function cmdJobCompare(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const ids: string[] = [];
-  for (const ref of inv.positionals) ids.push(await resolveJobId(inv, ref));
+  for (const ref of inv.positionals) ids.push(await resolveId(inv, "job", ref));
   const comparison = await client.compare(ids);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(comparison));
@@ -4474,7 +4682,7 @@ async function cmdJobCompare(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdJobCancel(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const e = await client.cancel(await resolveJobId(inv, inv.positionals[0]));
+  const e = await client.cancel(await resolveId(inv, "job", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(e));
   } else {
@@ -4495,7 +4703,7 @@ async function cmdJobCancel(inv: Invocation, io: CliIO): Promise<number> {
  */
 async function cmdJobDelete(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const id = await resolveJobId(inv, inv.positionals[0]);
+  const id = await resolveId(inv, "job", inv.positionals[0]);
   if (inv.flags.yes !== true) {
     if (io.confirm === undefined) {
       // Harbor's non-TTY refusal — reads may have happened (prefix
@@ -4541,7 +4749,7 @@ async function cmdJobStop(inv: Invocation, io: CliIO): Promise<number> {
     );
   }
   const client = jobs(clientConfig(inv));
-  const job = await client.get(await resolveJobId(inv, inv.positionals[0]));
+  const job = await client.get(await resolveId(inv, "job", inv.positionals[0]));
   const names = job.datasets.map((d) => d.name);
   if (!names.includes(dataset)) {
     // A refusal, not an empty no-op: stopping a dataset the job never spanned
@@ -4655,7 +4863,7 @@ async function cmdJobResume(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
   const filter = inv.flags["filter-error-type"] as string[] | undefined;
   const e = await client.resume(
-    await resolveJobId(inv, inv.positionals[0]),
+    await resolveId(inv, "job", inv.positionals[0]),
     filter !== undefined ? { filter_error_types: filter } : undefined
   );
   if (inv.flags.json === true) {
@@ -4685,7 +4893,7 @@ async function cmdJobRetry(inv: Invocation, io: CliIO): Promise<number> {
   if (trialIds !== undefined) req.trial_ids = trialIds;
   if (failedOnly) req.failed_only = true;
   const job = await jobs(clientConfig(inv)).retry(
-    await resolveJobId(inv, inv.positionals[0]),
+    await resolveId(inv, "job", inv.positionals[0]),
     req
   );
   if (inv.flags.json === true) {
@@ -4749,7 +4957,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   const client = jobs(clientConfig(inv));
-  const id = await resolveJobId(inv, inv.positionals[0]);
+  const id = await resolveId(inv, "job", inv.positionals[0]);
   // The config, parsed at the keyboard ({} = Harbor's defaults); the server
   // owns every acceptance refusal — the rubric bounds, the model roster, the
   // one-wave-at-a-time law.
@@ -5091,7 +5299,7 @@ async function cmdCheckList(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdCheckShow(inv: Invocation, io: CliIO): Promise<number> {
-  const check = await checks(clientConfig(inv)).get(inv.positionals[0]);
+  const check = await checks(clientConfig(inv)).get(await resolveId(inv, "check", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(check));
   } else {
@@ -5105,7 +5313,7 @@ async function cmdCheckTrace(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const since = inv.flags.since as number | undefined;
   const transcript = await checks(clientConfig(inv)).transcript(
-    inv.positionals[0],
+    await resolveId(inv, "task check", inv.positionals[0]),
     since !== undefined ? { since } : undefined
   );
   for (const event of transcript.events) emitTraceEvent(io, json, event);
@@ -5154,13 +5362,6 @@ async function streamedTaskCheck(client: ReturnType<typeof checks>, id: string):
  */
 async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = checks(clientConfig(inv));
-  // EITHER a check id (save mode: the whole check) OR a task check id (save
-  // mode: that task's folder; --stream: that task's artifacts). Save mode
-  // hands the id to the server, which resolves the species and refuses an
-  // id that is neither with one typed sentence naming both forms
-  // (check_not_found); --stream is per task check by construction.
-  const id = inv.positionals[0];
-  const taskCheckId = id;
   const json = inv.flags.json === true;
   const stream = inv.flags.stream as string | undefined;
 
@@ -5170,6 +5371,18 @@ async function cmdCheckDownload(inv: Invocation, io: CliIO): Promise<number> {
   if ((stream === undefined || stream !== "trace-parsed") && inv.flags.since !== undefined) {
     throw new CliUsageError("--since pages the parsed events; it applies only to --stream trace-parsed");
   }
+
+  // EITHER a check id (save mode: the whole check) OR a task check id (save
+  // mode: that task's folder; --stream: that task's artifacts). A prefix
+  // resolves among the nouns the mode takes — both in save mode, ambiguity
+  // named across them; task checks alone under --stream, which is per task
+  // check by construction. A full id goes to the server, which resolves the
+  // species and refuses an id that is neither with one typed sentence naming
+  // both forms (check_not_found).
+  const id = (
+    await resolveIdAmong(inv, stream !== undefined ? ["task check"] : ["check", "task check"], inv.positionals[0])
+  ).id;
+  const taskCheckId = id;
 
   if (stream !== undefined) {
     if (!TASK_CHECK_STREAM_ARTIFACTS.includes(stream as TaskCheckStreamArtifact)) {
@@ -5349,7 +5562,7 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
   const statuses = parseStatusFilter(inv);
   if (statuses !== undefined) req.statuses = statuses;
   if (inv.flags.task !== undefined) req.task_name = String(inv.flags.task);
-  const job = await client.regrade(await resolveJobId(inv, inv.positionals[0]), req);
+  const job = await client.regrade(await resolveId(inv, "job", inv.positionals[0]), req);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
@@ -5369,7 +5582,7 @@ async function cmdJobRegrade(inv: Invocation, io: CliIO): Promise<number> {
 // .tar.gz the user still has to unpack by hand.
 async function cmdJobDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const id = await resolveJobId(inv, inv.positionals[0]);
+  const id = await resolveId(inv, "job", inv.positionals[0]);
   const { join } = await import("node:path");
   const outputDir = (inv.flags["output-dir"] as string | undefined) ?? process.cwd();
   const root = `job-${id}`;
@@ -5748,6 +5961,8 @@ async function cmdJobImports(inv: Invocation, io: CliIO): Promise<number> {
 /** `evolve job import <id>` — one job import; `--watch` follows it to the job or its typed failure. */
 async function cmdJobImport(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
+  // An import id is a cuid, not a uuid: the id-prefix law (hex prefixes)
+  // cannot name one, so the id goes to the server as typed.
   const imported = await client.getImport(inv.positionals[0]);
   if (inv.flags.watch === true) return followJobImport(inv, imported, io, "attached");
   if (inv.flags.json === true) {
@@ -5760,7 +5975,7 @@ async function cmdJobImport(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdTrialShow(inv: Invocation, io: CliIO): Promise<number> {
   const client = trials(clientConfig(inv));
-  const run = await client.get(inv.positionals[0]);
+  const run = await client.get(await resolveId(inv, "trial", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(run));
   } else {
@@ -5779,7 +5994,6 @@ type StreamArtifact = (typeof STREAM_ARTIFACTS)[number];
 
 async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = trials(clientConfig(inv));
-  const trialId = inv.positionals[0];
   const json = inv.flags.json === true;
   const stream = inv.flags.stream as string | undefined;
 
@@ -5795,6 +6009,7 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
   ) {
     throw new CliUsageError('--cursor/--limit page the parsed events; they apply only to --stream trace-parsed');
   }
+  const trialId = await resolveId(inv, "trial", inv.positionals[0]);
 
   if (stream !== undefined) {
     if (!STREAM_ARTIFACTS.includes(stream as StreamArtifact)) {
@@ -5909,7 +6124,7 @@ async function cmdTrialTrace(inv: Invocation, io: CliIO): Promise<number> {
   if (inv.flags.grep !== undefined) options.grep = String(inv.flags.grep);
   if (inv.flags.tail !== undefined) options.tail = inv.flags.tail as number;
   let count = 0;
-  for await (const event of client.traceEvents(inv.positionals[0], options)) {
+  for await (const event of client.traceEvents(await resolveId(inv, "trial", inv.positionals[0]), options)) {
     emitTraceEvent(io, json, event);
     count += 1;
   }
@@ -5919,7 +6134,7 @@ async function cmdTrialTrace(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdJobGrep(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const id = await resolveJobId(inv, inv.positionals[0]);
+  const id = await resolveId(inv, "job", inv.positionals[0]);
   const options: GrepJobOptions = pageOptions(inv);
   if (inv.flags.type !== undefined) options.type = String(inv.flags.type);
   const page = await client.grep(id, inv.positionals[1], options);
@@ -5949,7 +6164,7 @@ async function cmdJobGrep(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdTrialRetry(inv: Invocation, io: CliIO): Promise<number> {
   // One settled trial, run again — the result IS a job, same output shape as
   // every other job-creating verb.
-  const job = await trials(clientConfig(inv)).retry(inv.positionals[0]);
+  const job = await trials(clientConfig(inv)).retry(await resolveId(inv, "trial", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
@@ -5961,7 +6176,7 @@ async function cmdTrialRetry(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdTrialRegrade(inv: Invocation, io: CliIO): Promise<number> {
-  const job = await trials(clientConfig(inv)).regrade(inv.positionals[0]);
+  const job = await trials(clientConfig(inv)).regrade(await resolveId(inv, "trial", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(job));
   } else {
@@ -5974,7 +6189,9 @@ async function cmdTrialRegrade(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdTrialStop(inv: Invocation, io: CliIO): Promise<number> {
   const client = trials(clientConfig(inv));
-  const result = await client.stop(inv.positionals);
+  const ids: string[] = [];
+  for (const ref of inv.positionals) ids.push(await resolveId(inv, "trial", ref));
+  const result = await client.stop(ids);
   if (inv.flags.json === true) {
     io.out(JSON.stringify(result));
     return 0;
@@ -6022,7 +6239,7 @@ async function cmdAnalysisList(inv: Invocation, io: CliIO): Promise<number> {
   const scope = parseScopeFlag(inv);
   const status = parseAnalysisStatusFilter(inv);
   // --job takes a prefix like every verb that names a job.
-  const job = inv.flags.job !== undefined ? await resolveJobId(inv, String(inv.flags.job)) : undefined;
+  const job = inv.flags.job !== undefined ? await resolveId(inv, "job", String(inv.flags.job)) : undefined;
   const client = analyses(clientConfig(inv));
   const page = await client.list({
     ...pageOptions(inv),
@@ -6046,7 +6263,8 @@ async function cmdAnalysisList(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdAnalysisShow(inv: Invocation, io: CliIO): Promise<number> {
-  const analysis = await analyses(clientConfig(inv)).get(inv.positionals[0]);
+  const client = analyses(clientConfig(inv));
+  const analysis = await analysisVerdict(client, await resolveAnalysisRef(inv, client, inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(analysis));
   } else {
@@ -6063,7 +6281,7 @@ async function cmdAnalysisTrace(inv: Invocation, io: CliIO): Promise<number> {
   // ride (client-side filtering would be opinion, not wire).
   const since = inv.flags.since as number | undefined;
   const transcript = await client.transcript(
-    inv.positionals[0],
+    (await resolveAnalysisRef(inv, client, inv.positionals[0])).id,
     since !== undefined ? { since } : undefined
   );
   for (const event of transcript.events) emitTraceEvent(io, json, event);
@@ -6088,7 +6306,6 @@ type AnalysisStreamArtifact = (typeof ANALYSIS_STREAM_ARTIFACTS)[number];
 
 async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> {
   const client = analyses(clientConfig(inv));
-  const analysisId = inv.positionals[0];
   const json = inv.flags.json === true;
   const stream = inv.flags.stream as string | undefined;
 
@@ -6104,6 +6321,8 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
   ) {
     throw new CliUsageError("--since pages the parsed events; it applies only to --stream trace-parsed");
   }
+  const ref = await resolveAnalysisRef(inv, client, inv.positionals[0]);
+  const analysisId = ref.id;
 
   if (stream !== undefined) {
     if (!ANALYSIS_STREAM_ARTIFACTS.includes(stream as AnalysisStreamArtifact)) {
@@ -6113,7 +6332,7 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
       // The verdict document itself — the same object the feed's
       // &format=log form downloads under Harbor's analysis.json name.
       // --json keeps the wire's {analysis} envelope, like {log} below.
-      const analysis = await client.get(analysisId);
+      const analysis = await analysisVerdict(client, ref);
       io.out(json ? JSON.stringify({ analysis }) : JSON.stringify(analysis, null, 2));
       return 0;
     }
@@ -6168,7 +6387,7 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
     scratchPrefix: "evolve-analysis-download-",
     enrich: async (targetDir) => {
       const { join } = await import("node:path");
-      const analysis = await client.get(analysisId);
+      const analysis = await analysisVerdict(client, ref);
       await writeRecord(join(targetDir, "evolve.json"), analysisEvolveRecord(analysis, await callerUserId(inv)));
       return ["evolve.json"];
     },
@@ -6939,9 +7158,10 @@ async function cmdSkillUpload(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdSkillShow(inv: Invocation, io: CliIO): Promise<number> {
-  // The positional is a record id, or name:<skill-name> — the server resolves
-  // the name pointer to its current record; the CLI passes the string through.
-  const skill = await skills(clientConfig(inv)).get(inv.positionals[0]);
+  // The positional is a record id (or its prefix, by the one id law), or
+  // name:<skill-name> — not id-shaped, so it passes through untouched and the
+  // server resolves the name pointer to its current record.
+  const skill = await skills(clientConfig(inv)).get(await resolveId(inv, "skill", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(skill));
     return 0;
@@ -6958,7 +7178,7 @@ async function cmdSkillDelete(inv: Invocation, io: CliIO): Promise<number> {
   // A skill_in_use refusal (a live job references this record) surfaces
   // VERBATIM through the standard error path — nothing rewrites the server's
   // sentence.
-  const id = inv.positionals[0];
+  const id = await resolveId(inv, "skill", inv.positionals[0]);
   await skills(clientConfig(inv)).delete(id);
   if (inv.flags.json === true) {
     io.out(JSON.stringify({ id, deleted: true }));
@@ -7135,7 +7355,7 @@ async function cmdSessionList(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdSessionShow(inv: Invocation, io: CliIO): Promise<number> {
-  const info = await sessions(sessionsConfig(inv)).get(inv.positionals[0]);
+  const info = await sessions(sessionsConfig(inv)).get(await resolveId(inv, "session", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(info));
   } else {

@@ -3653,7 +3653,9 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
 
   // Ids this client has already proven to be analysis runs. A run id's
   // species never changes, so one proof per id is enough — the whole-tree
-  // download reads three streams and must not re-spend the gate on each.
+  // download reads three streams and must not re-spend the gate on each,
+  // and a get() that already answered 200 is the same proof (the CLI's
+  // analysis verbs read the verdict first, then stream).
   const provenAnalyses = new Set<string>();
 
   /**
@@ -3765,6 +3767,9 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
         // absence fails closed instead of fabricating an empty object.
         throw new Error(`The analysis feed served no readable verdict object for "${analysisId}"`);
       }
+      // The door's 200 is the species gate's own proof: a stream read after
+      // this get() does not re-spend it.
+      provenAnalyses.add(analysisId);
       return verdict;
     },
 
