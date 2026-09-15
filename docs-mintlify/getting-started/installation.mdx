@@ -16,20 +16,19 @@ evolve --version
 
 The same surface is available as a library in TypeScript and in Python.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```bash
-    npm install @evolvingmachines/sdk
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```bash
-    pip install evolve-sdk
-    ```
+<CodeGroup>
 
-    The Python package needs Python 3.10 or newer, and a Node.js runtime on your `PATH`. It runs the TypeScript SDK underneath and starts it with the `node` command.
-  </Tab>
-</Tabs>
+```bash TypeScript
+npm install @evolvingmachines/sdk
+```
+
+```bash Python
+pip install evolve-sdk
+```
+
+</CodeGroup>
+
+The Python package needs Python 3.10 or newer, and a Node.js runtime on your `PATH`. It runs the TypeScript SDK underneath and starts it with the `node` command.
 
 ## Your API key
 
@@ -44,4 +43,6 @@ evolve auth status
 
 To use a different key for one call, pass `--api-key <key>` on the command line, or `{ apiKey }` to an SDK client.
 
-Next: the [quick start](/getting-started/quick-start).
+<Card title="Quick start" icon="play" href="/getting-started/quick-start">
+  Start your first job.
+</Card>

@@ -42,32 +42,30 @@ evolve dataset check ./my-swe
 
 Then publish from a local directory, from a git repository, or from a source the server fetches itself.
 
-### From a local directory
+<Tabs>
+  <Tab title="Local directory">
+    ```bash
+    evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
+    ```
 
-```bash
-evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
-```
+    When the corpus carries a `dataset.toml` manifest, `--name` and `--version` come from it and may be omitted.
+  </Tab>
+  <Tab title="Git repository">
+    ```bash
+    evolve dataset publish --git https://github.com/acme/my-swe.git --ref v1.0.0 \
+      --name my-swe --version 1.0 --watch
+    ```
 
-When the corpus carries a `dataset.toml` manifest, `--name` and `--version` come from it and may be omitted.
+    `--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is refused. `--path <subfolder>` imports one folder of a larger repository.
+  </Tab>
+  <Tab title="Fetchable source">
+    ```bash
+    evolve dataset publish --from hub:cookbook/hello-world --watch
+    ```
 
-### From a git repository
-
-```bash
-evolve dataset publish --git https://github.com/acme/my-swe.git --ref v1.0.0 \
-  --name my-swe --version 1.0 --watch
-```
-
-`--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is refused. `--path <subfolder>` imports one folder of a larger repository.
-
-### From a fetchable source
-
-```bash
-evolve dataset publish --from hub:cookbook/hello-world --watch
-```
-
-`--from` takes a public https tarball URL, or `hub:org/name[@ref]` for a public Harbor hub package. For a hub package the name and version default to the package's own.
-
-### Following the publish
+    `--from` takes a public https tarball URL, or `hub:org/name[@ref]` for a public Harbor hub package. For a hub package the name and version default to the package's own.
+  </Tab>
+</Tabs>
 
 `--watch` follows the publish until the version is READY or FAILED. If the terminal is gone, `evolve dataset watch <name>` re-attaches to the same follow, from any machine. `--skip-preflight` uploads without the check; a task the check would have refused then fails at import instead.
 
@@ -85,4 +83,6 @@ The owner of a dataset can download the original package back:
 evolve dataset download my-swe@1.0 -o corpora/
 ```
 
-Every flag is in the [dataset reference](/cli-reference/dataset).
+<Card title="dataset reference" icon="terminal" href="/cli-reference/dataset">
+  Every flag of `evolve dataset`.
+</Card>

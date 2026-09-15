@@ -3,11 +3,11 @@ title: "evolve auth"
 description: "Identity, API keys, and your organizations."
 ---
 
+import GlobalOptions from '/snippets/global-options.mdx';
+
 ```bash
 evolve auth <command> [options]
 ```
-
-Every command below takes the [global options](/cli-reference#global-options).
 
 ## auth status
 
@@ -25,11 +25,25 @@ evolve auth org list [options]
 
 List the organizations you belong to.
 
-- `--search <text>`: Free-text filter over slug, display name and role.
-- `--columns <keys|all|help>`: Choose and order columns, comma-separated. `help` lists the keys.
-- `-q, --quiet`: Print only slugs, one per line, for piping.
-- `--no-trunc`: Full cell content instead of one-line truncation.
-- `--no-headers`: Omit the header row in piped (TSV) output.
+<ParamField path="--search" type="text">
+  Free-text filter over slug, display name and role.
+</ParamField>
+
+<ParamField path="--columns" type="keys | all | help">
+  Choose and order columns, comma-separated. `help` lists the keys.
+</ParamField>
+
+<ParamField path="-q, --quiet">
+  Print only slugs, one per line, for piping.
+</ParamField>
+
+<ParamField path="--no-trunc">
+  Full cell content instead of one-line truncation.
+</ParamField>
+
+<ParamField path="--no-headers">
+  Omit the header row in piped (TSV) output.
+</ParamField>
 
 ## auth org show
 
@@ -42,3 +56,5 @@ Show one organization: your role, its members, its quota and live usage.
 ```bash
 evolve auth org show acme
 ```
+
+<GlobalOptions />

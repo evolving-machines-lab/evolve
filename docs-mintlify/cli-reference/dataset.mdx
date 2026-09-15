@@ -3,11 +3,12 @@ title: "evolve dataset"
 description: "Browse and publish the dataset catalog."
 ---
 
+import GlobalOptions from '/snippets/global-options.mdx';
+import ListFlags from '/snippets/list-flags.mdx';
+
 ```bash
 evolve dataset <command> [options]
 ```
-
-Every command below takes the [global options](/cli-reference#global-options).
 
 ## dataset list
 
@@ -15,9 +16,13 @@ Every command below takes the [global options](/cli-reference#global-options).
 evolve dataset list [options]
 ```
 
-List the dataset catalog. Takes the [listing flags](/cli-reference#listing-flags), plus:
+List the dataset catalog.
 
-- `--search <text>`: Free-text filter over name and description.
+<ListFlags />
+
+<ParamField path="--search" type="text">
+  Free-text filter over name and description.
+</ParamField>
 
 ## dataset show
 
@@ -27,8 +32,13 @@ evolve dataset show <name[@version]> [options]
 
 Show one dataset: its versions, its tasks, and the providers each task can run on.
 
-- `-l, --limit <n>`: Task-list page size.
-- `--cursor <c>`: Resume the task list from a cursor.
+<ParamField path="-l, --limit" type="n">
+  Task-list page size.
+</ParamField>
+
+<ParamField path="--cursor" type="c">
+  Resume the task list from a cursor.
+</ParamField>
 
 ```bash
 evolve dataset show deep-swe@1.1
@@ -50,15 +60,41 @@ evolve dataset publish [options]
 
 Publish a dataset version from a git source, a local directory, or a fetchable source: a public tarball URL, or a Harbor hub package.
 
-- `--git <url>`: Git repository URL. With `--ref`.
-- `--ref <ref>`: Pinned git ref: a full 40-hex commit sha, or a tag, resolved to its commit at publish and verified at import. Branch names are refused as `unpinned_git_ref`. With `--git`.
-- `--path <subfolder>`: Repository subfolder holding the corpus. With `--git`; only that folder is imported.
-- `--dir <path>`: Local corpus directory, tarred and uploaded. Pre-flighted first; see `--skip-preflight`.
-- `--from <url|hub:org/name[@ref]>`: Fetchable source the server pulls itself, with no local bytes: a public https tarball URL, or `hub:org/name[@ref]`, a public Harbor hub package. The ref is the latest tag by default, a revision number, or `sha256:<digest>`; it is resolved and digest-pinned when the publish is accepted.
-- `--name <dataset>`: Catalog dataset name to create or extend. Optional with `--dir` when the corpus carries a `dataset.toml` manifest, and with `--from hub:…`, which defaults to the package's short name. Required with `--git` and `--from <url>`.
-- `--version <v>`: Version label for the published version. Optional with `--dir` when `dataset.toml` declares one, and with `--from hub:…`, which defaults to the resolved revision. Required with `--git` and `--from <url>`.
-- `--watch`: Poll until the publish settles: the version `READY` (built and active) or `FAILED`.
-- `--skip-preflight`: Upload without the pre-flight check. A refused task then lands `FAILED` at import instead of being caught here.
+<ParamField path="--git" type="url">
+  Git repository URL. With `--ref`.
+</ParamField>
+
+<ParamField path="--ref" type="ref">
+  Pinned git ref: a full 40-hex commit sha, or a tag, resolved to its commit at publish and verified at import. Branch names are refused as `unpinned_git_ref`. With `--git`.
+</ParamField>
+
+<ParamField path="--path" type="subfolder">
+  Repository subfolder holding the corpus. With `--git`; only that folder is imported.
+</ParamField>
+
+<ParamField path="--dir" type="path">
+  Local corpus directory, tarred and uploaded. Pre-flighted first; see `--skip-preflight`.
+</ParamField>
+
+<ParamField path="--from" type="url | hub:org/name[@ref]">
+  Fetchable source the server pulls itself, with no local bytes: a public https tarball URL, or `hub:org/name[@ref]`, a public Harbor hub package. The ref is the latest tag by default, a revision number, or `sha256:<digest>`; it is resolved and digest-pinned when the publish is accepted.
+</ParamField>
+
+<ParamField path="--name" type="dataset">
+  Catalog dataset name to create or extend. Optional with `--dir` when the corpus carries a `dataset.toml` manifest, and with `--from hub:…`, which defaults to the package's short name. Required with `--git` and `--from <url>`.
+</ParamField>
+
+<ParamField path="--version" type="v">
+  Version label for the published version. Optional with `--dir` when `dataset.toml` declares one, and with `--from hub:…`, which defaults to the resolved revision. Required with `--git` and `--from <url>`.
+</ParamField>
+
+<ParamField path="--watch">
+  Poll until the publish settles: the version `READY` (built and active) or `FAILED`.
+</ParamField>
+
+<ParamField path="--skip-preflight">
+  Upload without the pre-flight check. A refused task then lands `FAILED` at import instead of being caught here.
+</ParamField>
 
 ```bash
 evolve dataset publish --from hub:cookbook/hello-world --watch
@@ -80,7 +116,9 @@ evolve dataset download <name[@version]> [options]
 
 Download the original corpus package. Owner only.
 
-- `-o, --output-dir <dir>`: Directory to save into. Defaults to the current directory.
+<ParamField path="-o, --output-dir" type="dir">
+  Directory to save into. Defaults to the current directory.
+</ParamField>
 
 ## dataset activate
 
@@ -89,3 +127,5 @@ evolve dataset activate <name> <version>
 ```
 
 Make a `READY` version the dataset's active version.
+
+<GlobalOptions />

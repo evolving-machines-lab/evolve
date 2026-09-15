@@ -3,11 +3,12 @@ title: "evolve agent"
 description: "Register and manage your own agents."
 ---
 
+import GlobalOptions from '/snippets/global-options.mdx';
+import ListFlags from '/snippets/list-flags.mdx';
+
 ```bash
 evolve agent <command> [options]
 ```
-
-Every command below takes the [global options](/cli-reference#global-options).
 
 ## agent list
 
@@ -15,7 +16,9 @@ Every command below takes the [global options](/cli-reference#global-options).
 evolve agent list [options]
 ```
 
-List your registered agents. Takes the [listing flags](/cli-reference#listing-flags).
+List your registered agents.
+
+<ListFlags />
 
 ## agent show
 
@@ -33,10 +36,21 @@ evolve agent add <name> [options]
 
 Register an agent from an install script or a local directory.
 
-- `--install-script <path>`: Install script file. Its contents are uploaded.
-- `--dir <path>`: Local agent directory, tarred and uploaded.
-- `--run <command>`: Run command, executed with `sh -c`. Required.
-- `--ae, --agent-env KEY=VALUE`: Environment injected at run time. Repeatable.
+<ParamField path="--install-script" type="path">
+  Install script file. Its contents are uploaded.
+</ParamField>
+
+<ParamField path="--dir" type="path">
+  Local agent directory, tarred and uploaded.
+</ParamField>
+
+<ParamField path="--run" type="command" required>
+  Run command, executed with `sh -c`.
+</ParamField>
+
+<ParamField path="--ae, --agent-env" type="KEY=VALUE">
+  Environment injected at run time. Repeatable.
+</ParamField>
 
 ```bash
 evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"
@@ -49,3 +63,5 @@ evolve agent remove <name>
 ```
 
 Delete a registered agent. Past jobs keep their record.
+
+<GlobalOptions />
