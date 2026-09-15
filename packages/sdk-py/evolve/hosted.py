@@ -1736,9 +1736,11 @@ class AnalysisFailure(TypedDict):
     absence and never a fake pass."""
     #: Which part failed: ``invalid_result`` (the analyzer ran but its
     #: analysis.json failed validation — the message preserves every
-    #: validator reason, one per line), ``inputs`` (the trial tree or task
-    #: content could not be assembled), ``timeout`` (the analyzer's run
-    #: budget ran out with no analysis.json written — never re-run: a
+    #: validator reason, one per line; a run cut by its budget is
+    #: ``timeout`` instead), ``inputs`` (the trial tree or task content
+    #: could not be assembled), ``timeout`` (the analyzer's run budget ran
+    #: out with no valid analysis.json — the file missing, or a partial one
+    #: that failed validation, its reasons in the message — never re-run: a
     #: timeout is deterministic; the message names the budget, the seconds
     #: used and the exit code), or an infrastructure stage of the analyzer
     #: run (``mint_key``, ``boot``, ``harness_install``, ``agent``,
