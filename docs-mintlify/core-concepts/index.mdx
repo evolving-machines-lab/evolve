@@ -8,16 +8,23 @@ description: "How a dataset becomes trials, rewards, analyses and results."
 flowchart TB
   subgraph S[Set up]
     D[Dataset: a folder of tasks] --> J[Job: arms of harness x model, one sandbox provider]
-    D --> C[Check: task quality]
+    J --> T[Trials: one per task per arm]
   end
-  subgraph RUN[Run]
-    T[Trials: one task, one arm, its own sandbox] --> A[Agent trajectory: live trace stream]
-    A --> V[Verifier]
-    V --> R[Reward and artifacts]
-    R --> AN[Analyze: trace analysis, verdicts]
+  subgraph RUN[Run, per trial]
+    SB[Sandbox: the agent works on the task] --> V[Verifier: scores the result]
+    SB -.-> L[Live trace to the dashboard]
+    V --> R[Reward and outputs: trajectory, files, logs]
   end
-  J --> T
-  R --> O[Results: dashboard, CLI, downloads]
+  subgraph AFTER[After]
+    AN[Analyze: trace analysis, verdicts]
+    C[Check: task quality]
+    O[Results: jobs, trials, analyses and checks, in the dashboard and as downloads]
+  end
+  T --> SB
+  R --> AN
+  D --> C
+  R ~~~ C
+  R --> O
   AN --> O
   C --> O
 ```
@@ -27,8 +34,9 @@ flowchart TB
 - **Job**: one run of every task of its datasets by every arm, a fixed number of attempts each. See [jobs](/core-concepts/jobs).
 - **Arm**: one harness driving one model, with its optional effort, preset, config and skills. A job with two models has two arms, and every arm runs on the job's one sandbox provider.
 - **Trial**: one attempt of one task by one arm, in its own sandbox. See [trials](/core-concepts/trials).
-- **Trajectory**: the trial's recorded trace, streamed live while it runs: the instruction, every agent turn, every tool call and its result.
-- **Verifier**: the task's test script. It runs after the agent and produces the reward.
+- **Trajectory**: the record of what the agent did: the instruction, every agent turn, every tool call and its result. It streams live to the dashboard while the trial runs and is stored with the trial.
+- **Verifier**: the task's test script. It runs after the agent has finished and produces the reward.
 - **Reward**: the verifier's score for the trial, usually `1` or `0`.
+- **Outputs**: what a finished trial keeps: the reward, the trajectory, the agent's files and the logs, captured when the trial ends. See [trial outputs](/core-concepts/trial-outputs).
 - **Analysis**: a rubric judgment of a settled trial's trace, one analyzer run per trial. See [analyze](/core-concepts/analyze).
 - **Check**: a rubric judgment of a task itself, before you spend a job on it. See [check](/core-concepts/check).
