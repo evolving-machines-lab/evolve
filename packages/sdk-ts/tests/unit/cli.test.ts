@@ -5055,12 +5055,13 @@ async function testTrialStop() {
 }
 
 /**
- * ONE prefix law for EVERY id a verb takes. The nine read verbs that used to
- * hand a prefix to the server and get its 404 — check show|trace|download,
- * trial show|trace|download|retry|regrade|stop, session show, job import —
+ * ONE prefix law for EVERY uuid a verb takes. The verbs that used to hand a
+ * prefix to the server and get its 404 — check show|trace|download, trial
+ * show|trace|download|retry|regrade|stop, session show, skill show|delete —
  * resolve it exactly as the job verbs do, each against its own noun's list
  * (a task check's ids come off the check list's results; a trial's off every
- * job's trial pages). The analysis verbs also take a TRIAL id, meaning the
+ * job's trial pages). A job import id is not a uuid (the server prints a
+ * cuid), so `job import` sends it as typed. The analysis verbs also take a TRIAL id, meaning the
  * trial's latest analysis, with one precedence: an analysis id (or prefix)
  * names that run; a trial id (or prefix) names its latest analysis; a prefix
  * both nouns own is refused, naming both.
@@ -5232,18 +5233,33 @@ async function testIdPrefixLawEveryNoun() {
     restoreFetch();
   }
 
-  const impA = "1e0e0000-aaaa-2222-3333-444455556666";
-  const impB = "1e0e0000-bbbb-2222-3333-444455556666";
+  // SKILLS — a record id (or prefix) off the skill list; `name:<skill-name>`
+  // is not id-shaped and passes through for the server's moving pointer.
+  const skillA = "6f6f1f36-aaaa-2222-3333-444455556666";
+  const skillB = "6f6f1f36-bbbb-2222-3333-444455556666";
   installMockFetch();
   try {
-    setMockResponse(`/api/jobs/imports/${impA}`, { status: 200, body: wireJobImport({ id: impA }) });
-    setMockResponse("/api/jobs/imports", { status: 200, body: page([wireJobImport({ id: impA }), wireJobImport({ id: impB })]) });
+    setMockResponse("/api/skills/name%3Amy-skill", { status: 200, body: { ...CLI_SKILL, skill_md: null } });
+    setMockResponse(`/api/skills/${skillA}`, { status: 200, body: { ...CLI_SKILL, id: skillA, skill_md: null } });
+    setMockResponse(`/api/skills/${skillB}`, { status: 204, body: null });
+    setMockResponse("/api/skills", { status: 200, body: page([{ ...CLI_SKILL, id: skillA }, { ...CLI_SKILL, id: skillB }]) });
     const show = captureIO();
-    assertEqual(await runCli(["job", "import", "1e0e0000-aaaa", "--json", ...AUTH], show.io), 0, "job import resolves a unique import prefix");
-    assert(fetchCalls[fetchCalls.length - 1].url.endsWith(`/api/jobs/imports/${impA}`), "the wire carries the FULL import id");
-    const short = captureIO();
-    assertEqual(await runCli(["job", "import", "1e0e", ...AUTH], short.io), 2, "a too-short import prefix is a usage error");
-    assert(short.err.some((l) => l.includes("too short to name a job import")), "the refusal names the noun");
+    assertEqual(await runCli(["skill", "show", "6f6f1f36-aaaa", "--json", ...AUTH], show.io), 0, "skill show resolves a unique skill prefix");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith(`/api/skills/${skillA}`), "the wire carries the FULL skill id");
+    fetchCalls.length = 0;
+    const byName = captureIO();
+    assertEqual(await runCli(["skill", "show", "name:my-skill", ...AUTH], byName.io), 0, "name:<skill-name> still passes through");
+    assertEqual(fetchCalls.length, 1, "a name is not id-shaped: no index walk, one read");
+    assert(fetchCalls[0].url.endsWith("/api/skills/name%3Amy-skill"), "the name reaches the server as typed");
+    const remove = captureIO();
+    assertEqual(await runCli(["skill", "delete", "6f6f1f36-bbbb", ...AUTH], remove.io), 0, "skill delete resolves a unique skill prefix");
+    const delCall = fetchCalls[fetchCalls.length - 1];
+    assert(delCall.url.endsWith(`/api/skills/${skillB}`) && delCall.init?.method === "DELETE", "DELETE carries the FULL skill id");
+    assert(remove.out.some((l) => l.includes(`Deleted skill ${skillB}`)), "the confirmation names the resolved id");
+    const ambiguous = captureIO();
+    assertEqual(await runCli(["skill", "delete", "6f6f1f36", ...AUTH], ambiguous.io), 2, "a prefix two skills share is a usage error");
+    assert(ambiguous.err.some((l) => l.includes("matches 2 skills")), "the refusal counts the skills");
+    assert(!fetchCalls.some((c) => c.init?.method === "DELETE" && c.url.endsWith("/api/skills/6f6f1f36")), "nothing is deleted on an ambiguous prefix");
   } finally {
     restoreFetch();
   }

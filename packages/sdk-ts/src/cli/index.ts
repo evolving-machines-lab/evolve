@@ -576,7 +576,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<import-id>",
-        example: "evolve job import 4f1c… --watch",
+        example: "evolve job import cmfl2q8r30001v4kx9zd1h7wa --watch",
       },
       download: {
         summary:
@@ -4105,7 +4105,7 @@ function clientConfig(inv: Invocation): HostedClientConfig {
 const FULL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{7,34}$/i;
 const ID_PREFIX_MIN = 8;
-/** The contract's collection page cap (spec: default 50, max 200) — the fewest reads per index walk. */
+/** The contract's page cap on every list an index walks (spec: max 200) — the fewest reads per walk. */
 const INDEX_PAGE = 200;
 
 /**
@@ -4115,8 +4115,10 @@ const INDEX_PAGE = 200;
  * "analyzed trial" is the trial an analysis verb accepts in place of an
  * analysis id: its ids are the analysis list's trial_id column, so a trial
  * nobody analyzed is not in it — nothing those verbs could serve for it.
+ * A job import is NOT a noun here: its id is a cuid, not a uuid, so no hex
+ * prefix can name one — `job import` sends the id as typed.
  */
-type IdNoun = "job" | "trial" | "analysis" | "analyzed trial" | "check" | "task check" | "session" | "job import";
+type IdNoun = "job" | "trial" | "analysis" | "analyzed trial" | "check" | "task check" | "session" | "skill";
 
 const ID_NOUN_PLURAL: Record<IdNoun, string> = {
   job: "jobs",
@@ -4126,7 +4128,7 @@ const ID_NOUN_PLURAL: Record<IdNoun, string> = {
   check: "checks",
   "task check": "task checks",
   session: "sessions",
-  "job import": "job imports",
+  skill: "skills",
 };
 
 /**
@@ -4230,8 +4232,7 @@ const ID_INDEX: Record<IdNoun, (inv: Invocation) => Promise<string[]>> = {
   check: async (inv) => (await checkRows(inv)).map((check) => check.id),
   "task check": async (inv) => (await checkRows(inv)).flatMap((check) => check.results.map((task) => task.id)),
   session: sessionIds,
-  "job import": async (inv) =>
-    (await everyRow(jobs(clientConfig(inv)).listImports({ limit: INDEX_PAGE }))).map((imported) => imported.id),
+  skill: async (inv) => (await everyRow(skills(clientConfig(inv)).list({ limit: INDEX_PAGE }))).map((skill) => skill.id),
 };
 
 const idIndex = (inv: Invocation, noun: IdNoun): Promise<string[]> =>
@@ -4254,12 +4255,12 @@ interface IdMatch {
  * against the noun's index (every page) to the one row it names — zero or
  * several matches refuse loudly, naming the noun. The wire always carries
  * the full id, so no verb depends on server-side prefix leniency and no
- * verb lacks it. (It used to be per-verb luck: the job verbs resolved, the
- * nine other id-taking read verbs handed the prefix to the server and got
- * its 404.) Anything not id-shaped passes through for the server to refuse
- * by name. A verb whose positional may be either of two nouns (`check
- * download`; the analysis verbs) resolves among both, and a prefix both own
- * is ambiguous, the refusal naming each.
+ * verb lacks it. (It used to be per-verb luck: the job verbs resolved, every
+ * other id-taking verb handed the prefix to the server and got its 404.)
+ * Anything not id-shaped passes through for the server to refuse by name. A
+ * verb whose positional may be either of two nouns (`check download`; the
+ * analysis verbs) resolves among both, and a prefix both own is ambiguous,
+ * the refusal naming each.
  */
 async function resolveIdAmong(inv: Invocation, nouns: readonly IdNoun[], ref: string): Promise<IdMatch> {
   if (ref === undefined || FULL_UUID_RE.test(ref)) return { noun: null, id: ref };
@@ -5960,7 +5961,9 @@ async function cmdJobImports(inv: Invocation, io: CliIO): Promise<number> {
 /** `evolve job import <id>` — one job import; `--watch` follows it to the job or its typed failure. */
 async function cmdJobImport(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
-  const imported = await client.getImport(await resolveId(inv, "job import", inv.positionals[0]));
+  // An import id is a cuid, not a uuid: the id-prefix law (hex prefixes)
+  // cannot name one, so the id goes to the server as typed.
+  const imported = await client.getImport(inv.positionals[0]);
   if (inv.flags.watch === true) return followJobImport(inv, imported, io, "attached");
   if (inv.flags.json === true) {
     io.out(JSON.stringify(imported));
@@ -7155,9 +7158,10 @@ async function cmdSkillUpload(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdSkillShow(inv: Invocation, io: CliIO): Promise<number> {
-  // The positional is a record id, or name:<skill-name> — the server resolves
-  // the name pointer to its current record; the CLI passes the string through.
-  const skill = await skills(clientConfig(inv)).get(inv.positionals[0]);
+  // The positional is a record id (or its prefix, by the one id law), or
+  // name:<skill-name> — not id-shaped, so it passes through untouched and the
+  // server resolves the name pointer to its current record.
+  const skill = await skills(clientConfig(inv)).get(await resolveId(inv, "skill", inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(skill));
     return 0;
@@ -7174,7 +7178,7 @@ async function cmdSkillDelete(inv: Invocation, io: CliIO): Promise<number> {
   // A skill_in_use refusal (a live job references this record) surfaces
   // VERBATIM through the standard error path — nothing rewrites the server's
   // sentence.
-  const id = inv.positionals[0];
+  const id = await resolveId(inv, "skill", inv.positionals[0]);
   await skills(clientConfig(inv)).delete(id);
   if (inv.flags.json === true) {
     io.out(JSON.stringify({ id, deleted: true }));
