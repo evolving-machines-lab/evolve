@@ -4229,6 +4229,38 @@ function testTrialDetailAnalysisRows() {
   assert(analyzed.includes("pass — No verifier writes observed."), "each criterion renders outcome and explanation");
   assert(analyzed.includes("Legitimate solve."), "the summary renders");
   assert(analyzed.includes("$0.0173"), "the analyzer's own spend renders, never folded into the trial's bill");
+  // A server predating the derived label sends none: no label row, no word invented.
+  assert(!analyzed.includes("label"), "no label row when the server stated none");
+
+  // THE DERIVED LABEL (the platform's word for the whole trial) rides its own
+  // row in capitals; `custom rubric` where the run has none; the fourth
+  // outcome renders as its wire word.
+  const labelled = (label: "flagged" | null) =>
+    trialDetailLines(
+      trialFixture({
+        status: "SCORED",
+        reward: 1,
+        analysis: {
+          id: "an-3",
+          status: "completed",
+          model_name: "claude-haiku-4-5-20251001",
+          rubric: CLI_RUBRIC,
+          summary: "Tampered.",
+          checks: {
+            score_is_earned: { outcome: "fail", explanation: "Test tampering: tests/test.sh edited.", evidence: [{ where: "step_id 4", quote: "rm tests/test.sh" }] },
+            environment_worked: { outcome: "unknown", explanation: "No trial.log.", evidence: [] },
+          },
+          label,
+          estimated_cost_usd: 0.01,
+          failure: null,
+          created_at: "2026-09-14T00:00:00.000Z",
+          finished_at: "2026-09-14T00:01:00.000Z",
+        },
+      })
+    ).join("\n");
+  assert(labelled("flagged").includes("FLAGGED"), "the derived label renders in capitals");
+  assert(labelled(null).includes("custom rubric"), "a null label reads `custom rubric`");
+  assert(labelled("flagged").includes("unknown — No trial.log."), "the fourth outcome renders as its wire word");
 
   const failed = trialDetailLines(
     trialFixture({
@@ -9086,7 +9118,7 @@ async function testCheckReadVerbs() {
     const done = wireCheck({
       status: "completed",
       results: [
-        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "None found." }, pinned_dependencies: { outcome: "not_applicable", explanation: "No deps." } }, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
+        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "None found.", evidence: [{ where: "instruction.md line 1", quote: "Write output.csv" }] }, pinned_dependencies: { outcome: "not_applicable", explanation: "No deps.", evidence: [] }, verifier_is_correct: { outcome: "unknown", explanation: "No docker here.", evidence: [] } }, label: "no_problem_found", executed: false, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
       ],
       cost_usd: 0.0123,
       finished_at: "2026-09-09T10:05:00.000Z",
@@ -9098,9 +9130,13 @@ async function testCheckReadVerbs() {
     const show = captureIO();
     assertEqual(await runCli(["check", "show", "chk-1", ...AUTH], show.io), 0, "show exits 0 when no task failed");
     assert(show.out.some((l) => l === "Task Quality Checks: hello-world"), "Harbor's single-task table title");
+    // The platform's derived label, with the executed flag beside it, on its own line above Harbor's table.
+    assert(show.out.some((l) => l === "Label: NO PROBLEM FOUND · not executed"), "the derived label line, the executed flag beside it");
     assert(show.out.some((l) => l.startsWith("CHECK") && l.includes("OUTCOME") && l.includes("EXPLANATION")), "Harbor's single-task columns");
     assert(show.out.some((l) => l.startsWith("Typos") && l.includes("pass") && l.includes("None found.")), "the criterion is titled like Harbor's row (Pinned Dependencies, Typos)");
+    assert(show.out.some((l) => l.includes("instruction.md line 1 — Write output.csv")), "each verdict's evidence rides the rows beneath it");
     assert(show.out.some((l) => l.startsWith("Pinned Dependencies") && l.includes("not_applicable")), "every criterion rows");
+    assert(show.out.some((l) => l.startsWith("Verifier Is Correct") && l.includes("unknown")), "the fourth outcome renders as its wire word");
     assert(show.out.some((l) => l === "Agent cost: $0.0123"), "Harbor's agent cost line");
     const showJson = captureIO();
     await runCli(["check", "show", "chk-1", "--json", ...AUTH], showJson.io);

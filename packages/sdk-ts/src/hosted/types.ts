@@ -1029,7 +1029,7 @@ export interface JobAnalysisStats {
    */
   checks: Record<
     string,
-    { n_pass: number; n_fail: number; n_not_applicable: number }
+    { n_pass: number; n_fail: number; n_not_applicable: number; n_unknown: number }
   >;
 }
 
@@ -1464,14 +1464,51 @@ export interface JudgeResult {
 }
 
 /**
- * One criterion's verdict — Harbor's QualityCheckModel verbatim (their
- * cli/quality_checker/models.py `{explanation, outcome}`).
+ * One place a verdict rests on. `where` names a step_id in the trajectory, a
+ * file and line, or a command; `quote` is the exact text found there. The
+ * page links each entry to the record; a reader verifies by eye — nothing
+ * verifies the quotes mechanically.
+ */
+export interface AnalysisEvidence {
+  where: string;
+  quote: string;
+}
+
+/**
+ * One criterion's verdict — Harbor's QualityCheckModel (their
+ * cli/quality_checker/models.py `{explanation, outcome}`) extended by the
+ * platform's result schema: a fourth outcome, `unknown`, for a criterion the
+ * record cannot decide (`not_applicable` keeps Harbor's meaning, no subject),
+ * and the `evidence` list — at least one entry behind a `pass` or a `fail`;
+ * `not_applicable` and `unknown` may carry none. Results stored before the
+ * evidence field existed serve an empty list.
  */
 export interface AnalysisCheck {
-  outcome: "pass" | "fail" | "not_applicable";
-  /** The analyzer's rationale, citing trial evidence. */
+  outcome: "pass" | "fail" | "not_applicable" | "unknown";
+  /** The analyzer's reasoning, in plain words, opening with a few words that name what it found. */
   explanation: string;
+  evidence: AnalysisEvidence[];
 }
+
+/**
+ * The derived label of an analysis — computed by the platform from the
+ * outcomes when the result is stored, never asked from the model. Null until
+ * completed, and null on a completed analysis whose rubric is not the
+ * default one (a custom rubric carries its per-criterion outcomes and no
+ * label). Precedence: `flagged` on a fail of score_is_earned,
+ * score_is_correct, task_was_fair or report_is_truthful; else `env_fault` on
+ * a fail of environment_worked; else `unclear` on an unknown of any of those
+ * five, or a not_applicable of score_is_earned or score_is_correct; else
+ * `clean`.
+ */
+export type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
+
+/**
+ * The derived label of a task check — computed the same way. `has_a_problem`
+ * on a fail of any criterion; else `unclear` on an unknown of any of the six
+ * file-based criteria; else `no_problem_found`. Null under a custom rubric.
+ */
+export type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
 
 /**
  * Why an analysis FAILED — a stored typed failure, never a silent absence and
@@ -1548,6 +1585,8 @@ export interface TrialAnalysis {
    * (the frozen-criteria law). Null until completed.
    */
   checks: Record<string, AnalysisCheck> | null;
+  /** The derived label (AnalysisLabel states the rule); null until completed, and null under a custom rubric. */
+  label: AnalysisLabel | null;
   estimated_cost_usd: number | null;
   /**
    * The analyzer's one-home usage reading — the SAME object, same keys, the
@@ -4482,6 +4521,17 @@ export interface TaskCheck {
   status: AnalysisStatus;
   /** One entry per rubric criterion, keys exactly the frozen criteria. Null until completed. */
   checks: Record<string, AnalysisCheck> | null;
+  /** The derived label (CheckLabel states the rule); null until completed, and null under a custom rubric. */
+  label: CheckLabel | null;
+  /**
+   * Whether the box ran the task's environment: true when none of the five
+   * run-based criteria (reference_solution_is_valid,
+   * verifier_rejects_non_solutions, environment_builds_and_runs,
+   * verification_is_stable, limits_allow_the_task) is unknown, so a
+   * reading-only `no_problem_found` is never mistaken for a run. Null
+   * exactly when `label` is null.
+   */
+  executed: boolean | null;
   cost_usd: number | null;
   /** 1, or 2 when the one automatic re-run fired (a run that produced no valid check-result.json, the missing file included, is re-run once — the analyze verb's hosted rule; a run cut by its budget is not that class: it settles `failed` with phase `timeout` at once and is never re-run). */
   attempts: number;

@@ -836,5 +836,51 @@ assert(
   "TaskLinkReason derives from TASK_LINK_REASONS (no shadow union)"
 );
 
+// -----------------------------------------------------------------------------
+// 11. RUBRIC VERDICT VOCABULARIES — the outcome a criterion can carry
+// (AnalysisCheck.outcome: Harbor's three plus `unknown`) and the two derived
+// labels (TrialAnalysis.label, TaskCheck.label). All three are type-only
+// (nothing validates a verdict word at run time), so they are read out of
+// the shipped source and held to the contract's enums member for member; the
+// labels' spec enums carry `null` as a member, which the SDK spells as
+// `| null` on the field, not in the union, so it is set aside before the
+// comparison. The Python gate pins the same shapes' keys
+// (test_hosted_analysis_typing.py).
+// -----------------------------------------------------------------------------
+
+/** The members of a string-literal union on an interface property (`  outcome: "a" | "b";`), read out of the shipped source. */
+function declaredPropertyUnion(interfaceName: string, property: string): string[] {
+  const body = new RegExp(`export interface ${interfaceName} \\{([^}]+)\\}`).exec(TYPES_SOURCE)?.[1] ?? "";
+  return (new RegExp(`\\n\\s*${property}:([^;]+);`).exec(body)?.[1] ?? "")
+    .split("|")
+    .map((member) => member.trim().replace(/^"|"$/g, ""))
+    .filter((member) => member.length > 0);
+}
+
+const declaredOutcomes = declaredPropertyUnion("AnalysisCheck", "outcome");
+const specOutcomes = propertyEnum("AnalysisCheck", "outcome");
+assert(specOutcomes.length === 4, `the spec's AnalysisCheck.outcome enum parsed (${specOutcomes.length} words)`);
+assert(
+  JSON.stringify(declaredOutcomes) === JSON.stringify(specOutcomes),
+  JSON.stringify(declaredOutcomes) === JSON.stringify(specOutcomes)
+    ? `AnalysisCheck.outcome is the spec's enum, byte-exactly (${specOutcomes.join(", ")})`
+    : `outcome words drifted: SDK [${declaredOutcomes.join(", ")}] vs spec [${specOutcomes.join(", ")}]`
+);
+
+for (const [typeName, schema] of [
+  ["AnalysisLabel", "TrialAnalysis"],
+  ["CheckLabel", "TaskCheck"],
+] as const) {
+  const declared = declaredUnion(typeName);
+  const spec = propertyEnum(schema, "label").filter((member) => member !== "null");
+  assert(spec.length >= 3, `the spec's ${schema}.label enum parsed (${spec.length} words)`);
+  assert(
+    JSON.stringify(declared) === JSON.stringify(spec),
+    JSON.stringify(declared) === JSON.stringify(spec)
+      ? `${typeName} is the spec's ${schema}.label enum, byte-exactly (${spec.join(", ")})`
+      : `${typeName} drifted: SDK [${declared.join(", ")}] vs spec [${spec.join(", ")}]`
+  );
+}
+
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);
