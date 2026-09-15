@@ -123,19 +123,13 @@ samp {
   margin: 0;
 }
 
-/* GitHub: the icon only, muted. */
-#topbar-cluster a[href^="https://github.com/"] {
-  color: #737373;
-}
-
+/* GitHub: the icon only, at rest in its hover color. */
+#topbar-cluster a[href^="https://github.com/"],
 #topbar-cluster a[href^="https://github.com/"]:hover {
   color: #191919;
 }
 
-.dark #topbar-cluster a[href^="https://github.com/"] {
-  color: #8c8c8c;
-}
-
+.dark #topbar-cluster a[href^="https://github.com/"],
 .dark #topbar-cluster a[href^="https://github.com/"]:hover {
   color: #f7f6f5;
 }

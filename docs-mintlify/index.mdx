@@ -1,11 +1,11 @@
 ---
 title: "Evolve documentation"
-description: "Any model, any harness, any sandbox, one API key. Every task checked, every trajectory analyzed."
+description: "Any model, any harness, any sandbox, one API key. Versioned environments, reproducible rollouts at scale. Every task checked, every trajectory analyzed."
 ---
 
 Evolve runs coding agents on evaluation tasks in cloud sandboxes, with any model, any agent harness and any sandbox provider behind one API key. Every trial is fully observable: its trace streams live while the agent works, and its files and artifacts are there to inspect when it ends. Task quality control is automated with `evolve check`. Trace analysis runs after every trial, cheap and scalable, with `evolve analyze`.
 
-- **Hosted rollouts.** Every task runs in its own sandbox, reproducibly, across models, harnesses and sandbox providers.
+- **Versioned environments, reproducible rollouts.** A dataset is versioned as `name@version`, and each task's image is built once per version and pinned, so every trial of that version runs the same environment on any provider, now or months later. A job runs its trials in parallel, as many at once as you set.
 - **One API key.** Any model with `-m`, any agent harness with `-a`, any sandbox provider with `-e`.
 - **Full observability.** Every trial streams its trace live. Its artifacts and files are yours to read and download.
 - **Task quality control.** `evolve check` runs each task and judges it against a rubric before you spend a job on it.
