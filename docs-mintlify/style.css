@@ -22,6 +22,14 @@ samp {
   color: #f7f6f5;
 }
 
+/* On a phone a long chip wraps at its spaces rather than widening the page. */
+@media (max-width: 640px) {
+  :not(pre) > code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 /* Body text at the website's full contrast. Maple renders paragraphs as bare spans under #content. */
 #content > span,
 #content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
@@ -58,66 +66,40 @@ samp {
   border-right-color: #ffffff1a;
 }
 
-/* The active item's bar: 3px of the accent. */
-#navigation-items a.border-primary {
-  border-left-color: #b026ff;
-}
-
-/* Pagination: a visible frame, a divider between the halves, two equal
-   halves, nothing truncated. Hover lightens the border only. */
+/* Pagination: Maple's own tile and behaviour, in our colors. */
 #pagination {
   background: #ffffff;
-  border: 1px solid #00000026;
-  padding: 0;
 }
 
-#pagination:hover {
-  border-color: #00000040;
+#pagination .font-semibold {
+  color: #191919;
+}
+
+#pagination a:not(:hover) span {
+  color: #1919198f;
 }
 
 .dark #pagination {
   background: #141414;
-  border-color: #ffffff2e;
 }
 
-.dark #pagination:hover {
-  border-color: #ffffff47;
+.dark #pagination .font-semibold {
+  color: #f7f6f5;
 }
 
-#pagination a {
-  flex: 1 1 50%;
-  min-width: 0;
+.dark #pagination a:not(:hover) span {
+  color: #f7f6f5aa;
 }
 
-#pagination a:hover {
-  background: transparent;
+/* The sidebar paints above the tab bar's glass, so the cluster at its top
+   right (below) is never blurred by it. The two never overlap. */
+#sidebar {
+  z-index: 25;
 }
 
-#pagination a[rel="next"] {
-  border-left: 1px solid #00000026;
-}
-
-.dark #pagination a[rel="next"] {
-  border-left-color: #ffffff2e;
-}
-
-#pagination a[rel="prev"] + a[rel="next"] {
-  margin-left: 0;
-}
-
-#pagination .truncate {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  width: auto;
-}
-
-/* The flow diagram fills the content column. */
-#content svg[aria-roledescription="flowchart-v2"],
-#content .mermaid svg {
-  width: 100%;
-  height: auto;
-  max-width: none;
+/* The sidebar's scroll area keeps room under its last item. */
+#sidebar-content > div {
+  padding-bottom: 4.5rem;
 }
 
 /* Navbar links and the Dashboard button, top right. */
@@ -170,43 +152,134 @@ samp {
   height: 1.25rem;
 }
 
-/* Dashboard: solid purple, white label, square. */
-#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"],
-#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+/* Dashboard: the website's primary button, square. */
+#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] {
   display: inline-flex;
   align-items: center;
   height: 2rem;
   padding: 0 0.875rem;
-  background: #b026ff;
-  color: #ffffff;
+  background: #191919;
+  color: #f7f6f5;
   font-weight: 500;
 }
 
+#sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+  background: #000000;
+}
+
 #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] span {
-  color: #ffffff;
+  color: #f7f6f5;
+}
+
+.dark #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] {
+  background: #f7f6f5;
+  color: #0a0a0a;
+}
+
+.dark #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+  background: #ffffff;
+}
+
+.dark #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] span {
+  color: #0a0a0a;
 }
 
 #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] svg {
   display: none;
 }
 
-/* Mermaid charts: the node labels are html spans, and the page's text color
-   reached them before the chart's own; the nodes are dark in both modes. */
-#content svg .node .nodeLabel,
-#content svg .node foreignObject div,
-#content svg .node foreignObject span {
+/* Charts: grays and black, in both modes. Size comes from each chart's init. */
+#content svg[id^="mermaid"] {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+#content svg[id^="mermaid"] .node rect,
+#content svg[id^="mermaid"] .node polygon,
+#content svg[id^="mermaid"] .node circle,
+#content svg[id^="mermaid"] .node path {
+  fill: #ffffff;
+  stroke: #191919;
+  stroke-width: 1px;
+}
+
+#content svg[id^="mermaid"] .node .nodeLabel,
+#content svg[id^="mermaid"] .node foreignObject div,
+#content svg[id^="mermaid"] .node foreignObject span {
+  color: #191919;
+}
+
+#content svg[id^="mermaid"] .node text {
+  fill: #191919;
+}
+
+#content svg[id^="mermaid"] .edgePath path,
+#content svg[id^="mermaid"] path.flowchart-link {
+  stroke: #191919;
+  stroke-width: 1px;
+}
+
+#content svg[id^="mermaid"] marker path,
+#content svg[id^="mermaid"] .marker {
+  fill: #191919;
+  stroke: #191919;
+}
+
+#content svg[id^="mermaid"] .cluster rect {
+  fill: #0000000a;
+  stroke: #00000026;
+}
+
+#content svg[id^="mermaid"] .cluster-label .nodeLabel,
+#content svg[id^="mermaid"] .cluster-label span {
+  color: #737373;
+}
+
+#content svg[id^="mermaid"] .cluster-label text {
+  fill: #737373;
+}
+
+.dark #content svg[id^="mermaid"] .node rect,
+.dark #content svg[id^="mermaid"] .node polygon,
+.dark #content svg[id^="mermaid"] .node circle,
+.dark #content svg[id^="mermaid"] .node path {
+  fill: #141414;
+  stroke: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] .node .nodeLabel,
+.dark #content svg[id^="mermaid"] .node foreignObject div,
+.dark #content svg[id^="mermaid"] .node foreignObject span {
   color: #f7f6f5;
 }
 
-#content svg .node text {
+.dark #content svg[id^="mermaid"] .node text {
   fill: #f7f6f5;
 }
 
-#content svg .cluster-label .nodeLabel,
-#content svg .cluster-label span {
+.dark #content svg[id^="mermaid"] .edgePath path,
+.dark #content svg[id^="mermaid"] path.flowchart-link {
+  stroke: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] marker path,
+.dark #content svg[id^="mermaid"] .marker {
+  fill: #f7f6f5;
+  stroke: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] .cluster rect {
+  fill: #ffffff0a;
+  stroke: #ffffff26;
+}
+
+.dark #content svg[id^="mermaid"] .cluster-label .nodeLabel,
+.dark #content svg[id^="mermaid"] .cluster-label span {
   color: #8c8c8c;
 }
 
-#content svg .cluster-label text {
+.dark #content svg[id^="mermaid"] .cluster-label text {
   fill: #8c8c8c;
 }
