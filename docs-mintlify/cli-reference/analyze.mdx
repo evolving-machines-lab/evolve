@@ -1,9 +1,7 @@
 ---
 title: "evolve analyze"
-description: "Analyze a finished job's trial traces against a rubric, on the platform."
+description: "Analyze a job's traces against a rubric."
 ---
-
-import GlobalOptions from '/snippets/global-options.mdx';
 
 ```bash
 evolve analyze <job-id> [options]
@@ -17,51 +15,19 @@ evolve analyze 3e1f9a2c-… -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --
 
 ## Options
 
-<ParamField path="-m, --model" type="name" default="openrouter/deepseek/deepseek-v4.1-flash">
-  Model the analyzer runs. `glm-5.3-flash` and `haiku` are alternatives, `glm-5.3` escalates, and `fireworks/deepseek-v4.1-flash` is the same model on its Fireworks route. Must be on the `claude` roster.
-</ParamField>
+- `-m, --model <name>`: Model the analyzer runs. Default `openrouter/deepseek/deepseek-v4.1-flash`; `glm-5.3-flash` and `haiku` are alternatives, `glm-5.3` escalates, and `fireworks/deepseek-v4.1-flash` is the same model on its Fireworks route. Must be on the `claude` roster.
+- `--effort <value>`: Reasoning effort the analyzer runs at. Defaults to the per-model default: `high` on `openrouter/deepseek/deepseek-v4.1-flash`, `max` on `glm-5.3-flash`.
+- `-r, --rubric <path>`: Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's analyze rubric, seven criteria with `score_is_earned` first.
+- `-p, --prompt <path>`: Prompt file for the evaluator agent. Its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
+- `-e, --env <provider>`: Sandbox provider the analyzer runs on. Defaults to the platform's analysis default.
+- `-n, --n-concurrent <n>`: Max concurrent trial analyses, beneath the organization's ceiling. Defaults to the ceiling.
+- `--passing`: Only analyze passing trials (reward 1.0).
+- `--failing`: Only analyze failing trials (reward below 1.0, or an exception).
+- `-l, --n-trials <n>`: Max trials to analyze, after `--passing` or `--failing`, in the job's trial order.
+- `--watch`: Poll until every analysis settles: 2 seconds between reads, backing off to 30 seconds while nothing changes.
+- `-q, --quiet`: With `--watch`: suppress the progress lines and print the final block only.
 
-<ParamField path="--effort" type="value">
-  Reasoning effort the analyzer runs at. Defaults to the per-model default: `high` on `openrouter/deepseek/deepseek-v4.1-flash`, `max` on `glm-5.3-flash`.
-</ParamField>
-
-<ParamField path="-r, --rubric" type="path">
-  Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's analyze rubric, seven criteria with `score_is_earned` first.
-</ParamField>
-
-<ParamField path="-p, --prompt" type="path">
-  Prompt file for the evaluator agent. Its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
-</ParamField>
-
-<ParamField path="-e, --env" type="provider">
-  Sandbox provider the analyzer runs on. Defaults to the platform's analysis default.
-</ParamField>
-
-<ParamField path="-n, --n-concurrent" type="n">
-  Max concurrent trial analyses, beneath the organization's ceiling. Defaults to the ceiling.
-</ParamField>
-
-<ParamField path="--passing">
-  Only analyze passing trials (reward 1.0).
-</ParamField>
-
-<ParamField path="--failing">
-  Only analyze failing trials (reward below 1.0, or an exception).
-</ParamField>
-
-<ParamField path="-l, --n-trials" type="n">
-  Max trials to analyze, after `--passing` or `--failing`, in the job's trial order.
-</ParamField>
-
-<ParamField path="--watch">
-  Poll until every analysis settles: 2 seconds between reads, backing off to 30 seconds while nothing changes.
-</ParamField>
-
-<ParamField path="-q, --quiet">
-  With `--watch`: suppress the progress lines and print the final block only.
-</ParamField>
-
-<GlobalOptions />
+Every command also takes the [global options](/cli-reference#global-options).
 
 ## Reading analyses back
 

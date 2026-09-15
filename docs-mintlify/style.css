@@ -1,49 +1,14 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap");
-
-/* The website's serif, self-hosted: book for text, medium for emphasis. */
-@font-face {
-  font-family: "STK Bureau Serif";
-  src: url("/fonts/stk-bureau-serif-book.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "STK Bureau Serif";
-  src: url("/fonts/stk-bureau-serif-medium.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* The website's pairing: sans headings and navigation (docs.json), serif body, regular weights.
-   Maple renders body paragraphs as bare spans under #content, so those are named beside p. */
-#content > span,
-#content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
-  font-family: "STK Bureau Serif", Georgia, serif;
-  color: #000000;
-}
-
-.dark #content > span,
-.dark #content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
-  color: #f7f6f5;
-}
-
-#content-area :is(h1, h2, h3, h4) {
-  font-weight: 400;
-}
+@import url("https://fonts.googleapis.com/css2?family=Google+Sans+Code:wght@400;500;600&display=swap");
 
 code,
 kbd,
 pre,
 samp {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: "Google Sans Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 /* Inline code, visible on both grounds. Code blocks keep their own frame. */
 :not(pre) > code {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   background: #edeceb;
   border: 1px solid #0000000f;
   color: #191919;
@@ -56,15 +21,22 @@ samp {
   color: #f7f6f5;
 }
 
-/* Links take the accent. */
-#content-area a.link {
-  color: #b026ff;
-  text-decoration-color: #b026ff;
+/* Body text at the website's full contrast. Maple renders paragraphs as bare spans under #content. */
+#content > span,
+#content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
+  color: #000000;
 }
 
-.dark #content-area a.link {
-  color: #c45cff;
-  text-decoration-color: #c45cff;
+.dark #content > span,
+.dark #content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
+  color: #f7f6f5;
+}
+
+/* Links: the accent, no underline, in both modes and on hover. */
+#content-area a.link,
+#content-area a.link:hover {
+  color: #b026ff;
+  text-decoration: none;
 }
 
 /* Square corners: the owner's rule. */
@@ -83,4 +55,31 @@ samp {
 .dark #sidebar {
   background: #141414;
   border-right-color: #ffffff1a;
+}
+
+/* The active item's bar: 3px of the accent. */
+#navigation-items a.border-primary {
+  border-left-width: 3px;
+  border-left-color: #b026ff;
+}
+
+/* Pagination: two equal halves, nothing truncated. */
+#pagination a {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+#pagination .truncate {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  width: auto;
+}
+
+/* The flow diagram fills the content column. */
+#content svg[aria-roledescription="flowchart-v2"],
+#content .mermaid svg {
+  width: 100%;
+  height: auto;
+  max-width: none;
 }

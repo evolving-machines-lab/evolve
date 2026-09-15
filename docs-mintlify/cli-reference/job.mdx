@@ -3,9 +3,6 @@ title: "evolve job"
 description: "Start, follow, and derive jobs."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
-import ListFlags from '/snippets/list-flags.mdx';
-
 ```bash
 evolve job <command> [options]
 ```
@@ -26,17 +23,10 @@ Start a job; add `--watch` to follow it. Exactly the options of [`evolve run`](/
 evolve job list [options]
 ```
 
-List jobs, newest first: yours, or `--scope shared` for your organizations'.
+List jobs, newest first: yours, or `--scope shared` for your organizations'. Takes the [listing flags](/cli-reference#listing-flags), plus:
 
-<ListFlags />
-
-<ParamField path="--search" type="text">
-  Free-text filter over job name and dataset names.
-</ParamField>
-
-<ParamField path="--scope" type="my | shared">
-  Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created.
-</ParamField>
+- `--search <text>`: Free-text filter over job name and dataset names.
+- `--scope <my|shared>`: Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created.
 
 ```bash
 evolve job list --limit 20 -q
@@ -56,17 +46,10 @@ Show one or more jobs in full, including pass@k once every attempt has settled.
 evolve job trials <id> [options]
 ```
 
-List a job's trials.
+List a job's trials. Takes the [listing flags](/cli-reference#listing-flags), plus:
 
-<ListFlags />
-
-<ParamField path="--status" type="s1,s2,...">
-  Filter by trial status, for example `INFRASTRUCTURE_ERROR`.
-</ParamField>
-
-<ParamField path="--dataset" type="name">
-  Filter to one dataset's trials.
-</ParamField>
+- `--status <s1,s2,...>`: Filter by trial status, for example `INFRASTRUCTURE_ERROR`.
+- `--dataset <name>`: Filter to one dataset's trials.
 
 ```bash
 evolve job trials 3e1f9a2c-… --status INFRASTRUCTURE_ERROR,SCORING_ERROR
@@ -78,9 +61,7 @@ evolve job trials 3e1f9a2c-… --status INFRASTRUCTURE_ERROR,SCORING_ERROR
 evolve job tasks <id> [options]
 ```
 
-Per-task rollup of a job: one row per task.
-
-<ListFlags />
+Per-task rollup of a job: one row per task. Takes the [listing flags](/cli-reference#listing-flags).
 
 ## job compare
 
@@ -106,9 +87,7 @@ evolve job delete <id> [options]
 
 Permanently delete a job you created: its trials, traces, analyses and stored files.
 
-<ParamField path="-y, --yes">
-  Delete without a confirmation prompt.
-</ParamField>
+- `-y, --yes`: Delete without a confirmation prompt.
 
 ## job stop
 
@@ -118,9 +97,7 @@ evolve job stop <id> --dataset <name>
 
 Stop one dataset's live trials without cancelling the job.
 
-<ParamField path="--dataset" type="name" required>
-  The dataset whose live trials to stop.
-</ParamField>
+- `--dataset <name>`: The dataset whose live trials to stop. Required.
 
 ## job resume
 
@@ -130,9 +107,7 @@ evolve job resume <id> [options]
 
 A new linked job over a terminal job's failed or stopped trials.
 
-<ParamField path="-f, --filter-error-type" type="type">
-  Failure types to resume, matched on the trial's exception type. Repeatable. Defaults to the standard failure set plus stopped trials.
-</ParamField>
+- `-f, --filter-error-type <type>`: Failure types to resume, matched on the trial's exception type. Repeatable. Defaults to the standard failure set plus stopped trials.
 
 ```bash
 evolve job resume 3e1f9a2c-… -f InfrastructureError
@@ -146,13 +121,8 @@ evolve job retry <id> [options]
 
 A new linked job re-running selected trials: all of them, the failed ones only, or named ids.
 
-<ParamField path="--failed-only">
-  Only retry failed trials: `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`. Stopped and scored trials are not failures.
-</ParamField>
-
-<ParamField path="-t, --trial" type="trial-id">
-  Retry exactly this trial. Repeatable, all or nothing: each must be settled, and the job may still be running. Not combinable with `--failed-only`.
-</ParamField>
+- `--failed-only`: Only retry failed trials: `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`. Stopped and scored trials are not failures.
+- `-t, --trial <trial-id>`: Retry exactly this trial. Repeatable, all or nothing: each must be settled, and the job may still be running. Not combinable with `--failed-only`.
 
 ## job regrade
 
@@ -162,13 +132,8 @@ evolve job regrade <id> [options]
 
 Verifier-only re-run of a terminal job. The result is a job.
 
-<ParamField path="--status" type="s1,s2,...">
-  Only regrade source trials in these statuses.
-</ParamField>
-
-<ParamField path="--task" type="name">
-  Only regrade source trials of this task.
-</ParamField>
+- `--status <s1,s2,...>`: Only regrade source trials in these statuses.
+- `--task <name>`: Only regrade source trials of this task.
 
 ## job imports
 
@@ -176,13 +141,9 @@ Verifier-only re-run of a terminal job. The result is a job.
 evolve job imports [options]
 ```
 
-List your job imports (uploads), newest first. This is how an import id is found again.
+List your job imports (uploads), newest first. This is how an import id is found again. Takes the [listing flags](/cli-reference#listing-flags), plus:
 
-<ListFlags />
-
-<ParamField path="--status" type="QUEUED | RUNNING | COMPLETED | FAILED">
-  Filter by import status.
-</ParamField>
+- `--status <QUEUED|RUNNING|COMPLETED|FAILED>`: Filter by import status.
 
 ## job import
 
@@ -192,9 +153,7 @@ evolve job import <import-id> [options]
 
 Show one job import, an upload's record.
 
-<ParamField path="--watch">
-  Poll until the import settles: `COMPLETED`, and the job is printed, or `FAILED`.
-</ParamField>
+- `--watch`: Poll until the import settles: `COMPLETED`, and the job is printed, or `FAILED`.
 
 ## job download
 
@@ -204,13 +163,8 @@ evolve job download <id> [options]
 
 Download the job's results, unpacked as the standard job-directory tree plus `evolve.json` records.
 
-<ParamField path="-o, --output-dir" type="dir">
-  Directory to unpack into. Defaults to the current directory. The tree lands in `<dir>/job-<id>/`.
-</ParamField>
-
-<ParamField path="--overwrite">
-  Replace an existing `<dir>/job-<id>/`.
-</ParamField>
+- `-o, --output-dir <dir>`: Directory to unpack into. Defaults to the current directory. The tree lands in `<dir>/job-<id>/`.
+- `--overwrite`: Replace an existing `<dir>/job-<id>/`.
 
 ## job grep
 
@@ -220,20 +174,10 @@ evolve job grep <id> <pattern> [options]
 
 Search every trial's parsed trace in one server-side pass.
 
-<ParamField path="--type" type="event-type">
-  Only search events of exactly this type.
-</ParamField>
-
-<ParamField path="-l, --limit" type="n" default="50">
-  Per-trial match groups per page. Max 200.
-</ParamField>
-
-<ParamField path="--cursor" type="c">
-  Resume after this trial id, the previous page's `nextCursor`.
-</ParamField>
+- `--type <event-type>`: Only search events of exactly this type.
+- `-l, --limit <n>`: Per-trial match groups per page. Default 50, max 200.
+- `--cursor <c>`: Resume after this trial id, the previous page's `nextCursor`.
 
 ```bash
 evolve job grep 3e1f9a2c-… 'permission denied'
 ```
-
-<GlobalOptions />

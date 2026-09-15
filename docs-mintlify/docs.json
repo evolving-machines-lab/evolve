@@ -4,7 +4,7 @@
   "theme": "maple",
   "colors": {
     "primary": "#B026FF",
-    "light": "#C45CFF",
+    "light": "#B026FF",
     "dark": "#B026FF"
   },
   "favicon": "/favicon.png",
@@ -23,21 +23,11 @@
     }
   },
   "fonts": {
-    "family": "NB International Pro",
+    "family": "Google Sans Flex",
     "weight": 400,
-    "source": "/fonts/nb-international-pro-regular.woff2",
-    "format": "woff2",
     "heading": {
-      "family": "NB International Pro",
-      "weight": 400,
-      "source": "/fonts/nb-international-pro-regular.woff2",
-      "format": "woff2"
-    },
-    "body": {
-      "family": "STK Bureau Serif",
-      "weight": 400,
-      "source": "/fonts/stk-bureau-serif-book.woff2",
-      "format": "woff2"
+      "family": "Google Sans Flex",
+      "weight": 600
     }
   },
   "icons": {
@@ -63,7 +53,12 @@
     }
   },
   "contextual": {
-    "options": ["copy", "view", "claude", "chatgpt"],
+    "options": [
+      "copy",
+      "view",
+      "claude",
+      "chatgpt"
+    ],
     "display": "header"
   },
   "redirects": [

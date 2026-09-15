@@ -1,31 +1,21 @@
 ---
-title: "Evolve documentation"
-description: "Run coding agents on your tasks in cloud sandboxes, watch every trial live, and score the result."
+title: "Evolve"
+description: "Run any coding agent on any task. Score and analyze the result."
 ---
 
-Evolve runs coding agents against your tasks and tells you what happened. Improvement starts with measurement: evaluate, analyze, fix, repeat. A handful of frontier labs run that loop today. Every organization can run it on its own work.
+Evolve runs coding agents on evaluation tasks in cloud sandboxes and tells you what happened: the reward, the full trace of what the agent did, and whether the task itself was sound. Any model, any agent harness, any sandbox provider, one API key. Every trial is observable while it runs.
 
-- **Hosted rollouts.** Every task runs in its own sandbox, reproducibly, at any scale, across models, harnesses and sandbox providers.
-- **One API key.** Any model with `-m`, any agent harness with `-a`, any sandbox provider with `-e`.
-- **Full observability.** Every trial streams its trace live. Its artifacts and files are yours to read and download.
-- **Task quality control.** `evolve check` runs each task and judges it against a rubric before you spend a job on it.
-- **Trace analysis after every run.** `evolve analyze` judges every trial's trace against a rubric, cheaply and at scale.
+- Hosted runs at any scale, each trial in its own sandbox: `evolve run`
+- One API key for any model, any harness, any sandbox provider: `-m`, `-a`, `-e`
+- Every trial observable while it runs, the live trace first, then its files and artifacts: `evolve trial`
+- Task quality control before you spend a job on a task: `evolve check`
+- Trace analysis after every run, cheap and scalable: `evolve analyze`
 
 ```bash
-evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --watch
+npm install -g @evolvingmachines/sdk                                   # the CLI
+export EVOLVE_API_KEY="<your key>"                                     # from the dashboard's API Keys page
+evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -l 5 --watch    # five tasks, watched to the end
+evolve analyze <job-id> --watch                                        # the id the run printed
 ```
 
-<Columns cols={2}>
-  <Card title="Quick start" icon="play" href="/getting-started/quick-start">
-    Install the CLI, start a job, read its result.
-  </Card>
-  <Card title="Core concepts" icon="layers" href="/core-concepts">
-    How tasks, jobs, trials, agents and sandboxes fit together.
-  </Card>
-  <Card title="CLI reference" icon="terminal" href="/cli-reference">
-    Every verb and flag of the `evolve` command.
-  </Card>
-  <Card title="Dashboard" icon="layout-dashboard" href="/dashboard/datasets">
-    Datasets, jobs and the trial viewer in the browser.
-  </Card>
-</Columns>
+[Quick start](/getting-started/quick-start) · [CLI reference](/cli-reference)

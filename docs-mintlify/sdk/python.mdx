@@ -1,6 +1,6 @@
 ---
 title: "Python SDK"
-description: "Start a job, wait for it, read the result, and download it from Python."
+description: "Start, wait, read, download in Python."
 ---
 
 ```bash
@@ -20,7 +20,7 @@ evals = jobs()
 
 ```python
 job = await evals.start(
-    datasets=[{"name": "deep-swe", "version": "1.1", "n_tasks": 5}],
+    datasets=[{"name": "terminal-bench-4", "version": "4.0", "n_tasks": 5}],
     agents=[{"name": "codex", "model_name": "gpt-5.5"}],
     n_attempts=1,
     n_concurrent_trials=4,
@@ -105,7 +105,7 @@ catalog = datasets()
 async for dataset in catalog.list():
     print(dataset.name, dataset.active_version and dataset.active_version.version)
 
-version = await catalog.get("deep-swe@1.1")
+version = await catalog.get("terminal-bench-4@4.0")
 ```
 
 ## Everything else

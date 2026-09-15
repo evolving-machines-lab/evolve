@@ -1,10 +1,7 @@
 ---
 title: "evolve check"
-description: "Check task quality against a rubric, and read checks back."
+description: "Check task quality, and read checks back."
 ---
-
-import GlobalOptions from '/snippets/global-options.mdx';
-import ListFlags from '/snippets/list-flags.mdx';
 
 ```bash
 evolve check [<path>] [options]
@@ -18,55 +15,20 @@ evolve check ./tasks -i 'abs-*' -l 5 --watch
 
 ## Options
 
-<ParamField path="-d, --dataset" type="name[@version]">
-  Check a published dataset's tasks instead of a local path. The checker reads the version's retained task package, and the job page's CHECK tab lists these checks by task.
-</ParamField>
+- `-d, --dataset <name[@version]>`: Check a published dataset's tasks instead of a local path. The checker reads the version's retained task package, and the job page's CHECK tab lists these checks by task.
+- `-m, --model <name>`: Model the checker runs. Default `openrouter/deepseek/deepseek-v4.1-flash`; `fireworks/deepseek-v4.1-flash` is the same model on its Fireworks route. Must be on the `claude` roster.
+- `--effort <value>`: Reasoning effort the checker runs at. Defaults to the per-model default.
+- `-r, --rubric <path>`: Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's check rubric, eleven criteria.
+- `-p, --prompt <path>`: Prompt file for the evaluator agent. Its text replaces the built-in check prompt, with `{task_path}`, `{file_tree}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
+- `-e, --env <provider>`: Sandbox provider the checker runs on. Defaults to the platform's analysis default.
+- `-n, --n-concurrent <n>`: Max concurrent task checks, beneath the organization's ceiling. Defaults to the ceiling.
+- `-i, --include-task-name <glob>`: Only check tasks matching the glob. Repeatable.
+- `-x, --exclude-task-name <glob>`: Skip tasks matching the glob. Repeatable.
+- `-l, --n-tasks <n>`: Max tasks to check, after the globs, in sorted directory order.
+- `--watch`: Poll until every task check settles: 2 seconds between reads, backing off to 30 seconds while nothing changes.
+- `-q, --quiet`: With `--watch`: suppress the progress lines and print the final report only.
 
-<ParamField path="-m, --model" type="name" default="openrouter/deepseek/deepseek-v4.1-flash">
-  Model the checker runs. `fireworks/deepseek-v4.1-flash` is the same model on its Fireworks route. Must be on the `claude` roster.
-</ParamField>
-
-<ParamField path="--effort" type="value">
-  Reasoning effort the checker runs at. Defaults to the per-model default.
-</ParamField>
-
-<ParamField path="-r, --rubric" type="path">
-  Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's check rubric, eleven criteria.
-</ParamField>
-
-<ParamField path="-p, --prompt" type="path">
-  Prompt file for the evaluator agent. Its text replaces the built-in check prompt, with `{task_path}`, `{file_tree}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
-</ParamField>
-
-<ParamField path="-e, --env" type="provider">
-  Sandbox provider the checker runs on. Defaults to the platform's analysis default.
-</ParamField>
-
-<ParamField path="-n, --n-concurrent" type="n">
-  Max concurrent task checks, beneath the organization's ceiling. Defaults to the ceiling.
-</ParamField>
-
-<ParamField path="-i, --include-task-name" type="glob">
-  Only check tasks matching the glob. Repeatable.
-</ParamField>
-
-<ParamField path="-x, --exclude-task-name" type="glob">
-  Skip tasks matching the glob. Repeatable.
-</ParamField>
-
-<ParamField path="-l, --n-tasks" type="n">
-  Max tasks to check, after the globs, in sorted directory order.
-</ParamField>
-
-<ParamField path="--watch">
-  Poll until every task check settles: 2 seconds between reads, backing off to 30 seconds while nothing changes.
-</ParamField>
-
-<ParamField path="-q, --quiet">
-  With `--watch`: suppress the progress lines and print the final report only.
-</ParamField>
-
-<GlobalOptions />
+Every command also takes the [global options](/cli-reference#global-options).
 
 ## Reading checks back
 
@@ -78,17 +40,10 @@ The same word, followed by `list`, `show`, `trace` or `download`, reads checks b
 evolve check list [options]
 ```
 
-List your task quality checks, newest first.
+List your task quality checks, newest first. Takes the [listing flags](/cli-reference#listing-flags), plus:
 
-<ListFlags />
-
-<ParamField path="--scope" type="my | shared">
-  Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created.
-</ParamField>
-
-<ParamField path="--status" type="s1,s2,...">
-  Filter by check status: `queued`, `running`, `completed`.
-</ParamField>
+- `--scope <my|shared>`: Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created.
+- `--status <s1,s2,...>`: Filter by check status: `queued`, `running`, `completed`.
 
 ```bash
 evolve check list --status running
@@ -110,9 +65,7 @@ evolve check trace <task-check-id> [options]
 
 Print the checker's own parsed transcript for one task check.
 
-<ParamField path="--since" type="n">
-  Skip the first N events. To resume, pass the count you already hold.
-</ParamField>
+- `--since <n>`: Skip the first N events. To resume, pass the count you already hold.
 
 ### check download
 
@@ -122,21 +75,10 @@ evolve check download <check-id | task-check-id> [options]
 
 Save a check as a check folder (`check_report.json` plus one folder per task) by its check id, one task check's folder by its task check id, or stream one task check's artifact.
 
-<ParamField path="-o, --output-dir" type="dir" default="checks/">
-  Directory to save under. A check id lands in `<dir>/check-<id>/`, a task check id in `<dir>/check-<task>__<7 chars>/`, the run's own folder name.
-</ParamField>
-
-<ParamField path="--overwrite">
-  Replace an existing folder of the same name.
-</ParamField>
-
-<ParamField path="--stream" type="artifact">
-  Print one artifact of a task check to stdout instead of saving: `task-check` (the result document), `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
-</ParamField>
-
-<ParamField path="--since" type="n">
-  With `--stream trace-parsed`: skip the first N events.
-</ParamField>
+- `-o, --output-dir <dir>`: Directory to save under. Default `checks/`. A check id lands in `<dir>/check-<id>/`, a task check id in `<dir>/check-<task>__<7 chars>/`, the run's own folder name.
+- `--overwrite`: Replace an existing folder of the same name.
+- `--stream <artifact>`: Print one artifact of a task check to stdout instead of saving: `task-check` (the result document), `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
+- `--since <n>`: With `--stream trace-parsed`: skip the first N events.
 
 ```bash
 evolve check download 3f9a1c2e-… -o checks/

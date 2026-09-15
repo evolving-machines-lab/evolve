@@ -1,6 +1,6 @@
 ---
 title: "Trials"
-description: "One agent's attempt at one task: its record, its trace, and its artifacts."
+description: "One trial: its record, trace, artifacts."
 ---
 
 A trial is one attempt of one task by one agent arm. Trial ids are global: every trial command takes the trial id alone, and the trial's record carries its job id.
@@ -80,6 +80,4 @@ evolve trial stop <trial-id> <trial-id>
 
 `retry` runs a settled trial again, `regrade` re-runs only its verifier, and each produces a new job holding the one new trial. `stop` ends in-flight trials without cancelling their job.
 
-<Card title="trial reference" icon="terminal" href="/cli-reference/trial">
-  Every flag of `evolve trial`.
-</Card>
+Every flag is in the [trial reference](/cli-reference/trial).
