@@ -69,8 +69,10 @@ from evolve import (
     HOSTED_ERROR_CODES,
     AgentsClient,
     AnalysesClient,
+    AnalysisLabel,
     AnalysisStatus,
     AuthClient,
+    CheckLabel,
     CheckStatus,
     ChecksClient,
     DatasetsClient,
@@ -535,6 +537,16 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     check_statuses = _spec_property_enum('Check', 'status')
     assert len(check_statuses) >= 3, 'the Check.status parse found too few — spec moved?'
     assert list(typing.get_args(CheckStatus)) == check_statuses
+
+    # The two derived labels: the spec's enum carries null (the wire's "no
+    # label yet, or a custom rubric"), which Optional[...] types here.
+    analysis_labels = _spec_property_enum('TrialAnalysis', 'label')
+    assert len(analysis_labels) >= 4, 'the TrialAnalysis.label parse found too few — spec moved?'
+    assert [*typing.get_args(AnalysisLabel), 'null'] == analysis_labels
+
+    check_labels = _spec_property_enum('TaskCheck', 'label')
+    assert len(check_labels) >= 3, 'the TaskCheck.label parse found too few — spec moved?'
+    assert [*typing.get_args(CheckLabel), 'null'] == check_labels
 
 
 def _spec_discriminator_mapping(schema: str) -> 'list[str]':

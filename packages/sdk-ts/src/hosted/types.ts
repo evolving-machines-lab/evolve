@@ -491,14 +491,14 @@ export interface RetryConfig {
 export interface RubricCriterion {
   /**
    * Criterion identifier, snake_case (it keys the result's `checks` object).
-   * Harbor's defaults are `reward_hacking` and `task_specification`.
+   * The platform's default rubrics name seven criteria for analyze and eleven for check.
    */
   name: string;
   /** What the criterion evaluates, one sentence. */
   description: string;
   /**
    * Evaluation guidance handed to the analyzer agent — what evidence to read
-   * and what PASS / FAIL / NOT_APPLICABLE mean for this criterion.
+   * and what PASS / FAIL / NOT_APPLICABLE / UNKNOWN mean for this criterion.
    */
   guidance: string;
 }
@@ -522,9 +522,8 @@ export interface Rubric {
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
  * wave. `{}` is legal and means "all defaults":
  * openrouter/deepseek/deepseek-v4.1-flash at its per-model effort (high)
- * over Harbor's default rubric
- * (reward_hacking, task_specification — their
- * analyze/prompts/analyze-rubric.toml, ported verbatim).
+ * over the platform's default analyze rubric (seven criteria, score_is_earned
+ * first) and its default prompt body.
  *
  * The analyzer always runs the claude-code harness (Harbor's default analyze
  * agent) in its own sealed sandbox — on the provider `sandbox_provider`
@@ -567,8 +566,8 @@ export interface AnalyzeConfigInput {
   /**
    * The analyzer's prompt template — the TEXT of Harbor's `-p/--prompt <file>`
    * ("Prompt file for the evaluator agent. Uses built-in default if not
-   * specified.", their cli/analyze.py:94-99). It REPLACES the built-in
-   * template (their analyze/prompts/analyze.txt) as the body of the analyzer's
+   * specified.", their cli/analyze.py:252-255). It REPLACES the platform's
+   * default body as the body of the analyzer's
    * instruction and is rendered with the same three tokens (`{trial_path}`,
    * `{task_section}`, `{criteria_guidance}`): the three tokens are
    * substituted, an unknown `{token}` renders empty, `{{` and `}}` write a
@@ -663,7 +662,7 @@ export interface AnalyzeConfigInput {
 export interface AnalyzeConfig {
   model_name: string;
   rubric: Rubric;
-  /** The caller's prompt template as stored; null = Harbor's built-in analyze.txt. */
+  /** The caller's prompt template as stored; null = the platform's default analyze body. */
   prompt: string | null;
   /**
    * The effort this policy's analyses run at. Named at create it is served
@@ -1029,7 +1028,7 @@ export interface JobAnalysisStats {
    */
   checks: Record<
     string,
-    { n_pass: number; n_fail: number; n_not_applicable: number }
+    { n_pass: number; n_fail: number; n_not_applicable: number; n_unknown: number }
   >;
 }
 
@@ -1464,14 +1463,51 @@ export interface JudgeResult {
 }
 
 /**
- * One criterion's verdict — Harbor's QualityCheckModel verbatim (their
- * cli/quality_checker/models.py `{explanation, outcome}`).
+ * One place a verdict rests on. `where` names a step_id in the trajectory, a
+ * file and line, or a command; `quote` is the exact text found there. The
+ * page links each entry to the record; a reader verifies by eye — nothing
+ * verifies the quotes mechanically.
+ */
+export interface AnalysisEvidence {
+  where: string;
+  quote: string;
+}
+
+/**
+ * One criterion's verdict — Harbor's QualityCheckModel (their
+ * cli/quality_checker/models.py `{explanation, outcome}`) extended by the
+ * platform's result schema: a fourth outcome, `unknown`, for a criterion the
+ * record cannot decide (`not_applicable` keeps Harbor's meaning, no subject),
+ * and the `evidence` list — at least one entry behind a `pass` or a `fail`;
+ * `not_applicable` and `unknown` may carry none. Results stored before the
+ * evidence field existed serve an empty list.
  */
 export interface AnalysisCheck {
-  outcome: "pass" | "fail" | "not_applicable";
-  /** The analyzer's rationale, citing trial evidence. */
+  outcome: "pass" | "fail" | "not_applicable" | "unknown";
+  /** The analyzer's reasoning, in plain words, opening with a few words that name what it found. */
   explanation: string;
+  evidence: AnalysisEvidence[];
 }
+
+/**
+ * The derived label of an analysis — computed by the platform from the
+ * outcomes when the result is stored, never asked from the model. Null until
+ * completed, and null on a completed analysis whose rubric is not the
+ * default one (a custom rubric carries its per-criterion outcomes and no
+ * label). Precedence: `flagged` on a fail of score_is_earned,
+ * score_is_correct, task_was_fair or report_is_truthful; else `env_fault` on
+ * a fail of environment_worked; else `unclear` on an unknown of any of those
+ * five, or a not_applicable of score_is_earned or score_is_correct; else
+ * `clean`.
+ */
+export type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
+
+/**
+ * The derived label of a task check — computed the same way. `has_a_problem`
+ * on a fail of any criterion; else `unclear` on an unknown of any of the six
+ * file-based criteria; else `no_problem_found`. Null under a custom rubric.
+ */
+export type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
 
 /**
  * Why an analysis FAILED — a stored typed failure, never a silent absence and
@@ -1497,8 +1533,9 @@ export interface AnalysisFailure {
 
 /**
  * One trace analysis of a trial. The result half is Harbor's AnalyzeResult
- * verbatim (their analyze/models.py: `summary`, `checks` keyed by criterion,
- * `estimated_cost_usd`; the enclosing trial is Harbor's `trial_name`); the
+ * shape (their analyze/models.py: `summary`, `checks` keyed by criterion,
+ * `estimated_cost_usd`; the enclosing trial is Harbor's `trial_name`), its
+ * checks extended by the result schema (four outcomes, an evidence list); the
  * rest is provenance — which model and rubric THIS analysis ran under, its
  * lifecycle status, and its typed failure when it failed.
  *
@@ -1535,12 +1572,12 @@ export interface TrialAnalysis {
   rubric: Rubric;
   /**
    * The prompt template THIS analysis ran under, frozen at enqueue
-   * (`AnalyzeConfigInput.prompt`); null = Harbor's built-in analyze.txt.
+   * (`AnalyzeConfigInput.prompt`); null = the platform's default analyze body.
    */
   prompt: string | null;
   /**
-   * 3–5 sentence overview of what happened during the trial (Harbor's
-   * summary contract, analyze/prompts/analyze.txt). Null until completed.
+   * 3–5 sentence overview of what happened during the trial (the default
+   * output section's summary contract). Null until completed.
    */
   summary: string | null;
   /**
@@ -1548,6 +1585,8 @@ export interface TrialAnalysis {
    * (the frozen-criteria law). Null until completed.
    */
   checks: Record<string, AnalysisCheck> | null;
+  /** The derived label (AnalysisLabel states the rule); null until completed, and null under a custom rubric. */
+  label: AnalysisLabel | null;
   estimated_cost_usd: number | null;
   /**
    * The analyzer's one-home usage reading — the SAME object, same keys, the
@@ -3953,7 +3992,8 @@ export interface JobsClient {
    * RE-analysis path: calling again (same job, different rubric or model)
    * runs a fresh wave once the previous one has settled. `request` omitted
    * (or `{}`) means the defaults: openrouter/deepseek/deepseek-v4.1-flash
-   * at its per-model effort over Harbor's default rubric. CANCELLED trials
+   * at its per-model effort over the platform's default analyze rubric.
+   * CANCELLED trials
    * are never analyzed.
    */
   analyze(id: string, request?: AnalyzeConfigInput): Promise<Job>;
@@ -4382,10 +4422,10 @@ export interface AnalysesClient {
  * (Harbor's check default is `claude-sonnet-4-6`; this platform's is the
  * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
  * default for both rubric
- * agents, a recorded deviation), `rubric` (the default is Harbor's
- * cli/quality_checker/default-rubric.toml, eleven criteria verbatim), and
- * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing their
- * prompts/check.txt and rendered with `{task_path}`, `{file_tree}`,
+ * agents, a recorded deviation), `rubric` (the default is the platform's
+ * check rubric, eleven criteria), and
+ * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing the platform's
+ * default check body and rendered with `{task_path}`, `{file_tree}`,
  * `{criteria_guidance}`; the output contract is appended after it exactly
  * as Harbor appends it). `reasoning_effort` and `sandbox_provider` are the
  * platform's two hosted knobs, exactly as on the analyze door.
@@ -4403,7 +4443,7 @@ export interface AnalysesClient {
 export interface CheckConfigInput {
   /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
   model_name?: string;
-  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: Harbor's default check rubric. */
+  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (eleven criteria). */
   rubric?: Rubric;
   /** The prompt template — the TEXT of Harbor's `-p/--prompt` file. */
   prompt?: string;
@@ -4461,15 +4501,17 @@ export interface CheckSource {
 }
 
 /**
- * One task's quality check — Harbor's QualityCheckResult verbatim (their
+ * One task's quality check — Harbor's QualityCheckResult shape (their
  * cli/quality_checker/models.py:31-35: `task_name`, `checks` keyed by
- * criterion, `cost_usd`) plus the hosted provenance: its own id, the check
+ * criterion, `cost_usd`), its checks extended by the result schema and the
+ * derived `label` and `executed` beside them, plus the hosted provenance: its own id, the check
  * it belongs to, its lifecycle (the analysis ladder's four lowercase words),
  * the bounded attempt count, and a typed `failure` in place of Harbor's
  * `error` string (the TrialAnalysis rule).
  *
- * `checks` is the FLAT object Harbor's validate.py accepts (one key per
- * rubric criterion, each `{outcome, explanation}` — no summary; analyze has
+ * `checks` is the FLAT object the platform's validate.py accepts (one key per
+ * rubric criterion, each `{outcome, explanation, evidence}`, four outcome
+ * words — no summary; analyze has
  * one, check does not). `cost_usd` is the checker agent's OWN metered spend;
  * null when nothing was measured, never a fabricated 0.
  */
@@ -4482,6 +4524,17 @@ export interface TaskCheck {
   status: AnalysisStatus;
   /** One entry per rubric criterion, keys exactly the frozen criteria. Null until completed. */
   checks: Record<string, AnalysisCheck> | null;
+  /** The derived label (CheckLabel states the rule); null until completed, and null under a custom rubric. */
+  label: CheckLabel | null;
+  /**
+   * Whether the box ran the task's environment: true when none of the five
+   * run-based criteria (reference_solution_is_valid,
+   * verifier_rejects_non_solutions, environment_builds_and_runs,
+   * verification_is_stable, limits_allow_the_task) is unknown, so a
+   * reading-only `no_problem_found` is never mistaken for a run. Null
+   * exactly when `label` is null.
+   */
+  executed: boolean | null;
   cost_usd: number | null;
   /** 1, or 2 when the one automatic re-run fired (a run that produced no valid check-result.json, the missing file included, is re-run once — the analyze verb's hosted rule; a run cut by its budget is not that class: it settles `failed` with phase `timeout` at once and is never re-run). */
   attempts: number;
@@ -4507,7 +4560,7 @@ export interface Check {
   /** The effort every task's checker ran at — named at create, or the model's default, resolved at accept. */
   reasoning_effort: string;
   rubric: Rubric;
-  /** The prompt template as stored; null = Harbor's built-in check.txt. */
+  /** The prompt template as stored; null = the platform's default check body. */
   prompt: string | null;
   sandbox_provider: EvalSandboxProvider;
   /** Harbor's -n as stored; null = the organization's ceiling alone. */

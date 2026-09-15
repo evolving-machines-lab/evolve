@@ -64,6 +64,7 @@ import type {
   AgentArmInput,
   AgentInput,
   AnalysisArtifactStream,
+  AnalysisCheck,
   AnalysisStatus,
   Check,
   CheckConfigInput,
@@ -331,7 +332,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     kind: "boolean",
     help:
       "Analyze each trial's trace server-side as it settles (Harbor's analyze, embedded; " +
-      "CANCELLED trials are skipped). Bare = the defaults: claude-haiku-4-5, Harbor's default rubric",
+      "CANCELLED trials are skipped). Bare = the defaults: the platform's analyze model, rubric and prompt",
   },
   "analyze-model": {
     kind: "string",
@@ -1218,7 +1219,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<path>",
         help:
           "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} " +
-          "shape; default: Harbor's default rubric — reward_hacking, task_specification)",
+          "shape; default: the platform's analyze rubric — seven criteria, score_is_earned first)",
       },
       prompt: {
         kind: "string",
@@ -1310,7 +1311,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<path>",
         help:
           "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} shape; " +
-          "default: Harbor's default check rubric — eleven task-quality criteria)",
+          "default: the platform's check rubric — eleven criteria)",
       },
       prompt: {
         kind: "string",
@@ -2428,8 +2429,8 @@ function loadAgentConfigFile(
 
 /**
  * Read a local prompt file for `analyze -p` / `run --analyze-prompt` — Harbor's
- * `-p/--prompt` (their cli/analyze.py:94-99), whose TEXT replaces the built-in
- * analyze.txt as the analyzer's instruction template (analyzer.py:130-134
+ * `-p/--prompt` (their cli/analyze.py:252-255), whose TEXT replaces the platform's
+ * default body as the analyzer's instruction template (analyzer.py:130-134
  * `prompt_path.read_text()`). Read verbatim, no parsing: the tokens
  * (`{trial_path}`, `{task_section}`, `{criteria_guidance}`) are rendered
  * server-side. Ruled here: the file must be readable and non-empty; the
@@ -3368,7 +3369,9 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
     for (const [name, tally] of Object.entries(e.stats.analysis.checks)) {
       rows.push([
         `  ${name}`,
-        `${tally.n_pass} pass · ${tally.n_fail} fail · ${tally.n_not_applicable} n/a`,
+        `${tally.n_pass} pass · ${tally.n_fail} fail · ${tally.n_not_applicable} n/a` +
+          // A server predating the field sends no n_unknown; nothing is invented.
+          (typeof tally.n_unknown === "number" ? ` · ${tally.n_unknown} unknown` : ""),
       ]);
     }
   }
@@ -3511,13 +3514,39 @@ const TASK_ROLLUP_COLUMNS: ListColumn<JobTaskRollup>[] = [
 ];
 const TASK_ROLLUP_DEFAULT_COLUMNS = ["task", "source", "trials", "statuses", "reward", "spent", "check"];
 
-/** One task check's cell — status until completed, then `pass N · fail N · n/a N`. */
+/** The outcome tally of one checks object, the four words in the wire's order. */
+function outcomeCounts(checks: Record<string, AnalysisCheck> | null): Record<AnalysisCheck["outcome"], number> {
+  const counts = { pass: 0, fail: 0, not_applicable: 0, unknown: 0 };
+  for (const verdict of Object.values(checks ?? {})) counts[verdict.outcome] += 1;
+  return counts;
+}
+
+/**
+ * The derived label as the CLI prints it: the wire word in capitals with
+ * spaces, `custom rubric` when the run has none (null). A server predating
+ * the field sends no `label` at all; that is "not stated", never a word the
+ * CLI invents — the callers print nothing for it.
+ */
+function labelWord(label: string | null | undefined): string | null {
+  if (label === undefined) return null;
+  return label === null ? "custom rubric" : label.replace(/_/g, " ").toUpperCase();
+}
+
+/** A task check's label with its executed flag beside it — a reading-only verdict says so; null when the server stated none. */
+function checkLabelWord(check: Pick<TaskCheck, "label" | "executed">): string | null {
+  const word = labelWord(check.label);
+  if (word === null || check.label === null) return word;
+  return `${word}${check.executed === true ? " · executed" : check.executed === false ? " · not executed" : ""}`;
+}
+
+/** One task check's cell — status until completed, then the label and `pass N · fail N · n/a N · unknown N`. */
 function taskCheckCell(check: TaskCheck | null): string {
   if (check === null) return "-";
   if (check.status !== "completed") return check.status;
-  const counts = { pass: 0, fail: 0, not_applicable: 0 };
-  for (const verdict of Object.values(check.checks ?? {})) counts[verdict.outcome] += 1;
-  return `pass ${counts.pass} · fail ${counts.fail} · n/a ${counts.not_applicable}`;
+  const counts = outcomeCounts(check.checks);
+  const tally = `pass ${counts.pass} · fail ${counts.fail} · n/a ${counts.not_applicable} · unknown ${counts.unknown}`;
+  const label = checkLabelWord(check);
+  return label === null ? tally : `${label} · ${tally}`;
 }
 
 const DATASET_COLUMNS: ListColumn<Dataset>[] = [
@@ -3733,6 +3762,10 @@ export function trialDetailLines(run: Trial): string[] {
     // The id closes the loop to the analysis verbs: `evolve analysis
     // show|trace|download <id>` read the ANALYZER's own side of this row.
     rows.push(["analysis", `${analysis.status} · ${analysis.model_name} · ${analysis.id}`]);
+    // The derived label first (the platform's word for the whole trial), then
+    // one row per criterion verdict.
+    const label = analysis.status === "completed" ? labelWord(analysis.label) : null;
+    if (label !== null) rows.push(["  label", label]);
     for (const [name, check] of Object.entries(analysis.checks ?? {})) {
       rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
     }
@@ -3766,8 +3799,15 @@ export function analysisDetailLines(analysis: TrialAnalysis): string[] {
     ["model", analysis.model_name],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
   ];
+  // The derived label (the platform's word for the whole trial; `custom
+  // rubric` when the rubric is not the default one), then one row per
+  // criterion verdict with its evidence beneath.
+  const label = analysis.status === "completed" ? labelWord(analysis.label) : null;
+  if (label !== null) rows.push(["label", label]);
   for (const [name, check] of Object.entries(analysis.checks ?? {})) {
     rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
+    // A server predating the evidence field sends none; nothing is invented.
+    for (const entry of check.evidence ?? []) rows.push(["", `${entry.where} — ${oneLine(entry.quote)}`]);
   }
   if (analysis.summary) rows.push(["summary", analysis.summary]);
   if (analysis.estimated_cost_usd !== null) {
@@ -4681,10 +4721,15 @@ export function analysisResultLines(runs: Trial[]): string[] {
         );
       }
     } else {
-      checks =
+      // The derived label leads the cell through labelWord (spaces for the
+      // underscores, `custom rubric` for a run without one, nothing for a
+      // server that states none), the way `check --watch` prints Label:.
+      const words =
         Object.entries(analysis.checks ?? {})
           .map(([name, check]) => `${name} ${check.outcome}`)
           .join(" · ") || analysis.status;
+      const label = labelWord(analysis.label);
+      checks = label ? `${label} · ${words}` : words;
     }
     rows.push([
       run.id,
@@ -4836,9 +4881,14 @@ export function checkResultLines(check: Check): string[] {
       return lines;
     }
     lines.push(`Task Quality Checks: ${result.task_name}`);
+    // The derived label and the executed flag first, on their own line
+    // (nothing when the server stated none).
+    const label = result.status === "completed" ? checkLabelWord(result) : null;
+    if (label !== null) lines.push(`Label: ${label}`);
     const rows: string[][] = [["CHECK", "OUTCOME", "EXPLANATION"]];
     for (const [name, verdict] of Object.entries(result.checks ?? {})) {
       rows.push([checkRowLabel(name), verdict.outcome, oneLine(verdict.explanation)]);
+      for (const entry of verdict.evidence ?? []) rows.push(["", "", `${entry.where} — ${oneLine(entry.quote)}`]);
     }
     if (rows.length === 1) rows.push(["-", result.status, "-"]);
     lines.push(...table(rows));
@@ -4849,23 +4899,26 @@ export function checkResultLines(check: Check): string[] {
     return lines;
   }
   lines.push("Task Quality Checks");
-  const rows: string[][] = [["TASK", "PASS", "FAIL", "N/A", "COST ($)", "TASK CHECK ID"]];
+  // Harbor's columns plus the platform's: the derived LABEL first, and the
+  // fourth outcome's count beside their three.
+  const rows: string[][] = [["TASK", "LABEL", "PASS", "FAIL", "N/A", "UNKNOWN", "COST ($)", "TASK CHECK ID"]];
   for (const result of check.results) {
     if (result.status === "failed") {
-      rows.push([result.task_name, "-", "-", "-", "-", result.id]);
+      rows.push([result.task_name, "-", "-", "-", "-", "-", "-", result.id]);
       continue;
     }
     if (result.status !== "completed") {
-      rows.push([result.task_name, result.status, "", "", "-", result.id]);
+      rows.push([result.task_name, result.status, "", "", "", "", "-", result.id]);
       continue;
     }
-    const counts = { pass: 0, fail: 0, not_applicable: 0 };
-    for (const verdict of Object.values(result.checks ?? {})) counts[verdict.outcome] += 1;
+    const counts = outcomeCounts(result.checks);
     rows.push([
       result.task_name,
+      checkLabelWord(result) ?? "-",
       String(counts.pass),
       String(counts.fail),
       String(counts.not_applicable),
+      String(counts.unknown),
       result.cost_usd !== null ? result.cost_usd.toFixed(4) : "-",
       result.id,
     ]);

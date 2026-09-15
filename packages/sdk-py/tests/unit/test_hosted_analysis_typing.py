@@ -4,7 +4,7 @@ the analyze lane's mirror of test_hosted_stats_typing.py.
 The law of the shapes:
 
 - ``AnalyzeConfigInput`` / ``AnalyzeConfig`` / ``Rubric`` / ``RubricCriterion``
-  / ``AnalysisCheck`` / ``AnalysisFailure`` / ``TrialAnalysis`` /
+  / ``AnalysisEvidence`` / ``AnalysisCheck`` / ``AnalysisFailure`` / ``TrialAnalysis`` /
   ``JobAnalysisStats`` are TypedDicts: the runtime object stays the plain
   wire dict, the class only teaches type checkers the keys.
 - Each key set equals its spec schema's properties byte-exactly, in spec
@@ -27,6 +27,7 @@ from typing import List, Optional
 
 from evolve import (
     AnalysisCheck,
+    AnalysisEvidence,
     AnalysisFailure,
     AnalyzeConfig,
     AnalyzeConfigInput,
@@ -81,6 +82,7 @@ def test_every_analysis_shape_equals_its_spec_schema() -> None:
         (Rubric, 'Rubric'),
         (AnalyzeConfigInput, 'AnalyzeConfigInput'),
         (AnalyzeConfig, 'AnalyzeConfig'),
+        (AnalysisEvidence, 'AnalysisEvidence'),
         (AnalysisCheck, 'AnalysisCheck'),
         (AnalysisFailure, 'AnalysisFailure'),
         (TrialAnalysis, 'TrialAnalysis'),
@@ -109,7 +111,7 @@ def test_input_is_optional_and_resolved_is_required() -> None:
     # required lists.
     assert AnalyzeConfigInput.__total__ is False
     assert not AnalyzeConfigInput.__required_keys__
-    for typed_dict in (AnalyzeConfig, Rubric, RubricCriterion, AnalysisCheck,
+    for typed_dict in (AnalyzeConfig, Rubric, RubricCriterion, AnalysisEvidence, AnalysisCheck,
                        AnalysisFailure, TrialAnalysis, JobAnalysisStats):
         assert typed_dict.__total__ is True, typed_dict.__name__
 
