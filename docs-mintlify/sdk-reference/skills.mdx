@@ -1,0 +1,64 @@
+---
+title: "skills"
+description: "Upload and manage platform-stored skills."
+---
+
+`skills()` returns the skills client. An uploaded skill is referenced from a job as `upload:<id>` or `name:<skill-name>`.
+
+## upload
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    upload(directory: string): Promise<SkillUpload[]>
+    ```
+
+    Upload a skill folder. Its name becomes your moving name pointer.
+
+    ```ts
+    const [skill] = await skills().upload("./my-skill");
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def upload(directory: str) -> List[SkillUpload]
+    ```
+
+    Upload a skill folder. Its name becomes your moving name pointer.
+
+    ```python
+    [skill] = await skills().upload("./my-skill")
+    ```
+  </Tab>
+</Tabs>
+
+## list, get, delete
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    list(options?: { limit?: number; cursor?: string }): SkillUploadList
+    get(id: string): Promise<SkillUpload & { skill_md: string | null }>
+    delete(id: string): Promise<void>
+    ```
+
+    Your uploads, one upload with its `SKILL.md`, or delete one. A skill a running job references cannot be deleted.
+
+    ```ts
+    const one = await skills().get(skill.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def list(*, limit: Optional[int] = None, cursor: Optional[str] = None)
+    async def get(skill_id: str) -> SkillUpload
+    async def delete(skill_id: str) -> None
+    ```
+
+    Your uploads, one upload, or delete one. A skill a running job references cannot be deleted.
+
+    ```python
+    one = await skills().get(skill.id)
+    ```
+  </Tab>
+</Tabs>

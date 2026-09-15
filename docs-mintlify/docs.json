@@ -146,6 +146,27 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "SDK reference",
+        "groups": [
+          {
+            "group": "Clients",
+            "pages": [
+              "sdk-reference/index",
+              "sdk-reference/jobs",
+              "sdk-reference/trials",
+              "sdk-reference/datasets",
+              "sdk-reference/analyses",
+              "sdk-reference/checks",
+              "sdk-reference/sessions",
+              "sdk-reference/skills",
+              "sdk-reference/agents",
+              "sdk-reference/auth",
+              "sdk-reference/meta"
+            ]
+          }
+        ]
       }
     ]
   }

@@ -13,6 +13,7 @@ samp {
   border: 1px solid #0000000f;
   color: #191919;
   padding: 0.1em 0.35em;
+  white-space: nowrap;
 }
 
 .dark :not(pre) > code {
