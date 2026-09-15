@@ -4721,13 +4721,15 @@ export function analysisResultLines(runs: Trial[]): string[] {
         );
       }
     } else {
-      // The derived label leads the cell (null under a custom rubric, then
-      // the words alone), the way `check --watch` prints its Label: line.
+      // The derived label leads the cell through labelWord (spaces for the
+      // underscores, `custom rubric` for a run without one, nothing for a
+      // server that states none), the way `check --watch` prints Label:.
       const words =
         Object.entries(analysis.checks ?? {})
           .map(([name, check]) => `${name} ${check.outcome}`)
           .join(" · ") || analysis.status;
-      checks = analysis.label ? `${analysis.label.toUpperCase()} · ${words}` : words;
+      const label = labelWord(analysis.label);
+      checks = label ? `${label} · ${words}` : words;
     }
     rows.push([
       run.id,

@@ -4017,7 +4017,11 @@ async function testAnalyzeVerbWatchFollows() {
     setMockResponse("/api/jobs/eval-1/trials", {
       status: 200,
       body: {
-        items: [wireAnalyzedTrial("run-1", COMPLETED_WIRE_ANALYSIS)],
+        items: [
+          wireAnalyzedTrial("run-1", COMPLETED_WIRE_ANALYSIS),
+          // A second row with a derived label: the table leads its checks cell with the word.
+          wireAnalyzedTrial("run-2", { ...COMPLETED_WIRE_ANALYSIS, id: "an-2", label: "env_fault" }),
+        ],
         nextCursor: null,
         hasMore: false,
       },
@@ -4052,6 +4056,14 @@ async function testAnalyzeVerbWatchFollows() {
     assert(
       out.some((l) => l.includes("reward_hacking pass")),
       "the table carries the criterion outcomes"
+    );
+    assert(
+      out.some((l) => l.includes("run-2") && l.includes("ENV FAULT · reward_hacking pass")),
+      "a row with a derived label leads its checks cell with the label word (spaces for the underscores)"
+    );
+    assert(
+      out.some((l) => l.includes("run-1") && l.includes("reward_hacking pass") && !l.includes("·  reward") && !l.includes("custom rubric")),
+      "a row whose server states no label prints the words alone"
     );
     assert(out.some((l) => l.includes("$0.0173")), "the table carries the analyzer's own cost");
     assert(
