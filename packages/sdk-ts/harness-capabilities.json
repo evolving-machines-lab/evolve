@@ -27,6 +27,11 @@
           "description": "Highest capability, long-horizon agentic work"
         },
         {
+          "alias": "claude-fable-5",
+          "modelId": "claude-fable-5",
+          "description": "Claude Fable 5 (legacy)"
+        },
+        {
           "alias": "opus",
           "modelId": "claude-opus-5",
           "description": "Complex reasoning, R&D, architecting"
@@ -101,7 +106,7 @@
         {
           "alias": "gpt-5.6-sol",
           "modelId": "gpt-5.6-sol",
-          "description": "Previous frontier flagship"
+          "description": "GPT-5.6 flagship (previous generation)"
         },
         {
           "alias": "gpt-5.6-terra",
@@ -116,7 +121,7 @@
         {
           "alias": "gpt-5.5",
           "modelId": "gpt-5.5",
-          "description": "Previous frontier model"
+          "description": "GPT-5.5 frontier model (two generations back)"
         },
         {
           "alias": "gpt-5.3-codex",
@@ -146,9 +151,14 @@
       "defaultModel": "claude-opus-5",
       "models": [
         {
+          "alias": "claude-fable-5.1",
+          "modelId": "claude-fable-5-1",
+          "description": "Factory-managed Claude Fable 5.1"
+        },
+        {
           "alias": "claude-fable-5",
           "modelId": "claude-fable-5",
-          "description": "Factory-managed Claude Fable 5"
+          "description": "Factory-managed Claude Fable 5 (legacy)"
         },
         {
           "alias": "claude-opus-5",
@@ -164,6 +174,11 @@
           "alias": "claude-haiku-4-5",
           "modelId": "claude-haiku-4-5-20251001",
           "description": "Factory-managed Claude Haiku 4.5"
+        },
+        {
+          "alias": "gpt-6-astra",
+          "modelId": "gpt-6-astra",
+          "description": "Factory-managed GPT-6 Astra"
         },
         {
           "alias": "gpt-5.6-sol",
@@ -304,6 +319,11 @@
           "alias": "openrouter/anthropic/claude-fable-5.1",
           "modelId": "openrouter/anthropic/claude-fable-5.1",
           "description": "Anthropic Fable 5.1 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-fable-5",
+          "modelId": "openrouter/anthropic/claude-fable-5",
+          "description": "Anthropic Fable 5 via OpenRouter (legacy)"
         },
         {
           "alias": "openrouter/anthropic/claude-opus-5",
