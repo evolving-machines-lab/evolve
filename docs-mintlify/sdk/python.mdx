@@ -20,7 +20,7 @@ evals = jobs()
 
 ```python
 job = await evals.start(
-    datasets=[{"name": "deep-swe", "version": "1.1", "n_tasks": 5}],
+    datasets=[{"name": "terminal-bench-4", "version": "4.0", "n_tasks": 5}],
     agents=[{"name": "codex", "model_name": "gpt-5.5"}],
     n_attempts=1,
     n_concurrent_trials=4,
@@ -57,7 +57,10 @@ detail = await evals.get(job.id)
 async for trial in evals.trials(job.id):
     print(trial.task_name, trial.agent_info.name, trial.status, trial.reward)
 
-failures = await evals.trials(job.id, status=["INFRASTRUCTURE_ERROR", "SCORING_ERROR"])
+failures = await evals.trials(
+    job.id,
+    status=["INFRASTRUCTURE_ERROR", "SCORING_ERROR"],
+)
 ```
 
 Every list on this surface works the same way: await it for one page, iterate it to walk every page.
@@ -82,7 +85,10 @@ async for event in t.trace_events(trial_id):
 ## Download
 
 ```python
-path = await evals.download(job.id, to="./results")   # the saved file's path
+path = await evals.download(
+    job.id,
+    to="./results",
+)   # the saved file's path
 data = await evals.download(job.id)                    # bytes
 ```
 
@@ -91,11 +97,15 @@ The archive is the standard job directory, the same tree `evolve job download` u
 ## Analyze
 
 ```python
-await evals.analyze(job.id, failing=True, n_trials=20)
+await evals.analyze(
+    job.id,
+    failing=True,
+    n_trials=20,
+)
 analyzed = await evals.watch_analysis(job.id)
 ```
 
-`analyze()` enqueues one analysis per trial and returns at once. `watch_analysis()` follows the wave to its end.
+`analyze()` enqueues one analysis per trial and returns at once. `watch_analysis()` follows the batch of analyses to its end.
 
 ## The catalog
 
@@ -105,7 +115,7 @@ catalog = datasets()
 async for dataset in catalog.list():
     print(dataset.name, dataset.active_version and dataset.active_version.version)
 
-version = await catalog.get("deep-swe@1.1")
+version = await catalog.get("terminal-bench-4@4.0")
 ```
 
 ## Everything else

@@ -6,7 +6,7 @@ description: "Bring a job you ran elsewhere onto the platform as a finished job.
 A job you ran elsewhere, in the Harbor job layout, uploads as a terminal job. Its trials, traces and rewards become a job you read like any other.
 
 ```bash
-evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1
+evolve upload ./job-2026-08-27__12-00-00 -d terminal-bench-4@4.0
 ```
 
 `upload` takes the job directory, or its `.tar.gz`. With `--from <url>` it takes instead a public https URL of the archive, which the server fetches itself. `-d name[@version]` links the uploaded trials to a published dataset version by task name. The command follows the import until the job exists.

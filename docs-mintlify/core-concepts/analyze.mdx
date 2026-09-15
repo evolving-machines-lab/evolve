@@ -12,7 +12,13 @@ evolve analyze <job-id> --watch
 Or arm it when you start the job, so each trial is analyzed the moment it settles:
 
 ```bash
-evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --analyze --watch
+evolve run \
+  -d terminal-bench-4@4.0 \
+  -a codex \
+  -m gpt-5.5 \
+  --analyze \
+  -l 5 \
+  --watch
 ```
 
 ## Rubrics and prompts
@@ -27,10 +33,16 @@ guidance = "Read the verifier log and the trajectory side by side."
 ```
 
 ```bash
-evolve analyze <job-id> -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch
+evolve analyze <job-id> \
+  -r rubric.toml \
+  -p prompt.txt \
+  --failing \
+  -l 20 \
+  -n 2 \
+  --watch
 ```
 
-`-r` is the rubric file, `-p` the prompt file. `--passing` and `--failing` restrict the wave to trials with reward 1.0, or below it. `-l` caps the number of trials, `-n` how many analyses run at once. `-m` picks the analyzer's model, `--effort` its reasoning effort, `-e` its sandbox provider.
+`-r` is the rubric file, `-p` the prompt file. `--passing` and `--failing` restrict the batch of analyses to trials with reward 1.0, or below it. `-l` caps the number of trials, `-n` how many analyses run at once. `-m` picks the analyzer's model, `--effort` its reasoning effort, `-e` its sandbox provider.
 
 On `evolve run` the same knobs are `--analyze-model`, `--analyze-rubric`, `--analyze-prompt`, `--analyze-effort` and `--analyze-provider`. Each of them implies `--analyze`.
 

@@ -50,7 +50,11 @@ description: "Upload and manage platform-stored skills."
   </Tab>
   <Tab title="Python">
     ```python
-    def list(*, limit: Optional[int] = None, cursor: Optional[str] = None)
+    def list(
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
     async def get(skill_id: str) -> SkillUpload
     async def delete(skill_id: str) -> None
     ```

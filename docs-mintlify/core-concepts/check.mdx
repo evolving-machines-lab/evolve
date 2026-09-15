@@ -6,7 +6,10 @@ description: "Check the quality of tasks against a rubric before you spend a job
 A check reads a task and, when it can, runs its environment, its reference solution and its verifier, then rules on every criterion of a rubric. Point it at a task directory, or at a directory of tasks:
 
 ```bash
-evolve check ./tasks -i 'abs-*' -l 5 --watch
+evolve check ./tasks \
+  -i 'abs-*' \
+  -l 5 \
+  --watch
 ```
 
 Or at a published dataset version. Nothing is uploaded; the checker reads the retained task package.

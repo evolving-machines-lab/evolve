@@ -9,10 +9,16 @@ import GlobalOptions from '/snippets/global-options.mdx';
 evolve analyze <job-id> [options]
 ```
 
-Analyze a terminal job's trial traces against a rubric. The analyses run server-side; add `--watch` to follow the wave.
+Analyze a terminal job's trial traces against a rubric. The analyses run server-side; add `--watch` to follow the batch of analyses.
 
 ```bash
-evolve analyze 3e1f9a2c-… -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch
+evolve analyze 3e1f9a2c-… \
+  -r rubric.toml \
+  -p prompt.txt \
+  --failing \
+  -l 20 \
+  -n 2 \
+  --watch
 ```
 
 ## Options

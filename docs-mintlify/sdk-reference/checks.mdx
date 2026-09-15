@@ -21,7 +21,21 @@ description: "Start and read task quality checks."
   </Tab>
   <Tab title="Python">
     ```python
-    async def create(directory: Optional[str] = None, *, dataset: Optional[str] = None, model_name=None, rubric: Optional[Rubric] = None, prompt=None, reasoning_effort=None, sandbox_provider=None, n_concurrent=None, include_task_names=None, exclude_task_names=None, n_tasks=None, on_upload_progress=None) -> Check
+    async def create(
+        directory: Optional[str] = None,
+        *,
+        dataset: Optional[str] = None,
+        model_name=None,
+        rubric: Optional[Rubric] = None,
+        prompt=None,
+        reasoning_effort=None,
+        sandbox_provider=None,
+        n_concurrent=None,
+        include_task_names=None,
+        exclude_task_names=None,
+        n_tasks=None,
+        on_upload_progress=None,
+    ) -> Check
     ```
 
     Check a local task directory, or a directory of them, or a published dataset. One source, not both.
@@ -51,8 +65,20 @@ description: "Start and read task quality checks."
   <Tab title="Python">
     ```python
     async def get(check_id: str) -> Check
-    def list(*, scope: Optional[JobListScope] = None, status: Optional[List[CheckStatus]] = None, limit: Optional[int] = None, cursor: Optional[str] = None)
-    async def watch(check_id: str, *, on_progress: Optional[Callable[[Check], None]] = None, poll_interval_s: float = 2.0, timeout_s: Optional[float] = None) -> Check
+    def list(
+        *,
+        scope: Optional[JobListScope] = None,
+        status: Optional[List[CheckStatus]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
+    async def watch(
+        check_id: str,
+        *,
+        on_progress: Optional[Callable[[Check], None]] = None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ) -> Check
     ```
 
     One check with its per-task results, your checks, or a poll until every task settled.
@@ -69,9 +95,18 @@ description: "Start and read task quality checks."
   <Tab title="TypeScript">
     ```ts
     task(taskCheckId: string): Promise<TaskCheck>
-    transcript(taskCheckId: string, options?: { since?: number }): Promise<TaskCheckTranscript>
-    artifact(taskCheckId: string, stream: "trace-stdout" | "trace-stderr"): Promise<string | null>
-    artifact(taskCheckId: string, stream: "agent-home"): Promise<Record<string, string> | null>
+    transcript(
+      taskCheckId: string,
+      options?: { since?: number },
+    ): Promise<TaskCheckTranscript>
+    artifact(
+      taskCheckId: string,
+      stream: "trace-stdout" | "trace-stderr",
+    ): Promise<string | null>
+    artifact(
+      taskCheckId: string,
+      stream: "agent-home",
+    ): Promise<Record<string, string> | null>
     ```
 
     One task's result by its task check id, the checker's own transcript, or one stored artifact.
@@ -91,25 +126,41 @@ description: "Start and read task quality checks."
   <Tab title="TypeScript">
     ```ts
     download(id: string): Promise<Buffer>
-    download(id: string, options: { to: string }): Promise<string>
-    download(id: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>
+    download(
+      id: string,
+      options: { to: string },
+    ): Promise<string>
+    download(
+      id: string,
+      options: { stream: true },
+    ): Promise<ReadableStream<Uint8Array>>
     ```
 
     The whole check by its check id, or one task's folder by its task check id, as one `.tar.gz`.
 
     ```ts
-    const path = await checks().download(check.id, { to: "./checks" });
+    const path = await checks().download(
+      check.id,
+      { to: "./checks" },
+    );
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    async def download(id: str, *, to: Optional[str] = None)
+    async def download(
+        id: str,
+        *,
+        to: Optional[str] = None,
+    )
     ```
 
     The whole check by its check id, or one task's folder by its task check id, as one `.tar.gz`.
 
     ```python
-    path = await checks().download(check.id, to="./checks")
+    path = await checks().download(
+        check.id,
+        to="./checks",
+    )
     ```
   </Tab>
 </Tabs>

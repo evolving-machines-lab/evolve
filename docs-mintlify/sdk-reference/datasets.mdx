@@ -11,8 +11,14 @@ description: "The catalog: list, read, publish, download, activate, delete."
   <Tab title="TypeScript">
     ```ts
     list(options?: { search?: string; limit?: number; cursor?: string }): DatasetList
-    get(ref: string, options?: { limit?: number; cursor?: string }): Promise<Dataset>
-    getActive(name: string, options?: { limit?: number; cursor?: string }): Promise<ActiveDataset>
+    get(
+      ref: string,
+      options?: { limit?: number; cursor?: string },
+    ): Promise<Dataset>
+    getActive(
+      name: string,
+      options?: { limit?: number; cursor?: string },
+    ): Promise<ActiveDataset>
     ```
 
     The catalog, one dataset with one page of its tasks, or the active version alone. `getActive` throws `NoActiveVersionError` when nothing is runnable.
@@ -23,9 +29,24 @@ description: "The catalog: list, read, publish, download, activate, delete."
   </Tab>
   <Tab title="Python">
     ```python
-    def list(*, search: Optional[str] = None, limit: Optional[int] = None, cursor: Optional[str] = None)
-    async def get(ref: str, *, limit: Optional[int] = None, cursor: Optional[str] = None) -> Dataset
-    async def get_active(name: str, *, limit: Optional[int] = None, cursor: Optional[str] = None) -> ActiveDataset
+    def list(
+        *,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
+    async def get(
+        ref: str,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> Dataset
+    async def get_active(
+        name: str,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> ActiveDataset
     ```
 
     The catalog, one dataset with one page of its tasks, or the active version alone. `get_active` raises `NoActiveVersionError` when nothing is runnable.
@@ -41,7 +62,10 @@ description: "The catalog: list, read, publish, download, activate, delete."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    getTaskBuild(ref: string, taskName: string): Promise<TaskBuild>
+    getTaskBuild(
+      ref: string,
+      taskName: string,
+    ): Promise<TaskBuild>
     ```
 
     One task's build record: its outcome and, on failure, the failing step and log.
@@ -52,7 +76,10 @@ description: "The catalog: list, read, publish, download, activate, delete."
   </Tab>
   <Tab title="Python">
     ```python
-    async def get_task_build(ref: str, task_name: str) -> TaskBuild
+    async def get_task_build(
+        ref: str,
+        task_name: str,
+    ) -> TaskBuild
     ```
 
     One task's build record: its outcome and, on failure, the failing step and log.
@@ -79,7 +106,10 @@ description: "The catalog: list, read, publish, download, activate, delete."
   </Tab>
   <Tab title="Python">
     ```python
-    async def preflight(*, directory: str) -> DatasetPreflight
+    async def preflight(
+        *,
+        directory: str,
+    ) -> DatasetPreflight
     ```
 
     Dry-run a local folder of tasks: only each task's metadata is sent, nothing is uploaded or written.
@@ -101,18 +131,38 @@ description: "The catalog: list, read, publish, download, activate, delete."
     Publish a version. `source` is `{ git_url, git_ref, git_path? }`, `{ directory }`, `{ archive_url }` or `{ hub_package }`. Returns the import record; follow it with `watchImport`.
 
     ```ts
-    const imp = await datasets().publish({ source: { directory: "./my-swe" }, name: "my-swe", version: "1.0" });
+    const imp = await datasets().publish({
+      source: { directory: "./my-swe" },
+      name: "my-swe",
+      version: "1.0",
+    });
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    async def publish(*, git_url=None, git_ref=None, git_path=None, directory=None, archive_url=None, hub_package=None, name=None, version=None, on_upload_progress=None, on_registered=None) -> DatasetImport
+    async def publish(
+        *,
+        git_url=None,
+        git_ref=None,
+        git_path=None,
+        directory=None,
+        archive_url=None,
+        hub_package=None,
+        name=None,
+        version=None,
+        on_upload_progress=None,
+        on_registered=None,
+    ) -> DatasetImport
     ```
 
     Publish a version from one source: `git_url` with `git_ref` (and `git_path`), `directory`, `archive_url`, or `hub_package`. Returns the import record; follow it with `watch_import`.
 
     ```python
-    imp = await datasets().publish(directory="./my-swe", name="my-swe", version="1.0")
+    imp = await datasets().publish(
+        directory="./my-swe",
+        name="my-swe",
+        version="1.0",
+    )
     ```
   </Tab>
 </Tabs>
@@ -136,8 +186,23 @@ description: "The catalog: list, read, publish, download, activate, delete."
   <Tab title="Python">
     ```python
     async def get_import(id: str) -> DatasetImport
-    async def watch_import(id: str, *, on_status=None, on_progress=None, on_version=None, poll_interval_s: float = 2.0, timeout_s: Optional[float] = None, settle_timeout_s: float = ...) -> DatasetImport
-    def list_imports(*, status: Optional[str] = None, dataset: Optional[str] = None, limit: Optional[int] = None, cursor: Optional[str] = None)
+    async def watch_import(
+        id: str,
+        *,
+        on_status=None,
+        on_progress=None,
+        on_version=None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+        settle_timeout_s: float = ...,
+    ) -> DatasetImport
+    def list_imports(
+        *,
+        status: Optional[str] = None,
+        dataset: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
     ```
 
     Read one publish, follow it until the version is READY or FAILED, or list your publishes.
@@ -154,25 +219,41 @@ description: "The catalog: list, read, publish, download, activate, delete."
   <Tab title="TypeScript">
     ```ts
     download(ref: string): Promise<Buffer>
-    download(ref: string, options: { to: string }): Promise<string>
-    download(ref: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>
+    download(
+      ref: string,
+      options: { to: string },
+    ): Promise<string>
+    download(
+      ref: string,
+      options: { stream: true },
+    ): Promise<ReadableStream<Uint8Array>>
     ```
 
     The original package of a dataset you own: the bytes, the saved file's path, or a stream.
 
     ```ts
-    const path = await datasets().download("my-swe@1.0", { to: "./corpora" });
+    const path = await datasets().download(
+      "my-swe@1.0",
+      { to: "./corpora" },
+    );
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    async def download(ref: str, *, to: Optional[str] = None)
+    async def download(
+        ref: str,
+        *,
+        to: Optional[str] = None,
+    )
     ```
 
     The original package of a dataset you own: the bytes, or with `to` the saved file's path.
 
     ```python
-    path = await datasets().download("my-swe@1.0", to="./corpora")
+    path = await datasets().download(
+        "my-swe@1.0",
+        to="./corpora",
+    )
     ```
   </Tab>
 </Tabs>
@@ -182,8 +263,14 @@ description: "The catalog: list, read, publish, download, activate, delete."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    activate(name: string, version: string): Promise<Dataset>
-    update(name: string, patch: { upstream_auto_import: boolean }): Promise<Dataset>
+    activate(
+      name: string,
+      version: string,
+    ): Promise<Dataset>
+    update(
+      name: string,
+      patch: { upstream_auto_import: boolean },
+    ): Promise<Dataset>
     delete(name: string): Promise<void>
     ```
 
@@ -195,8 +282,15 @@ description: "The catalog: list, read, publish, download, activate, delete."
   </Tab>
   <Tab title="Python">
     ```python
-    async def activate(name: str, version: str) -> Dataset
-    async def update(name: str, *, upstream_auto_import: bool) -> Dataset
+    async def activate(
+        name: str,
+        version: str,
+    ) -> Dataset
+    async def update(
+        name: str,
+        *,
+        upstream_auto_import: bool,
+    ) -> Dataset
     async def delete(name: str) -> None
     ```
 

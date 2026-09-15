@@ -31,7 +31,10 @@ description: "The platform's capability document, no key needed."
 
     ```python
     doc = await meta()
-    for agent in doc.agents: print(agent.name, [m.alias for m in agent.models])
+    for agent in doc.agents: print(
+        agent.name,
+        [m.alias for m in agent.models],
+    )
     ```
   </Tab>
 </Tabs>

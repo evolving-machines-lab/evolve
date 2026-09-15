@@ -16,18 +16,33 @@ description: "Register and manage your own agents."
     Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory.
 
     ```ts
-    const agent = await agents().create({ name: "acme-cli", install_script: "curl -fsSL https://acme.dev/install.sh | sh", run_command: "acme-cli --headless" });
+    const agent = await agents().create({
+      name: "acme-cli",
+      install_script: "curl -fsSL https://acme.dev/install.sh | sh",
+      run_command: "acme-cli --headless",
+    });
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    async def create(*, name: str, install_script: Optional[str] = None, directory: Optional[str] = None, run_command: str, env: Optional[Dict[str, str]] = None) -> Agent
+    async def create(
+        *,
+        name: str,
+        install_script: Optional[str] = None,
+        directory: Optional[str] = None,
+        run_command: str,
+        env: Optional[Dict[str, str]] = None,
+    ) -> Agent
     ```
 
     Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory.
 
     ```python
-    agent = await agents().create(name="acme-cli", install_script="curl -fsSL https://acme.dev/install.sh | sh", run_command="acme-cli --headless")
+    agent = await agents().create(
+        name="acme-cli",
+        install_script="curl -fsSL https://acme.dev/install.sh | sh",
+        run_command="acme-cli --headless",
+    )
     ```
   </Tab>
 </Tabs>
@@ -39,28 +54,52 @@ description: "Register and manage your own agents."
     ```ts
     list(options?: { limit?: number; cursor?: string }): AgentList
     get(name: string): Promise<Agent>
-    upsert(name: string, input: { run_command: string; env?: Record<string, string> } & ({ install_script: string } | { directory: string })): Promise<Agent>
+    upsert(
+      name: string,
+      input: { run_command: string; env?: Record<string, string> } & ({ install_script: string } | { directory: string }),
+    ): Promise<Agent>
     delete(name: string): Promise<void>
     ```
 
     Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded.
 
     ```ts
-    await agents().upsert("acme-cli", { install_script: "curl -fsSL https://acme.dev/install.sh | sh", run_command: "acme-cli --headless --v2" });
+    await agents().upsert(
+      "acme-cli",
+      {
+        install_script: "curl -fsSL https://acme.dev/install.sh | sh",
+        run_command: "acme-cli --headless --v2",
+      },
+    );
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    def list(*, limit: Optional[int] = None, cursor: Optional[str] = None)
+    def list(
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
     async def get(name: str) -> Agent
-    async def upsert(name: str, *, run_command: str, install_script: Optional[str] = None, directory: Optional[str] = None, env: Optional[Dict[str, str]] = None) -> Agent
+    async def upsert(
+        name: str,
+        *,
+        run_command: str,
+        install_script: Optional[str] = None,
+        directory: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+    ) -> Agent
     async def delete(name: str) -> None
     ```
 
     Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded.
 
     ```python
-    await agents().upsert("acme-cli", install_script="curl -fsSL https://acme.dev/install.sh | sh", run_command="acme-cli --headless --v2")
+    await agents().upsert(
+        "acme-cli",
+        install_script="curl -fsSL https://acme.dev/install.sh | sh",
+        run_command="acme-cli --headless --v2",
+    )
     ```
   </Tab>
 </Tabs>

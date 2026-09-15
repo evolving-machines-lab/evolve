@@ -6,7 +6,13 @@ description: "Mount skills into every agent run, from a git source or from your 
 A skill is a folder of instructions mounted into the agent's run. Give a job one or more with `--skills`; every arm gets them.
 
 ```bash
-evolve run -d deep-swe@1.1 -a claude -m fable --skills skills.sh/acme/skills/pdf --watch
+evolve run \
+  -d terminal-bench-4@4.0 \
+  -a claude \
+  -m fable \
+  --skills skills.sh/acme/skills/pdf \
+  -l 5 \
+  --watch
 ```
 
 `--skills` (also spelled `--skill`) repeats, and accepts:

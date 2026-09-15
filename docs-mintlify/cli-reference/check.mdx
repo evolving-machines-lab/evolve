@@ -13,7 +13,10 @@ evolve check [<path>] [options]
 Check task quality against a rubric, server-side. Add `--watch` to follow. `<path>` is one task directory or a directory of task directories; `-d` names a published dataset instead. One or the other, not both.
 
 ```bash
-evolve check ./tasks -i 'abs-*' -l 5 --watch
+evolve check ./tasks \
+  -i 'abs-*' \
+  -l 5 \
+  --watch
 ```
 
 ## Options

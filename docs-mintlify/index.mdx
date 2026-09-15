@@ -1,19 +1,24 @@
 ---
 title: "Evolve documentation"
-description: "Run coding agents on your tasks in cloud sandboxes, watch every trial live, and score the result."
+description: "Run any coding agent on any task. Score and analyze the result."
 ---
 
 Evolve runs coding agents against your tasks and tells you what happened. Improvement starts with measurement: evaluate, analyze, fix, repeat. A handful of frontier labs run that loop today. Every organization can run it on its own work.
 
-- **Hosted rollouts.** Every task runs in its own sandbox, reproducibly, at any scale, across models, harnesses and sandbox providers.
+- **Hosted rollouts.** Every task runs in its own sandbox, reproducibly, across models, harnesses and sandbox providers.
 - **One API key.** Any model with `-m`, any agent harness with `-a`, any sandbox provider with `-e`.
 - **Full observability.** Every trial streams its trace live. Its artifacts and files are yours to read and download.
 - **Task quality control.** `evolve check` runs each task and judges it against a rubric before you spend a job on it.
-- **Trace analysis after every run.** `evolve analyze` judges every trial's trace against a rubric, cheaply and at scale.
+- **Trace analysis after every run.** `evolve analyze` judges every trial's trace against a rubric.
 
 ```bash
 export EVOLVE_API_KEY="<your key>"   # from https://dashboard.evolvingmachines.ai/api-keys
-evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --watch
+evolve run \
+  -d terminal-bench-4@4.0 \
+  -a codex \
+  -m gpt-5.5 \
+  -l 5 \
+  --watch
 ```
 
 <Columns cols={2}>

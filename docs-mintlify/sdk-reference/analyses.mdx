@@ -16,18 +16,34 @@ description: "Read trace-analysis runs."
     Analysis runs, newest first, each naming the trial, job and task it judged.
 
     ```ts
-    for await (const a of analyses().list({ job: job.id, status: ["failed"] })) console.log(a.id, a.label);
+    for await (const a of analyses().list({
+      job: job.id,
+      status: ["failed"],
+    })) {
+      console.log(a.id, a.label);
+    }
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    def list(*, scope: Optional[JobListScope] = None, job: Optional[str] = None, status: Optional[List[AnalysisStatus]] = None, limit: Optional[int] = None, cursor: Optional[str] = None)
+    def list(
+        *,
+        scope: Optional[JobListScope] = None,
+        job: Optional[str] = None,
+        status: Optional[List[AnalysisStatus]] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
     ```
 
     Analysis runs, newest first, each naming the trial, job and task it judged.
 
     ```python
-    async for a in analyses().list(job=job.id, status=["failed"]): print(a["id"], a["label"])
+    async for a in analyses().list(
+        job=job.id,
+        status=["failed"],
+    ):
+        print(a["id"], a["label"])
     ```
   </Tab>
 </Tabs>
@@ -38,9 +54,18 @@ description: "Read trace-analysis runs."
   <Tab title="TypeScript">
     ```ts
     get(analysisId: string): Promise<TrialAnalysis>
-    transcript(analysisId: string, options?: { since?: number }): Promise<AnalysisTranscript>
-    artifact(analysisId: string, stream: "trace-stdout" | "trace-stderr"): Promise<string | null>
-    artifact(analysisId: string, stream: "agent-home"): Promise<Record<string, string> | null>
+    transcript(
+      analysisId: string,
+      options?: { since?: number },
+    ): Promise<AnalysisTranscript>
+    artifact(
+      analysisId: string,
+      stream: "trace-stdout" | "trace-stderr",
+    ): Promise<string | null>
+    artifact(
+      analysisId: string,
+      stream: "agent-home",
+    ): Promise<Record<string, string> | null>
     ```
 
     The verdict document, the analyzer's own transcript, or one stored artifact.
@@ -60,25 +85,41 @@ description: "Read trace-analysis runs."
   <Tab title="TypeScript">
     ```ts
     download(analysisId: string): Promise<Buffer>
-    download(analysisId: string, options: { to: string }): Promise<string>
-    download(analysisId: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>
+    download(
+      analysisId: string,
+      options: { to: string },
+    ): Promise<string>
+    download(
+      analysisId: string,
+      options: { stream: true },
+    ): Promise<ReadableStream<Uint8Array>>
     ```
 
     The run as one `.tar.gz`: the bytes, the saved file's path, or a stream.
 
     ```ts
-    const path = await analyses().download("a0a1b2c3-…", { to: "./analyses" });
+    const path = await analyses().download(
+      "a0a1b2c3-…",
+      { to: "./analyses" },
+    );
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    async def download(analysis_id: str, *, to: Optional[str] = None)
+    async def download(
+        analysis_id: str,
+        *,
+        to: Optional[str] = None,
+    )
     ```
 
     The run as one `.tar.gz`: the bytes, or with `to` the saved file's path.
 
     ```python
-    path = await analyses().download("a0a1b2c3-…", to="./analyses")
+    path = await analyses().download(
+        "a0a1b2c3-…",
+        to="./analyses",
+    )
     ```
   </Tab>
 </Tabs>

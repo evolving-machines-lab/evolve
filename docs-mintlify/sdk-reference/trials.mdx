@@ -37,26 +37,57 @@ description: "Read, download, and act on single trials."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    trace(trialId: string, options?: { cursor?: string; limit?: number; type?: string; grep?: string; tail?: number }): Promise<TraceEventPage>
-    traceEvents(trialId: string, options?: TraceOptions): AsyncIterableIterator<TraceEvent>
+    trace(
+      trialId: string,
+      options?: { cursor?: string; limit?: number; type?: string; grep?: string; tail?: number },
+    ): Promise<TraceEventPage>
+    traceEvents(
+      trialId: string,
+      options?: TraceOptions,
+    ): AsyncIterableIterator<TraceEvent>
     ```
 
     One page of the parsed trace, or every available event. `type`, `grep` and `tail` filter on the server.
 
     ```ts
-    for await (const event of trials().traceEvents(trial.id, { grep: "permission denied" })) console.log(event.seq, event.type);
+    for await (const event of trials().traceEvents(
+      trial.id,
+      { grep: "permission denied" },
+    )) {
+      console.log(event.seq, event.type);
+    }
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    async def trace(trial_id: str, *, cursor=None, limit=None, type=None, grep=None, tail=None) -> TraceEventPage
-    async def trace_events(trial_id: str, *, cursor=None, limit=None, type=None, grep=None, tail=None)
+    async def trace(
+        trial_id: str,
+        *,
+        cursor=None,
+        limit=None,
+        type=None,
+        grep=None,
+        tail=None,
+    ) -> TraceEventPage
+    async def trace_events(
+        trial_id: str,
+        *,
+        cursor=None,
+        limit=None,
+        type=None,
+        grep=None,
+        tail=None,
+    )
     ```
 
     One page of the parsed trace, or every available event. `type`, `grep` and `tail` filter on the server.
 
     ```python
-    async for event in trials().trace_events(trial.id, grep="permission denied"): print(event.seq, event.type)
+    async for event in trials().trace_events(
+        trial.id,
+        grep="permission denied",
+    ):
+        print(event.seq, event.type)
     ```
   </Tab>
 </Tabs>
@@ -66,8 +97,14 @@ description: "Read, download, and act on single trials."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    artifact(trialId: string, stream: "verifier" | "trace-stdout" | "trace-stderr" | "trace-atif" | "trajectory"): Promise<string | null>
-    artifact(trialId: string, stream: "agent-home"): Promise<Record<string, string> | null>
+    artifact(
+      trialId: string,
+      stream: "verifier" | "trace-stdout" | "trace-stderr" | "trace-atif" | "trajectory",
+    ): Promise<string | null>
+    artifact(
+      trialId: string,
+      stream: "agent-home",
+    ): Promise<Record<string, string> | null>
     ```
 
     One raw artifact, the same names `evolve trial download --stream` takes. Null means the trial never stored it.
@@ -78,7 +115,10 @@ description: "Read, download, and act on single trials."
   </Tab>
   <Tab title="Python">
     ```python
-    async def artifact(trial_id: str, stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home']) -> Optional[Union[str, Dict[str, str]]]
+    async def artifact(
+        trial_id: str,
+        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home'],
+    ) -> Optional[Union[str, Dict[str, str]]]
     ```
 
     One raw artifact, the same names `evolve trial download --stream` takes. None means the trial never stored it. `trace-parsed` is refused here; use `trace()`.
@@ -94,26 +134,53 @@ description: "Read, download, and act on single trials."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    files(trialId: string, options?: { limit?: number; cursor?: string }): Promise<TrialFilePage>
-    file(trialId: string, path: string, range?: { start?: number; end?: number; suffix?: number }): Promise<Buffer>
+    files(
+      trialId: string,
+      options?: { limit?: number; cursor?: string },
+    ): Promise<TrialFilePage>
+    file(
+      trialId: string,
+      path: string,
+      range?: { start?: number; end?: number; suffix?: number },
+    ): Promise<Buffer>
     ```
 
     Every file the platform stored for the trial, as `{ path, size_bytes }` rows, and the raw bytes of one of them. A range reads a slice; `suffix` reads the last N bytes.
 
     ```ts
-    const tail = await trials().file(trial.id, "verifier/test-stdout.txt", { suffix: 4096 });
+    const tail = await trials().file(
+      trial.id,
+      "verifier/test-stdout.txt",
+      { suffix: 4096 },
+    );
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    async def files(trial_id: str, *, cursor: Optional[str] = None, limit: Optional[int] = None) -> TrialFilePage
-    async def file(trial_id: str, path: str, *, start: Optional[int] = None, end: Optional[int] = None, suffix: Optional[int] = None) -> bytes
+    async def files(
+        trial_id: str,
+        *,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> TrialFilePage
+    async def file(
+        trial_id: str,
+        path: str,
+        *,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        suffix: Optional[int] = None,
+    ) -> bytes
     ```
 
     Every file the platform stored for the trial, as `path` and `size_bytes` rows, and the raw bytes of one of them. A range reads a slice; `suffix` reads the last N bytes.
 
     ```python
-    tail = await trials().file(trial.id, "verifier/test-stdout.txt", suffix=4096)
+    tail = await trials().file(
+        trial.id,
+        "verifier/test-stdout.txt",
+        suffix=4096,
+    )
     ```
   </Tab>
 </Tabs>
@@ -124,7 +191,10 @@ description: "Read, download, and act on single trials."
   <Tab title="TypeScript">
     ```ts
     regrade(trialId: string): Promise<Job>
-    retry(trialId: string, options?: StartJobOptions): Promise<Job>
+    retry(
+      trialId: string,
+      options?: StartJobOptions,
+    ): Promise<Job>
     stop(trialIds: string[]): Promise<StopResponse>
     ```
 
@@ -137,7 +207,11 @@ description: "Read, download, and act on single trials."
   <Tab title="Python">
     ```python
     async def regrade(trial_id: str) -> Job
-    async def retry(trial_id: str, *, idempotency_key: Optional[str] = None) -> Job
+    async def retry(
+        trial_id: str,
+        *,
+        idempotency_key: Optional[str] = None,
+    ) -> Job
     async def stop(trial_ids: List[str]) -> StopResponse
     ```
 

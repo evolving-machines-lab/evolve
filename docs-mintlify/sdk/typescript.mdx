@@ -19,7 +19,7 @@ const evals = jobs();
 
 ```ts
 const job = await evals.start({
-  datasets: [{ name: "deep-swe", version: "1.1", n_tasks: 5 }],
+  datasets: [{ name: "terminal-bench-4", version: "4.0", n_tasks: 5 }],
   agents: [{ name: "codex", model_name: "gpt-5.5" }],
   n_attempts: 1,
   n_concurrent_trials: 4,
@@ -75,7 +75,10 @@ const trial = await t.get(trialId);
 console.log(trial.reward, trial.exception_info?.exception_type);
 
 const verifierLog = await t.artifact(trialId, "verifier");   // string | null
-const home = await t.artifact(trialId, "agent-home");         // Record<string, string> | null
+const home = await t.artifact(
+  trialId,
+  "agent-home",
+);   // Record<string, string> | null
 
 for await (const event of t.traceEvents(trialId)) {
   console.log(event.seq, event.type);
@@ -87,7 +90,10 @@ for await (const event of t.traceEvents(trialId)) {
 ## Download
 
 ```ts
-const path = await evals.download(job.id, { to: "./results" });   // the saved file's path
+const path = await evals.download(
+  job.id,
+  { to: "./results" },
+);   // the saved file's path
 const bytes = await evals.download(job.id);                        // a Buffer
 ```
 
@@ -96,11 +102,17 @@ The archive is the standard job directory, the same tree `evolve job download` u
 ## Analyze
 
 ```ts
-await evals.analyze(job.id, { failing: true, n_trials: 20 });
+await evals.analyze(
+  job.id,
+  {
+    failing: true,
+    n_trials: 20,
+  },
+);
 const analyzed = await evals.watchAnalysis(job.id);
 ```
 
-`analyze()` enqueues one analysis per trial and returns at once. `watchAnalysis()` follows the wave to its end.
+`analyze()` enqueues one analysis per trial and returns at once. `watchAnalysis()` follows the batch of analyses to its end.
 
 ## The catalog
 
@@ -111,7 +123,7 @@ for await (const dataset of catalog.list()) {
   console.log(dataset.name, dataset.active_version?.version);
 }
 
-const version = await catalog.get("deep-swe@1.1");
+const version = await catalog.get("terminal-bench-4@4.0");
 ```
 
 ## Everything else

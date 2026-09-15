@@ -12,7 +12,13 @@ evolve run [options]
 Start a job. `evolve run` is the short form of `evolve job start`, and both take the same options.
 
 ```bash
-evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch
+evolve run \
+  -d terminal-bench-4@4.0 \
+  -a codex \
+  -m gpt-5.5 \
+  -k 2 \
+  -l 5 \
+  --watch
 ```
 
 ## What to run
@@ -62,7 +68,7 @@ evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch
 Each of these applies to every arm of the job.
 
 <ParamField path="--effort" type="value">
-  Reasoning effort for every arm. The values are published in the capability document. Applied verbatim: an agent that cannot honor it is refused by the server, never silently skipped.
+  Reasoning effort for every arm. The accepted values are listed in the capability document at `GET https://dashboard.evolvingmachines.ai/api/meta`, which needs no key. Applied verbatim: an agent that cannot honor it is refused by the server, never silently skipped.
 </ParamField>
 
 <ParamField path="--preset" type="name">

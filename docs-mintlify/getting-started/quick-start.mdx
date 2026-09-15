@@ -21,7 +21,7 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
 
     ```bash
     evolve dataset list
-    evolve dataset show deep-swe@1.1
+    evolve dataset show terminal-bench-4@4.0
     ```
 
     `dataset show` prints the version's tasks and, for each task, which sandbox providers can run it.
@@ -31,7 +31,12 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
     Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes; `-l 5` caps the run at five tasks so the first job is small.
 
     ```bash
-    evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -l 5 --watch
+    evolve run \
+      -d terminal-bench-4@4.0 \
+      -a codex \
+      -m gpt-5.5 \
+      -l 5 \
+      --watch
     ```
 
     The final block prints the job id, how many trials landed in each status, and what the trials spent. Without `--watch` the command returns the id at once and the job keeps running.
