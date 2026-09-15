@@ -189,3 +189,24 @@ samp {
 #sidebar > ul a[href^="https://dashboard.evolvingmachines.ai"] svg {
   display: none;
 }
+
+/* Mermaid charts: the node labels are html spans, and the page's text color
+   reached them before the chart's own; the nodes are dark in both modes. */
+#content svg .node .nodeLabel,
+#content svg .node foreignObject div,
+#content svg .node foreignObject span {
+  color: #f7f6f5;
+}
+
+#content svg .node text {
+  fill: #f7f6f5;
+}
+
+#content svg .cluster-label .nodeLabel,
+#content svg .cluster-label span {
+  color: #8c8c8c;
+}
+
+#content svg .cluster-label text {
+  fill: #8c8c8c;
+}
