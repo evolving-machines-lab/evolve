@@ -1722,13 +1722,30 @@ class AnalyzeConfig(TypedDict):
     n_trials: Optional[int]
 
 
+class AnalysisEvidence(TypedDict):
+    """One place a verdict rests on. ``where`` names a step_id in the
+    trajectory, a file and line, or a command; ``quote`` is the exact text
+    found there. The page links each entry to the record; a reader verifies
+    by eye — nothing verifies the quotes mechanically."""
+    where: str
+    quote: str
+
+
 class AnalysisCheck(TypedDict):
-    """One criterion's verdict — Harbor's QualityCheckModel verbatim (their
-    cli/quality_checker/models.py ``{explanation, outcome}``)."""
-    #: ``'pass'`` | ``'fail'`` | ``'not_applicable'``.
+    """One criterion's verdict — Harbor's QualityCheckModel (their
+    cli/quality_checker/models.py ``{explanation, outcome}``) extended by the
+    platform's result schema: a fourth outcome, ``'unknown'``, for a
+    criterion the record cannot decide (``'not_applicable'`` keeps Harbor's
+    meaning, no subject), and the ``evidence`` list — at least one entry
+    behind a ``'pass'`` or a ``'fail'``; ``'not_applicable'`` and
+    ``'unknown'`` may carry none. Results stored before the evidence field
+    existed serve an empty list."""
+    #: ``'pass'`` | ``'fail'`` | ``'not_applicable'`` | ``'unknown'``.
     outcome: str
-    #: The analyzer's rationale, citing trial evidence.
+    #: The analyzer's reasoning, in plain words, opening with a few words
+    #: that name what it found.
     explanation: str
+    evidence: List[AnalysisEvidence]
 
 
 class AnalysisFailure(TypedDict):
@@ -1795,6 +1812,17 @@ class TrialAnalysis(TypedDict):
     #: One entry per rubric criterion, keys exactly the rubric's criterion
     #: names (the frozen-criteria law). None until completed.
     checks: Optional[Dict[str, AnalysisCheck]]
+    #: The derived label — ``'flagged'`` | ``'env_fault'`` | ``'unclear'`` |
+    #: ``'clean'`` — computed by the platform from the outcomes when the
+    #: result is stored, never asked from the model: ``'flagged'`` on a fail
+    #: of score_is_earned, score_is_correct, task_was_fair or
+    #: report_is_truthful; else ``'env_fault'`` on a fail of
+    #: environment_worked; else ``'unclear'`` on an unknown of any of those
+    #: five, or a not_applicable of score_is_earned or score_is_correct;
+    #: else ``'clean'``. None until completed, and None on a completed
+    #: analysis whose rubric is not the default one (a custom rubric carries
+    #: its per-criterion outcomes and no label).
+    label: Optional[str]
     estimated_cost_usd: Optional[float]
     #: The analyzer's one-home usage reading — the SAME shape, same keys, the
     #: trial and session surfaces serve
@@ -1845,7 +1873,8 @@ class JobAnalysisStats(TypedDict):
     #: analysis recorded measured spend.
     cost_usd: Optional[float]
     #: Per-criterion outcome tally over the completed latest analyses, keyed
-    #: by criterion name: ``{n_pass, n_fail, n_not_applicable}`` each.
+    #: by criterion name: ``{n_pass, n_fail, n_not_applicable, n_unknown}``
+    #: each.
     checks: Dict[str, Dict[str, int]]
 
 
@@ -1924,6 +1953,20 @@ class TaskCheck(TypedDict):
     status: str
     #: One entry per rubric criterion, keys exactly the frozen criteria. None until completed.
     checks: Optional[Dict[str, AnalysisCheck]]
+    #: The derived label — ``'has_a_problem'`` | ``'unclear'`` |
+    #: ``'no_problem_found'`` — computed by the platform from the outcomes
+    #: when the result is stored: ``'has_a_problem'`` on a fail of any
+    #: criterion; else ``'unclear'`` on an unknown of any of the six
+    #: file-based criteria; else ``'no_problem_found'``. None until
+    #: completed, and None under a custom rubric.
+    label: Optional[str]
+    #: Whether the box ran the task's environment: True when none of the
+    #: five run-based criteria (reference_solution_is_valid,
+    #: verifier_rejects_non_solutions, environment_builds_and_runs,
+    #: verification_is_stable, limits_allow_the_task) is unknown, so a
+    #: reading-only ``'no_problem_found'`` is never mistaken for a run.
+    #: None exactly when ``label`` is None.
+    executed: Optional[bool]
     cost_usd: Optional[float]
     #: 1, or 2 when the one automatic re-run fired.
     attempts: int
