@@ -568,6 +568,14 @@ AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
 #: ``'completed'`` once every task settled. A check never fails as a whole;
 #: each task carries its own typed failure (``TaskCheck['failure']``).
 CheckStatus = Literal['queued', 'running', 'completed']
+#: The derived label of a trial analysis (spec ``TrialAnalysis.label``;
+#: ``TrialAnalysis`` states the rule). None on the wire until completed and
+#: under a custom rubric.
+AnalysisLabel = Literal['flagged', 'env_fault', 'unclear', 'clean']
+#: The derived label of one task's quality check (spec ``TaskCheck.label``;
+#: ``TaskCheck`` states the rule). None until completed and under a custom
+#: rubric.
+CheckLabel = Literal['has_a_problem', 'unclear', 'no_problem_found']
 #: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
 #: ``'measured_provisional'`` is a real gateway reading taken inside its
 #: asynchronous spend flush — an honest floor a deferred pass later confirms or
@@ -1553,12 +1561,14 @@ class RubricCriterion(TypedDict):
     every wire shape here.
     """
     #: Criterion identifier, snake_case (it keys the result's ``checks``).
-    #: Harbor's defaults are ``reward_hacking`` and ``task_specification``.
+    #: The platform's default rubrics name seven criteria for analyze and
+    #: eleven for check.
     name: str
     #: What the criterion evaluates, one sentence.
     description: str
     #: Evaluation guidance handed to the analyzer agent — what evidence to
-    #: read and what PASS / FAIL / NOT_APPLICABLE mean for this criterion.
+    #: read and what PASS / FAIL / NOT_APPLICABLE / UNKNOWN mean for this
+    #: criterion.
     guidance: str
 
 
@@ -1584,7 +1594,8 @@ class AnalyzeConfigInput(TypedDict, total=False):
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
     means "all defaults" — openrouter/deepseek/deepseek-v4.1-flash at its
     per-model effort (high)
-    over Harbor's default rubric (reward_hacking, task_specification). The analyzer always runs the
+    over the platform's default analyze rubric (seven criteria) and its
+    default prompt body. The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
     names none; its spend is capped per analysis and metered as its own
@@ -1609,8 +1620,8 @@ class AnalyzeConfigInput(TypedDict, total=False):
     model_name: str
     rubric: Rubric
     #: The analyzer's prompt template — the TEXT of Harbor's ``-p/--prompt
-    #: <file>`` (their cli/analyze.py:94-99). It REPLACES the built-in
-    #: template (their analyze/prompts/analyze.txt) as the body of the
+    #: <file>`` (their cli/analyze.py:252-255). It REPLACES the platform's
+    #: default body as the body of the
     #: analyzer's instruction and is rendered with the same three tokens
     #: (``{trial_path}``, ``{task_section}``, ``{criteria_guidance}``): the
     #: three tokens are substituted, an unknown ``{token}`` renders empty,
@@ -1690,8 +1701,8 @@ class AnalyzeConfig(TypedDict):
     """
     model_name: str
     rubric: Rubric
-    #: The caller's prompt template as stored; None = Harbor's built-in
-    #: analyze.txt.
+    #: The caller's prompt template as stored; None = the platform's default
+    #: analyze body.
     prompt: Optional[str]
     #: The effort this policy's analyses run at. Named at create it is
     #: served as stored; when the create named none, this echoes the
@@ -1769,8 +1780,9 @@ class AnalysisFailure(TypedDict):
 class TrialAnalysis(TypedDict):
     """One trace analysis of a trial — ``Trial.analysis``.
 
-    The result half is Harbor's AnalyzeResult verbatim (their
-    analyze/models.py: ``summary``, ``checks`` keyed by criterion,
+    The result half is Harbor's AnalyzeResult shape (their
+    analyze/models.py: ``summary``, ``checks`` keyed by criterion — each
+    check extended by the result schema: four outcomes and an evidence list —
     ``estimated_cost_usd``; the enclosing trial is Harbor's ``trial_name``);
     the rest is provenance — which model, rubric and prompt THIS analysis
     ran under, its lifecycle status, and its typed failure when it failed.
@@ -1804,7 +1816,7 @@ class TrialAnalysis(TypedDict):
     reasoning_effort: Optional[str]
     rubric: Rubric
     #: The prompt template THIS analysis ran under, frozen at enqueue
-    #: (``AnalyzeConfigInput['prompt']``); None = Harbor's built-in analyze.txt.
+    #: (``AnalyzeConfigInput['prompt']``); None = the platform's default analyze body.
     prompt: Optional[str]
     #: 3–5 sentence overview of the trial (Harbor's summary contract). None
     #: until completed.
@@ -1822,7 +1834,7 @@ class TrialAnalysis(TypedDict):
     #: else ``'clean'``. None until completed, and None on a completed
     #: analysis whose rubric is not the default one (a custom rubric carries
     #: its per-criterion outcomes and no label).
-    label: Optional[str]
+    label: Optional[AnalysisLabel]
     estimated_cost_usd: Optional[float]
     #: The analyzer's one-home usage reading — the SAME shape, same keys, the
     #: trial and session surfaces serve
@@ -1887,10 +1899,10 @@ class CheckConfigInput(TypedDict, total=False):
     ``claude-sonnet-4-6``; this platform's is the analyzer's
     ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
     for both rubric agents, a
-    recorded deviation), ``rubric`` (default: Harbor's
-    cli/quality_checker/default-rubric.toml, eleven criteria verbatim) and
-    ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing their
-    prompts/check.txt; rendered with ``{task_path}``, ``{file_tree}``,
+    recorded deviation), ``rubric`` (default: the platform's check rubric,
+    eleven criteria) and
+    ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing the
+    platform's default check body; rendered with ``{task_path}``, ``{file_tree}``,
     ``{criteria_guidance}``; the output contract appended after it exactly
     as Harbor appends it). ``reasoning_effort`` and ``sandbox_provider`` are
     the platform's two hosted knobs, exactly as on the analyze door.
@@ -1939,8 +1951,9 @@ class TaskCheck(TypedDict):
     words), the bounded attempt count, and a typed ``failure`` in place of
     Harbor's ``error`` string.
 
-    ``checks`` is the FLAT object Harbor's validate.py accepts — one key per
-    rubric criterion, each ``{outcome, explanation}``; no summary (analyze
+    ``checks`` is the FLAT object the platform's validate.py accepts — one key
+    per rubric criterion, each ``{outcome, explanation, evidence}``, four
+    outcome words; no summary (analyze
     has one, check does not). ``cost_usd`` is the checker agent's OWN
     metered spend; None when nothing was measured, never a fabricated 0.
     A plain wire dict at runtime.
@@ -1959,7 +1972,7 @@ class TaskCheck(TypedDict):
     #: criterion; else ``'unclear'`` on an unknown of any of the six
     #: file-based criteria; else ``'no_problem_found'``. None until
     #: completed, and None under a custom rubric.
-    label: Optional[str]
+    label: Optional[CheckLabel]
     #: Whether the box ran the task's environment: True when none of the
     #: five run-based criteria (reference_solution_is_valid,
     #: verifier_rejects_non_solutions, environment_builds_and_runs,
@@ -1992,7 +2005,7 @@ class Check(TypedDict):
     #: The effort every task's checker ran at — named at create, or the model's default, resolved at accept.
     reasoning_effort: str
     rubric: Rubric
-    #: The prompt template as stored; None = Harbor's built-in check.txt.
+    #: The prompt template as stored; None = the platform's default check body.
     prompt: Optional[str]
     sandbox_provider: EvalSandboxProvider
     #: Harbor's -n as stored; None = the organization's ceiling alone.
@@ -7609,8 +7622,8 @@ class JobsClient:
         analysis.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at high
-        over Harbor's default rubric (reward_hacking,
-        task_specification), on the platform's analysis default provider.
+        over the platform's default analyze rubric (seven criteria), on the
+        platform's analysis default provider.
         CANCELLED trials are never analyzed.
         Which trials, and how wide, are Harbor's own analyze options with
         their exact names (their cli/analyze.py:278-290): ``passing`` /

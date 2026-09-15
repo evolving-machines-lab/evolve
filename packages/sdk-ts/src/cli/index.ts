@@ -332,7 +332,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     kind: "boolean",
     help:
       "Analyze each trial's trace server-side as it settles (Harbor's analyze, embedded; " +
-      "CANCELLED trials are skipped). Bare = the defaults: claude-haiku-4-5, Harbor's default rubric",
+      "CANCELLED trials are skipped). Bare = the defaults: the platform's analyze model, rubric and prompt",
   },
   "analyze-model": {
     kind: "string",
@@ -1219,7 +1219,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<path>",
         help:
           "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} " +
-          "shape; default: Harbor's default rubric — reward_hacking, task_specification)",
+          "shape; default: the platform's analyze rubric — seven criteria, score_is_earned first)",
       },
       prompt: {
         kind: "string",
@@ -1311,7 +1311,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<path>",
         help:
           "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} shape; " +
-          "default: Harbor's default check rubric — eleven task-quality criteria)",
+          "default: the platform's check rubric — eleven criteria)",
       },
       prompt: {
         kind: "string",
@@ -2429,8 +2429,8 @@ function loadAgentConfigFile(
 
 /**
  * Read a local prompt file for `analyze -p` / `run --analyze-prompt` — Harbor's
- * `-p/--prompt` (their cli/analyze.py:94-99), whose TEXT replaces the built-in
- * analyze.txt as the analyzer's instruction template (analyzer.py:130-134
+ * `-p/--prompt` (their cli/analyze.py:252-255), whose TEXT replaces the platform's
+ * default body as the analyzer's instruction template (analyzer.py:130-134
  * `prompt_path.read_text()`). Read verbatim, no parsing: the tokens
  * (`{trial_path}`, `{task_section}`, `{criteria_guidance}`) are rendered
  * server-side. Ruled here: the file must be readable and non-empty; the
@@ -3369,7 +3369,9 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
     for (const [name, tally] of Object.entries(e.stats.analysis.checks)) {
       rows.push([
         `  ${name}`,
-        `${tally.n_pass} pass · ${tally.n_fail} fail · ${tally.n_not_applicable} n/a · ${tally.n_unknown} unknown`,
+        `${tally.n_pass} pass · ${tally.n_fail} fail · ${tally.n_not_applicable} n/a` +
+          // A server predating the field sends no n_unknown; nothing is invented.
+          (typeof tally.n_unknown === "number" ? ` · ${tally.n_unknown} unknown` : ""),
       ]);
     }
   }

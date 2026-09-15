@@ -671,7 +671,7 @@ import { checks } from "@evolvingmachines/sdk";
 const c = checks();
 
 // Check one task directory under the defaults
-// (openrouter/deepseek/deepseek-v4.1-flash at effort high; Harbor's default rubric, eleven criteria)
+// (openrouter/deepseek/deepseek-v4.1-flash at effort high; the platform's default check rubric, eleven criteria)
 const accepted = await c.create({ source: { directory: "./my-task" } });   // returns at once — THE RESPONSE IS THE CHECK
 console.log(accepted.status, accepted.results.map((r) => r.status));
 // "queued" [ "queued" ]
@@ -808,7 +808,7 @@ await evals.analyze(job.id, {
 });
 ```
 
-A prompt file looks like Harbor's own `analyze.txt`. Three tokens are rendered for you — `{trial_path}` (where the trial's tree sits in the analyzer's sandbox), `{task_section}` (the task's paths, or Harbor's sentence for an unavailable task) and `{criteria_guidance}` (one line per rubric criterion). An unknown `{token}` renders empty, `{{` and `}}` write a literal brace, and any other brace text is left as written (Harbor's Python renderer would render it empty, convert it or raise there — `{ x }` empty, `{x!r}` quoted, `{"a": 1}` an error). The output contract (write `analysis.json` matching the rubric's schema) is appended after your text exactly as Harbor appends it, so a custom prompt shapes *how* the analyzer reads the evidence and can never opt out of the deliverable:
+A prompt file looks like the platform's default analyze body (the same tokens as Harbor's `analyze.txt`). Three tokens are rendered for you — `{trial_path}` (where the trial's tree sits in the analyzer's sandbox), `{task_section}` (the task's paths, or Harbor's sentence for an unavailable task) and `{criteria_guidance}` (one line per rubric criterion). An unknown `{token}` renders empty, `{{` and `}}` write a literal brace, and any other brace text is left as written (Harbor's Python renderer would render it empty, convert it or raise there — `{ x }` empty, `{x!r}` quoted, `{"a": 1}` an error). The output contract (write `analysis.json` matching the rubric's schema) is appended after your text exactly as Harbor appends it, so a custom prompt shapes *how* the analyzer reads the evidence and can never opt out of the deliverable:
 
 ```text
 Judge only whether the agent gamed its reward. The trial is at {trial_path};
@@ -2476,8 +2476,8 @@ interface Rubric { criteria: RubricCriterion[] }
 
 interface AnalyzeConfigInput {           // jobs().analyze() body, and JobCreate.analyze
     model_name?: string;                 // Harbor's --model; default openrouter/deepseek/deepseek-v4.1-flash
-    rubric?: Rubric;                     // Harbor's --rubric; default reward_hacking + task_specification
-    prompt?: string;                     // Harbor's -p/--prompt file text; default: the built-in analyze.txt
+    rubric?: Rubric;                     // Harbor's --rubric; default: the platform's analyze rubric (seven criteria)
+    prompt?: string;                     // Harbor's -p/--prompt file text; default: the platform's analyze body
     reasoning_effort?: string;           // the arms' effort vocabulary (GET /api/meta analyze.reasoning_efforts); default per model
     sandbox_provider?: EvalSandboxProvider; // where the analyzer box runs; default: the platform's analysis default (daytona)
 }
