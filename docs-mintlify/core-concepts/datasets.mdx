@@ -9,7 +9,7 @@ A dataset is a named, versioned folder of [tasks](/core-concepts/tasks) in the c
 
 ```bash
 evolve dataset list
-evolve dataset show deep-swe@1.1
+evolve dataset show terminal-bench-4@4.0
 ```
 
 `dataset list` prints every dataset you can run: the platform's public datasets and your own. `--search <text>` filters by name and description. `dataset show` prints one dataset's versions, its tasks with their timeouts, and for each task which sandbox providers can run it.
@@ -27,15 +27,23 @@ Then publish from a local directory, from a git repository, or from a source the
 <Tabs>
   <Tab title="Local directory">
     ```bash
-    evolve dataset publish --dir ./my-swe --name my-swe --version 1.0 --watch
+    evolve dataset publish \
+      --dir ./my-swe \
+      --name my-swe \
+      --version 1.0 \
+      --watch
     ```
 
     When the folder carries a `dataset.toml` manifest, `--name` and `--version` come from it and may be omitted.
   </Tab>
   <Tab title="Git repository">
     ```bash
-    evolve dataset publish --git https://github.com/acme/my-swe.git --ref v1.0.0 \
-      --name my-swe --version 1.0 --watch
+    evolve dataset publish \
+      --git https://github.com/acme/my-swe.git \
+      --ref v1.0.0 \
+      --name my-swe \
+      --version 1.0 \
+      --watch
     ```
 
     `--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is refused. `--path <subfolder>` imports one folder of a larger repository.
@@ -54,14 +62,19 @@ Then publish from a local directory, from a git repository, or from a source the
 ## What happens when you publish
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontSize": "18px", "fontFamily": "Google Sans Flex, sans-serif", "primaryColor": "#1a1a1a", "primaryTextColor": "#f7f6f5", "primaryBorderColor": "#B026FF", "lineColor": "#B026FF"}, "flowchart": {"nodeSpacing": 32, "rankSpacing": 40, "padding": 12}}}%%
+%%{init: {"themeVariables": {"fontSize": "14px", "fontFamily": "Google Sans Flex, sans-serif"}, "flowchart": {"nodeSpacing": 20, "rankSpacing": 24, "padding": 10, "wrappingWidth": 120, "subGraphTitleMargin": {"top": 6, "bottom": 6}}}}%%
 flowchart TB
-  P[Pre-flight: every task.toml checked, nothing uploaded] --> U[Upload: the package is stored, the version is BUILDING]
-  U --> PA[Parse: every task directory is read]
-  PA --> B[Build: one image per task, pinned by digest in the registry]
-  B --> RD[READY when at least one task built, FAILED when none did]
-  RD --> F[First trial on a provider: the boot image is built and cached]
-  F --> L[Every later trial on that provider starts from the cache]
+  subgraph PUB[At publish]
+    direction LR
+    P[Pre-flight: nothing uploaded] --> U[Upload: the version is BUILDING]
+    U --> B[Parse and build: one image per task, pinned by digest]
+    B --> RD[READY, or FAILED when no task built]
+  end
+  subgraph RUN[At the first run]
+    direction LR
+    F[The first trial on a provider builds its boot image] --> L[Every later trial starts from the cache]
+  end
+  PUB --> RUN
 ```
 
 The pre-flight sends each task's `task.toml`, and the `dataset.toml` if there is one, to the server, which answers with a verdict per task and writes nothing. A refused task stops the publish before anything is uploaded.
