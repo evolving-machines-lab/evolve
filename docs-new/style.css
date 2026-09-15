@@ -7,8 +7,7 @@ samp {
   font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-#content-area a:not([class]),
-#content-area .prose a {
+#content-area a.link {
   color: #b026ff;
   text-decoration-color: #b026ff;
 }
