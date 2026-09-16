@@ -101,7 +101,7 @@ The run's file system: while the box runs, `files` reads it as it changes; after
 - `files cat <analysis-id> <path>` — the raw bytes of one file, to stdout. `--range bytes=a-b` (or `bytes=a-`, `bytes=-n`) reads a slice.
 - `files search <analysis-id> <text>` — every line matching the text, as `path:line: snippet`. `--path` narrows the search to one folder (the whole box takes seconds); `--regex` treats the text as a pattern; a `(truncated)` note means there was more.
 - `files changes <analysis-id>` — the files the run created, modified or removed, with the phase (`--phase agent|verifier`).
-- `files archive <analysis-id>` — a `.tar.gz` of one subtree (`--path`, default the whole tree) to stdout, or saved under `-o <dir>`. The kept tree's archive lists the files it does not carry in `MANIFEST.tsv`.
+- `files archive <analysis-id>` — a `.tar.gz` of one subtree (`--path`, default the whole tree) to stdout, or saved under `-o <dir>`. The kept tree's archive lists the files it does not carry in `MANIFEST.tsv`; while the box runs, a subtree too large to read out in time is refused (`feature_unsupported`).
 
 <ParamField path="--source" type="live|capture">
   Force the source. Without it, whichever the run has. A source that is not there is refused with `filesystem_state`.

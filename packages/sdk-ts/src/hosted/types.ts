@@ -1356,9 +1356,9 @@ export interface Job {
    * on a job this platform ran.
    */
   sandbox_provider: EvalSandboxProvider | null;
-  /** Entity cardinality only — things with no status of their own. */
   /** The create's `system_log`; derived jobs inherit it, a regrade and every pre-switch job answer false. */
   system_log: boolean;
+  /** Entity cardinality only — things with no status of their own. */
   counts: { agents: number; tasks: number };
   /**
    * THE RESULTS-HONESTY LABEL of the partial-publish model: one entry per
@@ -4481,7 +4481,10 @@ export interface RunFilesystem {
   search(options: FilesystemSearchOptions): Promise<FilesystemSearchResult>;
   /** The files the run created, modified or removed, with the phase; served from the kept tree. */
   changes(options?: FilesystemChangesOptions): Promise<FilesystemChanges>;
-  /** A `.tar.gz` of one subtree — in memory, saved under `to`, or as a stream (jobs().download()'s three shapes). */
+  /**
+   * A `.tar.gz` of one subtree — in memory, saved under `to`, or as a stream (jobs().download()'s three shapes).
+   * While the box runs, a subtree too large to read out in time is refused (`feature_unsupported`).
+   */
   archive(options?: FilesystemArchiveOptions): Promise<Buffer>;
   archive(options: FilesystemArchiveOptions & { to: string }): Promise<string>;
   archive(options: FilesystemArchiveOptions & { stream: true }): Promise<ReadableStream<Uint8Array>>;

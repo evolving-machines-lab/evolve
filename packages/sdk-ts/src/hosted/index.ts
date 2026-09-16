@@ -1674,7 +1674,6 @@ async function* sseFrames(
   }
 }
 
-/** The `?…` of the file system reads — every option spelled as the contract spells it. */
 function filesystemQuery(params: Record<string, string | number | boolean | undefined>): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -1789,7 +1788,6 @@ function runFilesystem(cfg: ResolvedConfig, ownerPath: string): RunFilesystem {
   };
 }
 
-/** The task package owner's two reads + status, over `/api/datasets/{name}/versions/{version}/tasks/{task}`. */
 function taskPackageFiles(cfg: ResolvedConfig, ownerPath: string): TaskPackageFiles {
   return {
     async status(): Promise<TaskPackageFilesystemStatus> {

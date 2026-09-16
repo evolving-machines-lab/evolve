@@ -8882,7 +8882,9 @@ class RunFilesystem:
     ):
         """A ``.tar.gz`` of one subtree (default the whole tree): the bytes,
         or with ``to`` (a directory) streamed straight to disk and the saved
-        path returned — :meth:`JobsClient.download`'s two shapes."""
+        path returned — :meth:`JobsClient.download`'s two shapes. While the
+        box runs, a subtree too large to read out in time is refused
+        (``feature_unsupported``)."""
         return await self._http.download_archive(
             f'{self._owner_path}/filesystem/archive{_filesystem_query(path=path, source=source)}',
             to,
