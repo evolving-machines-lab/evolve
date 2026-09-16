@@ -17,13 +17,13 @@
       "source": "evolving-machines-lab/evolve",
       "sourceType": "github",
       "skillPath": "skills/evolve-agents/SKILL.md",
-      "computedHash": "a120fe0469104a8f42f7a377b758c6c344cb7df50235ad990fac073c23b6dfd2"
+      "computedHash": "9ba61e17e543ab745e5f171a495dcaf185f402806738c52dc08224ff2e7fb905"
     },
     "evolve-evals": {
       "source": "evolving-machines-lab/evolve",
       "sourceType": "github",
       "skillPath": "skills/evolve-evals/SKILL.md",
-      "computedHash": "971ca3bec2308550e8ad41950ee3ee120ef62fda9fc14d02271891855639449b"
+      "computedHash": "5d2f21f4e7f58415d4a66dfd19f5dfc634b88df0e7b2c1a50c620a770fe3b737"
     },
     "publish": {
       "source": "evolving-machines-lab/evolve",
