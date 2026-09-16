@@ -31,16 +31,22 @@
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...
 
-Add the [`evolve`](skills/evolve/SKILL.md) SKILL to your favorite coding agent and start building with Evolve SDK:
+Add the skills to your coding agent. Six ship in [`skills/`](skills): [`evolve-agents`](skills/evolve-agents/SKILL.md) (the SDK: run agents in sandboxes), [`evolve-evals`](skills/evolve-evals/SKILL.md) (hosted evals: datasets, jobs, trials, the `evolve` CLI), [`create-task`](skills/create-task/SKILL.md), [`rewardkit`](skills/rewardkit/SKILL.md), [`create-adapter`](skills/create-adapter/SKILL.md) and [`publish`](skills/publish/SKILL.md) (write, verify, convert and publish Harbor-format tasks). One command installs any of them with the [`skills` CLI](https://github.com/vercel-labs/skills), into the current project, or into your user-level skills with `-g`:
+
+```bash
+npx skills add evolving-machines-lab/evolve
+```
+
+Or copy the folders by hand:
 
 ```bash
 git clone https://github.com/evolving-machines-lab/evolve.git
-cp -r evolve/skills/evolve ~/.claude/skills/       # Claude Code
-cp -r evolve/skills/evolve ~/.codex/skills/        # Codex
-cp -r evolve/skills/evolve ~/.gemini/skills/       # Gemini CLI
-cp -r evolve/skills/evolve ~/.qwen-code/skills/    # Qwen Code
-cp -r evolve/skills/evolve ~/.kimi-code/skills/    # Kimi Code
-cp -r evolve/skills/evolve ~/.agents/skills/       # OpenCode
+cp -r evolve/skills/* ~/.claude/skills/            # Claude Code
+cp -r evolve/skills/* ~/.agents/skills/            # Codex
+cp -r evolve/skills/* ~/.gemini/skills/            # Gemini CLI
+cp -r evolve/skills/* ~/.qwen/skills/              # Qwen Code
+cp -r evolve/skills/* ~/.kimi-code/skills/         # Kimi Code
+cp -r evolve/skills/* ~/.config/opencode/skills/   # OpenCode
 ```
 
 ## Get Started
