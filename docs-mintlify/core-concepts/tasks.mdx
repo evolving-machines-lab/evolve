@@ -52,13 +52,13 @@ else
 fi
 ```
 
-`tests/grader.py`, `tests/config.json` and `tests/test.patch` have named roles; any other file under `tests/` lands beside `test.sh`.
+Everything under `tests/` is carried onto the verifier beside `test.sh`.
 
 `tests/Dockerfile` is built only for a `separate` verifier that pins no `docker_image`. Otherwise it is never built, the task imports with the `tests_dockerfile_not_built` note, and anything the recipe would install must already be in the image.
 
 ## pre_artifacts.sh
 
-Optional. It runs in the agent's sandbox after the agent finishes and decides what the work looks like on its way out. Uncommitted work is committed first, so a baseline-to-HEAD diff captures every edit. Without it the platform collects the work for you.
+Optional. It runs in the agent's sandbox after the agent finishes and writes the work to hand on under `/logs/artifacts`. Uncommitted work is committed first. Without it, the paths listed under `artifacts` are collected for you.
 
 ```bash
 #!/bin/bash
@@ -111,7 +111,7 @@ LOG_LEVEL = "${LOG_LEVEL:-info}"       # template with a fallback
 
 A literal lands in the box as written; it is dataset content, so it must never be a secret. A template, `${VAR}` as the whole value, asks for a secret the job attaches with `--secret`, matched by env name; see [secrets](/core-concepts/secrets). `${VAR:-default}` falls back to the default when nothing is attached. A job that leaves a template unsatisfied is refused with `secret_not_attached`, and a `${...}` inside a longer string is refused at import.
 
-The agent and every process it spawns see the table. The image's own start process sees the literals only.
+The image's own start process sees the literals only; templates reach the agent and everything it launches.
 
 ## LLM judges
 
@@ -124,7 +124,7 @@ ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 
 The verifier receives a credential for the platform's gateway under that name, with the matching base-URL variable set beside it, so `litellm`-style clients and `rewardkit` work unchanged and offline. The recognized names are `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` with their `_API_BASE` and `_BASE_URL` companions, each as the entire value; `"Bearer ${ANTHROPIC_API_KEY}"` is refused at import. Any other `${VAR:-default}` resolves to its default, and a non-judge template with no default is refused.
 
-The rubric names the judge model, or `rewardkit`'s own default, `anthropic/claude-sonnet-4-6`, applies; the credential admits its key's model family only. `--ve REWARDKIT_JUDGE=<agent>` and `--ve REWARDKIT_MODEL=<model>` override the rubric's `[judge]` for one job, in both verifier modes; no other `--ve` key is accepted. Judge spend shows apart from the agent's, as `judge_result` on the trial and `stats.judge_cost_usd` on the job. Judge tasks cannot be regraded yet.
+The rubric names the judge model, or `rewardkit`'s own default, `anthropic/claude-sonnet-4-6`, applies; the credential admits its key's model family only. `--ve REWARDKIT_JUDGE=<agent>` and `--ve REWARDKIT_MODEL=<model>` override the rubric's `[judge]` for one job, in both verifier modes; no other `--ve` key is accepted. The judge's spend is shown apart from the agent's, on the trial and on the job. Judge tasks are not regradable yet.
 
 ## Multi-step tasks
 
@@ -207,7 +207,7 @@ Inside `start_period_sec` a failure does not count. After it, `retries` failures
 
 - **Computer-use and desktop tasks.** `[environment].os` other than Linux is refused at import. A task whose instruction assumes a desktop is not refused; it runs on a Linux box without one.
 - **Run-level trajectory seeding.** No job flag names a session to resume from. Task-level seeding works: a `trajectory.json` beside `instruction.md` (or in the first step's directory) is seeded into the agent's session on `claude` and `codex`; other harnesses refuse before any spend. `[agent] load_trajectory` and `resume_trajectory` keys are refused.
-- **Verifier scripts whose PEP-723 header needs a package index.** Under `no-network` there is none to reach, and the import refuses the task; only a judge task can resolve `rewardkit` and `litellm` offline. A verifier under `allowlist` or `public`, or a `tests/` tree that never invokes `uv run` or `uvx`, is fine.
+- **Verifier scripts whose PEP-723 header needs a package index.** Under `no-network` the verifier box has no index (only `rewardkit` and `litellm` resolve, on a judge task), so such a task is refused at import. Under `allowlist` or `public`, or without `uv run` or `uvx` in `tests/`, nothing changes.
 
 ## From tasks to a dataset
 

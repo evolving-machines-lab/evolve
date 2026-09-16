@@ -23,7 +23,7 @@ evolve run \
 
 `-m` repeats. Each model is one arm, so the second command runs every task twice, once per model. Every arm must name a model; there is no default.
 
-When a managed provider key of your own is enabled for the model's provider, the trial's model calls bill that provider account and draw no credits. The cap still bounds the trial, and a zero credit balance still refuses a job create, resume or retry.
+With a provider key of your own enabled, model calls bill that provider account instead of credits; the cap still applies, and a zero credit balance still refuses a job create, resume or retry.
 
 ## The rosters
 

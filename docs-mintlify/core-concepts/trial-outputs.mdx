@@ -27,7 +27,7 @@ A finished trial leaves five kinds of output: its record, its parsed trace, its 
     └── reward.json         the rewards map
 ```
 
-The stdout file takes the harness's name: `claude-code.txt`, `codex.txt`, `gemini-cli.txt`, `qwen-code.txt`, `kimi-code.txt`, `opencode.txt` or `droid.txt`, and `stdout.log` for an agent you registered yourself. Beside the home at its real names, the tree also holds the harness's session copies: `agent/sessions/` for `claude` and `codex`, `agent/qwen-sessions/` for `qwen`, `agent/opencode/` for `opencode`.
+The stdout file takes the harness's name: `claude-code.txt`, `codex.txt`, `gemini-cli.txt`, `qwen-code.txt`, `kimi-code.txt`, `opencode.txt` or `droid.txt`, and `stdout.log` for an agent you registered yourself. The tree also holds `agent/sessions/` (claude, codex), `agent/qwen-sessions/` (qwen) and `agent/opencode/` (opencode): copies of the session files at the paths other tools expect.
 
 `result.json` states `agent_result.cost_usd` only once the spend is final; until then it is null there, and `evolve.json` carries the current figure with its `spend_source`. Tokens are always stated.
 

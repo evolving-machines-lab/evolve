@@ -44,7 +44,7 @@ evolve analyze <job-id> \
 
 `-r` is the rubric file, `-p` the prompt file. `--passing` and `--failing` restrict the batch of analyses to trials with reward 1.0, or below it; both together is refused. `-l` caps the number of trials, `-n` how many analyses run at once, beneath the organization's `max_concurrent_analyses` (fleet default 60). `-m` picks the analyzer's model, `--effort` its reasoning effort, `-e` its sandbox provider.
 
-A rubric with unknown keys, empty or duplicate criteria, or a length bound exceeded is refused with `invalid_rubric`; an off-roster model or an unknown effort or provider with `invalid_input`. A job whose trials are all cancelled, or a filter that selects nothing, is refused with `no_analyzable_trials`; a job still running with `job_not_terminal`. A result missing a criterion, or inventing one, is stored as a failed analysis, never a partial pass.
+A result that misses or invents a criterion is a failed analysis, never a partial pass. A rubric with unknown keys, empty or duplicate criteria, or a length bound exceeded is refused with `invalid_rubric`; an off-roster model or an unknown effort or provider with `invalid_input`; a job with no analyzable trial, or a `--passing` or `--failing` filter that selects none, with `no_analyzable_trials`; a job still running with `job_not_terminal`.
 
 On `evolve run` the same knobs are `--analyze-model`, `--analyze-rubric`, `--analyze-prompt`, `--analyze-effort` and `--analyze-provider`. Each of them implies `--analyze`.
 
@@ -67,7 +67,7 @@ Under the default rubric, the platform derives one label from the outcomes:
 
 A custom rubric carries its per-criterion outcomes and no label.
 
-The analyzer's spend is its own line, `estimated_cost_usd` on the analysis and `stats.analysis.cost_usd` on the job, never part of the trial's or the job's model spend. A failed analysis carries `failure` with a `phase` and a `message`. An analyzer run that produces no valid result is tried once more (`attempts` is then 2); a run cut by its budget fails at once as `timeout`.
+The analyzer's spend is shown apart from the trial's: `estimated_cost_usd` on the analysis, `stats.analysis.cost_usd` on the job. A failed analysis carries `failure` with a `phase` and a `message`; a run that produces no valid result is retried once.
 
 ## Read it back
 

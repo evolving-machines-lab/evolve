@@ -32,9 +32,9 @@ job = await evals.start(
 print(job.id, job.status)   # "QUEUED"
 ```
 
-`datasets` is a list of selectors, as dicts or `DatasetSelector` dataclasses. A bare `name` resolves to the active version; `task_names`, `exclude_task_names` and `n_tasks` narrow the task set. Every arm in `agents`, a dict or an `AgentArm`, names a `model_name`, and `version`, `reasoning_effort`, `kwargs`, `preset` and `skills` are optional. `sandbox_provider` picks `"e2b"`, `"daytona"` or `"modal"`.
+`datasets` is a list of selectors, as dicts or `DatasetSelector` dataclasses. A bare `name` resolves to the active version; `task_names`, `exclude_task_names` and `n_tasks` narrow the task set. Every arm in `agents`, a dict or an `AgentArm`, names a `model_name`, and `version`, `reasoning_effort`, `kwargs`, `preset` and `skills` are optional.
 
-The retry policy is a `JobRetryConfigInput` dict and comes back resolved as `JobRetryConfig`; the pair is named that way because `evolve.RetryConfig` already names the Swarm retry helper. The fields are the same ones a `-c` config file takes on the CLI.
+`sandbox_provider` picks `"e2b"`, `"daytona"` or `"modal"`. The retry policy is a `JobRetryConfigInput` dict and comes back resolved as `JobRetryConfig`. The fields are the same ones a `-c` config file takes on the CLI.
 
 Results are dataclasses with the wire's `snake_case` names and `Literal` vocabularies for every closed set. Four keys the wire spells in camelCase are mapped: `next_cursor`, `has_more`, `by_status` and `task_matrix`. A refused request raises `EvolveAPIError`; see [errors](/sdk-reference/errors).
 

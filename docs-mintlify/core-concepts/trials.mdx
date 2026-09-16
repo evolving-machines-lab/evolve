@@ -3,7 +3,7 @@ title: "Trials"
 description: "One agent's attempt at one task: its record, its trace, and its artifacts."
 ---
 
-A trial is one attempt of one task by one agent arm. Trial ids are global: every trial command takes the trial id alone, and the trial's record carries its job id. Job and trial ids are UUIDs; older ids use another alphabet and stay valid, so treat every id as opaque.
+A trial is one attempt of one task by one agent arm. Trial ids are global: every trial command takes the trial id alone, and the trial's record carries its job id. Treat ids as opaque strings.
 
 ```bash
 evolve trial show <trial-id>
@@ -11,7 +11,7 @@ evolve trial show <trial-id>
 
 `trial show` prints the task, the agent and model, the status, the reward, the tokens, what the trial spent and, when it failed, the exception. Spend prints as a plain amount once the meter has settled it, as `at least $X` while it is still a lower bound, and as `-` when nobody has measured it yet.
 
-While a trial runs, `attempt_phase` says which step it is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), and its spend is readable before it settles. `live_spent_usd` with `live_spend_at` is a lower bound refreshed about every 30 seconds, tokens included; it only climbs, is cleared at settle, and is null, never zero, before the first reading. The whole reading, spend and tokens with a `provisional` flag, is `usage`. On a settled trial read `agent_result.cost_usd` with `spend_source`; only `measured` is final.
+While a trial runs, `attempt_phase` says which step it is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), and `live_spent_usd` is a lower bound on its spend so far, refreshed about every 30 seconds and null before the first reading; `usage` carries the same reading with its tokens. On a settled trial read `agent_result.cost_usd`; `spend_source` says whether it is final (`measured`).
 
 ## The trace
 

@@ -124,10 +124,10 @@ Grouped by the door that returns them. The HTTP status is stated where it is fix
 | `invalid_archive` | The tarball is unreadable or unsafe. |
 | `import_too_large` | 413. A dataset archive over the object store's ceiling. |
 | `import_not_found` | The import id does not exist or is not yours. |
-| `too_many_concurrent_imports` | 429, no retry delay. The server is spooling its bound of corpus uploads; `details.max_concurrent`. |
+| `too_many_concurrent_imports` | 429, no retry delay. Too many uploads in flight; retry when one finishes. `details.max_concurrent`. |
 | `package_not_retained`, `package_corrupt`, `package_missing` | 409. The original package was never retained, is corrupt, or is gone. Re-publish. |
 | `too_many_concurrent_package_downloads` | 429, no retry delay. `details.max_concurrent`. |
-| `upload_session_not_found`, `upload_offset_mismatch`, `upload_chunk_digest_mismatch`, `upload_incomplete`, `upload_archive_digest_mismatch`, `upload_session_failed`, `too_many_concurrent_upload_chunks` | The resumable upload session behind a large publish or job upload; the SDK drives it and surfaces the refusal as is. |
+| `upload_session_not_found`, `upload_offset_mismatch`, `upload_chunk_digest_mismatch`, `upload_incomplete`, `upload_archive_digest_mismatch`, `upload_session_failed`, `too_many_concurrent_upload_chunks` | A large upload's session failed; the SDK surfaces the refusal as is. Retry the publish or upload. |
 
 ### Jobs, trials, regrades
 

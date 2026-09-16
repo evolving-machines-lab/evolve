@@ -67,7 +67,7 @@ description: "Who you are, and your organizations."
 
 - `max_queued_trials`: the one that refuses. A job whose trials would not fit is refused with `quota_exceeded`.
 - `max_concurrent_trials`, `max_concurrent_imports`, `max_concurrent_analyses` (trace analyses and task checks under one count): work beyond them waits.
-- `monthly_budget_usd`: model spend allowed per UTC calendar month, enforced by the gateway on every key minted for the organization; a trial it refuses settles `BUDGET` with `team:` in its message. Null means no monthly budget.
+- `monthly_budget_usd`: model spend allowed per UTC calendar month; a trial it refuses settles `BUDGET` with `team:` in its message. Null means no monthly budget.
 - `max_concurrent_sandboxes_e2b`, `_daytona`, `_modal`: the organization's sandboxes in flight per provider, trials, analyses, regrade verifiers and managed sessions together; work beyond one waits, and an organization with no value of its own reads the platform's fleet ceiling.
 - `max_concurrent_sessions`: managed-agent sessions open at once; recorded, not yet enforced.
 

@@ -36,9 +36,9 @@ Every trial's `lock.json` names its task by a content hash, and every task the p
 
 ## Bounds and duplicates
 
-There is no cap on an archive, its trial count or a trial's files beyond what the object store can land, published as `limits.uploads.job_archive_bytes`; past it the import fails with `upload_too_large`. A trial with a single file over 5 GiB, or a trajectory too large to load, is skipped instead of failing the job and listed on `skipped_trials`. A trial whose `result.json` cannot be read fails the import with `invalid_trial`.
+The only size limit is the archive ceiling published as `limits.uploads.job_archive_bytes` (`upload_too_large` past it). A trial with a single file over 5 GiB, or a trajectory too large to parse, is skipped instead of failing the job: the import lists it under `skipped_trials` as `trial_too_large`, and `job import` prints one line per skipped trial. A trial whose `result.json` cannot be read fails the whole import with `invalid_trial`.
 
-Re-uploading an archive whose job you already uploaded fails with `job_already_uploaded`, naming the existing job. Delete the job, then upload again. Another user uploading the same archive gets their own copy.
+Re-uploading a job you already uploaded fails with `job_already_uploaded`, naming the existing job; delete it, then upload again. Another user uploading the same archive gets their own copy.
 
 <Card title="upload reference" icon="terminal" href="/cli-reference/upload">
   Every flag of `evolve upload`.

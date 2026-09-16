@@ -106,7 +106,7 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="-r, --max-retries" type="n">
-  Max automatic retries per trial on infrastructure errors. Defaults to the fleet default, 2, published as `limits.job.default_max_retries`; `0` turns retries off. Each attempt carries the full trial cap. Over a `-c` file it overrides only its own field of `retry`.
+  Max automatic retries per trial on infrastructure errors. Defaults to 2; `0` turns retries off. Each attempt carries the full trial cap. Over a `-c` file it overrides only its own field of `retry`.
 </ParamField>
 
 <ParamField path="--retry-include" type="exception">
@@ -146,7 +146,7 @@ Each of these applies to every arm of the job.
 ## Timeouts
 
 <ParamField path="--timeout-multiplier" type="x" default="1.0">
-  Multiplier for task timeouts, any finite number above 0; below 1 shrinks. It multiplies each task's declared timeouts for this job only; the task is never rewritten. A product past the runtime's timer ceiling of 2,147,483,647 ms is refused at create. Resumed and retried jobs inherit the multipliers.
+  Multiplier for task timeouts, any finite number above 0; below 1 shrinks. It multiplies each task's declared timeouts for this job only; the task is never rewritten. A product past 2,147,483,647 ms is refused at create. Resumed and retried jobs inherit the multipliers.
 </ParamField>
 
 <ParamField path="--agent-timeout-multiplier" type="x">

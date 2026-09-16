@@ -35,7 +35,7 @@ evolve skill delete <id>
 
 The folder's name becomes your moving name pointer: `name:my-skill` resolves to the latest upload with that name, and an unknown name is refused with `skill_name_not_found`. `skill show` prints the metadata and the `SKILL.md`. A skill that a running job references cannot be deleted, and past jobs keep the version they ran with.
 
-Every run records what mounted: once an arm's first trial resolves its skills, the job's arm carries `skill_locks`, one per skill with its name, pinned source, content digest and, for a git skill, the repository and commit. A skill that cannot be fetched at run time is an infrastructure error on the trial, never a score.
+The job's arm records what mounted under `skill_locks`: name, pinned source, digest and, for a git skill, the repository and commit. A skill that cannot be fetched fails the trial as an infrastructure error, never as a score.
 
 <Card title="skill reference" icon="terminal" href="/cli-reference/skill">
   Every flag of `evolve skill`.

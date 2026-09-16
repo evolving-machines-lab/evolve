@@ -557,7 +557,7 @@ description: "Start, follow, and derive jobs."
     upload(source: string | { archive_url: string }, options?: { dataset?: string; onUploadProgress?: (sentBytes: number, totalBytes: number) => void; onRegistered?: (importId: string) => void }): Promise<JobImport>
     ```
 
-    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record; follow it with `watchImport`. Over 256 MiB the upload resumes after a dropped connection, and `onRegistered` hands you the import id before the transfer ends. A directory without `result.json` and `config.json` at its root is refused before anything is sent.
+    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record; follow it with `watchImport`. A large upload resumes after a dropped connection, and `onRegistered` hands you the import id as soon as it starts. A directory without `result.json` and `config.json` at its root is refused client-side.
 
     ```ts
     const imp = await jobs().upload(
@@ -661,7 +661,7 @@ description: "Start, follow, and derive jobs."
 
 ## grep
 
-Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. An empty page means no match anywhere, and a page can be short with more to come, so keep paging; a pattern too expensive to evaluate is refused with `invalid_input`.
+Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. Keep paging while `hasMore` (`has_more` in Python) is true; a pattern too expensive to evaluate is refused with `invalid_input`.
 
 <Tabs>
   <Tab title="TypeScript">

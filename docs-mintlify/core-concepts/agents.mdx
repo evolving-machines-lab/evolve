@@ -71,7 +71,7 @@ evolve agent remove acme-cli
 
 Removing an agent keeps the record of the past jobs that ran it. Registered agents are private, so another account's name reads as `agent_not_found`. The number you may hold is published as `agent_registration.max_per_user`; past it, `agent_limit_reached`.
 
-The install script, or the uploaded directory, runs once with internet access and no secrets, so everything it fetches must be public, and it must leave its executables in `$PREFIX/bin`. A registered agent has no version pin: change the install source, the run command or the env and the next run installs the new one. To change one without a gap, use `upsert` rather than remove and add.
+The install script, or the uploaded directory, runs once with internet and no secrets: fetch only public sources and leave the executables in `$PREFIX/bin`. To change an agent without a gap, use `upsert` rather than remove and add.
 
 ### The run contract
 
@@ -97,9 +97,9 @@ codex login --with-api-key <<< "$EVOLVE_GATEWAY_API_KEY"
 codex exec --skip-git-repo-check -
 ```
 
-A CLI that ignores `OPENAI_BASE_URL` without this reaches for its vendor's endpoint, finds the box sealed, and spends the agent budget failing to connect. The spend cap holds only when the task's network policy keeps traffic on the gateway; see [models](/core-concepts/models).
+A CLI that ignores `OPENAI_BASE_URL` without this reaches for its vendor's endpoint, finds the box sealed, and spends the agent budget failing to connect. The spend cap is airtight only under `no-network`; see [models](/core-concepts/models).
 
-Two things a registered agent gives up against a built-in: there is no live trace, because there is no parser for an unknown CLI, and an effort set on the arm is recorded but never reaches the command, so put the flag in `run_command`. Spend, tokens, the patch, the verifier and the artifacts are recorded as for a built-in.
+Against a built-in, a registered agent has no live trace (there is no parser for an unknown CLI) and no `reasoning_effort` (put the flag in `run_command`); everything else is recorded the same way.
 
 <Card title="agent reference" icon="terminal" href="/cli-reference/agent">
   Every flag of `evolve agent`.

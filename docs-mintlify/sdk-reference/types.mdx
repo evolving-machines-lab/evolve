@@ -17,7 +17,7 @@ One shape from `start`, `get`, `list`, `cancel`, `resume`, `retry` and `regrade`
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | string | Opaque; see [trials](/core-concepts/trials). |
+| `id` | string | UUID; treat every id as opaque. |
 | `job_name` | string | The label; server-generated when the create omitted one. Not unique. |
 | `status` | `QUEUED` `RUNNING` `CANCELLING` `COMPLETED` `CANCELLED` `FAILED` | See [jobs](/core-concepts/jobs#statuses). |
 | `datasets` | `{ name, version }[]` | The resolved versions the job ran. |
@@ -111,7 +111,7 @@ One shape on list rows and on `trials().get()`; the detail route alone serves `e
 | `judge_result` | `{ n_input_tokens, n_cache_tokens, n_output_tokens, cost_usd } \| null` | The judge key's own spend. Null when no judge ever ran. |
 | `analysis` | `TrialAnalysis \| null` | The latest analysis; null when never analyzed. |
 | `environment_setup`, `agent_setup`, `agent_execution`, `verifier` | `{ started_at, finished_at } \| null` | Phase clocks; either bound null while unreached. `verifier` is the graded command alone. |
-| `queue_wait` | `TimingInfo \| null` | Claimable to begun; for a retried trial it opens at the retry's backoff deadline. |
+| `queue_wait` | `TimingInfo \| null` | From claimable to begun. |
 | `harness_bundle`, `image_prepare` | `TimingInfo \| null` | Nested inside `environment_setup`. `image_prepare` is near zero on modal by design. |
 | `shared_verify_setup` | `TimingInfo \| null` | What a shared-mode verify did before its command; ends where `verifier` begins. Null on separate-mode and multi-step trials. |
 | `harness_bundle_cache_hit` | boolean \| null | Null is unrecorded, never a miss. |
