@@ -13,7 +13,7 @@ description: "Start and read task quality checks."
     create(input: { source: { directory: string } | { dataset: string }; model_name?: string; rubric?: Rubric; prompt?: string; reasoning_effort?: string; sandbox_provider?: EvalSandboxProvider; n_concurrent?: number; include_task_names?: string[]; exclude_task_names?: string[]; n_tasks?: number; onUploadProgress?: (sentBytes: number, totalBytes: number) => void }): Promise<Check>
     ```
 
-    Check a local task directory or a directory of them, uploaded as one archive, or a published dataset, nothing uploaded. Returns the accepted check with one `queued` result per task; an empty selection is refused with `no_checkable_tasks`, and a dataset version resolves as for a job (`dataset_not_found`, `no_active_version`, `version_not_ready`). A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
+    Check a local task directory or a directory of them, uploaded as one archive (`upload_too_large` past the published ceiling), or a published dataset, nothing uploaded. Returns the accepted check with one `queued` result per task; an empty selection is refused with `no_checkable_tasks`, and a dataset version resolves as for a job (`dataset_not_found`, `no_active_version`, `version_not_ready`). A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
 
     ```ts
     const check = await checks().create({ source: { dataset: "my-swe@1.0" } });
@@ -38,7 +38,7 @@ description: "Start and read task quality checks."
     ) -> Check
     ```
 
-    Check a local task directory or a directory of them, uploaded as one archive, or a published dataset, nothing uploaded; one source, not both. Returns the accepted check with one `queued` result per task; an empty selection is refused with `no_checkable_tasks`, and a dataset version resolves as for a job. A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
+    Check a local task directory or a directory of them, uploaded as one archive (`upload_too_large` past the published ceiling), or a published dataset, nothing uploaded; one source, not both. Returns the accepted check with one `queued` result per task; an empty selection is refused with `no_checkable_tasks`, and a dataset version resolves as for a job. A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
 
     ```python
     check = await checks().create(dataset="my-swe@1.0")

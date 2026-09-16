@@ -80,7 +80,7 @@ evolve trial regrade <trial-id>
 evolve trial stop <trial-id> <trial-id>
 ```
 
-`retry` runs a settled trial again, `regrade` re-runs only its verifier, and each produces a new job holding the one new trial. `stop` ends in-flight trials without cancelling their job.
+`retry` runs a settled trial again, `regrade` re-runs only its verifier, and each produces a new job holding the one new trial. `stop` ends in-flight trials without cancelling their job; each stopped trial settles `CANCELLED` and is charged its spend so far.
 
 ## Statuses
 
