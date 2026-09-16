@@ -6,7 +6,7 @@
     "agents",
     "sandbox",
     "daytona",
-    "evolve-sdk",
+    "evolve",
     "orchestration"
   ],
   "homepage": "https://github.com/evolving-machines-lab/evolve",

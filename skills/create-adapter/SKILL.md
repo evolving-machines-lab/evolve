@@ -25,7 +25,7 @@ Do not invent structure, field names, or workflow beyond what the guide specifie
 
 ## Prerequisites
 
-- The `evolve` CLI: `npm install -g @evolvingmachines/sdk` (`evolve --version` succeeds).
+- The `evolve` CLI: `npm install -g @evolvingmachines/evolve` (`evolve --version` succeeds).
 - `EVOLVE_API_KEY` exported, from the dashboard's API keys page
   (https://dashboard.evolvingmachines.ai/api-keys); `evolve auth status` prints who you are.
 - Docker, to build and enter a task's environment locally (optional).
@@ -281,7 +281,7 @@ questions come up, read the one that matches the benchmark's shape:
 
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
-| `evolve: command not found` | The CLI is not installed | `npm install -g @evolvingmachines/sdk`. |
+| `evolve: command not found` | The CLI is not installed | `npm install -g @evolvingmachines/evolve`. |
 | `evolve dataset check` refuses a task by name | Its `task.toml` breaks a rule (a field, a value, a name) | Fix the converter, regenerate, check again. The refusal names the field. |
 | A task check comes back `has_a_problem` | One criterion failed | `evolve check show <check-id>` prints the criterion, its explanation and its evidence. |
 | Every task fails the check the same way | An error in the task template | Fix `task-template/` in the converter, not the generated tasks. |

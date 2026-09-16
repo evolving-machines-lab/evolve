@@ -8,7 +8,7 @@
  * suite goes red instead of the mismatch surfacing at sandbox boot.
  *
  * The provider packages cannot `implements` the SDK's interfaces directly:
- * @evolvingmachines/sdk DEPENDS ON this package (build order is providers →
+ * @evolvingmachines/evolve DEPENDS ON this package (build order is providers →
  * sdk), so importing the SDK here would be a package cycle, and importing it
  * by relative path from src/ breaks the tsup dts build with TS6059 (the file
  * is outside the package rootDir). Conformance is therefore proved from a

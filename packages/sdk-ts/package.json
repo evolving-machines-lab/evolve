@@ -1,5 +1,5 @@
 {
-  "name": "@evolvingmachines/sdk",
+  "name": "@evolvingmachines/evolve",
   "version": "0.0.55",
   "keywords": [
     "ai",
@@ -15,7 +15,7 @@
     "gemini cli",
     "qwen code",
     "automation",
-    "evolve-sdk"
+    "evolve"
   ],
   "homepage": "https://github.com/evolving-machines-lab/evolve",
   "repository": {

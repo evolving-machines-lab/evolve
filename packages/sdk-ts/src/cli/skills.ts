@@ -132,7 +132,7 @@ export function skillsRoot(packageRoot: string, env: NodeJS.ProcessEnv = process
   for (const candidate of [packageRoot, join(packageRoot, "..", "..")]) {
     if (isSkillsRoot(candidate)) return resolve(candidate);
   }
-  throw new SkillsError(`skills directory not found; set ${SKILLS_DIR_ENV} or reinstall @evolvingmachines/sdk`);
+  throw new SkillsError(`skills directory not found; set ${SKILLS_DIR_ENV} or reinstall @evolvingmachines/evolve`);
 }
 
 // -----------------------------------------------------------------------------

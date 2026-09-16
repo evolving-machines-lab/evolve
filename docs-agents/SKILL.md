@@ -22,8 +22,8 @@ Determine the language from (in priority order):
 2. **Project signals** — imports, file extensions, package.json vs pyproject.toml
 3. **Ask** — if ambiguous, ask the user
 
-- **TypeScript** (`@evolvingmachines/sdk`) — read from [typescript/](typescript/)
-- **Python** (`evolve-sdk`) — read from [python/](python/)
+- **TypeScript** (`@evolvingmachines/evolve`) — read from [typescript/](typescript/)
+- **Python** (`evolvingmachines-evolve`) — read from [python/](python/)
 
 ## Required Reading
 

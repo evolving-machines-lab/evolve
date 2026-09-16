@@ -7,7 +7,7 @@
  *
  * Run: npm start
  */
-import { Evolve, readLocalDir, saveLocalDir } from "@evolvingmachines/sdk";
+import { Evolve, readLocalDir, saveLocalDir } from "@evolvingmachines/evolve";
 import { mkdirSync } from "fs";
 import "dotenv/config";
 import chalk from "chalk";

@@ -3,11 +3,11 @@
 Run CLI agents in secure sandboxes with built-in observability.
 
 ```bash
-npm install @evolvingmachines/sdk
+npm install @evolvingmachines/evolve
 ```
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve();
 await evolve.run({ prompt: "Hello world" });

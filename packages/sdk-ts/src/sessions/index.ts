@@ -51,7 +51,7 @@ function positiveNumber(name: string, value: number | undefined, fallback: numbe
  *
  * @example
  * ```ts
- * import { sessions } from "@evolvingmachines/sdk";
+ * import { sessions } from "@evolvingmachines/evolve";
  *
  * const s = sessions();
  * const page = await s.list({ limit: 20, state: "ended" });

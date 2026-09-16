@@ -2,7 +2,7 @@
  * Prompt for browser-use cookbook.
  */
 
-import type { FileMap } from "@evolvingmachines/sdk";
+import type { FileMap } from "@evolvingmachines/evolve";
 
 export function visitPostPrompt(files: FileMap, _index: number): string {
     const cfg = JSON.parse(files["config.json"] as string);

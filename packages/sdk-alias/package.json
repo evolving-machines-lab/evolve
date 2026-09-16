@@ -1,0 +1,40 @@
+{
+  "name": "@evolvingmachines/sdk",
+  "version": "0.0.55",
+  "description": "Renamed: this package is now @evolvingmachines/evolve. This name re-exports it at the same version.",
+  "homepage": "https://github.com/evolving-machines-lab/evolve",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/evolving-machines-lab/evolve.git"
+  },
+  "type": "module",
+  "bin": {
+    "evolve": "bin/evolve.js"
+  },
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "license": "Apache-2.0",
+  "files": [
+    "index.cjs",
+    "index.mjs",
+    "index.d.ts",
+    "bin",
+    "LICENSE",
+    "harness-capabilities.json",
+    "hosted-error-codes.json"
+  ],
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "require": "./index.cjs"
+    },
+    "./harness-capabilities.json": "./harness-capabilities.json"
+  },
+  "scripts": {
+    "prepack": "node scripts/stage.mjs"
+  },
+  "dependencies": {
+    "@evolvingmachines/evolve": "0.0.55"
+  }
+}

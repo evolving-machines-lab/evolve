@@ -3,7 +3,7 @@
  * Data extraction with Zod schema validation.
  */
 import "dotenv/config";
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 import { z } from "zod";
 
 // Define expected output structure

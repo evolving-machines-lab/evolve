@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evolve-sdk"
+version = "0.0.55"
+description = "Renamed: the Evolve SDK for Python is now evolvingmachines-evolve. This name only depends on it, at the same version."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Swarmlink, Inc.", email = "brandomagnani@evolvingmachines.ai"}
+]
+dependencies = ["evolvingmachines-evolve==0.0.55"]
+
+[project.urls]
+Homepage = "https://github.com/evolving-machines-lab/evolve"
+Repository = "https://github.com/evolving-machines-lab/evolve"
+
+# No module of its own: the import name `evolve` comes from evolvingmachines-evolve.
+[tool.setuptools]
+packages = []

@@ -11,7 +11,7 @@ commands that upload.
 
 ## Prerequisites
 
-1. **The CLI**: `npm install -g @evolvingmachines/sdk`; `evolve --version` succeeds.
+1. **The CLI**: `npm install -g @evolvingmachines/evolve`; `evolve --version` succeeds.
 
 2. **API key**: create a key on the dashboard's API keys page
    (https://dashboard.evolvingmachines.ai/api-keys) and export it. Every command reads

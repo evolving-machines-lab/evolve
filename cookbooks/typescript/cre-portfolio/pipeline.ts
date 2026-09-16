@@ -6,7 +6,7 @@
 
 import "dotenv/config";
 import { writeFileSync, mkdirSync } from "fs";
-import { Swarm, Pipeline } from "@evolvingmachines/sdk";
+import { Swarm, Pipeline } from "@evolvingmachines/evolve";
 import {
     EXTRACT_SYSTEM, EXTRACT,
     ANALYZE_SYSTEM, ANALYZE,

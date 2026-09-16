@@ -3,7 +3,7 @@
  * Multiple .run() calls maintain context and history.
  */
 import "dotenv/config";
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const agent = new Evolve();
 

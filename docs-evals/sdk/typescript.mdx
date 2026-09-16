@@ -4,13 +4,13 @@ description: "Start a job, wait for it, read the result, and download it from Ty
 ---
 
 ```bash
-npm install @evolvingmachines/sdk
+npm install @evolvingmachines/evolve
 ```
 
 The hosted surface is a set of clients, one per noun. Each one reads `EVOLVE_API_KEY` from the environment, or takes `{ apiKey, baseUrl }`. Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys).
 
 ```ts
-import { jobs, trials, datasets } from "@evolvingmachines/sdk";
+import { jobs, trials, datasets } from "@evolvingmachines/evolve";
 
 const evals = jobs();
 ```
@@ -133,7 +133,7 @@ const version = await catalog.get("terminal-bench-4@4.0");
 `analyses()`, `checks()`, `skills()`, `agents()`, `auth()` and `orgs()` are built the same way. `meta()` fetches the platform's capability document, the live list of harnesses, models and limits, and needs no key. `hosted()` builds every client from one configuration.
 
 ```ts
-import { hosted } from "@evolvingmachines/sdk";
+import { hosted } from "@evolvingmachines/evolve";
 
 const evolve = hosted({ apiKey: process.env.EVOLVE_API_KEY });
 const doc = await evolve.meta();

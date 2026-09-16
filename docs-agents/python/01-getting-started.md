@@ -9,7 +9,7 @@ Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex
 **Requirements:** [Python 3.10+](https://python.org/) and [Node.js 18+](https://nodejs.org/) (the SDK uses a lightweight Node.js bridge).
 
 ```bash
-pip install evolve-sdk
+pip install evolvingmachines-evolve
 ```
 
 Storage & checkpointing is available in [gateway mode](./03-runtime.md#storage--checkpointing) (`EVOLVE_API_KEY`) — no additional dependencies needed.

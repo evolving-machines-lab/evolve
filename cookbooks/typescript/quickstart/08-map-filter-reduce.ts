@@ -3,7 +3,7 @@
  * Fluent API for multi-step workflows.
  */
 import "dotenv/config";
-import { Swarm, Pipeline } from "@evolvingmachines/sdk";
+import { Swarm, Pipeline } from "@evolvingmachines/evolve";
 import { z } from "zod";
 
 const swarm = new Swarm();

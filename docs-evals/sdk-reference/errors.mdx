@@ -8,7 +8,7 @@ A refused request raises one class. Branch on its `code`, never on the message.
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    import { EvolveApiError, HOSTED_ERROR_CODES, isHostedErrorCode } from "@evolvingmachines/sdk";
+    import { EvolveApiError, HOSTED_ERROR_CODES, isHostedErrorCode } from "@evolvingmachines/evolve";
 
     class EvolveApiError extends Error {
       status: number;                 // the HTTP status

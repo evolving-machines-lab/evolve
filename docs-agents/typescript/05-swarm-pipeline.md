@@ -3,7 +3,7 @@
 Functional programming for AI agents: `map`, `filter`, `reduce`, `bestOf`, `verify`.
 
 ```ts
-import { Swarm } from "@evolvingmachines/sdk";
+import { Swarm } from "@evolvingmachines/evolve";
 import { z } from "zod";  // Or use plain JSON Schema objects instead
 
 const swarm = new Swarm({
@@ -63,7 +63,7 @@ The `agent` here is the full `AgentConfig` — the same shape `.withAgent()` tak
 
 ```ts
 import "dotenv/config";  // If using .env file
-import { Swarm } from "@evolvingmachines/sdk";
+import { Swarm } from "@evolvingmachines/evolve";
 
 const swarm = new Swarm();  // Auto-resolves agent (claude) and sandbox from env
 ```
@@ -143,7 +143,7 @@ const results = await swarm.map({
 **Case 3: Entire folder per worker**
 
 ```ts
-import { readLocalDir } from "@evolvingmachines/sdk";
+import { readLocalDir } from "@evolvingmachines/evolve";
 
 // readLocalDir(path, recursive) → returns FileMap with all files
 const items: FileMap[] = [
@@ -767,7 +767,7 @@ Fluent wrapper over Swarm for chaining operations. **All Swarm features work in 
 
 ```ts
 import "dotenv/config";
-import { Swarm, Pipeline } from "@evolvingmachines/sdk";
+import { Swarm, Pipeline } from "@evolvingmachines/evolve";
 
 const swarm = new Swarm();  // See Swarm Abstractions for full config
 

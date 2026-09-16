@@ -114,7 +114,7 @@ function writeFixture(): string {
   put("docs-evals/style.css", "body {}\n");
   put("docs-agents/SKILL.md", AGENTS_SKILL);
   put("docs-agents/SKILL.source.md", AGENTS_SOURCE);
-  put("docs-agents/_meta.ts", "export default {};\n");
+  put("docs-agents/nav.ts", "export default {};\n");
   put("docs-agents/typescript/01-getting-started.md", TS_CHAPTER);
   put("skills/evolve/SKILL.md", POINTER);
   put("skills/create-task/SKILL.md", CREATE_TASK_SKILL);
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
 
       const agents = captureIO();
       assertEqual(await runCli(["skills", "get", "agents", "--full"], agents.io), 0, "get agents --full exits 0");
-      assertEqual(stdout(agents), AGENTS_SKILL + "\n--- typescript/01-getting-started.md ---\n\n" + TS_CHAPTER, "the chapters are the pages; the generator's source and the Nextra config are not");
+      assertEqual(stdout(agents), AGENTS_SKILL + "\n--- typescript/01-getting-started.md ---\n\n" + TS_CHAPTER, "the chapters are the pages; the generator's source and a non-page file are not");
 
       const references = captureIO();
       assertEqual(await runCli(["skills", "get", "rewardkit", "--full"], references.io), 0, "get rewardkit --full exits 0");

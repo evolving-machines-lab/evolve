@@ -101,7 +101,7 @@ await evolve.uploadFiles({
 });
 
 // From local directory (helper)
-import { readLocalDir } from "@evolvingmachines/sdk";
+import { readLocalDir } from "@evolvingmachines/evolve";
 await evolve.uploadContext(readLocalDir("./input", true));
 ```
 
@@ -123,7 +123,7 @@ interface OutputResult<T = unknown> {
 
 ```ts
 import { z } from "zod";
-import { saveLocalDir } from "@evolvingmachines/sdk";
+import { saveLocalDir } from "@evolvingmachines/evolve";
 
 const ResultSchema = z.object({
     summary: z.string(),
@@ -488,7 +488,7 @@ const checkpoints = await evolve.listCheckpoints({
 **Standalone `storage()` client** (no Evolve instance needed):
 
 ```ts
-import { storage } from "@evolvingmachines/sdk";
+import { storage } from "@evolvingmachines/evolve";
 
 const store = storage();  // Uses EVOLVE_API_KEY from env
 ```
@@ -599,7 +599,7 @@ type FileMap = Record<string, Buffer>;  // relative path → file contents
 ### End-to-End Example
 
 ```ts
-import { Evolve, storage } from "@evolvingmachines/sdk";
+import { Evolve, storage } from "@evolvingmachines/evolve";
 
 // 1. Create and checkpoint
 const evolve = new Evolve()
@@ -710,7 +710,7 @@ The standalone `sessions()` client queries past sessions and downloads full
 trace files programmatically — the API equivalent of the dashboard traces page.
 
 ```ts
-import { sessions } from "@evolvingmachines/sdk";
+import { sessions } from "@evolvingmachines/evolve";
 
 const session = sessions(); // uses EVOLVE_API_KEY
 
@@ -764,7 +764,7 @@ Query per-run and per-session LLM spend. Requires gateway mode (`EVOLVE_API_KEY`
 Cost data may take 5–60s to appear while the gateway finishes metering (typically under 30s).
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 import { createE2BProvider } from "@evolvingmachines/e2b";
 
 const evolve = new Evolve()

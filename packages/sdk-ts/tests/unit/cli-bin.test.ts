@@ -189,7 +189,7 @@ try {
   const noSkills = runNode(join(bare, "dist", "cli", "index.js"), ["skills", "list"]);
   assert(noSkills.code === 1, "no skills root anywhere: skills list exits 1");
   assert(
-    noSkills.stderr.includes("skills directory not found; set EVOLVE_SKILLS_DIR or reinstall"),
+    noSkills.stderr.includes("skills directory not found; set EVOLVE_SKILLS_DIR or reinstall @evolvingmachines/evolve"),
     `the refusal names the variable and the remedy (stderr: ${noSkills.stderr.trim()})`,
   );
   const noSkillsJson = runNode(join(bare, "dist", "cli", "index.js"), ["skills", "list", "--json"]);

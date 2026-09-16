@@ -9,7 +9,7 @@
  */
 
 import "dotenv/config";
-import { Swarm, Pipeline } from "@evolvingmachines/sdk";
+import { Swarm, Pipeline } from "@evolvingmachines/evolve";
 
 import { buildItems, setupRunDir, saveResults } from "./items";
 import { visitPostPrompt } from "./prompt";

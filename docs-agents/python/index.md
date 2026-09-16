@@ -3,7 +3,7 @@
 Run CLI agents in secure sandboxes with built-in observability.
 
 ```bash
-pip install evolve-sdk
+pip install evolvingmachines-evolve
 ```
 
 ```python

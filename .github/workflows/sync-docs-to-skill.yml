@@ -1,7 +1,7 @@
 # The docs folders are the skills — one source, nothing copied. scripts/generate-skills.ts
 # (npm run generate:skills) writes docs-evals/SKILL.md from docs.json, docs-agents/SKILL.md
-# from its SKILL.source.md, the .claude/skills/ mirror of the pointer skills/evolve/SKILL.md,
-# and skills-lock.json. Two jobs, one generator:
+# from its SKILL.source.md, and the .claude/skills/ mirror of the pointer
+# skills/evolve/SKILL.md. Two jobs, one generator:
 #   - pull requests: `--check` fails when a generated copy is stale, missing, or
 #     hand-edited (the same law as the SDK's harness-capabilities --check);
 #   - pushes to a trunk: regenerate and commit, so a docs edit lands in the
@@ -91,7 +91,7 @@ jobs:
       - name: Check for changes
         id: diff
         run: |
-          git add -A docs-evals/SKILL.md docs-agents/SKILL.md .claude/skills skills-lock.json
+          git add -A docs-evals/SKILL.md docs-agents/SKILL.md .claude/skills
           git diff --cached --quiet && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push

@@ -3,7 +3,7 @@
  * Parallel processing with LLM-as-judge verification.
  */
 import "dotenv/config";
-import { Swarm } from "@evolvingmachines/sdk";
+import { Swarm } from "@evolvingmachines/evolve";
 import { z } from "zod";
 
 // Swarm processes multiple items in parallel sandboxes

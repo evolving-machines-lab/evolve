@@ -3,10 +3,9 @@
 // skills/ (the pointer and the task-authoring skills), the same files the
 // checkout serves (src/cli/skills.ts). Only what an agent reads is staged
 // from a docs folder — docs.json and every .md/.mdx page — never the site's
-// assets (images, logo, favicon, stylesheet, script), its Nextra config or
-// the generator's source; skills/ is staged whole. Runs on every build and
-// every pack and rebuilds
-// each staged copy from scratch, so the CLI serves what the last build saw
+// assets (images, logo, favicon, stylesheet, script) or the generator's
+// source; skills/ is staged whole. Runs on every build and every pack and
+// rebuilds each staged copy from scratch, so the CLI serves what the last build saw
 // and a stale copy can never ship. The staged copies are gitignored; a
 // checkout that has never built has none, and the CLI then serves the repo
 // root directly.

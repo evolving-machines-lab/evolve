@@ -8,7 +8,7 @@ allowed-tools: Bash(evolve:*), Bash(npx evolve:*)
 
 Hosted evals and the SDK, from the `evolve` command.
 
-Install: `npm i -g @evolvingmachines/sdk`, then `export EVOLVE_API_KEY=<your key>` (create a key at https://dashboard.evolvingmachines.ai/api-keys).
+Install: `npm i -g @evolvingmachines/evolve`, then `export EVOLVE_API_KEY=<your key>` (create a key at https://dashboard.evolvingmachines.ai/api-keys).
 
 ## Start here
 

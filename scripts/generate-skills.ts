@@ -17,8 +17,6 @@
  *     -> docs-agents/SKILL.md     the same bytes behind the generated marker
  *   skills/evolve/SKILL.md       the pointer, hand-written
  *     -> .claude/skills/evolve/   the mirror an agent inside this repo sees
- *     -> skills-lock.json         the `skills` CLI's project lock (npx skills add),
- *                                 same hash recipe as the CLI's local-lock.ts
  *   skills/<name>/ for the other folders (create-task, rewardkit, create-adapter,
  *   publish): hand-written, edited in place, only validated here.
  *
@@ -42,7 +40,6 @@
  * same version packages/sdk-ts pins).
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,7 +50,6 @@ const SITE = join(ROOT, "docs-evals");
 const AGENTS = join(ROOT, "docs-agents");
 const SKILLS = join(ROOT, "skills");
 const MIRROR = join(ROOT, ".claude", "skills");
-const LOCK = join(ROOT, "skills-lock.json");
 
 const EVALS_SKILL = "docs-evals";
 const AGENTS_SKILL = "docs-agents";
@@ -66,8 +62,6 @@ const POINTER_SOURCE = join(SKILLS, POINTER, "SKILL.md");
 const POINTER_MAX_WORDS = 500;
 /** The agentskills.io front matter the pointer may carry; anything else is an editor's slip. */
 const POINTER_FIELDS = ["name", "description", "allowed-tools"] as const;
-/** The lock's `source`: what `npx skills add` is told. */
-const LOCK_SOURCE = "evolving-machines-lab/evolve";
 
 /** The generated body of docs-evals/SKILL.md, above the index. */
 const EVALS_PREAMBLE = `# Evolve hosted evals
@@ -96,7 +90,7 @@ function relPath(from: string, to: string): string {
 /** Every regular file under dir, absolute, sorted, recursive. `.git` and
  *  `node_modules` are never entered (the `skills` CLI skips them too) and
  *  `.DS_Store` is never listed: git never tracks it, so a local one would only
- *  put a hash into the lock that a clean checkout cannot reproduce. */
+ *  be reported as an extra generated file. */
 function walkFiles(dir: string): string[] {
   const out: string[] = [];
   const visit = (d: string) => {
@@ -255,7 +249,7 @@ function evalsSkill(): Buffer {
 }
 
 // ---------------------------------------------------------------------------
-// The pointer: skills/evolve/SKILL.md, validated, then mirrored and locked
+// The pointer: skills/evolve/SKILL.md, validated, then mirrored
 
 function pointerSkill(): Map<string, Buffer> {
   const where = `skills/${POINTER}/SKILL.md`;
@@ -275,18 +269,6 @@ function pointerSkill(): Map<string, Buffer> {
     throw new Error(`${where}: ${words} words — the pointer stays under ${POINTER_MAX_WORDS}; the content belongs in the docs folders`);
   }
   return new Map([["SKILL.md", bytes]]);
-}
-
-/** The `skills` CLI's own recipe (vercel-labs/skills src/local-lock.ts
- *  computeSkillFolderHash): every file of the folder, sorted by relative path
- *  with localeCompare, sha256 over path then content, so a rename is a change. */
-function skillFolderHash(files: Map<string, Buffer>): string {
-  const hash = createHash("sha256");
-  for (const p of [...files.keys()].sort((a, b) => a.localeCompare(b))) {
-    hash.update(p);
-    hash.update(files.get(p)!);
-  }
-  return hash.digest("hex");
 }
 
 /** The hand-written skills beside the pointer: validated, never written. */
@@ -315,25 +297,13 @@ function expectedOutput(): { expected: Expected; skillNames: string[] } {
   expected.set(`${AGENTS_SKILL}/SKILL.md`, agentsSkill());
   const pointer = pointerSkill();
   for (const [p, bytes] of pointer) expected.set(`.claude/skills/${POINTER}/${p}`, bytes);
-  const lock = {
-    version: 1,
-    skills: {
-      [POINTER]: {
-        source: LOCK_SOURCE,
-        sourceType: "github",
-        skillPath: `skills/${POINTER}/SKILL.md`,
-        computedHash: skillFolderHash(pointer),
-      },
-    },
-  };
-  expected.set("skills-lock.json", Buffer.from(JSON.stringify(lock, null, 2) + "\n", "utf8"));
   const skillNames = [EVALS_SKILL, AGENTS_SKILL, POINTER, ...validateHandWrittenSkills()];
   return { expected, skillNames };
 }
 
-/** What this script owns outright: the two generated SKILL.md files, the mirror folder, the lock. */
+/** What this script owns outright: the two generated SKILL.md files and the mirror folder. */
 function generatedRoots(): string[] {
-  return [join(SITE, "SKILL.md"), join(AGENTS, "SKILL.md"), MIRROR, LOCK];
+  return [join(SITE, "SKILL.md"), join(AGENTS, "SKILL.md"), MIRROR];
 }
 
 function check(expected: Expected): number {
@@ -357,7 +327,7 @@ function check(expected: Expected): number {
     );
     return 1;
   }
-  console.log(`docs-evals/SKILL.md, docs-agents/SKILL.md, .claude/skills/ and skills-lock.json match their sources (${expected.size} files)`);
+  console.log(`docs-evals/SKILL.md, docs-agents/SKILL.md and .claude/skills/ match their sources (${expected.size} files)`);
   return 0;
 }
 

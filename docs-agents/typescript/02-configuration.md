@@ -36,7 +36,7 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 // No .withSandbox() needed — SDK picks the right provider from env
 const evolve = new Evolve()
@@ -66,7 +66,7 @@ That is already what auto-resolution does when only `EVOLVE_API_KEY` is set — 
 managed **E2B** sandbox. To run on a different provider, say which one:
 
 ```ts
-import { Evolve, managedSandbox } from "@evolvingmachines/sdk";
+import { Evolve, managedSandbox } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
     .withAgent({ type: "claude" })
@@ -125,7 +125,7 @@ E2B_API_KEY=e2b_...              # Required in Direct Provider Key Mode
 ```
 
 ```ts
-import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,    // (optional) Auto-resolves from env
@@ -148,7 +148,7 @@ MODAL_TOKEN_SECRET=as-...
 ```
 
 ```ts
-import { Evolve, createModalProvider } from "@evolvingmachines/sdk";
+import { Evolve, createModalProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createModalProvider({
     tokenId: process.env.MODAL_TOKEN_ID,       // (optional) Auto-resolves from env
@@ -172,7 +172,7 @@ DAYTONA_API_KEY=...
 ```
 
 ```ts
-import { Evolve, createDaytonaProvider } from "@evolvingmachines/sdk";
+import { Evolve, createDaytonaProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createDaytonaProvider({
     apiKey: process.env.DAYTONA_API_KEY,  // (optional) Auto-resolves from env
@@ -469,7 +469,7 @@ To disable browser automation, omit `.withBrowser()`.
 Full browser run with live view and replay:
 
 ```ts
-import { Evolve, sessions } from "@evolvingmachines/sdk";
+import { Evolve, sessions } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
     .withBrowser()
@@ -540,7 +540,7 @@ Passwords are encrypted client-side with RSA-OAEP-SHA256 against the dashboard's
 Expose saved logins to a run:
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
     .withBrowser()
@@ -572,7 +572,7 @@ The agent receives a run-scoped `browser-login` MCP server with these tools:
 Manage browser logins from the SDK:
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const credentials = Evolve.browserCredentials();
 
@@ -628,7 +628,7 @@ If `.withAgent()` is omitted, plugins target the default agent (`claude`).
 Skills are folders of instructions and helper files — a `SKILL.md` manifest plus anything it needs — that the agent's harness discovers natively. `.withSkills()` takes real references; there is no built-in catalog:
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
     .withSkills([
@@ -663,7 +663,7 @@ The delivery mode is chosen when the secret is saved and decides how the value r
 - **`direct`** — the raw value is placed in the sandbox environment. This is the mode for keys the HTTPS broker cannot carry: URL-parameter keys, gRPC, websockets. Direct secrets carry no host/path/method scoping — nothing brokers a raw env value.
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const secrets = await Evolve.managedSecrets().list(); // includes label + delivery
 
@@ -688,7 +688,7 @@ Runtime behavior:
 `Evolve.managedSecrets()` also writes: `set()` creates an env secret (or updates one — see the collision rule), and `delete()` removes one. The value travels in the HTTPS request body and is sealed server-side with the platform vault cipher; no read ever returns it. Values are limited to 190 bytes.
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const secrets = Evolve.managedSecrets();
 
@@ -754,7 +754,7 @@ EVOLVE_API_KEY=sk-...
 ```
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
     .withIntegrations({

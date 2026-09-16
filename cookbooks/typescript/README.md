@@ -12,7 +12,7 @@
 ### 1. Install the SDK
 
 ```bash
-npm install @evolvingmachines/sdk
+npm install @evolvingmachines/evolve
 ```
 
 ### 2. Unlock full power with Evolve API key

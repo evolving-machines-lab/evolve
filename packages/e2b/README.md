@@ -8,9 +8,9 @@
 
 # Evolving Machines — Evolve E2B Provider
 
-E2B sandbox provider for [Evolve SDK](https://www.npmjs.com/package/@evolvingmachines/sdk).
+E2B sandbox provider for [Evolve SDK](https://www.npmjs.com/package/@evolvingmachines/evolve).
 
-**Note:** This package is automatically installed as a dependency of `@evolvingmachines/sdk`. You don't need to install it separately.
+**Note:** This package is automatically installed as a dependency of `@evolvingmachines/evolve`. You don't need to install it separately.
 
 Check out the [official documentation](https://github.com/evolving-machines-lab/evolve/tree/main/docs) and [cookbooks](https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks).
 

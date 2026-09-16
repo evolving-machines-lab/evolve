@@ -2090,7 +2090,7 @@ async function downloadArchive(
  *
  * @example
  * ```ts
- * import { datasets } from "@evolvingmachines/sdk";
+ * import { datasets } from "@evolvingmachines/evolve";
  *
  * const d = datasets();
  * const catalog = await d.list();
@@ -2688,7 +2688,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
  *
  * @example
  * ```ts
- * import { agents, jobs } from "@evolvingmachines/sdk";
+ * import { agents, jobs } from "@evolvingmachines/evolve";
  *
  * const registered = agents();
  * await registered.create({
@@ -2830,7 +2830,7 @@ function mapSkillUpload(raw: Record<string, unknown>): SkillUpload {
  *
  * @example
  * ```ts
- * import { skills, jobs } from "@evolvingmachines/sdk";
+ * import { skills, jobs } from "@evolvingmachines/evolve";
  *
  * const [uploaded] = await skills().upload("./my-skill");
  * await jobs().start({
@@ -2895,7 +2895,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
  *
  * @example
  * ```ts
- * import { jobs } from "@evolvingmachines/sdk";
+ * import { jobs } from "@evolvingmachines/evolve";
  *
  * const client = jobs();
  * // datasets: bare name = active version; { name, version } pins one
@@ -4279,7 +4279,7 @@ export interface HostedEvolve {
  *
  * @example
  * ```ts
- * import { hosted } from "@evolvingmachines/sdk";
+ * import { hosted } from "@evolvingmachines/evolve";
  *
  * const evolve = hosted();                    // EVOLVE_API_KEY from env
  * const { agents } = await evolve.meta();     // no key needed for this one

@@ -9,7 +9,7 @@ Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex
 **Requirements:** [Node.js 18+](https://nodejs.org/)
 
 ```bash
-npm install @evolvingmachines/sdk
+npm install @evolvingmachines/evolve
 ```
 
 Storage & checkpointing is available in [gateway mode](./03-runtime.md#storage--checkpointing) (`EVOLVE_API_KEY`) — no additional dependencies needed.
@@ -38,7 +38,7 @@ EVOLVE_API_KEY=sk-...        # Evolve gateway key (dashboard.evolvingmachines.ai
 Evolve auto-resolves API keys and sandbox providers from environment variables — no need to pass them explicitly.
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
     .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
@@ -142,7 +142,7 @@ EVOLVE_API_KEY=sk-...
 ```
 
 ```ts
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
     .withAgent({ type: "claude" });
@@ -177,7 +177,7 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,
@@ -208,7 +208,7 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,
@@ -238,7 +238,7 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,
@@ -268,7 +268,7 @@ E2B_API_KEY=e2b_...
 ```
 
 ```ts
-import { Evolve, createE2BProvider } from "@evolvingmachines/sdk";
+import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
     apiKey: process.env.E2B_API_KEY,

@@ -7,7 +7,7 @@
     "sandbox",
     "modal",
     "gpu",
-    "evolve-sdk",
+    "evolve",
     "orchestration"
   ],
   "homepage": "https://github.com/evolving-machines-lab/evolve",

@@ -3,7 +3,7 @@
  * Parallel processing with N candidates per item, judge picks best.
  */
 import "dotenv/config";
-import { Swarm } from "@evolvingmachines/sdk";
+import { Swarm } from "@evolvingmachines/evolve";
 import { z } from "zod";
 
 const swarm = new Swarm();

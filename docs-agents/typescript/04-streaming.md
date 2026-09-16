@@ -9,8 +9,8 @@ Real-time output from `run()` and `executeCommand()`. For basic usage, see [Gett
 `Evolve` extends Node's `EventEmitter`. Subscribe to real-time output from `run()` and `executeCommand()`:
 
 ```typescript
-import { Evolve } from "@evolvingmachines/sdk";
-import type { OutputEvent, LifecycleEvent } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
+import type { OutputEvent, LifecycleEvent } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve().withAgent({ type: "claude" });
 
@@ -341,7 +341,7 @@ the full example lives in [Configuration → Browser Automation](./02-configurat
 ## UI Integration Example
 
 ```typescript
-import type { OutputEvent } from "@evolvingmachines/sdk";
+import type { OutputEvent } from "@evolvingmachines/evolve";
 
 function handleEvent(event: OutputEvent): void {
   const { update } = event;
@@ -427,7 +427,7 @@ an error must not count — otherwise a run that never reached the model looks l
 produced output. Use the exported predicate rather than writing the check yourself:
 
 ```typescript
-import { isAgentWorkUpdate } from "@evolvingmachines/sdk";
+import { isAgentWorkUpdate } from "@evolvingmachines/evolve";
 
 const didWork = events.some((e) => isAgentWorkUpdate(e.update));
 ```
