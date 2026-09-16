@@ -422,11 +422,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // on 2026-09-15 and served claude-fable-5 for `fable`; the measurement
       // is in team/dev-items/fable-astra-lane-report-2026-09-15.md).
       { alias: "fable", modelId: "claude-fable-5-1", description: "Highest capability, long-horizon agentic work" },
-      // Fable 5 stays reachable by its explicit id: hosted create admits only
-      // roster names (swarm_dashboard lib/evaluations/agent-models.ts
-      // validateAgentModel), so a user who must pin the older model needs
-      // this row; the gateway keeps its claude-fable-5 entry.
-      { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Claude Fable 5 (legacy)" },
       { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-5", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
@@ -782,10 +777,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
       // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models,
-      // read 2026-09-15: anthropic/claude-fable-5.1). Fable 5 keeps a legacy
-      // row so hosted create (roster names only) can still pin it.
+      // read 2026-09-15: anthropic/claude-fable-5.1).
       { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable 5 via OpenRouter (legacy)" },
       { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
@@ -882,7 +875,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // for the settings-file route — the kimi-k3 pattern. Full record:
       // team/dev-items/fable-astra-lane-report-2026-09-15.md.
       { alias: "claude-fable-5.1", modelId: "claude-fable-5-1", description: "Factory-managed Claude Fable 5.1" },
-      { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Factory-managed Claude Fable 5 (legacy)" },
       { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
       { alias: "claude-sonnet-5", modelId: "claude-sonnet-5", description: "Factory-managed Claude Sonnet 5" },
       { alias: "claude-haiku-4-5", modelId: "claude-haiku-4-5-20251001", description: "Factory-managed Claude Haiku 4.5" },
