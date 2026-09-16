@@ -12,7 +12,7 @@ A refused request raises one class. Branch on its `code`, never on the message.
 
     class EvolveApiError extends Error {
       status: number;                 // the HTTP status
-      code: HostedErrorCode | string; // the stable code below; a newer server may send one this SDK does not list
+      code: HostedErrorCode | string; // the stable code below; "unknown_error" when the server sent none, or one a newer server added
       message: string;                // the server's sentence; may be shortened when a list is long
       param?: string;                 // the input the refusal is about: a body path, a query parameter, or a multipart part
       details?: Record<string, unknown>; // the complete machine-readable data; never shortened
@@ -40,7 +40,7 @@ A refused request raises one class. Branch on its `code`, never on the message.
 
     class EvolveAPIError(Exception):
         status: int                        # the HTTP status
-        code: str                          # the stable code below
+        code: str                          # the stable code below; "unknown_error" when the server sent none
         param: Optional[str]               # the input the refusal is about
         details: Optional[Dict[str, Any]]  # the complete machine-readable data; never shortened
         retry_after_sec: Optional[float]   # on 429 and 503
@@ -60,16 +60,17 @@ A refused request raises one class. Branch on its `code`, never on the message.
   </Tab>
 </Tabs>
 
-Every response, success or failure, carries the same id in its `x-request-id` header. One 429 carries no retry delay: `quota_exceeded`, because the wait is not a number the server knows.
+Every response, success or failure, carries the same id in its `x-request-id` header. Of the 429 codes only `rate_limited` carries a retry delay; `quota_exceeded` and the five `too_many_concurrent_*` codes carry none.
 
 ## Errors that are not API refusals
 
-Four errors mean the request succeeded, or never happened, and something else went wrong. They are separate classes, not codes.
+These mean the request succeeded, or never happened, and something else went wrong. They are separate classes, not codes.
 
 - `NoActiveVersionError`: `datasets().getActive()` (Python `get_active`) on a dataset with no active version. Carries `dataset`.
-- `ImportSettleError`: `watchImport()` (Python `watch_import`) reached its settle timeout before the version settled. `code` is `settle_timeout`; carries `importId`, `dataset`, `version` and the last observed `state`. When `state` is `FAILED` the version did settle; read the failure with `getImport()`.
+- `ImportSettleError`: `watchImport()` (Python `watch_import`) reached its settle timeout before the version settled. `code` is `settle_timeout`; carries `importId` (Python `import_id`), `dataset`, `version` and the last observed `state`. When `state` is `FAILED` the version did settle; read the failure with `getImport()` (Python `get_import`).
 - `EvolveDigestMismatchError`: a download's bytes do not match the digest the server stated. Carries `expected` and `actual`. Do not trust the stored object.
-- `EvolveIncompleteDownloadError`: fewer bytes arrived than `Content-Length` promised. Carries `expectedBytes` and `receivedBytes`. Retry the download.
+- `EvolveIncompleteDownloadError`: fewer bytes arrived than `Content-Length` promised. Carries `expectedBytes` and `receivedBytes` (Python `expected_bytes`, `received_bytes`). Retry the download.
+- `EvolveUploadTimeoutError`, TypeScript only: an upload saw no socket activity for 600 seconds. Retry the upload.
 
 ## The codes
 
@@ -95,7 +96,7 @@ Grouped by the door that returns them. The HTTP status is stated where it is fix
 | `invalid_input` | A field is malformed; the message names it and `param` names it when the server can. Also the 413 for a trial home too large to serve as one text view (`details`: `size_bytes`, `max_unranged_bytes`). |
 | `invalid_limit`, `invalid_cursor`, `invalid_after` | A paging parameter is malformed. |
 | `invalid_status`, `invalid_visibility`, `invalid_format` | A filter or selector names a value outside its closed set. |
-| `invalid_ids` | A stop batch that is empty or over 100 ids. |
+| `invalid_ids` | 400. A stop batch that is empty or over 100 ids. |
 | `invalid_multipart` | 400. An upload that is not `multipart/form-data`, or is malformed. |
 | `idempotency_key_reused` | 409. The key already stands for a different request. |
 | `concurrent_update` | The row changed under the request; read it again. |
@@ -132,7 +133,7 @@ Grouped by the door that returns them. The HTTP status is stated where it is fix
 
 | Code | When |
 | --- | --- |
-| `provider_unsupported` | 422. A selected task is refused on the chosen provider; `details.refused_tasks` carry each reason. |
+| `provider_unsupported` | 422. A selected task is refused on the chosen provider; `details.refused_tasks` carry each reason. A GPU task that moves to `modal` is not refused; the trial records the move as `sandbox_provider_degrade`. |
 | `job_not_found` | The job does not exist or is not visible to you. A regrade job id on delete. |
 | `job_not_terminal` | 409. Resume, retry, regrade, analyze or delete on a live job; on delete also a live regrade, listed in `details.regrade_job_ids`. |
 | `no_failed_trials` | 409. Resume, or retry with `failed_only`, found nothing. |
@@ -163,15 +164,16 @@ Grouped by the door that returns them. The HTTP status is stated where it is fix
 
 ### Job upload
 
-These arrive on the import's `failure`, one hop later, except the door's own three: `upload_too_large`, `too_many_concurrent_job_uploads` and `invalid_input`.
+The upload door itself answers four codes: `invalid_multipart` (400), `invalid_input` (400), `upload_too_large` (413) and `too_many_concurrent_job_uploads` (429). Everything else arrives on the import's `failure`, with no HTTP status.
 
 | Code | When |
 | --- | --- |
 | `not_a_job_dir` | No `result.json` and `config.json` at the root, or they do not parse. |
-| `invalid_trial` | 422. One trial's `result.json` cannot be ingested; the failure names the trial. |
+| `invalid_archive` | The tarball is unreadable or unsafe. |
+| `invalid_trial` | One trial's `result.json` cannot be ingested; the failure names the trial. |
 | `trial_too_large` | Not a failure: the trial is skipped and listed on `skipped_trials`; `details` carry `file`, `bytes`, `max_bytes`. |
-| `upload_too_large` | 413. The archive is over the object store's ceiling, or the worker's free disk. |
-| `job_already_uploaded` | 409. You already uploaded this archive's job; `details.existing_job_id`. Delete it to replace it. |
+| `upload_too_large` | The archive is over the published ceiling, at the door or when extracted. |
+| `job_already_uploaded` | You already uploaded this archive's job; `details.existing_job_id`. Delete it to replace it. |
 | `too_many_concurrent_job_uploads` | 429, no retry delay. `details.max_concurrent`. |
 | `job_import_not_found` | 404. An import that is not yours or does not exist. |
 

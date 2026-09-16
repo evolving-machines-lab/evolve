@@ -5,7 +5,7 @@ description: "Every field of the objects the clients return: name, type, meaning
 
 Field names are the wire's, `snake_case`, identical in TypeScript and Python. Four keys are the exception: TypeScript exposes `nextCursor`, `hasMore`, `byStatus` and `taskMatrix` as the wire spells them; Python maps them to `next_cursor`, `has_more`, `by_status` and `task_matrix`. Python results are dataclasses and their closed vocabularies are `Literal` types.
 
-Four vocabularies are also runtime values in TypeScript: `TRIAL_STATUSES`, `EVAL_SANDBOX_PROVIDERS`, `TRIAL_ARTIFACT_STREAMS` and `HOSTED_ERROR_CODES`. Python exports `HOSTED_ERROR_CODES`.
+Nine closed vocabularies are exported as runtime lists in TypeScript: `TRIAL_STATUSES`, `ANALYSIS_STATUSES`, `CHECK_STATUSES`, `EVAL_SANDBOX_PROVIDERS`, `JOB_LIST_SCOPES`, `TRIAL_ARTIFACT_STREAMS`, `ANALYSIS_ARTIFACT_STREAMS`, `AGENT_EFFORT_SUPPORT_VALUES` and `HOSTED_ERROR_CODES`. Python exports `HOSTED_ERROR_CODES`.
 
 ## Page
 
@@ -17,7 +17,7 @@ One shape from `start`, `get`, `list`, `cancel`, `resume`, `retry` and `regrade`
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | string | UUID. Older ids use another alphabet and stay valid; treat every id as opaque. |
+| `id` | string | Opaque; see [trials](/core-concepts/trials). |
 | `job_name` | string | The label; server-generated when the create omitted one. Not unique. |
 | `status` | `QUEUED` `RUNNING` `CANCELLING` `COMPLETED` `CANCELLED` `FAILED` | See [jobs](/core-concepts/jobs#statuses). |
 | `datasets` | `{ name, version }[]` | The resolved versions the job ran. |
@@ -261,7 +261,7 @@ Public fields only; instructions, environments and tests never leave the server.
 - `JobTaskRollup`, from `jobs().tasks()`: `task_name`, `source`, `trials` (`{ total, byStatus }`), `mean_reward` (over SCORED trials; null when none), `cost_usd`, `check` (the task's latest `TaskCheck` on a version this job spans; null when never checked).
 - `CompareResponse`, from `jobs().compare()`: `jobs` (per job: `id`, `datasets`, `status`, `mean_reward` over SCORED trials, `coverage` `{ scored, total }`, `cost_usd`, `agents`, `started_at`) and `taskMatrix` (per task: `task_name`, `disagreement`, `cells` in the caller's id order, each `{ job_id, status, mean_reward, coverage }` where `status` is a trial status when every trial in the cell shares it, `MIXED` when they differ, `MISSING` when the job has no trial for the task). Disagreement rows come first.
 - `StopResponse`, from `trials().stop()`: `stopped` (`Trial[]`), `stopped_analyses` (`TrialAnalysis[]`, each `failed` with phase `stopped`), `already_terminal` (ids), `not_found` (ids that do not exist or are not yours; never told apart). Every requested id appears in exactly one list.
-- `JobGrepGroup`, from `jobs().grep()`: `trial_id`, `task_name`, `match_count` (exact), `events` (the first five matches).
+- `JobGrepGroup`, from `jobs().grep()`: `trial_id`, `task_name` (string or null), `match_count` (exact), `events` (the first five matches).
 - `TrialFile`, from `trials().files()`: `path`, `size_bytes`.
 - `TraceEvent`: `seq`, `type`, `data`. A `usage` event whose `data.update.source` is `gateway` is the platform's meter and the only usage line that carries tokens and money; `gatewayUsageOf(event)` reads it. On a terminal trial these follow the last harness event with `seq` from 1000000000 (`GATEWAY_TRACE_SEQ_BASE`).
 - `SkillUpload`: `id`, `name`, `digest`, `size_bytes`, `description`, `ref` (the `upload:<id>` string), `created_at`.

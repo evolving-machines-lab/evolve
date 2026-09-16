@@ -47,7 +47,7 @@ description: "Read, download, and act on single trials."
     ): AsyncIterableIterator<TraceEvent>
     ```
 
-    One page of the parsed trace, or every available event; `traceEvents` drains what is stored and stops. `type` (an exact type, at most 100 characters), `grep` (a case-insensitive regex over type and content, at most 512 characters; a plain string is a substring; an invalid pattern is refused with `invalid_input`) and `tail` (the last N matches, 1 to 10000) filter on the server and compose with the cursor. A cursor is a `seq`: to resume later, pass the last event's `seq` as a string. `limit` defaults to 200, at most 1000. Event 0 is the instruction, as `_prompt`.
+    One page of the parsed trace, or every available event; `traceEvents` drains what is stored and stops. `type` (an exact type), `grep` (a case-insensitive regex over type and content, a plain string being a substring) and `tail` (the last N matches, 1 to 10000) filter on the server and compose with the cursor. A cursor is a `seq`: to resume later, pass the last event's `seq` as a string. `limit` defaults to 200, at most 1000, and event 0 is the instruction.
 
     ```ts
     for await (const event of trials().traceEvents(
@@ -80,7 +80,7 @@ description: "Read, download, and act on single trials."
     )
     ```
 
-    One page of the parsed trace, or every available event; `trace_events` drains what is stored and stops. `type` (an exact type, at most 100 characters), `grep` (a case-insensitive regex over type and content, at most 512 characters; a plain string is a substring; an invalid pattern is refused with `invalid_input`) and `tail` (the last N matches, 1 to 10000) filter on the server and compose with the cursor. A cursor is a `seq`: to resume later, pass the last event's `seq` as a string. `limit` defaults to 200, at most 1000. Event 0 is the instruction, as `_prompt`.
+    One page of the parsed trace, or every available event; `trace_events` drains what is stored and stops. `type` (an exact type), `grep` (a case-insensitive regex over type and content, a plain string being a substring) and `tail` (the last N matches, 1 to 10000) filter on the server and compose with the cursor. A cursor is a `seq`: to resume later, pass the last event's `seq` as a string. `limit` defaults to 200, at most 1000, and event 0 is the instruction.
 
     ```python
     async for event in trials().trace_events(
@@ -145,7 +145,7 @@ description: "Read, download, and act on single trials."
     ): Promise<Buffer>
     ```
 
-    Every file the platform stored for the trial, as `{ path, size_bytes }` rows sorted by path (`limit` default 200, at most 1000), and the raw bytes of one of them. A range reads a slice; `suffix` reads the last N bytes. A range that selects nothing is refused, and a whole file above the server's unranged ceiling is refused naming the size and the ceiling: ask for a range. There is no CLI verb for either.
+    Every file the platform stored for the trial, as `{ path, size_bytes }` rows sorted by path (`limit` default 200, at most 1000), and the raw bytes of one of them. A range reads a slice; `suffix` reads the last N bytes. A very large file must be read by range. There is no CLI verb for either.
 
     ```ts
     const tail = await trials().file(
@@ -173,7 +173,7 @@ description: "Read, download, and act on single trials."
     ) -> bytes
     ```
 
-    Every file the platform stored for the trial, as `path` and `size_bytes` rows sorted by path (`limit` default 200, at most 1000), and the raw bytes of one of them. A range reads a slice; `suffix` reads the last N bytes. A range that selects nothing is refused, and a whole file above the server's unranged ceiling is refused naming the size and the ceiling: ask for a range. There is no CLI verb for either.
+    Every file the platform stored for the trial, as `path` and `size_bytes` rows sorted by path (`limit` default 200, at most 1000), and the raw bytes of one of them. A range reads a slice; `suffix` reads the last N bytes. A very large file must be read by range. There is no CLI verb for either.
 
     ```python
     tail = await trials().file(
@@ -198,7 +198,7 @@ description: "Read, download, and act on single trials."
     stop(trialIds: string[]): Promise<StopResponse>
     ```
 
-    Re-run only the verifier, run the trial again, or stop in-flight trials. A regrade and a retry each return a new one-trial job; `regrade` is refused with `regrade_source_ineligible` for a trial that recorded no verifier inputs, `retry` with `trial_not_settled` for a live one. `stop` kills each trial's sandbox and settles it with its spend read from the gateway; ids may mix trials and analyses, at most 100 per call (`invalid_ids`). Every id lands in exactly one of `stopped`, `stopped_analyses`, `already_terminal` or `not_found`, the last covering ids that are not yours as well as ids that do not exist. Stopped trials rejoin the run on a `resume` of their job.
+    Re-run only the verifier, run the trial again, or stop in-flight trials. A regrade and a retry each return a new one-trial job; `regrade` is refused with `regrade_source_ineligible` for a shared-mode trial, `retry` with `trial_not_settled` for a live one. `stop` takes at most 100 ids, trials and analyses mixed, and reports each in exactly one of `stopped`, `stopped_analyses`, `already_terminal` or `not_found`. Stopped trials rejoin the run on a `resume` of their job.
 
     ```ts
     const again = await trials().retry(trial.id);
@@ -215,7 +215,7 @@ description: "Read, download, and act on single trials."
     async def stop(trial_ids: List[str]) -> StopResponse
     ```
 
-    Re-run only the verifier, run the trial again, or stop in-flight trials. A regrade and a retry each return a new one-trial job; `regrade` is refused with `regrade_source_ineligible` for a trial that recorded no verifier inputs, `retry` with `trial_not_settled` for a live one. `stop` kills each trial's sandbox and settles it with its spend read from the gateway; ids may mix trials and analyses, at most 100 per call (`invalid_ids`). Every id lands in exactly one of `stopped`, `stopped_analyses`, `already_terminal` or `not_found`, the last covering ids that are not yours as well as ids that do not exist. Stopped trials rejoin the run on a `resume` of their job.
+    Re-run only the verifier, run the trial again, or stop in-flight trials. A regrade and a retry each return a new one-trial job; `regrade` is refused with `regrade_source_ineligible` for a shared-mode trial, `retry` with `trial_not_settled` for a live one. `stop` takes at most 100 ids, trials and analyses mixed, and reports each in exactly one of `stopped`, `stopped_analyses`, `already_terminal` or `not_found`. Stopped trials rejoin the run on a `resume` of their job.
 
     ```python
     again = await trials().retry(trial.id)

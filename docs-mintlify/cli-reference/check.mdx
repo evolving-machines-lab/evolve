@@ -10,7 +10,7 @@ import ListFlags from '/snippets/list-flags.mdx';
 evolve check [<path>] [options]
 ```
 
-Check task quality against a rubric, server-side. `<path>` is one task directory or a directory of task directories, streamed up as one archive; an archive over what the object store can land, or the server's free spool disk, is refused with `upload_too_large`. `-d` names a published dataset instead. One or the other, not both. Without `--watch` the command prints the accepted check with the hint `Follow it with: evolve check show <id>`; `--json` alone prints the accepted check body. Exit 0 on an accepted check; with `--watch`, and on `check show`, exit 1 when any task errored.
+Check task quality against a rubric, server-side. `<path>` is one task directory or a directory of task directories, uploaded as one archive (`upload_too_large` past the published ceiling); `-d` names a published dataset instead, one or the other. Without `--watch` the command prints the accepted check with the hint `Follow it with: evolve check show <id>`; `--json` prints the accepted check body. Exit 0 on an accepted check; with `--watch`, and on `check show`, exit 1 when any task errored.
 
 ```bash
 evolve check ./tasks \
@@ -62,7 +62,7 @@ evolve check ./tasks \
 </ParamField>
 
 <ParamField path="--watch">
-  Poll until every task check settles: 2 seconds between reads, backing off to 30 seconds while nothing changes. Then the report: one task prints its label line (`Label: NO PROBLEM FOUND · executed`, or `custom rubric`), a `CHECK | OUTCOME | EXPLANATION` table with each verdict's evidence beneath it, and the agent cost; several tasks print a `TASK | LABEL | PASS | FAIL | N/A | UNKNOWN | COST ($) | TASK CHECK ID` table with each failed task's reason below it and the total cost. With `--json`, NDJSON envelopes: `check.accepted`, `check.progress` per change, `check.final`.
+  Poll until every task check settles, then print the report. One task prints its label line, a `CHECK | OUTCOME | EXPLANATION` table with the evidence beneath each verdict, and the cost; several tasks print a `TASK | LABEL | PASS | FAIL | N/A | UNKNOWN | COST ($) | TASK CHECK ID` table with each failed task's reason below it. With `--json`, NDJSON envelopes: `check.accepted`, `check.progress` per change, `check.final`.
 </ParamField>
 
 <ParamField path="-q, --quiet">

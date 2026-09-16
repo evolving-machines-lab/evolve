@@ -13,7 +13,7 @@ description: "Start and read task quality checks."
     create(input: { source: { directory: string } | { dataset: string }; model_name?: string; rubric?: Rubric; prompt?: string; reasoning_effort?: string; sandbox_provider?: EvalSandboxProvider; n_concurrent?: number; include_task_names?: string[]; exclude_task_names?: string[]; n_tasks?: number; onUploadProgress?: (sentBytes: number, totalBytes: number) => void }): Promise<Check>
     ```
 
-    Check a local task directory, or a directory of them (packed and streamed as one archive; `upload_too_large` past what the store or the spool disk can hold), or a published dataset (nothing uploaded; the version resolves as for a job, `dataset_not_found`, `no_active_version` or `version_not_ready`, and a version whose package was not retained is `invalid_input`). Returns the accepted check, one `queued` result per task; an empty selection is refused with `no_checkable_tasks`. The check's `source` records which form ran. A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
+    Check a local task directory or a directory of them, uploaded as one archive, or a published dataset, nothing uploaded. Returns the accepted check with one `queued` result per task; an empty selection is refused with `no_checkable_tasks`, and a dataset version resolves as for a job (`dataset_not_found`, `no_active_version`, `version_not_ready`). A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
 
     ```ts
     const check = await checks().create({ source: { dataset: "my-swe@1.0" } });
@@ -38,7 +38,7 @@ description: "Start and read task quality checks."
     ) -> Check
     ```
 
-    Check a local task directory, or a directory of them (packed and streamed as one archive; `upload_too_large` past what the store or the spool disk can hold), or a published dataset (nothing uploaded; the version resolves as for a job). One source, not both. Returns the accepted check, one `queued` result per task; an empty selection is refused with `no_checkable_tasks`. A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
+    Check a local task directory or a directory of them, uploaded as one archive, or a published dataset, nothing uploaded; one source, not both. Returns the accepted check with one `queued` result per task; an empty selection is refused with `no_checkable_tasks`, and a dataset version resolves as for a job. A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
 
     ```python
     check = await checks().create(dataset="my-swe@1.0")
@@ -109,7 +109,7 @@ description: "Start and read task quality checks."
     ): Promise<Record<string, string> | null>
     ```
 
-    One task's result by its task check id, the checker's own transcript (everything after `since` in one read, `total` counting all stored rows), or one stored artifact. A task check stores no verifier log and no ATIF trajectory, so those selectors are refused; an id of another kind of run is refused naming its kind. An id you may not read answers `trial_not_found`.
+    One task's result by its task check id, the checker's own transcript (everything after `since` in one read), or one stored artifact; a task check has no verifier log and no trajectory. An id you may not read answers `trial_not_found`.
 
     ```ts
     const result = await checks().task(done.results[0].id);
@@ -136,7 +136,7 @@ description: "Start and read task quality checks."
     ): Promise<ReadableStream<Uint8Array>>
     ```
 
-    The whole check by its check id (`check-<id>/` with `check_report.json` and one folder per task), or one task's folder by its task check id (`check-<task>__<7 chars>/`), as one `.tar.gz`, verified as a job download is. Each task folder holds `config.json`, `lock.json`, `result.json`, `trial.log`, `exception.txt` on an infrastructure failure, `agent/claude-code.txt`, `agent/stderr.log`, `agent/trace-parsed.jsonl`, the home with `agent/agent-home.json`, `verifier/test-stdout.txt`, `reward.txt` and `reward.json` when the validator ruled (1 for a valid result, 0 when refused), and `artifacts/manifest.json` with `artifacts/check-result.json` on a completed run. An id that is neither answers `check_not_found`; an unsettled check or task check answers `check_not_terminal`.
+    The whole check by its check id (`check-<id>/` with `check_report.json` and one folder per task), or one task's folder by its task check id (`check-<task>__<7 chars>/`), as one `.tar.gz`. Each task folder is a trial tree of the checker's own run, with `artifacts/check-result.json` on a completed run. An id that is neither answers `check_not_found`; an unsettled check or task check answers `check_not_terminal`.
 
     ```ts
     const path = await checks().download(
@@ -154,7 +154,7 @@ description: "Start and read task quality checks."
     )
     ```
 
-    The whole check by its check id (`check-<id>/` with `check_report.json` and one folder per task), or one task's folder by its task check id (`check-<task>__<7 chars>/`), as one `.tar.gz`, verified as a job download is. An id that is neither answers `check_not_found`; an unsettled check or task check answers `check_not_terminal`.
+    The whole check by its check id (`check-<id>/` with `check_report.json` and one folder per task), or one task's folder by its task check id (`check-<task>__<7 chars>/`), as one `.tar.gz`. An id that is neither answers `check_not_found`; an unsettled check or task check answers `check_not_terminal`.
 
     ```python
     path = await checks().download(

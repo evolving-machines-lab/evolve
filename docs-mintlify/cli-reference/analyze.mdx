@@ -9,7 +9,7 @@ import GlobalOptions from '/snippets/global-options.mdx';
 evolve analyze <job-id> [options]
 ```
 
-Analyze a terminal job's trial traces against a rubric. The analyses run server-side. Without `--watch` the command returns at once with the job block, its `analysis` row carrying the queued tally, and the re-attach hint `Follow it with: evolve job show <id>`; `--json` alone prints the accepted job body. Exit 0 on an accepted wave. With `--watch`, exit 0 only when every analysis completed; a wave with a failed analysis exits 1.
+Analyze a terminal job's trial traces against a rubric, server-side. Without `--watch` the command returns at once with the job block and the hint `Follow it with: evolve job show <id>`; `--json` prints the accepted job body. Exit 0 on an accepted wave; with `--watch`, exit 1 when any analysis failed.
 
 ```bash
 evolve analyze 3e1f9a2c-… \
@@ -36,7 +36,7 @@ evolve analyze 3e1f9a2c-… \
 </ParamField>
 
 <ParamField path="-p, --prompt" type="path">
-  Prompt file for the evaluator agent, read as is and sent as text; an empty file is refused at the keyboard, and a NUL character by the server. Its text replaces the built-in prompt: `{trial_path}`, `{task_section}` and `{criteria_guidance}` are rendered, an unknown `{token}` renders empty, `{{` and `}}` write a literal brace, and any other brace text is left as written. The output contract is appended after it, so a prompt can never opt out of the deliverable. There is no length bound. Defaults to the built-in prompt.
+  Prompt file for the evaluator agent; its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered, `{{` and `}}` writing a literal brace, and an unknown `{token}` rendering empty. The instructions for writing the result are appended after it. An empty file is refused; there is no length bound. Defaults to the built-in prompt.
 </ParamField>
 
 <ParamField path="-e, --env" type="provider">
@@ -60,7 +60,7 @@ evolve analyze 3e1f9a2c-… \
 </ParamField>
 
 <ParamField path="--watch">
-  Poll until every analysis settles: 2 seconds between reads, backing off to 30 seconds while nothing changes. Then one row per analyzed trial: the label (`custom rubric` when there is none), the criterion outcomes, the analyzer's cost and a summary excerpt, with every failed analysis shown typed below. With `--json`, NDJSON envelopes: `analysis.accepted`, `analysis.stats` per tally change, `analysis.final` with the job and the analyzed trials.
+  Poll until every analysis settles, then print one row per analyzed trial: the label (`custom rubric` when there is none), the criterion outcomes, the analyzer's cost and a summary excerpt, with failed analyses listed below. With `--json`, NDJSON envelopes: `analysis.accepted`, `analysis.stats` per change, `analysis.final` with the job and the analyzed trials.
 </ParamField>
 
 <ParamField path="-q, --quiet">

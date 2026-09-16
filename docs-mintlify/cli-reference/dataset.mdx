@@ -58,7 +58,9 @@ Pre-flight a local corpus. A dry run: nothing is uploaded, nothing is written. P
 evolve dataset publish [options]
 ```
 
-Publish a dataset version from a git source, a local directory, or a fetchable source: a public tarball URL, or a public hub package. The upload is `multipart/form-data` with the metadata parts first, so a name owned by someone else is refused before the bytes move; an archive over the object store's ceiling is refused with `import_too_large`. A directory upload prints `upload <sent>/<total> (P%)` once per 10% of the archive; with `--json --watch` the same steps are `upload.progress` events (`sent_bytes`, `total_bytes`, `elapsed_sec`), at most eleven, all before `import.created`. A large upload prints `Registered import <id>` as soon as its session opens and reads `QUEUED (receiving)` in `dataset list` and `dataset show` until the corpus has arrived. Once the build settles, `--watch` prints every task's outcome and ends with `built N of M tasks`.
+Publish a dataset version from a git source, a local directory, or a fetchable source: a public tarball URL, or a public hub package. A name owned by someone else is refused before the bytes move, and an archive over the published ceiling is refused with `import_too_large`.
+
+A directory upload prints `upload <sent>/<total> (P%)` once per 10% of the archive; with `--json --watch` the same steps are `upload.progress` events (`sent_bytes`, `total_bytes`, `elapsed_sec`). A large upload prints `Registered import <id>` early and reads `QUEUED (receiving)` until the corpus has arrived. Once the build settles, `--watch` prints every task's outcome and ends with `built N of M tasks`.
 
 <ParamField path="--git" type="url">
   Git repository URL. With `--ref`.

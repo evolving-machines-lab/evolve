@@ -76,7 +76,7 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="--agent-kwarg, --ak" type="key=value">
-  Agent kwarg for every arm, as `key=value`. Repeatable. The delivered key is `config`: `--ak 'config=<path|inline JSON>'` becomes the harness's native settings file, with your document as the base and the platform's routing on top. A path is read locally, as JSON or as TOML for a Codex config, and sent inline. Only `claude` and `codex` take a config. A key other than `config` is refused with `agent_kwarg_unsupported`, a config on an agent without native settings with `agent_config_unsupported`, and a config key touching billing, base URL, routing or env with `agent_config_key_refused`.
+  Agent kwarg for every arm, as `key=value`, repeatable. The delivered key is `config`: `--ak 'config=<path|inline JSON>'` becomes the harness's native settings file, your document as the base and the platform's routing on top; a path is read locally, as JSON or as TOML for a Codex config. Only `claude` and `codex` take a config. A key other than `config` is refused with `agent_kwarg_unsupported`, a config on another harness with `agent_config_unsupported`, and a key touching billing, base URL, routing or env with `agent_config_key_refused`.
 </ParamField>
 
 <ParamField path="--skills, --skill" type="ref | path">
@@ -146,7 +146,7 @@ Each of these applies to every arm of the job.
 ## Timeouts
 
 <ParamField path="--timeout-multiplier" type="x" default="1.0">
-  Multiplier for task timeouts. Any finite number above 0; below 1 shrinks. It multiplies each task's declared timeouts for this job only; the task is never rewritten. A product past the runtime's timer ceiling of 2,147,483,647 ms is refused at create. The multipliers are part of the idempotency identity, and resumed and retried jobs inherit them.
+  Multiplier for task timeouts, any finite number above 0; below 1 shrinks. It multiplies each task's declared timeouts for this job only; the task is never rewritten. A product past the runtime's timer ceiling of 2,147,483,647 ms is refused at create. Resumed and retried jobs inherit the multipliers.
 </ParamField>
 
 <ParamField path="--agent-timeout-multiplier" type="x">
@@ -168,9 +168,9 @@ Each of these applies to every arm of the job.
 ## Config file and output
 
 <ParamField path="-c, --config" type="path">
-  Job config file, YAML or JSON with the same field names `jobs().start()` takes. Explicit flags override its fields; the retry, analyze and timeout flags each override one field inside the file's `retry` and `analyze` objects. The file may be partial: `-d` and `-a`/`-m` can supply what it omits, but an entry inside it must be complete (a selector needs `name`, an arm `name` and `model_name`).
+  Job config file, YAML or JSON with the same field names `jobs().start()` takes. Explicit flags override its fields one at a time, inside the `retry` and `analyze` objects too. The file may be partial: `-d` and `-a`/`-m` can supply what it omits, but a selector inside it needs `name` and an arm needs `name` and `model_name`.
 
-  YAML is read with the 1.1 schema, as PyYAML reads it: `yes` and `on` are booleans, `012` is octal, a float needs a dot and an exponent needs a sign, an integer may not be zero-padded, and a `%YAML` directive changes nothing. A second document, an unresolvable `!tag`, an unknown `%YAML` version and a duplicate key each refuse with a line number. The body is validated against the contract's `JobCreate` schema before any request: an unknown key is refused by name at every level with the allowed keys listed, a string must be a string (quote `version: "1.10"`), `n_attempts` and `n_tasks` are integers of at least 1, `n_concurrent_trials` is 1 to 150, `job_name` is at most 200 characters, `sandbox_provider` is `e2b`, `daytona` or `modal`. A refusal names the path, the file and the line. A value no JSON body can carry, a bare date, `.inf`, `.nan`, `!!binary`, `!!set` or a self-referencing anchor, is refused rather than rewritten.
+  YAML is read with the 1.1 schema (`yes` and `on` are booleans, `012` is octal), and a duplicate key, a second document or an unknown tag refuse with a line number. The body is checked before any request: an unknown key is refused by name, a string must be a string (quote `version: "1.10"`), `n_attempts` and `n_tasks` are at least 1, `n_concurrent_trials` is 1 to 150, `job_name` is at most 200 characters. A bare date or `.inf` is refused rather than rewritten.
 </ParamField>
 
 <ParamField path="--print-config">

@@ -16,9 +16,9 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `n_attempts`, `n_concurrent_trials` (1 to 150), `max_trial_spend_usd`, `sandbox_provider`, `retry` (`max_retries`, `include_exceptions`, `exclude_exceptions`, `wait_multiplier`, `min_wait_sec`, `max_wait_sec`), `analyze`, the five `*_timeout_multiplier` fields, `verifier_env` (`REWARDKIT_JUDGE` and `REWARDKIT_MODEL` only), `secrets`. `agent_env` is in the shape but refused by the server. The response is the [Job](/sdk-reference/types#job): it echoes the resolved cap as `max_trial_spend_usd`, the job's ceiling as `worst_case_spend_usd`, and the resolved `retry`, `analyze` and multipliers.
+    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `n_attempts`, `n_concurrent_trials` (1 to 150), `max_trial_spend_usd`, `sandbox_provider`, `retry`, `analyze`, the five `*_timeout_multiplier` fields, `verifier_env` (`REWARDKIT_JUDGE` and `REWARDKIT_MODEL` only) and `secrets`. `agent_env` is in the shape but refused by the server.
 
-    `options.idempotencyKey` makes a repeated call return the same job, with `idempotent_replay` true. The server fingerprints the request behind the key: a different request under a used key is refused with `idempotency_key_reused`. The multipliers are part of that identity.
+    The response is the [Job](/sdk-reference/types#job), with the resolved `max_trial_spend_usd`, `worst_case_spend_usd`, `retry`, `analyze` and multipliers. `options.idempotencyKey` makes a repeated call return the same job, with `idempotent_replay` true; a different request under a used key is refused with `idempotency_key_reused`.
 
     ```ts
     const job = await jobs().start({
@@ -213,7 +213,7 @@ description: "Start, follow, and derive jobs."
     watch(id: string, options?: { onEvent?: (event: JobEvent) => void; signal?: AbortSignal; reconnectDelayMs?: number; maxReconnectDelayMs?: number }): JobWatch
     ```
 
-    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call. `onEvent` fires in both forms. The stream replays from the beginning and resumes from the last `seq` after a disconnect, backing off from `reconnectDelayMs` (default 1000) up to `maxReconnectDelayMs` (default 30000). Every event type and payload is on [types](/sdk-reference/types#events). A `trial.settled` is not final while a `trial.retrying` can follow it on the same trial; a `trial.retry_circuit_broken` in that place means the trial is terminal.
+    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call, and `onEvent` fires in both. The stream replays from the beginning and reconnects on its own, backing off from `reconnectDelayMs` (default 1000) to `maxReconnectDelayMs` (default 30000). Every event type and payload is on [types](/sdk-reference/types#events); a `trial.settled` is not final while a `trial.retrying` can follow it.
 
     ```ts
     const final = await jobs().watch(job.id);
@@ -231,7 +231,7 @@ description: "Start, follow, and derive jobs."
     )
     ```
 
-    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call. The stream replays from the beginning and resumes from the last `seq` after a disconnect, backing off from `reconnect_delay_s` up to `max_reconnect_delay_s` (30 s). Every event type and payload is on [types](/sdk-reference/types#events). A `trial.settled` is not final while a `trial.retrying` can follow it on the same trial.
+    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call. The stream replays from the beginning and reconnects on its own, backing off from `reconnect_delay_s` to `max_reconnect_delay_s` (30 s). Every event type and payload is on [types](/sdk-reference/types#events); a `trial.settled` is not final while a `trial.retrying` can follow it.
 
     ```python
     final = await jobs().watch(job.id)
@@ -320,7 +320,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    A new job re-running selected trials: named ids, the failed ones, or all of them; `trial_ids` and `failed_only` together is refused. The named form works on a running job when every named trial has settled (`trial_not_settled`, `trial_not_found` otherwise); the other two need a finished source. The idempotency fingerprint covers the resolved selection under this verb's own namespace, so `trials().retry(id)` and `retry(jobId, { trial_ids: [id] })` replay each other.
+    A new job re-running selected trials: named ids, the failed ones, or all of them; `trial_ids` and `failed_only` together is refused. The named form works on a running job once every named trial has settled; the other two need a finished source. The rules are on [jobs](/core-concepts/jobs#derive-a-new-job).
 
     ```ts
     const again = await jobs().retry(
@@ -557,7 +557,7 @@ description: "Start, follow, and derive jobs."
     upload(source: string | { archive_url: string }, options?: { dataset?: string; onUploadProgress?: (sentBytes: number, totalBytes: number) => void; onRegistered?: (importId: string) => void }): Promise<JobImport>
     ```
 
-    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record; follow it with `watchImport`. A directory is packed to a temporary file, never into memory; over 256 MiB it rides a resumable upload and `onRegistered` hands you the import id before the first byte moves. A directory without `result.json` and `config.json` at its root is refused client-side.
+    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record; follow it with `watchImport`. Over 256 MiB the upload resumes after a dropped connection, and `onRegistered` hands you the import id before the transfer ends. A directory without `result.json` and `config.json` at its root is refused before anything is sent.
 
     ```ts
     const imp = await jobs().upload(
@@ -661,6 +661,8 @@ description: "Start, follow, and derive jobs."
 
 ## grep
 
+Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. An empty page means no match anywhere, and a page can be short with more to come, so keep paging; a pattern too expensive to evaluate is refused with `invalid_input`.
+
 <Tabs>
   <Tab title="TypeScript">
     ```ts
@@ -670,8 +672,6 @@ description: "Start, follow, and derive jobs."
       options?: { type?: string; limit?: number; cursor?: string },
     ): Promise<JobGrepPage>
     ```
-
-    Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. An empty page means no match anywhere. The scan is bounded per request, so keep paging while `hasMore` is true; a pattern too expensive to evaluate is refused with `invalid_input`.
 
     ```ts
     const hits = await jobs().grep(job.id, "permission denied");
@@ -688,8 +688,6 @@ description: "Start, follow, and derive jobs."
         limit: Optional[int] = None,
     ) -> JobGrepPage
     ```
-
-    Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. An empty page means no match anywhere. The scan is bounded per request, so keep paging while `has_more` is true; a pattern too expensive to evaluate is refused with `invalid_input`.
 
     ```python
     hits = await jobs().grep(job.id, "permission denied")
