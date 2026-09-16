@@ -5,13 +5,13 @@
       "source": "evolving-machines-lab/evolve",
       "sourceType": "github",
       "skillPath": "skills/create-adapter/SKILL.md",
-      "computedHash": "19461248ca652d48f5442fb6d1170d1e2ab38e0e9ae55b8b8cceb2d1d653cf82"
+      "computedHash": "48515b7b2cd459ad1b8074c0874cef9a724ba7034dbb1a8e01655c859141ca08"
     },
     "create-task": {
       "source": "evolving-machines-lab/evolve",
       "sourceType": "github",
       "skillPath": "skills/create-task/SKILL.md",
-      "computedHash": "2f595dccc08513872e51803d8b5d8e492b2cb66c73083bd0634f411316d62dfd"
+      "computedHash": "917c29159c09ed4420fe5266ade1100aeaa2a149016a4314a0c97cec94ac90ac"
     },
     "evolve-agents": {
       "source": "evolving-machines-lab/evolve",
@@ -35,7 +35,7 @@
       "source": "evolving-machines-lab/evolve",
       "sourceType": "github",
       "skillPath": "skills/rewardkit/SKILL.md",
-      "computedHash": "ace7e5006dc126ac9fb161c2945f0b9566b4ed3e1ed498ff20139099f711b83a"
+      "computedHash": "8c1b7b069c0110ac3da93712e3305259be08affea7b4198e26ee1727b66d22bc"
     }
   }
 }

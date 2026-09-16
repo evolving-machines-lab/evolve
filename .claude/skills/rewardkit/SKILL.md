@@ -325,3 +325,7 @@ end-to-end check whose rewards already represent the full task.
 - **Use `isolated=True`** for any criterion that runs mutating commands, so it doesn't 
   corrupt the workspace for other criteria.
 
+## Working example
+
+See https://github.com/laude-institute/harbor/tree/main/examples/tasks/reward-kit-example.
+Reward Kit's own documentation: https://docs.harborframework.com/core-concepts/rewardkit/quick-start.

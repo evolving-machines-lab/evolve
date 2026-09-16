@@ -12,8 +12,12 @@ the task format in full, and the `publish` skill has every publish option.
 
 ## Authoritative reference
 
-The conversion rules below produce Harbor-format tasks, which Evolve runs unchanged.
-The task format itself is at https://docs.evolvingmachines.ai/core-concepts/tasks.
+The conversion rules below are Harbor's, from its adapter guide, and Evolve runs the
+task format unchanged. For the full guide, read
+https://github.com/laude-institute/harbor/blob/main/docs/content/docs/datasets/adapters.mdx
+(its steps on parity experiments, the registry and pull requests are Harbor's own
+process and do not apply here). The task format itself is at
+https://docs.harborframework.com/core-concepts/tasks/overview.
 
 Do not invent structure, field names, or workflow beyond what the guide specifies.
 
@@ -249,6 +253,20 @@ evolve run -d "<adapter-name>@1.0" -a codex -m gpt-5.5 --watch
 
 To see how faithful the conversion is, run a job with the same agent and model the
 benchmark's own leaderboard reports, and compare the scores.
+
+## Reference adapters by shape
+
+Harbor's repository holds one adapter per benchmark, public at
+https://github.com/laude-institute/harbor/tree/main/adapters. When implementation
+questions come up, read the one that matches the benchmark's shape:
+
+| Shape | Example adapter |
+|-------|----------------|
+| Repository-level coding tasks with unit-test verifiers | `adapters/swebench/` |
+| Many small tasks from one dataset file | `adapters/evoeval/` |
+| Data-analysis tasks with a custom dataset | `adapters/bixbench/` |
+| LLM-as-a-Judge verification | `adapters/financeagent/` |
+| GPU tasks | `adapters/featurebench/` |
 
 ## What this skill does NOT do
 

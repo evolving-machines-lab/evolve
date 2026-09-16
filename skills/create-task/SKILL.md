@@ -10,8 +10,8 @@ Guide the user through creating a new task end-to-end. Don't just dump commands 
 walk them through each decision, especially around the verifier (which is usually the 
 hardest part).
 
-The task format is the Harbor format. The full specification is at
-https://docs.evolvingmachines.ai/core-concepts/tasks.
+The task format is Harbor's, and Evolve runs it unchanged. The full specification is at 
+https://docs.harborframework.com/core-concepts/tasks/overview.
 
 ## Step 1: Create the task directory
 
@@ -286,7 +286,7 @@ environment_mode = "separate"
 network_mode = "public"   # Verifier baseline — not a phase override
 ```
 
-Full reference: https://docs.evolvingmachines.ai/core-concepts/tasks (network access).
+Full reference: https://docs.harborframework.com/core-concepts/tasks/network-policies.
 
 For Reward Kit judges needing API keys:
 ```toml
@@ -465,7 +465,8 @@ should be `1.0` across the aggregation strategy. Then publish and run it (Step 8
 
 ### Full reference + worked example
 
-- Docs: https://docs.evolvingmachines.ai/core-concepts/tasks (multi-step tasks)
+- Docs: https://docs.harborframework.com/core-concepts/tasks/multi-step
+- Example task: https://github.com/laude-institute/harbor/tree/main/examples/tasks/hello-multi-step-advanced
 
 ## Special features (mention if relevant)
 
