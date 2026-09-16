@@ -258,11 +258,60 @@ export interface SandboxListOptions {
   limit?: number;
 }
 
-/** File or directory entry (capability: SandboxFiles.list). */
+/** One filesystem entry, the same shape on every provider (files.list / files.stat): a symlink is itself,
+ *  never followed; `mode` is four octal digits; `mtime` ISO 8601; "other" covers sockets, devices, pipes. */
 export interface FileInfo {
   name: string;
   path: string;
-  type: "file" | "dir";
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+  mtime: string;
+  mode: string;
+  owner: string;
+  group: string;
+  /** The link's target, exactly as the box reports it; only on type "symlink". */
+  target?: string;
+}
+
+/** A byte range of a file (capability: SandboxFiles.readRange). */
+export interface FileRange {
+  /** First byte, 0-based. */
+  offset: number;
+  /** Number of bytes wanted; a read that meets the end of the file returns fewer. */
+  length: number;
+}
+
+/** One change under a watched directory; `rename` names the old path or the new one, so consumers relist the parent. */
+export interface FilesystemEvent {
+  path: string;
+  type: "create" | "write" | "remove" | "rename";
+}
+
+/** Options for watching a directory (capability: SandboxFiles.watchDir). */
+export interface WatchOptions {
+  /** Also report changes in every subdirectory. Default false. */
+  recursive?: boolean;
+}
+
+/** Stops a directory watch (capability: SandboxFiles.watchDir). */
+export interface WatchHandle {
+  stop(): Promise<void>;
+}
+
+/** One resource-usage sample (MiB, unrounded); `source` names the provider call, `sampledAt` is the sample's own time. */
+export interface SandboxMetrics {
+  cpuPct: number;
+  memUsedMb: number;
+  memTotalMb: number;
+  diskUsedMb?: number;
+  sampledAt: string;
+  source: string;
+}
+
+/** Options for attaching to a sandbox for reads (capability: SandboxProvider.inspect). */
+export interface SandboxInspectOptions {
+  /** The OS user the reads run as; default: the create-time user when known in this process, else the provider's. */
+  user?: string;
 }
 
 /**
@@ -340,12 +389,26 @@ export interface SandboxFiles {
 
   /** Check whether a file or directory exists. */
   exists?(path: string): Promise<boolean>;
-  /** List directory contents. */
+  /** List a directory's entries (not recursive); a missing directory throws SandboxPathNotFoundError, never an empty list. */
   list?(path: string): Promise<FileInfo[]>;
   /** Delete a file or directory. */
   remove?(path: string): Promise<void>;
   /** Rename or move a file or directory. */
   rename?(oldPath: string, newPath: string): Promise<void>;
+
+  // --- Live observation: every first-party provider implements these; a provider that lacks the
+  //     ability throws SandboxFeatureUnsupportedError from the member, never a silent fallback ---
+
+  /** The entry at `path` itself, a symlink never followed; missing → SandboxPathNotFoundError. */
+  stat?(path: string): Promise<FileInfo>;
+  /** Exactly the requested bytes without moving the whole file; past the end returns fewer (or none). */
+  readRange?(path: string, range: FileRange): Promise<Uint8Array>;
+  /** Changes under `path` until stop(), as absolute paths; Daytona refuses typed (no watcher) so callers poll list(). */
+  watchDir?(
+    path: string,
+    onEvent: (event: FilesystemEvent) => void | Promise<void>,
+    options?: WatchOptions
+  ): Promise<WatchHandle>;
 }
 
 /** Sandbox instance */
@@ -364,6 +427,9 @@ export interface SandboxInstance {
   isRunning?(): Promise<boolean>;
   /** Sandbox metadata and timing. */
   getInfo?(): Promise<SandboxInfo>;
+  /** The newest sample, or null while there is none yet (E2B's first arrives seconds after boot);
+   *  Modal refuses typed because the figures inside its sandbox are the host's. */
+  metrics?(): Promise<SandboxMetrics | null>;
 
   /**
    * Replace the sandbox's outbound network policy WITHOUT restarting it, so a
@@ -417,6 +483,10 @@ export interface SandboxProvider {
   readonly supportsBootCommand?: boolean;
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
+
+  /** Attach to a RUNNING sandbox for reads: unlike connect(), never starts or resumes it, never extends its lifetime
+   *  (modal's idle timer still counts reads as activity); not running → SandboxNotRunningError. Optional like `list`. */
+  inspect?(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance>;
 
   /**
    * List sandboxes, paginating to exhaustion.

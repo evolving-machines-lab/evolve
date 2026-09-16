@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 from .bridge import BridgeManager, SandboxNotFoundError
 from .config import AgentConfig, AgentPluginConfig, BrowserConfig, BrowserCredentialsConfig, IntegrationsSetup, ManagedSecretRef, SandboxCreateOptions, SandboxProvider, SchemaOptions, StorageConfig, WorkspaceMode
 from .results import AgentResponse, CheckpointInfo, ExecuteResult, OutputResult, RunCost, SessionCost, SessionStatus
+from .sandbox_view import SandboxView
 from .storage_client import StorageClient
 from . import integrations as integrations_helpers
 from .schema import is_pydantic_model, is_dataclass, to_json_schema, validate_and_parse
@@ -736,6 +737,35 @@ class Evolve:
             # Always stop bridge even if RPC fails (e.g., sandbox already gone)
             await self.bridge.stop()
             self._initialized = False
+
+    async def inspect_sandbox(self, sandbox_id: str, user: Optional[str] = None) -> SandboxView:
+        """Attach to an existing, running sandbox for reads only.
+
+        Uses the sandbox provider this Evolve was configured with (or the one
+        the environment resolves). Never starts a stopped sandbox, never
+        resumes a paused one, never extends its lifetime (on Modal, reads count
+        as activity for an idle timeout): a sandbox that is not running raises
+        SandboxNotRunningError naming its state.
+
+        Args:
+            sandbox_id: The sandbox to observe
+            user: The OS user the reads run as (default: the provider's default)
+
+        Returns:
+            SandboxView with `files` (list, stat, read_range, watch_dir) and `metrics()`
+
+        Example:
+            >>> view = await evolve.inspect_sandbox('sandbox-id')
+            >>> for entry in await view.files.list('/app'):
+            ...     print(entry.type, entry.path)
+            >>> await view.close()
+        """
+        await self._ensure_initialized()
+        params: Dict[str, Any] = {'sandbox_id': sandbox_id}
+        if user is not None:
+            params['user'] = user
+        response = await self.bridge.call('sandbox_inspect', params)
+        return SandboxView(self.bridge, response['handle'], response['sandbox_id'])
 
     async def get_host(self, port: int) -> str:
         """Get public URL for sandbox port.

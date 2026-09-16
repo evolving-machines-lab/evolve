@@ -1,7 +1,8 @@
 /**
  * E2B Sandbox Provider - Clean Architecture
  *
- * @requires @e2b/code-interpreter >= 1.0.0 or e2b >= 1.0.0
+ * @requires @e2b/code-interpreter >= 2.7.1 (pins e2b 2.39.0); every field and call this adapter uses is already
+ *   in e2b 2.10.3, the version the dashboard resolves (typings 2.10.3…2.39.0 unpacked and checked 2026-09-16)
  * @requires Node.js >= 18 (for ReadableStream support)
  *
  * Design principles:
@@ -12,7 +13,37 @@
  * - Clear naming (run = blocking, spawn = background)
  */
 
-import { Sandbox as E2BSandbox } from "@e2b/code-interpreter";
+import { Sandbox as E2BSandbox, ApiClient, ConnectionConfig } from "@e2b/code-interpreter";
+import { compareVersions } from "compare-versions";
+import {
+  SandboxFeatureUnsupportedError,
+  SandboxNotRunningError,
+  SandboxPathNotFoundError,
+  isSandboxFeatureUnsupportedError,
+  isSandboxNotRunningError,
+  isSandboxPathNotFoundError,
+} from "./sandbox-errors";
+import { assertByteRange, isoTime, joinPath, parseGoFileMode, readByteRangeOverUrl } from "./sandbox-observation";
+
+export {
+  SandboxFeatureUnsupportedError,
+  SandboxNotRunningError,
+  SandboxPathNotFoundError,
+  isSandboxFeatureUnsupportedError,
+  isSandboxNotRunningError,
+  isSandboxPathNotFoundError,
+};
+
+// 5 min for whole-file reads/writes and the range URL's signature: E2B's 60 s default was measured too short for multi-MB files.
+const E2B_FILE_REQUEST_TIMEOUT_MS = 300_000;
+
+// Entry permissions, owner, group, mtime and symlink target arrived in envd 0.2.5
+// (e2b-dev/infra 97d10b529f, 2025-07-25: proto EntryInfo fields 4-10, main.go Version 0.2.4 → 0.2.5).
+const E2B_ENVD_ENTRY_INFO_VERSION = "0.2.5";
+
+// envd sends no timestamp for an mtime of 0 (infra packages/shared/pkg/filesystem/entry.go toTimestamp: a zero
+// Timespec is the zero Time, which envd's toTimestamp drops); measured on /usr/bin/busybox, envd 0.6.10, 2026-09-16.
+const E2B_EPOCH = new Date(0);
 
 /**
  * E2B signals an expired command with TimeoutError. Matched by NAME rather than
@@ -213,19 +244,29 @@ export interface SandboxInfo {
   endAt?: string;
 }
 
-/** File or directory entry info */
+/** The SDK contract's FileInfo (sdk-ts types.ts), the same entry on every provider. */
 export interface FileInfo {
   name: string;
   path: string;
-  type: "file" | "dir";
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+  mtime: string;
+  mode: string;
+  owner: string;
+  group: string;
+  target?: string;
 }
 
-/** Filesystem event from watchDir */
+/** A byte range of a file (the SDK contract's FileRange). */
+export interface FileRange {
+  offset: number;
+  length: number;
+}
+
+/** One filesystem change from watchDir: an absolute path, four kinds. */
 export interface FilesystemEvent {
-  /** Relative path to the changed file/directory */
-  name: string;
-  /** Type of filesystem operation */
-  type: "create" | "remove" | "rename" | "chmod" | "write";
+  path: string;
+  type: "create" | "write" | "remove" | "rename";
 }
 
 /** Handle to stop watching a directory */
@@ -235,9 +276,23 @@ export interface WatchHandle {
 
 /** Options for watching a directory */
 export interface WatchOptions {
+  /** Also report changes in every subdirectory. Default false. */
   recursive?: boolean;
-  timeoutMs?: number;
-  onExit?: (err?: Error) => void | Promise<void>;
+}
+
+/** One resource-usage sample (the SDK contract's SandboxMetrics). */
+export interface SandboxMetrics {
+  cpuPct: number;
+  memUsedMb: number;
+  memTotalMb: number;
+  diskUsedMb?: number;
+  sampledAt: string;
+  source: string;
+}
+
+/** Options for an inspect-only attach (the SDK contract's SandboxInspectOptions). */
+export interface SandboxInspectOptions {
+  user?: string;
 }
 
 // ============================================================
@@ -424,6 +479,14 @@ export interface SandboxFiles {
   /** Rename or move file/directory */
   rename(oldPath: string, newPath: string): Promise<void>;
 
+  // --- Live observation ---
+
+  /** The entry at `path` itself; a symlink is never followed */
+  stat(path: string): Promise<FileInfo>;
+
+  /** Exactly the requested bytes, without moving the whole file when the range is small */
+  readRange(path: string, range: FileRange): Promise<Uint8Array>;
+
   /** Watch directory for changes */
   watchDir(
     path: string,
@@ -446,6 +509,9 @@ export interface SandboxInstance {
 
   /** Get sandbox metadata and timing */
   getInfo(): Promise<SandboxInfo>;
+
+  /** The newest resource-usage sample, or null while there is none yet */
+  metrics(): Promise<SandboxMetrics | null>;
 
   /** Terminate sandbox */
   kill(): Promise<void>;
@@ -470,6 +536,9 @@ export interface SandboxProvider {
 
   /** Connect to existing sandbox */
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
+
+  /** Attach to a RUNNING sandbox for reads; never resumes it, never touches its lifetime */
+  inspect(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance>;
 
   /** List sandboxes, paginating to exhaustion. `limit` bounds items returned. */
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
@@ -672,7 +741,19 @@ export class E2BCommands implements SandboxCommands {
 }
 
 export class E2BFiles implements SandboxFiles {
-  constructor(private sandbox: E2BSandbox, private defaultUser?: string) {}
+  /** inspect() passes the record's envd version; a created or connected sandbox reads its record once. */
+  constructor(private sandbox: E2BSandbox, private defaultUser?: string, private envdVersion?: string) {}
+
+  private async assertEntryInfo(feature: "files.list" | "files.stat"): Promise<void> {
+    this.envdVersion ??= (await this.sandbox.getInfo()).envdVersion;
+    if (compareVersions(this.envdVersion, E2B_ENVD_ENTRY_INFO_VERSION) < 0) {
+      throw new SandboxFeatureUnsupportedError(
+        feature,
+        "e2b",
+        `the sandbox runs envd ${this.envdVersion}; entry permissions, owner, group and mtime need envd ${E2B_ENVD_ENTRY_INFO_VERSION} or later (rebuild the template)`
+      );
+    }
+  }
 
   async read(path: string): Promise<string | Uint8Array> {
     // Always read raw bytes and decide text-vs-binary from CONTENT, never
@@ -684,8 +765,7 @@ export class E2BFiles implements SandboxFiles {
     // survive a STRICT UTF-8 decode (fatal, BOM preserved) to come back as a
     // string. Both answers are therefore byte-exact: a returned string
     // re-encodes to the identical bytes, a returned Uint8Array IS the bytes.
-    // Long timeout: default 60s is too short for multi-MB downloads.
-    const bytes = await this.sandbox.files.read(path, { format: "bytes", requestTimeoutMs: 300000, user: this.defaultUser });
+    const bytes = await this.sandbox.files.read(path, { format: "bytes", requestTimeoutMs: E2B_FILE_REQUEST_TIMEOUT_MS, user: this.defaultUser });
     if (!bytes.includes(0)) {
       try {
         return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
@@ -697,8 +777,7 @@ export class E2BFiles implements SandboxFiles {
   }
 
   async write(path: string, content: string | Buffer | ArrayBuffer | Uint8Array): Promise<void> {
-    // Increase timeout for large files (default 60s is too short for multi-MB uploads)
-    await this.sandbox.files.write(path, toArrayBuffer(content), { requestTimeoutMs: 300000, user: this.defaultUser });
+    await this.sandbox.files.write(path, toArrayBuffer(content), { requestTimeoutMs: E2B_FILE_REQUEST_TIMEOUT_MS, user: this.defaultUser });
   }
 
   async writeBatch(files: Array<{ path: string; data: string | Buffer | ArrayBuffer | Uint8Array }>): Promise<void> {
@@ -706,8 +785,7 @@ export class E2BFiles implements SandboxFiles {
       path: f.path,
       data: toArrayBuffer(f.data),
     }));
-    // Increase timeout for large files (default 60s is too short for multi-MB uploads)
-    await this.sandbox.files.write(entries, { requestTimeoutMs: 300000, user: this.defaultUser });
+    await this.sandbox.files.write(entries, { requestTimeoutMs: E2B_FILE_REQUEST_TIMEOUT_MS, user: this.defaultUser });
   }
 
   async makeDir(path: string): Promise<void> {
@@ -732,13 +810,37 @@ export class E2BFiles implements SandboxFiles {
     return this.sandbox.files.exists(path, { user: this.defaultUser });
   }
 
+  // envd drops a dangling symlink and reports a symlink's size as its target's (measured envd 0.6.10, 2026-09-16); documented for users.
   async list(path: string): Promise<FileInfo[]> {
-    const entries = await this.sandbox.files.list(path, { user: this.defaultUser });
-    return entries.map((entry) => ({
-      name: entry.name,
-      path: entry.path,
-      type: entry.type === "dir" ? "dir" : "file",
-    }));
+    await this.assertEntryInfo("files.list");
+    try {
+      const entries = await this.sandbox.files.list(path, { user: this.defaultUser });
+      return entries.map((entry) => toFileInfo(entry));
+    } catch (err) {
+      if (isE2BNotFound(err)) throw new SandboxPathNotFoundError(path, "e2b");
+      throw err;
+    }
+  }
+
+  async stat(path: string): Promise<FileInfo> {
+    await this.assertEntryInfo("files.stat");
+    try {
+      return toFileInfo(await this.sandbox.files.getInfo(path, { user: this.defaultUser }));
+    } catch (err) {
+      if (isE2BNotFound(err)) throw new SandboxPathNotFoundError(path, "e2b");
+      throw err;
+    }
+  }
+
+  // Range on the signed URL: 64 KiB at 150 MB took 0.37 s, the SDK stream had to move 157 MB in 40 s (measured 2026-09-16).
+  async readRange(path: string, range: FileRange): Promise<Uint8Array> {
+    assertByteRange(range);
+    if (range.length === 0) return new Uint8Array(0);
+    const url = await this.sandbox.downloadUrl(path, {
+      user: this.defaultUser,
+      useSignatureExpiration: Math.ceil(E2B_FILE_REQUEST_TIMEOUT_MS / 1000),
+    });
+    return readByteRangeOverUrl(url, range, { provider: "e2b", path, timeoutMs: E2B_FILE_REQUEST_TIMEOUT_MS });
   }
 
   async remove(path: string): Promise<void> {
@@ -830,34 +932,108 @@ export class E2BFiles implements SandboxFiles {
     }
   }
 
+  // timeoutMs 0: envd's default ends a watch after 60 s. Names arrive relative to the watched dir;
+  // chmod is reported as write so a metadata change is not hidden.
   async watchDir(
     path: string,
     onEvent: (event: FilesystemEvent) => void | Promise<void>,
     options?: WatchOptions
   ): Promise<WatchHandle> {
-    const handle = await this.sandbox.files.watchDir(path, onEvent, {
-      recursive: options?.recursive,
-      timeoutMs: options?.timeoutMs,
-      user: this.defaultUser,
-      onExit: options?.onExit,
-    });
+    let handle: { stop(): Promise<void> };
+    try {
+      handle = await this.sandbox.files.watchDir(
+        path,
+        (event) => {
+          const type = event.type === "chmod" ? "write" : event.type;
+          return onEvent({ path: joinPath(path, event.name), type });
+        },
+        {
+          recursive: options?.recursive ?? false,
+          timeoutMs: 0,
+          user: this.defaultUser,
+        }
+      );
+    } catch (err) {
+      if (isE2BNotFound(err)) throw new SandboxPathNotFoundError(path, "e2b");
+      throw err;
+    }
     return {
       stop: () => handle.stop(),
     };
   }
 }
 
+/** envd's not-found, matched by name: FileNotFoundError from e2b 2.15.0, NotFoundError before it (see isTimeoutError). */
+function isE2BNotFound(err: unknown): boolean {
+  const name = !!err && typeof err === "object" ? (err as { name?: unknown }).name : undefined;
+  return name === "FileNotFoundError" || name === "NotFoundError";
+}
+
+/** The vendor entry fields this adapter reads (EntryInfo, e2b index.d.ts). */
+interface E2BEntry {
+  name: string;
+  path: string;
+  size: number;
+  permissions: string;
+  owner: string;
+  group: string;
+  modifiedTime?: Date;
+  symlinkTarget?: string;
+}
+
+// envd's `type` and numeric `mode` are a symlink's TARGET's and carry no setuid/setgid/sticky bit; its permission
+// string is the entry's own (Go FileMode), so type and mode both come from it. A dangling link's "target" is its own path.
+function toFileInfo(entry: E2BEntry): FileInfo {
+  const { type, mode } = parseGoFileMode(entry.permissions);
+  const info: FileInfo = {
+    name: entry.name,
+    path: entry.path,
+    type,
+    size: entry.size,
+    mtime: isoTime(entry.modifiedTime ?? E2B_EPOCH),
+    mode,
+    owner: entry.owner,
+    group: entry.group,
+  };
+  if (type === "symlink" && entry.symlinkTarget !== undefined && entry.symlinkTarget !== entry.path) {
+    info.target = entry.symlinkTarget;
+  }
+  return info;
+}
+
 class E2BSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;
   readonly files: SandboxFiles;
+  /** Timestamp of the newest metrics sample seen, so later reads ask only for what is new. */
+  private lastMetricsAt?: Date;
 
-  constructor(private sandbox: E2BSandbox, private apiKey: string, private apiUrl?: string, defaultUser?: string) {
+  constructor(private sandbox: E2BSandbox, private apiKey: string, private apiUrl?: string, defaultUser?: string, envdVersion?: string) {
     this.commands = new E2BCommands(sandbox, defaultUser);
-    this.files = new E2BFiles(sandbox, defaultUser);
+    this.files = new E2BFiles(sandbox, defaultUser, envdVersion);
   }
 
   get sandboxId(): string {
     return this.sandbox.sandboxId;
+  }
+
+  // Later reads ask from the newest sample seen, so a long-lived sandbox is not re-fetched whole;
+  // no sample yet (empty ~10 s after boot, measured) is null, never zeros.
+  async metrics(): Promise<SandboxMetrics | null> {
+    const samples = await this.sandbox.getMetrics(this.lastMetricsAt ? { start: this.lastMetricsAt } : {});
+    let newest: (typeof samples)[number] | undefined;
+    for (const sample of samples) {
+      if (!newest || sample.timestamp.getTime() > newest.timestamp.getTime()) newest = sample;
+    }
+    if (!newest) return null;
+    this.lastMetricsAt = newest.timestamp;
+    return {
+      cpuPct: newest.cpuUsedPct,
+      memUsedMb: newest.memUsed / MIB,
+      memTotalMb: newest.memTotal / MIB,
+      diskUsedMb: newest.diskUsed / MIB,
+      sampledAt: isoTime(newest.timestamp),
+      source: "e2b:getMetrics",
+    };
   }
 
   getHost(port: number): Promise<string> {
@@ -1055,6 +1231,46 @@ export class E2BProvider implements SandboxProvider {
     );
   }
 
+  // Not Sandbox.connect: it POSTs /connect with a timeout on every call (300 s default) and resumes a
+  // paused sandbox. The record is read instead and the client built from its fields (endAt unchanged, measured).
+  async inspect(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance> {
+    const detail = await this.fetchSandboxDetail(sandboxId);
+    if (detail.state !== "running") {
+      throw new SandboxNotRunningError(sandboxId, "e2b", detail.state);
+    }
+    const sandbox = E2BInspectSandbox.attach({
+      sandboxId: detail.sandboxID,
+      sandboxDomain: detail.domain ?? undefined,
+      envdVersion: detail.envdVersion,
+      envdAccessToken: detail.envdAccessToken,
+      trafficAccessToken: detail.trafficAccessToken ?? undefined,
+      apiKey: this.apiKey,
+      apiUrl: this.apiUrl,
+    });
+    return new E2BSandboxImpl(
+      sandbox,
+      this.apiKey,
+      this.apiUrl,
+      options?.user ?? this.sandboxUsers.get(sandboxId),
+      detail.envdVersion,
+    );
+  }
+
+  // A GET; SandboxDetail carries the envd access token that Sandbox.getInfo() maps away. Seam for the unit test.
+  protected async fetchSandboxDetail(sandboxId: string): Promise<E2BSandboxDetail> {
+    const config = new ConnectionConfig({ apiKey: this.apiKey, apiUrl: this.apiUrl });
+    const res = await new ApiClient(config).api.GET("/sandboxes/{sandboxID}", {
+      params: { path: { sandboxID: sandboxId } },
+    });
+    if (res.error?.code === 404 || (!res.data && !res.error)) {
+      throw new SandboxNotRunningError(sandboxId, "e2b", "not found");
+    }
+    if (res.error) {
+      throw new Error(`E2B refused the sandbox record for ${sandboxId}: ${res.error.message ?? res.error.code}`);
+    }
+    return res.data as E2BSandboxDetail;
+  }
+
   /**
    * List sandboxes, walking every page.
    *
@@ -1238,6 +1454,26 @@ async function collectSandboxPages(
 
 export const _testCollectSandboxPages = collectSandboxPages;
 
+/** Bytes per MiB — the unit of every memory and disk figure in SandboxMetrics. */
+const MIB = 1024 * 1024;
+
+/** The fields of E2B's SandboxDetail record that inspect() reads. */
+interface E2BSandboxDetail {
+  sandboxID: string;
+  state: string;
+  envdVersion: string;
+  domain?: string | null;
+  envdAccessToken?: string;
+  trafficAccessToken?: string | null;
+}
+
+/** The SDK's constructor is protected; a subclass is the one way to build a client from a record. */
+class E2BInspectSandbox extends E2BSandbox {
+  static attach(opts: ConstructorParameters<typeof E2BSandbox>[0]): E2BSandbox {
+    return new E2BInspectSandbox(opts);
+  }
+}
+
 // ============================================================
 // FACTORY
 // ============================================================
@@ -1270,4 +1506,7 @@ export function createE2BProvider(config: E2BConfig = {}): SandboxProvider {
  * the type (never the constructor) gives the seam the real methods to pin.
  */
 export type _testE2BSandboxImpl = E2BSandboxImpl;
+
+/** The constructor, for the metrics unit test (a vendor sandbox double goes in). */
+export const _testE2BSandboxImplCtor = E2BSandboxImpl;
 

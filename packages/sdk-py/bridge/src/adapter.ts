@@ -25,7 +25,14 @@ import {
   type SessionsClient as TSSessionsClient,
   type SessionInfo as TSSessionInfo,
   type BrowserReplay as TSBrowserReplay,
+  type SandboxProvider,
+  type SandboxInstance,
+  type WatchHandle,
+  type FileInfo,
+  type SandboxMetrics,
   managedSandbox,
+  resolveDefaultSandbox,
+  SandboxFeatureUnsupportedError,
 } from '../../../sdk-ts/dist/index.js';
 import { createE2BProvider } from '../../../e2b/dist/index.js';
 import { createDaytonaProvider } from '../../../daytona/dist/index.js';
@@ -57,6 +64,19 @@ import type {
   IntegrationsAccountsListResponse,
   IntegrationsDisconnectResponse,
   IntegrationsAccountUpdateResponse,
+  SandboxInspectParams,
+  SandboxHandleParams,
+  SandboxPathParams,
+  SandboxReadRangeParams,
+  SandboxWatchDirParams,
+  SandboxWatchStopParams,
+  SandboxInspectResponse,
+  SandboxFilesListResponse,
+  SandboxFilesStatResponse,
+  SandboxReadRangeResponse,
+  SandboxWatchDirResponse,
+  SandboxMetricsResponse,
+  FileInfoResponse,
   CheckpointInfoResponse,
   CheckpointParams,
   ListCheckpointsParams,
@@ -134,6 +154,15 @@ export class EvolveAdapter {
 
   // Multi-instance support for Swarm operations
   private instances: Map<string, Evolve> = new Map();
+
+  // Sandbox observation: inspect-only views by handle, their watches by id, one provider built lazily.
+  private observationProviderConfig: InitializeParams['sandbox_provider'] | null = null;
+  private observationProvider: SandboxProvider | null = null;
+  private views: Map<string, { sandbox: SandboxInstance; providerType: string; watches: Set<string> }> = new Map();
+  private watches: Map<string, { handle: WatchHandle; view: string }> = new Map();
+  private fsEventSink: ((event: { watch_id: string; path: string; event: string }) => void) | null = null;
+  private nextViewId = 0;
+  private nextWatchId = 0;
 
   // ===========================================================================
   // PRIVATE: EVOLVE BUILDER (shared by initialize and createInstance)
@@ -349,6 +378,23 @@ export class EvolveAdapter {
         return this.getSessionCost();
       case 'get_run_cost':
         return this.getRunCost(params);
+      // Sandbox observation (inspect-only attach; see sandboxInspect)
+      case 'sandbox_inspect':
+        return this.sandboxInspect(params);
+      case 'sandbox_files_list':
+        return this.sandboxFilesList(params);
+      case 'sandbox_files_stat':
+        return this.sandboxFilesStat(params);
+      case 'sandbox_files_read_range':
+        return this.sandboxFilesReadRange(params);
+      case 'sandbox_watch_dir':
+        return this.sandboxWatchDir(params);
+      case 'sandbox_watch_stop':
+        return this.sandboxWatchStop(params);
+      case 'sandbox_metrics':
+        return this.sandboxMetrics(params);
+      case 'sandbox_release':
+        return this.sandboxRelease(params);
       // Integrations static methods (no instance required)
       case 'integrations_auth':
         return this.integrationsAuth(params);
@@ -383,6 +429,8 @@ export class EvolveAdapter {
 
   async initialize(params: InitializeParams, callbacks?: EventCallbacks): Promise<StatusResponse> {
     this.evolve = await this.buildEvolve(params);
+    this.observationProviderConfig = params.sandbox_provider ?? null;
+    this.fsEventSink = callbacks?.onFsEvent ?? null;
 
     // Initialize-only configurations (not used by Swarm workers)
     if (params.files && Object.keys(params.files).length > 0) {
@@ -945,6 +993,128 @@ export class EvolveAdapter {
     );
     await Promise.all(kills);
     this.instances.clear();
+  }
+
+  // ===========================================================================
+  // SANDBOX OBSERVATION (the Python side holds a handle, never a provider)
+  // ===========================================================================
+
+  /** Python's configured provider, else the environment's (the SDK's own rule); built once. */
+  private async observationSandboxProvider(): Promise<SandboxProvider> {
+    if (!this.observationProvider) {
+      this.observationProvider = this.observationProviderConfig
+        ? await this.createSandboxProvider(this.observationProviderConfig)
+        : await resolveDefaultSandbox();
+    }
+    return this.observationProvider;
+  }
+
+  private viewOf(handle: string): { sandbox: SandboxInstance; providerType: string; watches: Set<string> } {
+    const view = this.views.get(handle);
+    if (!view) throw new Error(`Sandbox view ${handle} not found (released, or never inspected)`);
+    return view;
+  }
+
+  private toFileInfoResponse(info: FileInfo): FileInfoResponse {
+    return {
+      name: info.name,
+      path: info.path,
+      type: info.type,
+      size: info.size,
+      mtime: info.mtime,
+      mode: info.mode,
+      owner: info.owner,
+      group: info.group,
+      ...(info.target !== undefined ? { target: info.target } : {}),
+    };
+  }
+
+  private toMetricsResponse(metrics: SandboxMetrics | null): SandboxMetricsResponse {
+    if (!metrics) return { metrics: null };
+    return {
+      metrics: {
+        cpu_pct: metrics.cpuPct,
+        mem_used_mb: metrics.memUsedMb,
+        mem_total_mb: metrics.memTotalMb,
+        ...(metrics.diskUsedMb !== undefined ? { disk_used_mb: metrics.diskUsedMb } : {}),
+        sampled_at: metrics.sampledAt,
+        source: metrics.source,
+      },
+    };
+  }
+
+  async sandboxInspect(params: SandboxInspectParams): Promise<SandboxInspectResponse> {
+    const provider = await this.observationSandboxProvider();
+    if (!provider.inspect) {
+      throw new SandboxFeatureUnsupportedError('inspect', provider.providerType, 'this provider offers no inspect-only attach');
+    }
+    const sandbox = await provider.inspect(params.sandbox_id, params.user !== undefined ? { user: params.user } : undefined);
+    const handle = `view-${++this.nextViewId}`;
+    this.views.set(handle, { sandbox, providerType: provider.providerType, watches: new Set() });
+    return { handle, sandbox_id: sandbox.sandboxId };
+  }
+
+  async sandboxFilesList(params: SandboxPathParams): Promise<SandboxFilesListResponse> {
+    const { sandbox, providerType } = this.viewOf(params.handle);
+    if (!sandbox.files.list) throw new SandboxFeatureUnsupportedError('files.list', providerType);
+    const entries = await sandbox.files.list(params.path);
+    return { entries: entries.map((e) => this.toFileInfoResponse(e)) };
+  }
+
+  async sandboxFilesStat(params: SandboxPathParams): Promise<SandboxFilesStatResponse> {
+    const { sandbox, providerType } = this.viewOf(params.handle);
+    if (!sandbox.files.stat) throw new SandboxFeatureUnsupportedError('files.stat', providerType);
+    return { entry: this.toFileInfoResponse(await sandbox.files.stat(params.path)) };
+  }
+
+  async sandboxFilesReadRange(params: SandboxReadRangeParams): Promise<SandboxReadRangeResponse> {
+    const { sandbox, providerType } = this.viewOf(params.handle);
+    if (!sandbox.files.readRange) throw new SandboxFeatureUnsupportedError('files.readRange', providerType);
+    const bytes = await sandbox.files.readRange(params.path, { offset: params.offset, length: params.length });
+    return { data_base64: Buffer.from(bytes).toString('base64') };
+  }
+
+  async sandboxWatchDir(params: SandboxWatchDirParams): Promise<SandboxWatchDirResponse> {
+    const view = this.viewOf(params.handle);
+    if (!view.sandbox.files.watchDir) throw new SandboxFeatureUnsupportedError('files.watchDir', view.providerType);
+    const watchId = `watch-${++this.nextWatchId}`;
+    const handle = await view.sandbox.files.watchDir(
+      params.path,
+      (event) => {
+        this.fsEventSink?.({ watch_id: watchId, path: event.path, event: event.type });
+      },
+      { recursive: params.recursive ?? false },
+    );
+    this.watches.set(watchId, { handle, view: params.handle });
+    view.watches.add(watchId);
+    return { watch_id: watchId };
+  }
+
+  async sandboxWatchStop(params: SandboxWatchStopParams): Promise<StatusResponse> {
+    const watch = this.watches.get(params.watch_id);
+    if (watch) {
+      this.watches.delete(params.watch_id);
+      this.views.get(watch.view)?.watches.delete(params.watch_id);
+      await watch.handle.stop();
+    }
+    return { status: 'ok' };
+  }
+
+  async sandboxMetrics(params: SandboxHandleParams): Promise<SandboxMetricsResponse> {
+    const { sandbox, providerType } = this.viewOf(params.handle);
+    if (!sandbox.metrics) throw new SandboxFeatureUnsupportedError('metrics', providerType);
+    return this.toMetricsResponse(await sandbox.metrics());
+  }
+
+  async sandboxRelease(params: SandboxHandleParams): Promise<StatusResponse> {
+    const view = this.views.get(params.handle);
+    if (view) {
+      for (const watchId of view.watches) {
+        await this.sandboxWatchStop({ watch_id: watchId });
+      }
+      this.views.delete(params.handle);
+    }
+    return { status: 'ok' };
   }
 
   // ===========================================================================

@@ -175,11 +175,32 @@ export type {
   SandboxCreateOptions,
   SandboxNetworkPolicy,
   ExternalGatewayConfig,
+  // Live observation of a running sandbox
+  FileInfo,
+  FileRange,
+  FilesystemEvent,
+  WatchOptions,
+  WatchHandle,
+  SandboxMetrics,
+  SandboxInspectOptions,
 } from "./types";
+
+// The typed refusals of the observation surface (one home; the provider
+// packages carry generated copies — recognise an instance by the guards).
+export {
+  SandboxFeatureUnsupportedError,
+  SandboxPathNotFoundError,
+  SandboxNotRunningError,
+  isSandboxFeatureUnsupportedError,
+  isSandboxPathNotFoundError,
+  isSandboxNotRunningError,
+} from "./sandbox-errors";
 
 // Managed sandboxes — the platform runs the box, the caller holds only an
 // Evolve API key. Which provider backs it is an argument, never an env var.
 export { managedSandbox } from "./utils/sandbox";
+// The provider the SDK picks when a run is given none (from the provider key present), so inspect() can use the same one.
+export { resolveDefaultSandbox } from "./utils/sandbox";
 export type { ManagedSandboxOptions, ManagedSandboxCreateDefaults } from "./utils/sandbox";
 export {
   MANAGED_SANDBOX_PROVIDERS,
