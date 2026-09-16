@@ -1,12 +1,12 @@
 {
-  "name": "evolve-sdk-integrations-cookbook",
+  "name": "evolve-integrations-cookbook",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "start": "tsx agent.ts"
   },
   "dependencies": {
-    "@evolvingmachines/sdk": "latest",
+    "@evolvingmachines/evolve": "latest",
     "boxen": "latest",
     "chalk": "latest",
     "cli-spinners": "latest",

@@ -1,0 +1,4 @@
+# Staged copies of the repo-root skill folders (scripts/copy-skills.mjs, on build and prepack)
+docs-evals/
+docs-agents/
+skills/

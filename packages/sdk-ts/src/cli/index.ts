@@ -7,13 +7,16 @@
  * `job start`'s flags), `analyze`, and `upload`, each spelled, helped and
  * dispatched as a command in its own right (Harbor registers all three the
  * same way, as top-level commands: their cli/main.py). Singular
- * nouns are canonical; `job`/`trial`/`analysis`/`dataset`/`skill` also answer
- * to their plurals as hidden aliases, but `agents` does NOT — that word is
- * reserved for the managed-agents CLI and refuses with the reason. `session`
- * is the managed-agents lane's first noun here — list and inspect the
- * sessions your SDK runs recorded, headless. The CLI speaks ONLY through the
- * SDK clients (datasets() / agents() / jobs() / trials() / analyses() /
- * skills() / auth() / sessions()) — no raw HTTP lives here.
+ * nouns are canonical; `job`/`trial`/`analysis`/`dataset` also answer to
+ * their plurals as hidden aliases, but `agents` does NOT — that word is
+ * reserved for the managed-agents CLI and refuses with the reason — and
+ * `skills` is not the plural of `skill`: it is the one local group, serving
+ * the bundled skill files a coding agent reads as its manual (skills.ts),
+ * with no API call. `session` is the managed-agents lane's first noun here —
+ * list and inspect the sessions your SDK runs recorded, headless. Every
+ * other command speaks ONLY through the SDK clients (datasets() / agents() /
+ * jobs() / trials() / analyses() / skills() / auth() / sessions()) — no raw
+ * HTTP lives here.
  *
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
@@ -23,6 +26,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync } from "fs";
+import { join, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { LineCounter, type Tags, parse as parseYaml, parseDocument } from "yaml";
 import { parse as parseToml } from "smol-toml";
@@ -122,6 +126,20 @@ import {
 } from "../managed-secrets";
 import { sessions } from "../sessions";
 import type { SessionInfo, SessionsConfig } from "../sessions/types";
+import {
+  INSTALL_TARGETS,
+  type InstallDestination,
+  type InstallTarget,
+  type Skill,
+  contentSkills,
+  findPage,
+  findSkill,
+  hasSkill,
+  installPointer,
+  skillFiles,
+  skillsRoot,
+  targetSkillsDir,
+} from "./skills";
 
 // =============================================================================
 // GRAMMAR
@@ -145,18 +163,25 @@ interface FlagSpec {
   aliases?: string[];
   /** Metavar for help output. */
   value?: string;
+  /** One sentence, no full stop; the default rides `default`, never the sentence. */
   help: string;
+  /** What applies when the flag is absent, rendered as `(default: …)`. */
+  default?: string;
+  /** The heading the option is listed under; absent = the plain Options heading. */
+  group?: string;
 }
 
 interface CommandSpec {
+  /** One line, under 60 characters: it is the row on the root and group pages. */
   summary: string;
-  /** A law the verb's own help states under its summary (the group table shows the summary alone). */
+  /** At most three sentences the verb's own help states under its usage; the group table shows the summary alone. */
   notes?: string;
   flags: Record<string, FlagSpec>;
   minPositionals: number;
   maxPositionals: number;
   positionalUsage?: string;
-  example: string;
+  /** One to three runnable lines; a long one breaks with ` \` and newlines, one flag per line. */
+  examples: string[];
 }
 
 /**
@@ -166,22 +191,23 @@ interface CommandSpec {
  */
 const GLOBAL_FLAGS: Record<string, FlagSpec> = {
   json: { kind: "boolean", help: "Machine-readable JSON output" },
-  "api-key": { kind: "string", value: "<key>", help: "API key (default: $EVOLVE_API_KEY)" },
-  "base-url": { kind: "string", value: "<url>", help: "API base URL (default: the Evolve dashboard API)" },
+  "api-key": { kind: "string", value: "<key>", help: "API key", default: "$EVOLVE_API_KEY" },
+  "base-url": { kind: "string", value: "<url>", help: "API base URL", default: "the Evolve dashboard API" },
 };
 
 /** The shared read-side flags every list command carries. */
 const LIST_FLAGS: Record<string, FlagSpec> = {
-  limit: { kind: "number", short: "l", value: "<n>", help: "Page size" },
-  cursor: { kind: "string", value: "<c>", help: "Resume from a page cursor" },
+  limit: { kind: "number", short: "l", value: "<n>", help: "Page size", group: "Paging" },
+  cursor: { kind: "string", value: "<c>", help: "Resume from a page cursor", group: "Paging" },
   columns: {
     kind: "string",
     value: "<keys|all|help>",
-    help: "Choose and order columns (comma-separated keys; 'help' lists them)",
+    help: "Choose and order columns; 'help' lists them",
+    group: "Output",
   },
-  quiet: { kind: "boolean", short: "q", help: "Print only ids, one per line (for piping)" },
-  "no-trunc": { kind: "boolean", help: "Full cell content instead of one-line truncation" },
-  "no-headers": { kind: "boolean", help: "Omit the header row in piped (TSV) output" },
+  quiet: { kind: "boolean", short: "q", help: "Print only ids, one per line", group: "Output" },
+  "no-trunc": { kind: "boolean", help: "Full cell content instead of one-line truncation", group: "Output" },
+  "no-headers": { kind: "boolean", help: "Omit the header row in piped output", group: "Output" },
 };
 
 /**
@@ -192,7 +218,9 @@ const LIST_FLAGS: Record<string, FlagSpec> = {
 const SCOPE_FLAG: FlagSpec = {
   kind: "string",
   value: "<my|shared>",
-  help: "Visibility scope: my (what you created, the default) | shared (your organizations' rows that teammates created)",
+  help: "What you created, or your organizations' rows that teammates created",
+  default: "my",
+  group: "Filter",
 };
 
 /**
@@ -200,417 +228,510 @@ const SCOPE_FLAG: FlagSpec = {
  * CLI-side law resolveAnalysisRef implements.
  */
 const ANALYSIS_REF_RULE =
-  "An analysis id (or its unambiguous prefix) names that run; a trial id (or prefix) names the trial's " +
-  "latest analysis — the one `trial show` prints on its analysis row; a prefix matching both an analysis " +
-  "and a trial is refused as ambiguous, naming both.";
+  "An analysis id, or its unambiguous prefix, names that run. A trial id, or its prefix, " +
+  "names the trial's latest analysis, the one `trial show` prints on its analysis row. " +
+  "A prefix matching both an analysis and a trial is refused as ambiguous.";
+
+/** A `--since <n>` on the transcript verbs: skip N events, or resume at the count already held. */
+const SINCE_FLAG: FlagSpec = {
+  kind: "number",
+  value: "<n>",
+  help: "Skip the first N events; to resume, pass the count you already hold",
+  group: "Selection",
+};
 
 const JOB_START_FLAGS: Record<string, FlagSpec> = {
   config: {
     kind: "string",
     short: "c",
     value: "<path>",
-    help: "Job config file (YAML or JSON, spec vocabulary); explicit flags override its fields",
+    help: "Job config file, YAML or JSON; flags override its fields",
+    group: "Config",
   },
-  "print-config": { kind: "boolean", help: "Print the resolved job body as JSON and exit without running" },
-  "job-name": { kind: "string", value: "<name>", help: "User-facing label (server-generated when omitted)" },
-  dataset: {
-    kind: "repeat",
-    short: "d",
-    value: "<name[@version]>",
-    help: "Dataset to run (repeatable; bare name = active version)",
-  },
-  "include-task-name": {
-    kind: "repeat",
-    short: "i",
-    value: "<glob>",
-    help: "Include filter over task names, applied to every dataset (repeatable)",
-  },
-  "exclude-task-name": {
-    kind: "repeat",
-    short: "x",
-    value: "<glob>",
-    help: "Exclude filter over task names, applied to every dataset (repeatable)",
-  },
-  "n-tasks": {
-    kind: "number",
-    short: "l",
-    value: "<n>",
-    help: "Cap the task count of EACH dataset after filters",
-  },
-  agent: { kind: "string", short: "a", value: "<name[@version]>", help: "Agent (built-in or registered)" },
-  model: { kind: "repeat", short: "m", value: "<name>", help: "Model (repeatable; each model is one arm)" },
-  effort: {
-    kind: "string",
-    value: "<value>",
-    help:
-      "Reasoning effort for EVERY arm (values: GET /api/meta). Applied verbatim — " +
-      "an agent that cannot honor it is refused by the server, never silently skipped",
-  },
-  preset: {
-    kind: "string",
-    value: "<name>",
-    help:
-      "Named settings preset for EVERY arm: no-internet (vendor server-side web tools " +
-      "off) or pinned-context (fixed context window). Applied verbatim — an agent that " +
-      "cannot guarantee it is refused by the server, never silently skipped",
-  },
-  ak: {
-    kind: "repeat",
-    aliases: ["agent-kwarg"],
-    value: "key=value",
-    help:
-      "Agent kwarg for EVERY arm (repeatable, Harbor grammar). The delivered key is " +
-      "'config': --ak 'config=<path|inline JSON>' becomes the harness's native settings " +
-      "file (user config is the base, platform routing on top); the server refuses " +
-      "unsupported kwargs and config keys touching billing/base-URL/routing/env",
-  },
-  skill: {
-    kind: "repeat",
-    aliases: ["skills"],
-    value: "<ref|path>",
-    help:
-      "Skill for EVERY agent arm (repeatable): skills.sh/<owner>/<repo>[/<skill>], " +
-      "org/repo[@ref], an https git URL, upload:<id>, name:<skill-name> (your " +
-      "moving name pointer, resolved server-side), or a local folder " +
-      "(uploaded to the platform first, then referenced)",
-  },
-  "agent-env": {
-    kind: "repeat",
-    aliases: ["ae"],
-    value: "KEY=VALUE",
-    help: "Env for every agent run (repeatable); a pass-through slot the server owns",
-  },
-  "verifier-env": {
-    kind: "repeat",
-    aliases: ["ve"],
-    value: "KEY=VALUE",
-    help:
-      "Env for every verifier run (repeatable); the server honors exactly " +
-      "REWARDKIT_JUDGE and REWARDKIT_MODEL (rewardkit's judge override) and refuses any other key",
-  },
-  secret: {
-    kind: "repeat",
-    value: "NAME[@LABEL][=ENVNAME]",
-    help:
-      "Attach one of your stored env secrets to every agent run (repeatable). " +
-      "NAME is the stored secret's name; @LABEL picks a labeled row (omitted = " +
-      "the 'default' row, or the only row — several labels with no 'default' is " +
-      "refused as ambiguous); =ENVNAME renames the env var inside the sandbox. " +
-      "References only — the value never rides the command line or the wire",
-  },
-  "secret-inline": {
-    kind: "repeat",
-    value: "NAME[@LABEL]:DELIVERY=VALUE",
-    help:
-      "Save VALUE into your vault as an env secret and attach it to this job " +
-      "in one step (repeatable). DELIVERY is 'brokered' or 'direct' and sits " +
-      "before '=' so everything after the first '=' is the value, passed " +
-      "through byte-for-byte ('=', ':' and '@' need no escaping). @LABEL " +
-      "defaults to 'default'. An existing (NAME, LABEL) secret splits on " +
-      "proof: restating it exactly (same value, same delivery) attaches it, " +
-      "so re-running the same command converges; a DIFFERENT value or " +
-      "delivery is refused as secret_exists — attach it with --secret or pick " +
-      "a label. The job stores only the reference, never the value",
-  },
-  "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task x arm (default 1)" },
-  "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials (default 4)" },
-  "max-trial-spend": {
-    kind: "number",
-    value: "<usd>",
-    help: "Model-spend cap for EACH trial (default: the server's, $200)",
-  },
-  "max-retries": {
-    kind: "number",
-    short: "r",
-    value: "<n>",
-    help:
-      "Max automatic retries per trial on infrastructure errors " +
-      "(default: the server's fleet default; 0 = off). Each attempt carries the full trial cap",
-  },
-  "retry-include": {
-    kind: "repeat",
-    value: "<exception>",
-    help: "Exception types to retry on (repeatable; default: everything --retry-exclude admits)",
-  },
-  "retry-exclude": {
-    kind: "repeat",
-    value: "<exception>",
-    help:
-      "Exception types to NOT retry on (repeatable; wins over --retry-include; " +
-      "default: Harbor's non-retryable set)",
-  },
-  analyze: {
-    kind: "boolean",
-    help:
-      "Analyze each trial's trace server-side as it settles (Harbor's analyze, embedded; " +
-      "CANCELLED trials are skipped). Bare = the defaults: the platform's analyze model, rubric and prompt",
-  },
-  "analyze-model": {
-    kind: "string",
-    value: "<name>",
-    help: "Model the analyzer agent runs (implies --analyze; must be on the claude roster, GET /api/meta)",
-  },
-  "analyze-rubric": {
-    kind: "string",
-    value: "<path>",
-    help: "Rubric file for the analyzer (TOML/YAML/JSON, Harbor's {criteria} shape; implies --analyze)",
-  },
-  "analyze-prompt": {
-    kind: "string",
-    value: "<path>",
-    help:
-      "Prompt file for the analyzer agent (Harbor's -p/--prompt; replaces the built-in prompt; " +
-      "implies --analyze)",
-  },
-  "analyze-provider": {
-    kind: "string",
-    value: "<provider>",
-    help:
-      "Sandbox provider the analyzer runs on (implies --analyze; the job lineup, GET /api/meta; " +
-      "default: the platform's analysis default)",
-  },
-  "analyze-effort": {
-    kind: "string",
-    value: "<value>",
-    help:
-      "Reasoning effort the analyzer runs at (implies --analyze; values: GET /api/meta analyze; " +
-      "default: the per-model default — high on openrouter/deepseek/deepseek-v4.1-flash, max on glm-5.3-flash)",
-  },
-  "timeout-multiplier": {
-    kind: "number",
-    value: "<x>",
-    help:
-      "Multiplier for task timeouts (default 1.0; any finite number > 0 — no ceiling of the platform's; a task timeout x multiplier past the runtime's timer ceiling is refused at create). " +
-      "Multiplies each task's DECLARED timeouts for this job only — the task is never rewritten",
-  },
-  "agent-timeout-multiplier": {
-    kind: "number",
-    value: "<x>",
-    help: "Multiplier for agent execution timeout (overrides --timeout-multiplier)",
-  },
-  "verifier-timeout-multiplier": {
-    kind: "number",
-    value: "<x>",
-    help: "Multiplier for verifier timeout (overrides --timeout-multiplier)",
-  },
-  "agent-setup-timeout-multiplier": {
-    kind: "number",
-    value: "<x>",
-    help: "Multiplier for agent setup timeout (overrides --timeout-multiplier)",
-  },
-  "environment-build-timeout-multiplier": {
-    kind: "number",
-    value: "<x>",
-    help: "Multiplier for environment build timeout (overrides --timeout-multiplier)",
-  },
-  env: { kind: "string", short: "e", value: "<provider>", help: "Sandbox provider: e2b | daytona | modal (default daytona)" },
-  watch: { kind: "boolean", help: "Stream events until the job finishes" },
-  quiet: { kind: "boolean", short: "q", help: "With --watch: suppress the event log, print the final block only" },
+  "print-config": { kind: "boolean", help: "Print the resolved job body as JSON and exit", group: "Config" },
+  "job-name": { kind: "string", value: "<name>", help: "Label for the job", default: "generated", group: "Job" },
+  "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task and arm", default: "1", group: "Job" },
+  "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials", default: "4", group: "Job" },
   yes: {
     kind: "boolean",
     short: "y",
     // Reserved so the letter never grows a confirmation meaning: a hosted run
     // has no host environment to confirm access to, so there is nothing to say
     // yes to and the flag changes nothing.
-    help: "Accepted for compatibility; hosted runs have no prompt to confirm",
+    help: "Accepted for compatibility; a hosted run has nothing to confirm",
+    group: "Job",
   },
+  dataset: {
+    kind: "repeat",
+    short: "d",
+    value: "<name[@version]>",
+    help: "Dataset to run; repeatable; a bare name is the active version",
+    group: "Datasets",
+  },
+  "include-task-name": {
+    kind: "repeat",
+    short: "i",
+    value: "<glob>",
+    help: "Only tasks matching the glob, in every dataset; repeatable",
+    group: "Datasets",
+  },
+  "exclude-task-name": {
+    kind: "repeat",
+    short: "x",
+    value: "<glob>",
+    help: "Skip tasks matching the glob, in every dataset; repeatable",
+    group: "Datasets",
+  },
+  "n-tasks": {
+    kind: "number",
+    short: "l",
+    value: "<n>",
+    help: "Cap the task count of each dataset, after the filters",
+    group: "Datasets",
+  },
+  agent: { kind: "string", short: "a", value: "<name[@version]>", help: "Agent harness, built-in or registered", group: "Agent" },
+  model: { kind: "repeat", short: "m", value: "<name>", help: "Model; repeatable, one arm per model", group: "Agent" },
+  effort: {
+    kind: "string",
+    value: "<value>",
+    help: "Reasoning effort for every arm; an agent that cannot honor it is refused",
+    default: "the agent's own",
+    group: "Agent",
+  },
+  preset: {
+    kind: "string",
+    value: "<name>",
+    help: "Settings preset for every arm: no-internet or pinned-context",
+    group: "Agent",
+  },
+  ak: {
+    kind: "repeat",
+    aliases: ["agent-kwarg"],
+    value: "key=value",
+    help: "Agent kwarg for every arm; repeatable; config=<path|JSON> is the native settings file",
+    group: "Agent",
+  },
+  skill: {
+    kind: "repeat",
+    aliases: ["skills"],
+    value: "<ref|path>",
+    help:
+      "Skill for every arm; repeatable: skills.sh/<owner>/<repo>[/<skill>], org/repo[@ref], " +
+      "a git URL, upload:<id>, name:<skill-name>, or a local folder",
+    group: "Agent",
+  },
+  "agent-env": {
+    kind: "repeat",
+    aliases: ["ae"],
+    value: "KEY=VALUE",
+    help: "Env for every agent run; repeatable",
+    group: "Agent",
+  },
+  "verifier-env": {
+    kind: "repeat",
+    aliases: ["ve"],
+    value: "KEY=VALUE",
+    help: "Env for every verifier run; repeatable; only REWARDKIT_JUDGE and REWARDKIT_MODEL",
+    group: "Verifier",
+  },
+  secret: {
+    kind: "repeat",
+    value: "NAME[@LABEL][=ENVNAME]",
+    help: "Attach a stored env secret to every agent run; repeatable; @LABEL picks a row, =ENVNAME renames it",
+    group: "Secrets",
+  },
+  "secret-inline": {
+    kind: "repeat",
+    value: "NAME[@LABEL]:DELIVERY=VALUE",
+    help: "Store VALUE as an env secret and attach it in one step; repeatable; DELIVERY is brokered or direct",
+    group: "Secrets",
+  },
+  "max-trial-spend": {
+    kind: "number",
+    value: "<usd>",
+    help: "Model-spend cap for each trial, in USD",
+    default: "200",
+    group: "Spend and retries",
+  },
+  "max-retries": {
+    kind: "number",
+    short: "r",
+    value: "<n>",
+    help: "Automatic retries per trial on infrastructure errors; 0 turns them off",
+    default: "the platform default",
+    group: "Spend and retries",
+  },
+  "retry-include": {
+    kind: "repeat",
+    value: "<exception>",
+    help: "Exception types to retry on; repeatable",
+    default: "everything --retry-exclude admits",
+    group: "Spend and retries",
+  },
+  "retry-exclude": {
+    kind: "repeat",
+    value: "<exception>",
+    help: "Exception types never retried; repeatable; wins over --retry-include",
+    default: "Harbor's non-retryable set",
+    group: "Spend and retries",
+  },
+  analyze: { kind: "boolean", help: "Analyze each trial's trace against a rubric as it settles", group: "Analysis" },
+  "analyze-model": {
+    kind: "string",
+    value: "<name>",
+    help: "Model for the analyzer; implies --analyze",
+    default: "the analyze default",
+    group: "Analysis",
+  },
+  "analyze-rubric": {
+    kind: "string",
+    value: "<path>",
+    help: "Rubric file for the analyzer, TOML, YAML or JSON; implies --analyze",
+    default: "the built-in rubric",
+    group: "Analysis",
+  },
+  "analyze-prompt": {
+    kind: "string",
+    value: "<path>",
+    help: "Prompt file for the analyzer, replacing the built-in prompt; implies --analyze",
+    group: "Analysis",
+  },
+  "analyze-provider": {
+    kind: "string",
+    value: "<provider>",
+    help: "Sandbox provider for the analyzer; implies --analyze",
+    default: "the analysis default",
+    group: "Analysis",
+  },
+  "analyze-effort": {
+    kind: "string",
+    value: "<value>",
+    help: "Reasoning effort for the analyzer; implies --analyze",
+    default: "the model's own",
+    group: "Analysis",
+  },
+  "timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for every task timeout, this job only",
+    default: "1.0",
+    group: "Timeouts",
+  },
+  "agent-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for the agent execution timeout; overrides --timeout-multiplier",
+    group: "Timeouts",
+  },
+  "verifier-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for the verifier timeout; overrides --timeout-multiplier",
+    group: "Timeouts",
+  },
+  "agent-setup-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for the agent setup timeout; overrides --timeout-multiplier",
+    group: "Timeouts",
+  },
+  "environment-build-timeout-multiplier": {
+    kind: "number",
+    value: "<x>",
+    help: "Multiplier for the environment build timeout; overrides --timeout-multiplier",
+    group: "Timeouts",
+  },
+  env: {
+    kind: "string",
+    short: "e",
+    value: "<provider>",
+    help: "Sandbox provider: e2b, daytona or modal",
+    default: "daytona",
+    group: "Environment",
+  },
+  watch: { kind: "boolean", help: "Stream the job's events until it finishes", group: "Output" },
+  quiet: { kind: "boolean", short: "q", help: "With --watch, print only the final block", group: "Output" },
 };
+
+/** `run` and `job start` share these; `run` spells them as `evolve run`. */
+function jobStartExamples(command: string): string[] {
+  return [
+    `${command} -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -l 5 --watch`,
+    `${command} \\\n-d deep-swe@1.1 \\\n-a claude -m fable \\\n--skills skills.sh/acme/skills/pdf \\\n--secret GITHUB_TOKEN \\\n-k 2 -n 8 \\\n--analyze --watch`,
+    `${command} -c job.yaml --print-config`,
+  ];
+}
 
 interface GroupSpec {
   summary: string;
+  /** A law the group's help states under its summary. */
+  notes?: string;
+  /** The verb a bare `evolve <group>` runs instead of printing the group's help. */
+  defaultVerb?: string;
   commands: Record<string, CommandSpec>;
 }
 
+/** The `--help` topic and refusal footer that name the errors page the CLI serves. */
+const ERRORS_DOCS_COMMAND = "evolve skills get evals sdk-reference/errors";
+
 const GROUPS: Record<string, GroupSpec> = {
+  // The one local group: the skills the package ships, served as the manual
+  // a coding agent reads before running anything else. agent-browser's
+  // `skills [list] | get | path` verbatim, plus `install` (browser-use's
+  // targets) and the page form of get; see skills.ts for the layout.
+  skills: {
+    summary: "The skills the CLI serves to coding agents",
+    notes:
+      "The skills ship with the CLI and match its version. `skills get evals` is the index " +
+      "of the documentation and `skills get evals <page>` one page of it; the `evolve` pointer " +
+      "skill that `skills install` writes is served but never listed. EVOLVE_SKILLS_DIR " +
+      "names another checkout or package root to serve.",
+    defaultVerb: "list",
+    commands: {
+      list: {
+        summary: "List the skills the installed version serves",
+        flags: {},
+        minPositionals: 0,
+        maxPositionals: 0,
+        examples: ["evolve skills", "evolve skills list --json"],
+      },
+      get: {
+        summary: "Print one or more skills, or one reference page",
+        notes:
+          "A second word that is not a skill name is a page of the first skill: the docs " +
+          "site's own path without the suffix (`core-concepts/tasks`), or a file under references/ " +
+          "for a task-authoring skill.",
+        flags: {
+          full: {
+            kind: "boolean",
+            help: "Also print every page of the skill (a docs folder's pages, or references/ and templates/), each behind a `--- <path> ---` line",
+          },
+          all: { kind: "boolean", help: "Every skill, instead of naming them" },
+        },
+        minPositionals: 0,
+        maxPositionals: Infinity,
+        positionalUsage: "<name> [name...] | <name> <page>",
+        examples: [
+          "evolve skills get evals",
+          "evolve skills get evals core-concepts/tasks",
+          "evolve skills get create-task --full",
+        ],
+      },
+      path: {
+        summary: "Print the skills root, or one skill's folder",
+        flags: {},
+        minPositionals: 0,
+        maxPositionals: 1,
+        positionalUsage: "[name]",
+        examples: ["evolve skills path", "evolve skills path evals"],
+      },
+      install: {
+        summary: "Install the evolve pointer skill for your agents",
+        notes:
+          "Each target gets <folder>/evolve/SKILL.md; the path written is printed. " +
+          "A file already there with different content is left alone unless --force.",
+        flags: {
+          target: {
+            kind: "string",
+            value: `<${[...INSTALL_TARGETS, "all"].join("|")}>`,
+            help:
+              "Which agent home: ~/.claude, ~/.codex, ~/.cursor, ~/.copilot, ~/.gemini, " +
+              "~/.config/opencode or ~/.agents, each under skills/",
+            default: "all",
+            group: "Destination",
+          },
+          path: {
+            kind: "string",
+            value: "<dir>",
+            help: "A skills directory of your own instead of --target",
+            group: "Destination",
+          },
+          force: { kind: "boolean", help: "Overwrite an installed SKILL.md whose content differs" },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        examples: ["evolve skills install", "evolve skills install --target claude", "evolve skills install --path ./skills"],
+      },
+    },
+  },
   job: {
     summary: "Start, follow, and derive jobs",
     commands: {
       start: {
-        summary: "Start a job (add --watch to follow it)",
+        summary: "Start a job",
         flags: JOB_START_FLAGS,
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve job start -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch",
+        examples: jobStartExamples("evolve job start"),
       },
       list: {
-        summary: "List jobs (newest first): yours, or --scope shared for your teams'",
+        summary: "List your jobs, newest first",
         flags: {
           ...LIST_FLAGS,
-          search: { kind: "string", value: "<text>", help: "Free-text filter over job name and dataset names" },
+          search: { kind: "string", value: "<text>", help: "Free-text filter over job name and dataset names", group: "Filter" },
           scope: SCOPE_FLAG,
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve job list --limit 20 -q",
+        examples: ["evolve job list", "evolve job list --scope shared --search deep-swe", "evolve job list -l 20 -q"],
       },
       show: {
-        summary: "Show one or more jobs in full (incl. pass@k, once attempts settle)",
+        summary: "Show one or more jobs in full",
         flags: {},
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<id> [id...]",
-        example: "evolve job show 3e1f9a2c-…",
+        examples: ["evolve job show 3e1f9a2c", "evolve job show 3e1f9a2c 9b7d4e10 --json"],
       },
       trials: {
         summary: "List a job's trials",
         flags: {
           ...LIST_FLAGS,
-          status: { kind: "string", value: "<s1,s2,...>", help: "Filter by trial status (e.g. INFRASTRUCTURE_ERROR)" },
-          dataset: { kind: "string", value: "<name>", help: "Filter to one dataset's trials" },
+          status: { kind: "string", value: "<s1,s2,...>", help: "Only trials in these statuses", group: "Filter" },
+          dataset: { kind: "string", value: "<name>", help: "Only one dataset's trials", group: "Filter" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job trials 3e1f9a2c-… --status FAILED,SCORING_ERROR",
+        examples: ["evolve job trials 3e1f9a2c", "evolve job trials 3e1f9a2c --status FAILED,SCORING_ERROR"],
       },
       tasks: {
-        summary: "Per-task rollup of a job",
+        summary: "Show a job's per-task rollup",
         flags: { ...LIST_FLAGS },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job tasks 3e1f9a2c-…",
+        examples: ["evolve job tasks 3e1f9a2c"],
       },
       compare: {
-        summary: "Compare 2-10 jobs side by side",
+        summary: "Compare 2 to 10 jobs side by side",
         flags: {},
         minPositionals: 2,
         maxPositionals: 10,
         positionalUsage: "<id> <id> [...]",
-        example: "evolve job compare 3e1f9a2c-… 9b7d4e10-…",
+        examples: ["evolve job compare 3e1f9a2c 9b7d4e10"],
       },
       cancel: {
-        summary: "Request cancellation of a job",
+        summary: "Cancel a job",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job cancel 3e1f9a2c-…",
+        examples: ["evolve job cancel 3e1f9a2c"],
       },
       delete: {
-        summary: "Permanently delete a job you created — trials, traces, analyses and stored files",
+        summary: "Delete a job you created, with everything it stored",
         flags: {
           yes: { kind: "boolean", short: "y", help: "Delete without a confirmation prompt" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job delete 3e1f9a2c-… --yes",
+        examples: ["evolve job delete 3e1f9a2c", "evolve job delete 3e1f9a2c --yes"],
       },
       stop: {
-        summary: "Stop one dataset's live trials without cancelling the job",
+        summary: "Stop one dataset's live trials, keeping the job",
         flags: {
-          dataset: { kind: "string", value: "<name>", help: "The dataset whose live trials to stop (required)" },
+          dataset: { kind: "string", value: "<name>", help: "The dataset whose live trials to stop; required" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job stop 3e1f9a2c-… --dataset deep-swe",
+        examples: ["evolve job stop 3e1f9a2c --dataset deep-swe"],
       },
       resume: {
-        summary: "New linked job over a terminal job's failed or stopped trials",
+        summary: "Start a linked job over failed or stopped trials",
         flags: {
           "filter-error-type": {
             kind: "repeat",
             short: "f",
             value: "<type>",
-            help:
-              "Failure types to resume, matched on exception_info.exception_type " +
-              "(repeatable; default: the standard failure set plus stopped trials)",
+            help: "Failure types to resume, by exception type; repeatable",
+            default: "the standard failure set plus stopped trials",
           },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job resume 3e1f9a2c-… -f InfrastructureError",
+        examples: ["evolve job resume 3e1f9a2c", "evolve job resume 3e1f9a2c -f InfrastructureError"],
       },
       retry: {
-        summary: "New linked job re-running selected trials (all, failed-only, or named ids)",
+        summary: "Start a linked job re-running chosen trials",
+        notes: "Without a flag every trial runs again. --failed-only and --trial do not combine.",
         flags: {
           "failed-only": {
             kind: "boolean",
-            help:
-              "Only retry failed trials (SCORING_ERROR, INFRASTRUCTURE_ERROR, BUDGET, INDETERMINATE); " +
-              "stopped and scored trials are not failures",
+            help: "Only failed trials: SCORING_ERROR, INFRASTRUCTURE_ERROR, BUDGET, INDETERMINATE",
+            group: "Selection",
           },
           trial: {
             kind: "repeat",
             short: "t",
             value: "<trial-id>",
-            help:
-              "Retry exactly this trial (repeatable, all-or-nothing; each must be settled, " +
-              "the job may still be running). Not combinable with --failed-only",
+            help: "Exactly this settled trial; repeatable, all or nothing",
+            group: "Selection",
           },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job retry 3e1f9a2c-… --failed-only",
+        examples: ["evolve job retry 3e1f9a2c --failed-only", "evolve job retry 3e1f9a2c -t d1a10c4e -t d1a10f72"],
       },
       regrade: {
-        summary: "Verifier-only re-run of a terminal job (the result IS a job)",
+        summary: "Re-run only the verifier over a finished job",
+        notes: "The result is a new job linked to the source; the source is never changed.",
         flags: {
-          status: { kind: "string", value: "<s1,s2,...>", help: "Only regrade source trials in these statuses" },
-          task: { kind: "string", value: "<name>", help: "Only regrade source trials of this task" },
+          status: { kind: "string", value: "<s1,s2,...>", help: "Only source trials in these statuses", group: "Selection" },
+          task: { kind: "string", value: "<name>", help: "Only source trials of this task", group: "Selection" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job regrade 3e1f9a2c-… --task tricky-task",
+        examples: ["evolve job regrade 3e1f9a2c", "evolve job regrade 3e1f9a2c --task tricky-task"],
       },
       imports: {
-        summary: "List your job imports (uploads) newest first — how an import id is found again",
+        summary: "List your job uploads, newest first",
         flags: {
           ...LIST_FLAGS,
-          status: { kind: "string", value: "<QUEUED|RUNNING|COMPLETED|FAILED>", help: "Filter by import status" },
+          status: { kind: "string", value: "<QUEUED|RUNNING|COMPLETED|FAILED>", help: "Only uploads in this status", group: "Filter" },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve job imports --status RUNNING",
+        examples: ["evolve job imports", "evolve job imports --status RUNNING"],
       },
       import: {
-        summary: "Show one job import (an upload's record); --watch follows it to the job or its typed failure",
+        summary: "Show one job upload, or follow it with --watch",
         flags: {
-          watch: { kind: "boolean", help: "Poll until the import settles: COMPLETED (the job is printed) or FAILED" },
+          watch: { kind: "boolean", help: "Poll until the upload is COMPLETED, printing the job, or FAILED" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<import-id>",
-        example: "evolve job import cmfl2q8r30001v4kx9zd1h7wa --watch",
+        examples: ["evolve job import cmfl2q8r30001v4kx9zd1h7wa --watch"],
       },
       download: {
-        summary:
-          "Download the job's results, unpacked as the standard job-directory tree (plus evolve.json records)",
+        summary: "Download a job as a Harbor job directory",
+        notes: "The tree lands in <dir>/job-<id>/, with an evolve.json record beside each Harbor file.",
         flags: {
-          "output-dir": {
-            kind: "string",
-            short: "o",
-            value: "<dir>",
-            help: "Directory to unpack into (default: current dir); the tree lands in <dir>/job-<id>/",
-          },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to unpack into", default: "the current directory" },
           overwrite: { kind: "boolean", help: "Replace an existing <dir>/job-<id>/" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve job download 3e1f9a2c-… -o results/",
+        examples: ["evolve job download 3e1f9a2c -o results/"],
       },
       grep: {
-        summary: "Search every trial's parsed trace in one server-side pass",
+        summary: "Search every trial's trace for a pattern",
         flags: {
-          type: { kind: "string", value: "<event-type>", help: "Only search events of exactly this type" },
-          limit: {
-            kind: "number",
-            short: "l",
-            value: "<n>",
-            help: "Per-trial match groups per page (default 50, max 200)",
-          },
-          cursor: { kind: "string", value: "<c>", help: "Resume after this trial id (the previous page's nextCursor)" },
+          type: { kind: "string", value: "<event-type>", help: "Only events of exactly this type", group: "Selection" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Per-trial match groups per page, at most 200", default: "50", group: "Paging" },
+          cursor: { kind: "string", value: "<c>", help: "Resume after this trial id, the previous page's nextCursor", group: "Paging" },
         },
         minPositionals: 2,
         maxPositionals: 2,
         positionalUsage: "<id> <pattern>",
-        example: "evolve job grep 3e1f9a2c-… 'permission denied'",
+        examples: ["evolve job grep 3e1f9a2c 'permission denied'", "evolve job grep 3e1f9a2c 'rm -rf' --type tool_call"],
       },
     },
   },
@@ -618,82 +739,78 @@ const GROUPS: Record<string, GroupSpec> = {
     summary: "Inspect, download, and act on single trials",
     commands: {
       show: {
-        summary: "Show one trial in full detail",
+        summary: "Show one trial in full",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial show d1a10c4e-…",
+        examples: ["evolve trial show d1a10c4e"],
       },
       trace: {
-        summary: "Print a trial's parsed trace, filtered server-side",
+        summary: "Print a trial's parsed trace",
         flags: {
-          type: { kind: "string", value: "<event-type>", help: "Only events of exactly this type" },
+          type: { kind: "string", value: "<event-type>", help: "Only events of exactly this type", group: "Selection" },
           grep: {
             kind: "string",
             value: "<pattern>",
-            help:
-              "Only events matching this case-insensitive regex over type + content " +
-              "(a plain string is a plain substring — grep's own grammar)",
+            help: "Only events matching this case-insensitive regex over type and content",
+            group: "Selection",
           },
-          tail: { kind: "number", value: "<n>", help: "Only the last N matching events" },
-          cursor: { kind: "string", value: "<seq>", help: "Resume after this seq" },
-          limit: { kind: "number", short: "l", value: "<n>", help: "Events per page fetch (default 200, max 1000)" },
+          tail: { kind: "number", value: "<n>", help: "Only the last N matching events", group: "Selection" },
+          cursor: { kind: "string", value: "<seq>", help: "Resume after this seq", group: "Paging" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Events per page, at most 1000", default: "200", group: "Paging" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial trace d1a10c4e-… --grep 'permission denied' --tail 50",
+        examples: ["evolve trial trace d1a10c4e", "evolve trial trace d1a10c4e --grep 'permission denied' --tail 50"],
       },
       download: {
-        summary: "Save a trial as Harbor's trial tree (plus evolve.json), or stream one artifact",
+        summary: "Save a trial's tree, or stream one artifact",
+        notes: "The tree is Harbor's trial directory, with an evolve.json record, under <dir>/<trial-id>/.",
         flags: {
-          "output-dir": {
-            kind: "string",
-            short: "o",
-            value: "<dir>",
-            help: "Directory to save under (default: trials/); files land in <dir>/<trial-id>/",
-          },
-          overwrite: { kind: "boolean", help: "Replace an existing <dir>/<trial-id>/" },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to save under", default: "trials/", group: "Save" },
+          overwrite: { kind: "boolean", help: "Replace an existing <dir>/<trial-id>/", group: "Save" },
           stream: {
             kind: "string",
             value: "<artifact>",
             help:
-              "Print ONE artifact to stdout instead of saving: trace-parsed | verifier | " +
-              "trace-stdout | trace-stderr | trace-atif (the ATIF trajectory) | " +
-              "trajectory (reserved: the harness-native session file) | agent-home",
+              "Print one artifact to stdout instead: trace-parsed, verifier, trace-stdout, " +
+              "trace-stderr, trace-atif (the ATIF trajectory), trajectory (reserved: the " +
+              "harness-native session file) or agent-home",
+            group: "Stream",
           },
-          cursor: { kind: "string", value: "<seq>", help: "With --stream trace-parsed: resume after this seq" },
-          limit: { kind: "number", value: "<n>", help: "With --stream trace-parsed: max events per page" },
+          cursor: { kind: "string", value: "<seq>", help: "With --stream trace-parsed: resume after this seq", group: "Stream" },
+          limit: { kind: "number", value: "<n>", help: "With --stream trace-parsed: max events per page", group: "Stream" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial download d1a10c4e-… --stream trace-stdout",
+        examples: ["evolve trial download d1a10c4e -o trials/", "evolve trial download d1a10c4e --stream trace-stdout"],
       },
       retry: {
-        summary: "Run one settled trial again (the result IS a job)",
+        summary: "Run one settled trial again, as a new job",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial retry d1a10c4e-…",
+        examples: ["evolve trial retry d1a10c4e"],
       },
       regrade: {
-        summary: "Verifier-only re-run of one trial (the result IS a job)",
+        summary: "Re-run only the verifier over one trial, as a new job",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<trial-id>",
-        example: "evolve trial regrade d1a10c4e-…",
+        examples: ["evolve trial regrade d1a10c4e"],
       },
       stop: {
-        summary: "Stop in-flight trials without cancelling their job",
+        summary: "Stop running trials, keeping their job",
         flags: {},
         minPositionals: 1,
         maxPositionals: Infinity,
         positionalUsage: "<trial-id> [trial-id...]",
-        example: "evolve trial stop d1a10c4e-… d1a10f72-…",
+        examples: ["evolve trial stop d1a10c4e d1a10f72"],
       },
     },
   },
@@ -703,81 +820,61 @@ const GROUPS: Record<string, GroupSpec> = {
   // document, the analyzer's own transcript, and its stored artifacts —
   // never the analyzed trial's, which keep their own verbs above.
   analysis: {
-    summary: "List, inspect, and download trace-analysis runs",
+    summary: "List, inspect, and download trace analyses",
     commands: {
       list: {
-        summary: "List analysis runs (newest first) with the trial, job, and task each judged",
+        summary: "List analysis runs, newest first",
         flags: {
           ...LIST_FLAGS,
           scope: SCOPE_FLAG,
-          job: { kind: "string", value: "<job-id>", help: "Only analyses of this job's trials (id or an unambiguous prefix)" },
+          job: { kind: "string", value: "<job-id>", help: "Only analyses of this job's trials; a prefix works", group: "Filter" },
           status: {
             kind: "string",
             value: "<s1,s2,...>",
-            help: `Filter by analysis status (${ANALYSIS_STATUSES.join(", ")})`,
+            help: `Only these statuses: ${ANALYSIS_STATUSES.join(", ")}`,
+            group: "Filter",
           },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve analysis list --job 3e1f9a2c-… --status failed",
+        examples: ["evolve analysis list", "evolve analysis list --job 3e1f9a2c --status failed"],
       },
       show: {
-        summary: "Show one analysis run in full (the verdict document)",
+        summary: "Show one analysis run: the verdict",
         notes: ANALYSIS_REF_RULE,
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<analysis-id | trial-id>",
-        example: "evolve analysis show a0a1b2c3-…",
+        examples: ["evolve analysis show a0a1b2c3", "evolve analysis show d1a10c4e"],
       },
       trace: {
-        summary: "Print the analyzer's own parsed transcript",
+        summary: "Print the analyzer's own transcript",
         notes: ANALYSIS_REF_RULE,
-        flags: {
-          since: {
-            kind: "number",
-            value: "<n>",
-            help:
-              "Skip the first N events — to resume, pass the count you already hold " +
-              "(seqs are dense from 0, so N is also the next seq)",
-          },
-        },
+        flags: { since: SINCE_FLAG },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<analysis-id | trial-id>",
-        example: "evolve analysis trace a0a1b2c3-… --since 200",
+        examples: ["evolve analysis trace a0a1b2c3", "evolve analysis trace a0a1b2c3 --since 200"],
       },
       download: {
-        summary:
-          "Save an analysis run as Harbor's wrapper-trial folder (+ evolve.json), or stream one artifact",
+        summary: "Save an analysis run, or stream one artifact",
         notes: ANALYSIS_REF_RULE,
         flags: {
-          "output-dir": {
-            kind: "string",
-            short: "o",
-            value: "<dir>",
-            help:
-              "Directory to save under (default: analyses/); the run lands in " +
-              "<dir>/analyze-<analyzed trial>__<7 chars>/ — Harbor's own trial name, read from the archive",
-          },
-          overwrite: { kind: "boolean", help: "Replace an existing folder of the same name" },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to save the run's trial folder under", default: "analyses/", group: "Save" },
+          overwrite: { kind: "boolean", help: "Replace an existing folder of the same name", group: "Save" },
           stream: {
             kind: "string",
             value: "<artifact>",
-            help:
-              "Print ONE artifact to stdout instead of saving: analysis (the verdict " +
-              "document) | trace-parsed | trace-stdout | trace-stderr | agent-home",
+            help: "Print one artifact to stdout instead: analysis (the verdict), trace-parsed, trace-stdout, trace-stderr or agent-home",
+            group: "Stream",
           },
-          since: {
-            kind: "number",
-            value: "<n>",
-            help: "With --stream trace-parsed: skip the first N events",
-          },
+          since: { ...SINCE_FLAG, help: "With --stream trace-parsed: skip the first N events", group: "Stream" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<analysis-id | trial-id>",
-        example: "evolve analysis download a0a1b2c3-… --stream trace-stdout",
+        examples: ["evolve analysis download a0a1b2c3 -o analyses/", "evolve analysis download a0a1b2c3 --stream trace-stdout"],
       },
     },
   },
@@ -789,81 +886,63 @@ const GROUPS: Record<string, GroupSpec> = {
   // `evolve check list|show|trace|download` is routed here by parseArgs; a
   // task directory literally named like a verb is written `./list`.
   check: {
-    summary: "Read back task quality checks (the verb itself is `evolve check <path>`)",
+    summary: "Read task quality checks back",
     commands: {
       list: {
-        summary: "List your task quality checks (newest first)",
+        summary: "List your task quality checks, newest first",
         flags: {
           ...LIST_FLAGS,
           scope: SCOPE_FLAG,
           status: {
             kind: "string",
             value: "<s1,s2,...>",
-            help: `Filter by check status (${CHECK_STATUSES.join(", ")})`,
+            help: `Only these statuses: ${CHECK_STATUSES.join(", ")}`,
+            group: "Filter",
           },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve check list --status running",
+        examples: ["evolve check list", "evolve check list --status running"],
       },
       show: {
-        summary: "Show one task quality check in full (Harbor's check report)",
+        summary: "Show one check: Harbor's check report, one row per task",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<check-id>",
-        example: "evolve check show 5f2c9b1e-…",
+        examples: ["evolve check show 5f2c9b1e"],
       },
       // The per-task reads — a task check read like an analysis run (owner
       // ruling 2026-09-09): the analysis verbs' flags, verbatim, on the TASK
       // CHECK id (`check show` prints one per task).
       trace: {
-        summary: "Print the checker's own parsed transcript for one task check",
-        flags: {
-          since: {
-            kind: "number",
-            value: "<n>",
-            help:
-              "Skip the first N events — to resume, pass the count you already hold " +
-              "(seqs are dense from 0, so N is also the next seq)",
-          },
-        },
+        summary: "Print the checker's transcript for one task check",
+        flags: { since: SINCE_FLAG },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<task-check-id>",
-        example: "evolve check trace 7c1d2e3f-… --since 200",
+        examples: ["evolve check trace 7c1d2e3f", "evolve check trace 7c1d2e3f --since 200"],
       },
       download: {
-        summary:
-          "Save a check as Harbor's check job folder (check_report.json + one folder per task) by its check id, " +
-          "one task check's folder by its task check id, or stream one task check's artifact",
+        summary: "Save a check, one task check, or stream an artifact",
+        notes:
+          "A check id saves Harbor's check job folder, check_report.json and one folder per task, " +
+          "under <dir>/check-<id>/. A task check id saves that task's folder alone.",
         flags: {
-          "output-dir": {
-            kind: "string",
-            short: "o",
-            value: "<dir>",
-            help:
-              "Directory to save under (default: checks/); a check id lands in <dir>/check-<id>/, a task check id in " +
-              "<dir>/check-<task>__<7 chars>/ — Harbor's own trial name, read from the archive",
-          },
-          overwrite: { kind: "boolean", help: "Replace an existing folder of the same name" },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to save under", default: "checks/", group: "Save" },
+          overwrite: { kind: "boolean", help: "Replace an existing folder of the same name", group: "Save" },
           stream: {
             kind: "string",
             value: "<artifact>",
-            help:
-              "Print ONE artifact of a TASK CHECK to stdout instead of saving: task-check (the result " +
-              "document) | trace-parsed | trace-stdout | trace-stderr | agent-home",
+            help: "Print one artifact of a task check to stdout instead: task-check (the result), trace-parsed, trace-stdout, trace-stderr or agent-home",
+            group: "Stream",
           },
-          since: {
-            kind: "number",
-            value: "<n>",
-            help: "With --stream trace-parsed: skip the first N events",
-          },
+          since: { ...SINCE_FLAG, help: "With --stream trace-parsed: skip the first N events", group: "Stream" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<check-id | task-check-id>",
-        example: "evolve check download 3f9a1c2e-… -o checks/",
+        examples: ["evolve check download 3f9a1c2e -o checks/", "evolve check download 7c1d2e3f --stream trace-stdout"],
       },
     },
   },
@@ -875,16 +954,16 @@ const GROUPS: Record<string, GroupSpec> = {
     summary: "List and inspect managed-agent sessions",
     commands: {
       list: {
-        summary: "List your sessions (newest first)",
+        summary: "List your sessions, newest first",
         flags: {
           ...LIST_FLAGS,
-          state: { kind: "string", value: "<live|ended>", help: "Only live or only ended sessions" },
-          agent: { kind: "string", value: "<name>", help: "Only sessions of this agent harness (exact match)" },
-          "tag-prefix": { kind: "string", value: "<prefix>", help: "Only sessions whose tag starts with this prefix" },
+          state: { kind: "string", value: "<live|ended>", help: "Only live or only ended sessions", group: "Filter" },
+          agent: { kind: "string", value: "<name>", help: "Only sessions of this agent harness", group: "Filter" },
+          "tag-prefix": { kind: "string", value: "<prefix>", help: "Only sessions whose tag starts with this prefix", group: "Filter" },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve session list --state ended --tag-prefix qa- -q",
+        examples: ["evolve session list", "evolve session list --state ended --tag-prefix qa- -q"],
       },
       show: {
         summary: "Show one session in full",
@@ -892,7 +971,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<session-id>",
-        example: "evolve session show 5f2c1a0e-7b3d-4c21-9e10-2f8a6c4d1b7e",
+        examples: ["evolve session show 5f2c1a0e"],
       },
     },
   },
@@ -903,66 +982,79 @@ const GROUPS: Record<string, GroupSpec> = {
         summary: "List the dataset catalog",
         flags: {
           ...LIST_FLAGS,
-          search: { kind: "string", value: "<text>", help: "Free-text filter over name and description" },
+          search: { kind: "string", value: "<text>", help: "Free-text filter over name and description", group: "Filter" },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve dataset list -q",
+        examples: ["evolve dataset list", "evolve dataset list --search swe -q"],
       },
       show: {
-        summary: "Show one dataset (versions + tasks + providers)",
+        summary: "Show a dataset's versions, tasks and providers",
         flags: {
-          limit: { kind: "number", short: "l", value: "<n>", help: "Task-list page size" },
-          cursor: { kind: "string", value: "<c>", help: "Resume the task list from a cursor" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Task-list page size", group: "Paging" },
+          cursor: { kind: "string", value: "<c>", help: "Resume the task list from a cursor", group: "Paging" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name[@version]>",
-        example: "evolve dataset show deep-swe@1.1",
+        examples: ["evolve dataset show terminal-bench-4@4.0"],
       },
       check: {
-        summary: "Pre-flight a local corpus (dry run — nothing uploaded, nothing written)",
+        summary: "Pre-flight a local corpus without uploading anything",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<dir>",
-        example: "evolve dataset check ./corpus",
+        examples: ["evolve dataset check ./corpus"],
       },
       publish: {
-        summary: "Publish a dataset version from a git source, a local directory, or a fetchable source (public tarball url / Harbor hub package)",
+        summary: "Publish a dataset version",
+        notes:
+          "One source per publish: a pinned git ref, a local directory, or a public tarball or " +
+          "Harbor hub package. --name and --version are required with --git and with --from " +
+          "<url>; a local dataset.toml or a hub package can supply them.",
         flags: {
-          git: { kind: "string", value: "<url>", help: "Git repository URL (with --ref)" },
-          ref: { kind: "string", value: "<ref>", help: "Pinned git ref: a full 40-hex commit sha, or a tag (resolved to its commit at publish and verified at import). Branch names are refused — unpinned_git_ref (with --git)" },
-          path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus (with --git; sparse checkout — only that folder is imported)" },
-          dir: { kind: "string", value: "<path>", help: "Local corpus directory (tarred + uploaded; pre-flighted first — see --skip-preflight)" },
-          from: { kind: "string", value: "<url|hub:org/name[@ref]>", help: "Fetchable source the SERVER pulls itself (no local bytes): a public https tarball url, or hub:org/name[@ref] — a public Harbor hub package (ref: latest tag by default, a revision number, or sha256:<digest>; resolved and digest-pinned when the publish is accepted)" },
-          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend (optional with --dir when the corpus carries a dataset.toml manifest, and with --from hub:… which defaults to the package's short name; required with --git and --from <url>)" },
-          version: { kind: "string", value: "<v>", help: "Version label for the published version (optional with --dir when dataset.toml declares one, and with --from hub:… which defaults to the resolved revision; required with --git and --from <url>)" },
-          watch: { kind: "boolean", help: "Poll until the publish settles: the version READY (built and active) or FAILED" },
-          "skip-preflight": { kind: "boolean", help: "Upload without the pre-flight check (a refused task then lands FAILED at import instead of being caught here)" },
+          git: { kind: "string", value: "<url>", help: "Git repository URL, with --ref", group: "Source" },
+          ref: { kind: "string", value: "<ref>", help: "Pinned git ref, a full commit sha or a tag; a branch is refused", group: "Source" },
+          path: { kind: "string", value: "<subfolder>", help: "Repository subfolder holding the corpus, with --git", group: "Source" },
+          dir: { kind: "string", value: "<path>", help: "Local corpus directory, pre-flighted then uploaded", group: "Source" },
+          from: {
+            kind: "string",
+            value: "<url|hub:org/name[@ref]>",
+            help: "A public https tarball URL, or a public Harbor hub package",
+            group: "Source",
+          },
+          name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend", group: "Version" },
+          version: { kind: "string", value: "<v>", help: "Version label for the published version", group: "Version" },
+          watch: { kind: "boolean", help: "Poll until the version is READY or FAILED", group: "Output" },
+          "skip-preflight": { kind: "boolean", help: "Upload a --dir without the pre-flight check", group: "Source" },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve dataset publish --from hub:cookbook/hello-world --watch",
+        examples: [
+          "evolve dataset publish --from hub:cookbook/hello-world --watch",
+          "evolve dataset publish --dir ./corpus --name my-swe --version 1.0 --watch",
+          "evolve dataset publish \\\n--git https://github.com/acme/tasks \\\n--ref v1.2.0 \\\n--path corpus \\\n--name acme-tasks --version 1.2.0",
+        ],
       },
       watch: {
-        summary:
-          "Re-attach to a publish and follow it to READY/FAILED — the same follow `dataset publish --watch` renders (everything from the 202 on); works after the CLI exited, or from another machine",
+        summary: "Follow a publish until it is READY or FAILED",
+        notes: "The same follow `dataset publish --watch` prints, re-attached later or from another machine.",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name | import-id>",
-        example: "evolve dataset watch deep-swe",
+        examples: ["evolve dataset watch my-swe"],
       },
       download: {
-        summary: "Download the original corpus package (owner only)",
+        summary: "Download the original corpus package",
         flags: {
-          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to save into (default: current dir)" },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Directory to save into", default: "the current directory" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name[@version]>",
-        example: "evolve dataset download my-swe@1.0 -o corpora/",
+        examples: ["evolve dataset download my-swe@1.0 -o corpora/"],
       },
       activate: {
         summary: "Make a READY version the dataset's active version",
@@ -970,7 +1062,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 2,
         maxPositionals: 2,
         positionalUsage: "<name> <version>",
-        example: "evolve dataset activate my-swe 1.0",
+        examples: ["evolve dataset activate my-swe 1.0"],
       },
     },
   },
@@ -978,36 +1070,36 @@ const GROUPS: Record<string, GroupSpec> = {
     summary: "Upload and manage platform-stored skills",
     commands: {
       list: {
-        summary: "List your uploaded skills (newest first)",
+        summary: "List your uploaded skills, newest first",
         flags: { ...LIST_FLAGS },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve skill list",
+        examples: ["evolve skill list"],
       },
       upload: {
-        summary: "Upload a skill folder (its name becomes your moving name pointer)",
+        summary: "Upload a skill folder; its name becomes a moving pointer",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<dir>",
-        example: "evolve skill upload ./my-skill",
+        examples: ["evolve skill upload ./my-skill"],
       },
       show: {
-        summary: "Show one uploaded skill (metadata + SKILL.md)",
+        summary: "Show one uploaded skill, metadata and SKILL.md",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id | name:<skill-name>>",
-        example: "evolve skill show name:my-skill",
+        examples: ["evolve skill show name:my-skill"],
       },
       delete: {
-        summary:
-          "Delete an uploaded skill record (past jobs keep their locks); refused (skill_in_use, 409) while a running job references it",
+        summary: "Delete an uploaded skill record",
+        notes: "Past jobs keep their locks. A skill a running job references is refused with skill_in_use.",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        example: "evolve skill delete 6f6f1f36-1c60-4f8e-9e2b-2a54cbb0f2aa",
+        examples: ["evolve skill delete 6f6f1f36"],
       },
     },
   },
@@ -1019,7 +1111,7 @@ const GROUPS: Record<string, GroupSpec> = {
         flags: { ...LIST_FLAGS },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve agent list",
+        examples: ["evolve agent list"],
       },
       show: {
         summary: "Show one registered agent",
@@ -1027,33 +1119,37 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name>",
-        example: "evolve agent show acme-cli",
+        examples: ["evolve agent show acme-cli"],
       },
       add: {
-        summary: "Register an agent (install script or local directory)",
+        summary: "Register an agent from an install script or a directory",
         flags: {
-          "install-script": { kind: "string", value: "<path>", help: "Install script file; its contents are uploaded" },
-          dir: { kind: "string", value: "<path>", help: "Local agent directory (tarred + uploaded)" },
-          run: { kind: "string", value: "<command>", help: "Run command, executed with sh -c (required)" },
+          "install-script": { kind: "string", value: "<path>", help: "Install script; its contents are uploaded", group: "Source" },
+          dir: { kind: "string", value: "<path>", help: "Local agent directory, uploaded as an archive", group: "Source" },
+          run: { kind: "string", value: "<command>", help: "Run command, executed with sh -c; required", group: "Run" },
           "agent-env": {
             kind: "repeat",
             aliases: ["ae"],
             value: "KEY=VALUE",
-            help: "Env injected at run time (repeatable)",
+            help: "Env set at run time; repeatable",
+            group: "Run",
           },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name>",
-        example: 'evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"',
+        examples: [
+          'evolve agent add acme-cli \\\n--install-script ./install.sh \\\n--run "acme-cli --headless"',
+          'evolve agent add acme-cli \\\n--dir ./acme-agent \\\n--run "./bin/acme --headless" \\\n--ae ACME_MODE=eval',
+        ],
       },
       remove: {
-        summary: "Delete a registered agent (past jobs keep their record)",
+        summary: "Delete a registered agent; past jobs keep their record",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<name>",
-        example: "evolve agent remove acme-cli",
+        examples: ["evolve agent remove acme-cli"],
       },
     },
   },
@@ -1061,11 +1157,11 @@ const GROUPS: Record<string, GroupSpec> = {
     summary: "Identity, API keys, and your organizations",
     commands: {
       status: {
-        summary: "Who am I: the caller and the API key in use",
+        summary: "Show who you are and which API key is in use",
         flags: {},
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve auth status",
+        examples: ["evolve auth status"],
       },
       // Harbor's `harbor auth org list` (their cli/auth.py `org_app`): the
       // organizations the caller belongs to, with Harbor's own flag set —
@@ -1075,104 +1171,107 @@ const GROUPS: Record<string, GroupSpec> = {
       "org list": {
         summary: "List the organizations you belong to",
         flags: {
-          search: { kind: "string", value: "<text>", help: "Free-text filter over slug, display name and role" },
+          search: { kind: "string", value: "<text>", help: "Free-text filter over slug, display name and role", group: "Filter" },
           columns: LIST_FLAGS.columns,
-          quiet: { kind: "boolean", short: "q", help: "Print only slugs, one per line (for piping)" },
+          quiet: { kind: "boolean", short: "q", help: "Print only slugs, one per line", group: "Output" },
           "no-trunc": LIST_FLAGS["no-trunc"],
           "no-headers": LIST_FLAGS["no-headers"],
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve auth org list",
+        examples: ["evolve auth org list", "evolve auth org list -q"],
       },
       // The recorded hosted extension: an organization's quota and live
       // usage are hosted facts Harbor's closed server does not publish.
       "org show": {
-        summary: "Show one organization: your role, members, its quota and live usage",
+        summary: "Show one organization: role, members, quota and usage",
         flags: {},
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<slug>",
-        example: "evolve auth org show acme",
+        examples: ["evolve auth org show acme"],
       },
     },
   },
   secrets: {
-    summary: "Store and manage env secrets (values are write-only; reads return metadata)",
+    summary: "Store and manage env secrets",
+    notes: "Values are write-only: reads return metadata, never the value.",
     commands: {
       set: {
-        summary:
-          "Store an env secret, or re-shape delivery/scoping by restating the same value; " +
-          "a DIFFERENT value under an existing name+label is refused (secret_exists, 409) — " +
-          "delete first or use another label, never a silent overwrite",
+        summary: "Store an env secret",
+        notes:
+          "Restating the same value re-shapes its delivery or scoping. A different value under " +
+          "an existing name and label is refused with secret_exists; delete it first or use " +
+          "another label.",
         flags: {
           value: {
             kind: "string",
             value: "<value>",
-            help: "The secret value; omit to pipe it on stdin (keeps it out of shell history)",
+            help: "The secret value; omit it to pipe the value on stdin",
+            group: "Value",
           },
           label: {
             kind: "string",
             value: "<label>",
-            help: "Labeled-row identity — several values of one name live side by side (default: 'default')",
+            help: "The row under the name; several values of one name can coexist",
+            default: "default",
+            group: "Value",
           },
           delivery: {
             kind: "string",
             value: "<mode>",
-            help:
-              "Required: 'brokered' (value never enters a sandbox; needs the --allowed-* scoping) " +
-              "or 'direct' (raw value in the sandbox env; scoping refused)",
+            help: "Required: brokered (the value never enters a sandbox; scoped with --allowed-*) or direct (raw in the sandbox env)",
+            group: "Delivery",
           },
           "allowed-host": {
             kind: "repeat",
             value: "<host>",
-            help: "Brokered scoping: hostname or wildcard like *.example.com (repeatable)",
+            help: "Brokered scoping: hostname or wildcard like *.example.com; repeatable",
+            group: "Delivery",
           },
           "allowed-path-prefix": {
             kind: "repeat",
             value: "</prefix>",
-            help: "Brokered scoping: allowed URL path prefix (repeatable)",
+            help: "Brokered scoping: allowed URL path prefix; repeatable",
+            group: "Delivery",
           },
           "allowed-method": {
             kind: "repeat",
             value: "<METHOD>",
-            help: "Brokered scoping: allowed HTTP method (repeatable)",
+            help: "Brokered scoping: allowed HTTP method; repeatable",
+            group: "Delivery",
           },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<NAME>",
-        example:
-          'printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN --delivery brokered ' +
-          "--allowed-host api.github.com --allowed-path-prefix / --allowed-method GET",
+        examples: [
+          'printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN \\\n--delivery brokered \\\n--allowed-host api.github.com \\\n--allowed-path-prefix / \\\n--allowed-method GET',
+          'printf %s "$OPENAI_API_KEY" | evolve secrets set OPENAI_API_KEY \\\n--delivery direct',
+        ],
       },
       list: {
-        summary: "List your env secrets (metadata only — values never leave the server)",
+        summary: "List your env secrets",
         flags: {
-          columns: {
-            kind: "string",
-            value: "<keys|all|help>",
-            help: "Choose and order columns (comma-separated keys; 'help' lists them)",
-          },
-          quiet: { kind: "boolean", short: "q", help: "Print only name[:label], one per line" },
-          "no-trunc": { kind: "boolean", help: "Full cell content instead of one-line truncation" },
-          "no-headers": { kind: "boolean", help: "Omit the header row in piped (TSV) output" },
+          columns: LIST_FLAGS.columns,
+          quiet: { kind: "boolean", short: "q", help: "Print only name[:label], one per line", group: "Output" },
+          "no-trunc": LIST_FLAGS["no-trunc"],
+          "no-headers": LIST_FLAGS["no-headers"],
         },
         minPositionals: 0,
         maxPositionals: 0,
-        example: "evolve secrets list",
+        examples: ["evolve secrets list"],
       },
       delete: {
-        summary:
-          "Delete an env secret by name (+ --label when several labeled rows share it); " +
-          "revokes every runtime grant riding the row",
+        summary: "Delete an env secret",
+        notes: "Every runtime grant riding the row is revoked with it.",
         flags: {
-          label: { kind: "string", value: "<label>", help: "The labeled row to delete" },
+          label: { kind: "string", value: "<label>", help: "The row to delete, when several share the name" },
         },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<NAME>",
-        example: "evolve secrets delete GITHUB_TOKEN --label staging",
+        examples: ["evolve secrets delete GITHUB_TOKEN", "evolve secrets delete GITHUB_TOKEN --label staging"],
       },
     },
   },
@@ -1188,11 +1287,11 @@ const GROUPS: Record<string, GroupSpec> = {
  */
 const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   run: {
-    summary: "Start a job (add --watch to follow it) — the short form of `job start`",
+    summary: "Start a job; the short form of job start",
     flags: JOB_START_FLAGS,
     minPositionals: 0,
     maxPositionals: 0,
-    example: "evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 -k 2 --watch",
+    examples: jobStartExamples("evolve run"),
   },
   // Harbor registers `analyze` at the top level too (their cli/main.py binds
   // analyze_command as its own command); theirs takes a local job directory,
@@ -1203,17 +1302,16 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // provider's sandbox the analyzer boots — there is no local backend
   // server-side.
   analyze: {
-    summary:
-      "Analyze a terminal job's trial traces against a rubric (server-side; add --watch to follow the wave)",
+    summary: "Judge a finished job's trial traces against a rubric",
+    notes: "Each trial gets its own analysis run; `analysis list --job <id>` finds them again.",
     flags: {
       model: {
         kind: "string",
         short: "m",
         value: "<name>",
-        help:
-          "Model the analyzer agent runs (default: openrouter/deepseek/deepseek-v4.1-flash; glm-5.3-flash and haiku " +
-          "as alternatives, glm-5.3 to escalate, fireworks/deepseek-v4.1-flash the same model on its Fireworks route; " +
-          "must be on the claude roster, GET /api/meta)",
+        help: "Model the analyzer runs",
+        default: "openrouter/deepseek/deepseek-v4.1-flash",
+        group: "Analyzer",
       },
       // The one option beyond Harbor's analyze trio, recorded as the hosted
       // extension it is: `run`'s own --effort (the platform's reasoning_effort
@@ -1223,34 +1321,32 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       effort: {
         kind: "string",
         value: "<value>",
-        help:
-          "Reasoning effort the analyzer runs at (values: GET /api/meta analyze; default: the " +
-          "per-model default — high on openrouter/deepseek/deepseek-v4.1-flash, max on glm-5.3-flash)",
+        help: "Reasoning effort the analyzer runs at",
+        default: "the model's own",
+        group: "Analyzer",
       },
       rubric: {
         kind: "string",
         short: "r",
         value: "<path>",
-        help:
-          "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} " +
-          "shape; default: the platform's analyze rubric — seven criteria, score_is_earned first)",
+        help: "Rubric file, TOML, YAML or JSON, in Harbor's criteria shape",
+        default: "the built-in analyze rubric",
+        group: "Analyzer",
       },
       prompt: {
         kind: "string",
         short: "p",
         value: "<path>",
-        help:
-          "Prompt file for the evaluator agent (Harbor's -p/--prompt; its text replaces the " +
-          "built-in prompt, {trial_path}/{task_section}/{criteria_guidance} rendered). " +
-          "Uses the built-in default if not specified",
+        help: "Prompt file for the analyzer, replacing the built-in prompt",
+        group: "Analyzer",
       },
       env: {
         kind: "string",
         short: "e",
         value: "<provider>",
-        help:
-          "Sandbox provider the analyzer runs on (Harbor's -e/--env; the job lineup, " +
-          "GET /api/meta; default: the platform's analysis default)",
+        help: "Sandbox provider the analyzer runs on",
+        default: "the analysis default",
+        group: "Analyzer",
       },
       // Harbor's selection and width options, their exact spellings
       // (cli/analyze.py:278-290): -n/--n-concurrent, --passing, --failing,
@@ -1260,37 +1356,29 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         kind: "number",
         short: "n",
         value: "<n>",
-        help: "Max concurrent trial analyses (beneath the organization's ceiling; default: the ceiling)",
+        help: "Max concurrent trial analyses",
+        default: "your organization's ceiling",
+        group: "Selection",
       },
-      passing: {
-        kind: "boolean",
-        help: "Only analyze passing trials (reward=1.0)",
-      },
-      failing: {
-        kind: "boolean",
-        help: "Only analyze failing trials (reward<1.0 or exception)",
-      },
+      passing: { kind: "boolean", help: "Only passing trials, reward 1.0", group: "Selection" },
+      failing: { kind: "boolean", help: "Only failing trials, reward below 1.0 or an error", group: "Selection" },
       "n-trials": {
         kind: "number",
         short: "l",
         value: "<n>",
-        help: "Max trials to analyze (after --passing/--failing, in the job's trial order)",
+        help: "Max trials to analyze, after --passing or --failing",
+        group: "Selection",
       },
-      watch: {
-        kind: "boolean",
-        help:
-          "Poll until every analysis settles (2 s between reads, backing off to 30 s while nothing changes)",
-      },
-      quiet: {
-        kind: "boolean",
-        short: "q",
-        help: "With --watch: suppress the progress lines, print the final block only",
-      },
+      watch: { kind: "boolean", help: "Poll until every analysis settles", group: "Output" },
+      quiet: { kind: "boolean", short: "q", help: "With --watch, print only the final block", group: "Output" },
     },
     minPositionals: 1,
     maxPositionals: 1,
     positionalUsage: "<job-id>",
-    example: "evolve analyze 3e1f9a2c-… -r rubric.toml -p prompt.txt --failing -l 20 -n 2 --watch",
+    examples: [
+      "evolve analyze 3e1f9a2c --watch",
+      "evolve analyze 3e1f9a2c \\\n-r rubric.toml -p prompt.txt \\\n--failing -l 20 -n 2 \\\n--watch",
+    ],
   },
   // Harbor's `check` is a top-level command too (their cli/main.py:163
   // binds check_command beside analyze); its flags are theirs
@@ -1302,92 +1390,96 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // conventions, as on analyze; --watch follows the hosted 202; -d/--dataset
   // is the hosted source (the flag's help states the deviation).
   check: {
-    summary:
-      "Check task quality against a rubric (Harbor's `harbor check`; server-side; add --watch to follow)",
+    summary: "Check task quality against a rubric",
+    notes:
+      "Checks a local task directory, a directory of them, or with -d a published dataset. " +
+      "Results are read back with the verbs below.",
     flags: {
       model: {
         kind: "string",
         short: "m",
         value: "<name>",
-        help:
-          "Model the checker agent runs (default: openrouter/deepseek/deepseek-v4.1-flash — the analyzer's default, a recorded deviation " +
-          "from Harbor's claude-sonnet-4-6; fireworks/deepseek-v4.1-flash is the same model on its Fireworks route; " +
-          "must be on the claude roster, GET /api/meta)",
+        help: "Model the checker runs",
+        default: "openrouter/deepseek/deepseek-v4.1-flash",
+        group: "Checker",
       },
       effort: {
         kind: "string",
         value: "<value>",
-        help: "Reasoning effort the checker runs at (values: GET /api/meta analyze; default: the per-model default)",
+        help: "Reasoning effort the checker runs at",
+        default: "the model's own",
+        group: "Checker",
       },
       rubric: {
         kind: "string",
         short: "r",
         value: "<path>",
-        help:
-          "Rubric file (TOML/YAML/JSON, Harbor's {criteria: [{name, description, guidance}]} shape; " +
-          "default: the platform's check rubric — eleven criteria)",
+        help: "Rubric file, TOML, YAML or JSON, in Harbor's criteria shape",
+        default: "the built-in check rubric",
+        group: "Checker",
       },
       prompt: {
         kind: "string",
         short: "p",
         value: "<path>",
-        help:
-          "Prompt file for the evaluator agent (Harbor's -p/--prompt; its text replaces the built-in " +
-          "check prompt, {task_path}/{file_tree}/{criteria_guidance} rendered). Uses the built-in default if not specified",
+        help: "Prompt file for the checker, replacing the built-in prompt",
+        group: "Checker",
       },
       env: {
         kind: "string",
         short: "e",
         value: "<provider>",
-        help: "Sandbox provider the checker runs on (Harbor's -e/--env; the job lineup, GET /api/meta; default: the platform's analysis default)",
+        help: "Sandbox provider the checker runs on",
+        default: "the analysis default",
+        group: "Checker",
       },
       "n-concurrent": {
         kind: "number",
         short: "n",
         value: "<n>",
-        help: "Max concurrent task checks (beneath the organization's ceiling; default: the ceiling)",
+        help: "Max concurrent task checks",
+        default: "your organization's ceiling",
+        group: "Selection",
       },
       "include-task-name": {
         kind: "repeat",
         short: "i",
         value: "<glob>",
-        help: "Only check tasks matching glob (repeatable)",
+        help: "Only tasks matching the glob; repeatable",
+        group: "Selection",
       },
       "exclude-task-name": {
         kind: "repeat",
         short: "x",
         value: "<glob>",
-        help: "Skip tasks matching glob (repeatable)",
+        help: "Skip tasks matching the glob; repeatable",
+        group: "Selection",
       },
       "n-tasks": {
         kind: "number",
         short: "l",
         value: "<n>",
-        help: "Max tasks to check (after the globs, in sorted directory order)",
-      },
-      watch: {
-        kind: "boolean",
-        help: "Poll until every task check settles (2 s between reads, backing off to 30 s while nothing changes)",
-      },
-      quiet: {
-        kind: "boolean",
-        short: "q",
-        help: "With --watch: suppress the progress lines, print the final report only",
+        help: "Max tasks to check, after the globs, in sorted order",
+        group: "Selection",
       },
       dataset: {
         kind: "string",
         short: "d",
         value: "<name[@version]>",
-        help:
-          "Check a PUBLISHED dataset's tasks instead of a local path (the hosted form — a recorded deviation: " +
-          "Harbor's check takes a local path only; the checker reads the version's retained task package, and " +
-          "the job page's CHECK tab lists these checks by task). Either <path> or -d, not both",
+        help: "A published dataset's tasks instead of a local <path>; not both",
+        group: "Source",
       },
+      watch: { kind: "boolean", help: "Poll until every task check settles", group: "Output" },
+      quiet: { kind: "boolean", short: "q", help: "With --watch, print only the final report", group: "Output" },
     },
     minPositionals: 0,
     maxPositionals: 1,
     positionalUsage: "[<path>]",
-    example: "evolve check ./tasks -i 'abs-*' -l 5 --watch",
+    examples: [
+      "evolve check ./tasks --watch",
+      "evolve check ./tasks -i 'abs-*' -l 5 --watch",
+      "evolve check -d terminal-bench-4@4.0 -l 10 --watch",
+    ],
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
   // cli/main.py); ours is a deliberate subset — no --public/--share-org/
@@ -1396,29 +1488,37 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // per-trial in parallel; ours is ONE archive POST, so the flag would have
   // nothing real to do).
   upload: {
-    summary:
-      "Upload a Harbor job directory (or its .tar.gz, or a public url of one) as a terminal job — Harbor's upload, in reverse; follows the import to the job",
+    summary: "Upload a Harbor job directory as a finished job",
+    notes:
+      "Takes the directory, its .tar.gz, or with --from a public URL of one, and follows " +
+      "the upload to the job it becomes.",
     flags: {
       dataset: {
         kind: "string",
         short: "d",
         value: "<name[@version]>",
         help: "Link the uploaded trials to a published dataset version by task name",
+        group: "Link",
       },
       from: {
         kind: "string",
         value: "<url>",
-        help: "A public https url of the job archive (.tar.gz) the SERVER fetches itself — no local bytes (instead of <job_dir>)",
+        help: "A public https URL of the job archive, instead of <job_dir>",
+        group: "Source",
       },
       "no-wait": {
         kind: "boolean",
-        help: "Return after the 202 with the import id instead of following the ingest to the job (re-attach with: evolve job import <id> --watch)",
+        help: "Return with the import id instead of following it; re-attach with job import <id> --watch",
+        group: "Output",
       },
     },
     minPositionals: 0,
     maxPositionals: 1,
     positionalUsage: "<job_dir>",
-    example: "evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1",
+    examples: [
+      "evolve upload ./job-2026-08-27__12-00-00 -d deep-swe@1.1",
+      "evolve upload --from https://example.com/job.tar.gz --no-wait",
+    ],
   },
 };
 
@@ -1426,7 +1526,9 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
  * Hidden plural aliases — the singular noun is canonical. `secrets` is the
  * one deliberate exception (plural canonical, singular aliased): the noun
  * names the surface — the dashboard's Secrets page and the managed-secrets
- * API — not one record.
+ * API — not one record. `skill` has no plural alias: `skills` is the
+ * bundled-skills group (GROUPS.skills), a different thing from the
+ * platform-stored skills `skill` manages.
  */
 const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
@@ -1434,7 +1536,6 @@ const GROUP_ALIASES: Record<string, string> = {
   analyses: "analysis",
   sessions: "session",
   datasets: "dataset",
-  skills: "skill",
   secret: "secrets",
 };
 
@@ -1456,6 +1557,39 @@ const VERB_ALIASES: Record<string, string> = { ls: "list" };
 // =============================================================================
 // HELP
 // =============================================================================
+//
+// The shape of every page (owner's word, 2026-09-16; agent-browser's
+// print_command_help and Harbor's grouped panels are the references): one
+// line saying what the command does, the usage line, the options under short
+// headings with one entry per option and its default, then one to three
+// examples. Every line fits in HELP_WIDTH columns; prose wraps, an option's
+// help hangs under its own column.
+
+const HELP_WIDTH = 80;
+/** The command column of the root and group pages. */
+const NAME_COLUMN = 23;
+
+/** Word-wrap one paragraph to the help width; every line gets `indent`. */
+function wrap(text: string, indent = "", width = HELP_WIDTH): string[] {
+  const lines: string[] = [];
+  let line = indent;
+  for (const word of text.split(/\s+/).filter((w) => w !== "")) {
+    if (line !== indent && line.length + 1 + word.length > width) {
+      lines.push(line);
+      line = indent;
+    }
+    line += (line === indent ? "" : " ") + word;
+  }
+  if (line !== indent) lines.push(line);
+  return lines;
+}
+
+/** A `name  text` row: the text wraps under its own column. */
+function row(name: string, text: string, column: number): string[] {
+  const hang = "".padEnd(column);
+  const [first, ...rest] = wrap(text, hang);
+  return [`  ${name.padEnd(column - 2)}${first.slice(column)}`, ...rest];
+}
 
 function flagLabel(name: string, spec: FlagSpec): string {
   const forms = [
@@ -1463,20 +1597,44 @@ function flagLabel(name: string, spec: FlagSpec): string {
     ...(spec.aliases ?? []).map((a) => `--${a}`),
     `--${name}`,
   ];
-  return `${forms.join(", ")}${spec.value ? ` ${spec.value}` : ""}`;
+  // Long forms line up on one column whether or not a short form precedes them.
+  const prefix = spec.short ? "" : "    ";
+  return `${prefix}${forms.join(", ")}${spec.value ? ` ${spec.value}` : ""}`;
 }
 
+/** The options as rows: label column, then the help and its default, wrapped. */
 function flagLines(flags: Record<string, FlagSpec>): string[] {
   const entries = Object.entries(flags);
-  if (entries.length === 0) return [];
   const labels = entries.map(([name, spec]) => flagLabel(name, spec));
-  const width = Math.min(Math.max(...labels.map((l) => l.length)), 36);
-  return entries.map(([, spec], i) => {
-    const label = labels[i];
-    return label.length > width
-      ? `  ${label}\n  ${"".padEnd(width)}  ${spec.help}`
-      : `  ${label.padEnd(width)}  ${spec.help}`;
+  const column = Math.min(Math.max(...labels.map((l) => l.length)) + 4, 34);
+  const lines: string[] = [];
+  entries.forEach(([, spec], i) => {
+    const text = spec.default !== undefined ? `${spec.help} (default: ${spec.default})` : spec.help;
+    if (labels[i].length + 4 > column) {
+      // A label wider than the column stands alone; its help starts on the next line.
+      lines.push(`  ${labels[i]}`, ...wrap(text, "".padEnd(column)));
+    } else {
+      lines.push(...row(labels[i], text, column));
+    }
   });
+  return lines;
+}
+
+/** The option sections: each `group` under its own heading, the rest under Options. */
+function optionSections(flags: Record<string, FlagSpec>): string[] {
+  const groups = new Map<string, Record<string, FlagSpec>>();
+  for (const [name, spec] of Object.entries(flags)) {
+    const heading = spec.group === undefined ? "Options" : spec.group;
+    groups.set(heading, { ...(groups.get(heading) ?? {}), [name]: spec });
+  }
+  const lines: string[] = [];
+  for (const [heading, group] of groups) lines.push("", `${heading}:`, ...flagLines(group));
+  return lines;
+}
+
+/** One example, indented; the continuation lines of a multi-line one sit deeper. */
+function exampleLines(example: string): string[] {
+  return example.split("\n").map((l, i) => (i === 0 ? `  ${l}` : `    ${l}`));
 }
 
 /**
@@ -1487,34 +1645,29 @@ function flagLines(flags: Record<string, FlagSpec>): string[] {
 function commandHelp(command: string, spec: CommandSpec): string {
   const positional = spec.positionalUsage ? ` ${spec.positionalUsage}` : "";
   const options = Object.keys(spec.flags).length > 0 ? " [options]" : "";
-  const lines = [
-    `Usage: evolve ${command}${positional}${options}`,
-    "",
-    spec.summary,
-  ];
-  if (spec.notes !== undefined) lines.push("", spec.notes);
-  if (Object.keys(spec.flags).length > 0) {
-    lines.push("", "Options:", ...flagLines(spec.flags));
-  }
+  const lines = [`evolve ${command} — ${spec.summary}`, "", `Usage: evolve ${command}${positional}${options}`];
+  if (spec.notes !== undefined) lines.push("", ...wrap(spec.notes));
+  lines.push(...optionSections(spec.flags));
   lines.push("", "Global options:", ...flagLines(GLOBAL_FLAGS));
-  lines.push("", "Example:", `  ${spec.example}`);
+  // A top-level command that is also a group's name (`check`) lists the
+  // group's verbs here: `evolve check --help` is the one page for both.
+  const group = GROUPS[command];
+  if (group !== undefined) lines.push("", "Commands:", ...verbRows(group));
+  lines.push("", "Examples:", ...spec.examples.flatMap(exampleLines));
   return lines.join("\n");
+}
+
+function verbRows(spec: GroupSpec): string[] {
+  const column = Math.max(...Object.keys(spec.commands).map((v) => v.length)) + 4;
+  return Object.entries(spec.commands).flatMap(([verb, cmd]) => row(verb, cmd.summary, column));
 }
 
 function groupHelp(group: string): string {
   const spec = GROUPS[group];
-  const lines = [
-    `Usage: evolve ${group} <command> [options]`,
-    "",
-    spec.summary,
-    "",
-    "Commands:",
-  ];
-  const width = Math.max(...Object.keys(spec.commands).map((v) => v.length));
-  for (const [verb, cmd] of Object.entries(spec.commands)) {
-    lines.push(`  ${verb.padEnd(width)}  ${cmd.summary}`);
-  }
-  lines.push("", `Run "evolve ${group} <command> --help" for flags and an example.`);
+  const lines = [`evolve ${group} — ${spec.summary}`, "", `Usage: evolve ${group} <command> [options]`];
+  if (spec.notes !== undefined) lines.push("", ...wrap(spec.notes));
+  lines.push("", "Commands:", ...verbRows(spec));
+  lines.push("", `Run "evolve ${group} <command> --help" for its options and examples.`);
   return lines.join("\n");
 }
 
@@ -1524,37 +1677,48 @@ function rootHelp(): string {
     "",
     "Usage: evolve <command> [options]",
     "",
+    // agent-browser's opening: the first thing a coding agent reads is where
+    // the manual is, before any command it might guess from the list.
+    "Start here (for AI agents):",
+    "  evolve skills get evals",
+    "",
+    ...wrap(
+      "Skills ship with the CLI and match its version. `skills get evals` is the index " +
+        "of the documentation; `skills get evals <page>` prints one page; `--full` prints " +
+        "every page. Task authoring: `skills get create-task`, `rewardkit`, `create-adapter`, `publish`.",
+      "  ",
+    ),
+    "",
     "Commands:",
   ];
-  for (const [name, spec] of Object.entries(TOP_LEVEL_COMMANDS)) {
-    lines.push(`  ${name.padEnd(22)} ${spec.summary}`);
-  }
+  for (const [name, spec] of Object.entries(TOP_LEVEL_COMMANDS)) lines.push(...row(name, spec.summary, NAME_COLUMN));
+  lines.push(...row("help [command]", "Show help; also -h/--help on any command", NAME_COLUMN));
+  lines.push("", "Command groups (evolve <group> <verb>):");
   for (const [group, spec] of Object.entries(GROUPS)) {
-    const verbs = Object.keys(spec.commands).join(" | ");
-    lines.push(`  ${group.padEnd(22)} ${spec.summary}`);
-    lines.push(`  ${"".padEnd(22)}   ${verbs}`);
+    lines.push(...row(group, spec.summary, NAME_COLUMN));
+    lines.push(...wrap(Object.keys(spec.commands).join(", "), "".padEnd(NAME_COLUMN)));
   }
   lines.push(
-    "  help [command]         Show help (also -h/--help on any command)",
     "",
     "Global options:",
-    ...flagLines(GLOBAL_FLAGS),
-    "  -v, --version                     Print the CLI version",
+    ...flagLines({ ...GLOBAL_FLAGS, version: { kind: "boolean", short: "v", help: "Print the CLI version" } }),
     "",
-    "Example:",
-    "  evolve run -d deep-swe@1.1 -a codex -m gpt-5.5 --watch"
+    "Examples:",
+    "  evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -l 5 --watch",
+    "  evolve job list",
+    "  evolve skills get evals core-concepts/jobs",
   );
   return lines.join("\n");
 }
 
 export const USAGE = rootHelp();
 
+/** The package root: two levels up from both src/cli/ and dist/cli/ (package.json, docs-evals/, docs-agents/, skills/). */
+const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
 function cliVersion(): string {
-  // Two levels up from both src/cli/ and dist/cli/ sits package.json.
   try {
-    const pkg = JSON.parse(
-      readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf-8")
-    ) as { version?: string };
+    const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf-8")) as { version?: string };
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
@@ -1738,11 +1902,18 @@ export function parseArgs(argv: string[]): Invocation {
     throw new CliUsageError(`Unknown command "${head}"`);
   }
   const rawVerb = argv[1];
-  if (rawVerb === undefined || rawVerb === "--help" || rawVerb === "-h") {
+  if (rawVerb === "--help" || rawVerb === "-h") {
     return { command: "help", positionals: [group], flags: {} };
   }
-  if (rawVerb.startsWith("-")) {
-    throw new CliUsageError(`"${group}" requires a command (run "evolve ${group} --help")`);
+  if (rawVerb === undefined || rawVerb.startsWith("-")) {
+    // A bare group prints its help — except a group with a default verb,
+    // which runs it (`evolve skills` is `evolve skills list`, agent-browser's
+    // `skills [list]`), the flags after the group being that verb's.
+    if (groupSpec.defaultVerb === undefined) {
+      if (rawVerb === undefined) return { command: "help", positionals: [group], flags: {} };
+      throw new CliUsageError(`"${group}" requires a command (run "evolve ${group} --help")`);
+    }
+    return parseCommandArgs(`${group} ${groupSpec.defaultVerb}`, groupSpec.commands[groupSpec.defaultVerb], argv.slice(1));
   }
   const resolved = resolveVerb(groupSpec, argv.slice(1));
   if (!resolved) {
@@ -7575,13 +7746,124 @@ async function cmdSecretsDelete(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 // =============================================================================
+// SKILLS (local: the bundled skill files, skills.ts)
+// =============================================================================
+
+/** A file's bytes through the line-based io: one trailing newline is io.out's. */
+function printDocument(io: CliIO, text: string): void {
+  io.out(text.endsWith("\n") ? text.slice(0, -1) : text);
+}
+
+/** One skill as `get` prints it: SKILL.md, then under --full each extra file behind its separator. */
+function renderSkill(skill: Skill, full: boolean): string {
+  const parts = [skill.content];
+  if (full) for (const file of skillFiles(skill)) parts.push(`\n--- ${file.path} ---\n\n${file.content}`);
+  return parts.join("");
+}
+
+/** The list row's description: whole when it fits, else cut at a word and marked. */
+function cutDescription(description: string, width: number): string {
+  if (description.length <= width) return description;
+  const head = description.slice(0, width - 3);
+  const atWord = head.lastIndexOf(" ");
+  return `${(atWord > 0 ? head.slice(0, atWord) : head).trimEnd()}...`;
+}
+
+async function cmdSkillsList(inv: Invocation, io: CliIO): Promise<number> {
+  const skills = contentSkills(skillsRoot(PACKAGE_ROOT));
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, path: s.dir }))));
+    return 0;
+  }
+  const width = Math.max(...skills.map((s) => s.name.length));
+  for (const s of skills) io.out(`  ${s.name.padEnd(width)}  ${cutDescription(s.description, 70)}`);
+  return 0;
+}
+
+async function cmdSkillsGet(inv: Invocation, io: CliIO): Promise<number> {
+  const dir = skillsRoot(PACKAGE_ROOT);
+  const full = inv.flags.full === true;
+  const all = inv.flags.all === true;
+  const names = inv.positionals;
+  if (all && names.length > 0) throw new CliUsageError('"skills get" takes either names or --all, not both');
+  if (!all && names.length === 0) throw new CliUsageError('"skills get" requires <name> [name...] or --all');
+
+  // The page form: `get <skill> <page>` — a second word that names no skill.
+  if (!all && names.length === 2 && !hasSkill(dir, names[1])) {
+    if (full) throw new CliUsageError("--full applies to a skill; a page is one file");
+    const skill = findSkill(dir, names[0]);
+    const page = findPage(skill, names[1]);
+    if (inv.flags.json === true) {
+      io.out(JSON.stringify([{ name: skill.name, page: page.page, path: join(skill.dir, page.path), content: page.content }]));
+    } else {
+      printDocument(io, page.content);
+    }
+    return 0;
+  }
+
+  const skills = all ? contentSkills(dir) : names.map((name) => findSkill(dir, name));
+  if (inv.flags.json === true) {
+    io.out(
+      JSON.stringify(
+        skills.map((s) => ({ name: s.name, path: s.dir, content: s.content, ...(full ? { files: skillFiles(s) } : {}) })),
+      ),
+    );
+    return 0;
+  }
+  // Between two skills: a blank line, a rule, a blank line (agent-browser's boundary).
+  printDocument(io, skills.map((s) => renderSkill(s, full)).join("\n---\n\n"));
+  return 0;
+}
+
+async function cmdSkillsPath(inv: Invocation, io: CliIO): Promise<number> {
+  const root = skillsRoot(PACKAGE_ROOT);
+  if (inv.positionals.length === 0) {
+    io.out(inv.flags.json === true ? JSON.stringify({ path: root }) : root);
+    return 0;
+  }
+  const skill = findSkill(root, inv.positionals[0]);
+  io.out(inv.flags.json === true ? JSON.stringify({ name: skill.name, path: skill.dir }) : skill.dir);
+  return 0;
+}
+
+async function cmdSkillsInstall(inv: Invocation, io: CliIO): Promise<number> {
+  const dir = skillsRoot(PACKAGE_ROOT);
+  const target = typeof inv.flags.target === "string" ? inv.flags.target : undefined;
+  const path = typeof inv.flags.path === "string" ? inv.flags.path : undefined;
+  if (target !== undefined && path !== undefined) {
+    throw new CliUsageError("--target and --path both name the destination; pass one of them");
+  }
+  let destinations: InstallDestination[];
+  if (path !== undefined) {
+    destinations = [{ target: "path", skillsDir: resolve(path) }];
+  } else {
+    const chosen = target ?? "all";
+    const known = INSTALL_TARGETS as readonly string[];
+    if (chosen !== "all" && !known.includes(chosen)) {
+      throw new CliUsageError(`--target must be one of ${[...INSTALL_TARGETS, "all"].join(", ")}, got "${chosen}"`);
+    }
+    const targets: InstallTarget[] = chosen === "all" ? [...INSTALL_TARGETS] : [chosen as InstallTarget];
+    destinations = targets.map((name) => ({ target: name, skillsDir: targetSkillsDir(name) }));
+  }
+  const results = installPointer(dir, destinations, inv.flags.force === true);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(results));
+  } else {
+    for (const result of results) io.out(result.path);
+  }
+  return 0;
+}
+
+// =============================================================================
 // ENTRY
 // =============================================================================
 
 function helpFor(topic: string[]): { text: string; code: number } {
   if (topic.length === 0) return { text: rootHelp(), code: 0 };
+  // `check` is both a command and a group: `help check` is the command's page
+  // (which lists the group's verbs), `help check list` the verb's.
   const topLevel = TOP_LEVEL_COMMANDS[topic[0]];
-  if (topLevel) return { text: commandHelp(topic[0], topLevel), code: 0 };
+  if (topLevel && (topic.length === 1 || !GROUPS[topic[0]])) return { text: commandHelp(topic[0], topLevel), code: 0 };
   // A reserved word asked about by name answers with the reason it is
   // reserved, not with the root page — "help agents" is exactly the question
   // that deserves the honest sentence.
@@ -7603,6 +7885,10 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   analyze: cmdAnalyze,
   check: cmdCheck,
   upload: cmdUpload,
+  "skills list": cmdSkillsList,
+  "skills get": cmdSkillsGet,
+  "skills path": cmdSkillsPath,
+  "skills install": cmdSkillsInstall,
   "job start": cmdJobStart,
   "job list": cmdJobList,
   "job show": cmdJobShow,
@@ -7728,43 +8014,53 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ error: jsonErrorBody(error) }));
     }
-    if (error instanceof EvolveApiError && error.code === "quota_exceeded") {
-      // Harbor's own rendering of the hosted quota refusal — `Launch quota
-      // exceeded:` + the server's sentence, exit 2 (cli/hosted_jobs.py:
-      // 615-617). Before the rate-limit arm: this 429 carries no
-      // Retry-After, because the wait is not a known number.
-      io.err(`Launch quota exceeded: ${error.message}`);
-      return 2;
-    }
-    if (error instanceof EvolveApiError && error.status === 429) {
-      // A rate limit is a delay, not a mystery: name it and honor the
-      // server's Retry-After instead of echoing the raw message.
-      const wait = error.retryAfterSec !== undefined ? `retry in ${error.retryAfterSec}s` : "retry shortly";
-      io.err(`Error: rate limited by the server — ${wait}.`);
-      return 1;
-    }
-    io.err(`Error: ${(error as Error).message}`);
-    // A job create that NAMED a task whose build FAILED refuses typed
-    // (partial-publish model), and the refusal's details.failed_tasks quotes
-    // every named task's own build failure — render each one, so the caller
-    // reads the reason here instead of hunting for it.
-    if (error instanceof EvolveApiError && error.code === "task_failed_to_build") {
-      const details = (error.details ?? {}) as Record<string, unknown>;
-      const failedTasks = Array.isArray(details.failed_tasks) ? details.failed_tasks : [];
-      for (const entry of failedTasks as Record<string, unknown>[]) {
-        if (!entry || typeof entry !== "object") continue;
-        const failure = (entry.failure ?? {}) as Record<string, unknown>;
-        const reason =
-          typeof failure.message === "string" && failure.message
-            ? `${failure.code ?? "?"} (${failure.step ?? "?"}): ${failure.message}`
-            : "build failed (reason not recorded)";
-        io.err(`  ${entry.task_name}: ${reason}`);
-      }
-      io.err("  Fix: re-publish a new version, or drop the failed task(s) from --include-task-name.");
-      return 1;
-    }
+    const code = reportFailure(error, io);
+    // Every API refusal ends by naming the errors page the CLI itself serves,
+    // so the code's meaning is one command away. A local failure (a bad path,
+    // an unknown skill) has no page there and gets no footer; a usage error
+    // returned above the same way.
+    if (error instanceof EvolveApiError) io.err(`Docs: ${ERRORS_DOCS_COMMAND}`);
+    return code;
+  }
+}
+
+/** The human rendering of a runtime failure on stderr, and its exit code. */
+function reportFailure(error: unknown, io: CliIO): number {
+  if (error instanceof EvolveApiError && error.code === "quota_exceeded") {
+    // Harbor's own rendering of the hosted quota refusal — `Launch quota
+    // exceeded:` + the server's sentence, exit 2 (cli/hosted_jobs.py:
+    // 615-617). Before the rate-limit arm: this 429 carries no
+    // Retry-After, because the wait is not a known number.
+    io.err(`Launch quota exceeded: ${error.message}`);
+    return 2;
+  }
+  if (error instanceof EvolveApiError && error.status === 429) {
+    // A rate limit is a delay, not a mystery: name it and honor the
+    // server's Retry-After instead of echoing the raw message.
+    const wait = error.retryAfterSec !== undefined ? `retry in ${error.retryAfterSec}s` : "retry shortly";
+    io.err(`Error: rate limited by the server — ${wait}.`);
     return 1;
   }
+  io.err(`Error: ${(error as Error).message}`);
+  // A job create that NAMED a task whose build FAILED refuses typed
+  // (partial-publish model), and the refusal's details.failed_tasks quotes
+  // every named task's own build failure — render each one, so the caller
+  // reads the reason here instead of hunting for it.
+  if (error instanceof EvolveApiError && error.code === "task_failed_to_build") {
+    const details = (error.details ?? {}) as Record<string, unknown>;
+    const failedTasks = Array.isArray(details.failed_tasks) ? details.failed_tasks : [];
+    for (const entry of failedTasks as Record<string, unknown>[]) {
+      if (!entry || typeof entry !== "object") continue;
+      const failure = (entry.failure ?? {}) as Record<string, unknown>;
+      const reason =
+        typeof failure.message === "string" && failure.message
+          ? `${failure.code ?? "?"} (${failure.step ?? "?"}): ${failure.message}`
+          : "build failed (reason not recorded)";
+      io.err(`  ${entry.task_name}: ${reason}`);
+    }
+    io.err("  Fix: re-publish a new version, or drop the failed task(s) from --include-task-name.");
+  }
+  return 1;
 }
 
 // Run only when invoked as the `evolve` bin — never on test/library import.

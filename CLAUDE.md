@@ -14,7 +14,7 @@ branch; never force-push. Full rules: [CONTRIBUTING.md](CONTRIBUTING.md).
 ```
 evolve/
 ├── packages/
-│   ├── sdk-ts/                  # TypeScript SDK (@evolvingmachines/sdk) — PRIMARY
+│   ├── sdk-ts/                  # TypeScript SDK (@evolvingmachines/evolve) — PRIMARY
 │   │   └── src/
 │   │       ├── evolve.ts        # Evolve builder class
 │   │       ├── agent.ts         # Agent runtime
@@ -22,7 +22,7 @@ evolve/
 │   │       ├── types.ts         # Shared types
 │   │       ├── constants.ts     # Constants
 │   │       ├── index.ts         # Public exports
-│   │       ├── cli/             # The `evolve` CLI binary (src/cli/index.ts)
+│   │       ├── cli/             # The `evolve` CLI binary (src/cli/index.ts; skills.ts serves the bundled skills)
 │   │       ├── hosted/          # Hosted evals client (datasets/agents/jobs/trials/auth)
 │   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid)
 │   │       ├── integrations.ts  # Managed integration helpers
@@ -38,10 +38,12 @@ evolve/
 │   │       ├── observability/   # Session logger + dashboard integration
 │   │       ├── prompts/         # Agent & user prompt templates (agent_md/, user/)
 │   │       └── utils/           # Config, files, retry, sandbox, schema helpers
-│   ├── sdk-py/                  # Python SDK (evolve-sdk) — bridges to TS via JSON-RPC
+│   ├── sdk-py/                  # Python SDK (evolvingmachines-evolve) — bridges to TS via JSON-RPC
 │   │   ├── evolve/              # Python package (agent, bridge, integrations, pipeline, swarm, schema)
 │   │   ├── bridge/              # Node.js bridge subprocess (bundle.mjs)
 │   │   └── tests/
+│   ├── sdk-alias/               # The old npm name of the SDK: re-exports @evolvingmachines/evolve at the same version
+│   ├── sdk-py-alias/            # The old PyPI name of the SDK: depends on evolvingmachines-evolve at the same version, no module
 │   ├── e2b/                     # E2B sandbox provider (@evolvingmachines/e2b)
 │   │   └── src/
 │   ├── daytona/                 # Daytona sandbox provider (@evolvingmachines/daytona)
@@ -55,21 +57,26 @@ evolve/
 │   ├── docker/                  # Docker image (Dockerfile, build.ts)
 │   ├── build.sh                 # Master build script
 │   └── README.md
-├── skills/                      # Agent skills: evolve-agents + evolve-evals (GENERATED from docs/ and docs-mintlify/ by scripts/generate-skills.ts), create-task, rewardkit, create-adapter, publish (hand-written, ported from Harbor)
+├── skills/
+│   ├── evolve/SKILL.md          # The pointer skill (hand-written): the one skill an agent installs; it reads the content from `evolve skills get`
+│   └── create-task/, rewardkit/, create-adapter/, publish/   # hand-written task-authoring skills, ported from Harbor; metadata.internal so only the pointer installs
 ├── cookbooks/                   # Example applications
 │   ├── typescript/
 │   └── python/
-├── docs/                        # Documentation (SOURCE OF TRUTH — edit here only)
-│   ├── _meta.ts                 # Nextra navigation config
-│   ├── index.md                 # Docs landing page
-│   ├── evolve-agents.SKILL.md   # Hand-written SKILL.md of the evolve-agents skill (front matter + index of chapters 01–05)
-│   ├── evolve-evals.SKILL.md    # Hand-written front matter of the evolve-evals skill (its body is generated from docs-mintlify/)
+├── docs-evals/                  # The hosted-evals docs site (Mintlify) AND the `evals` skill the CLI serves; pages read in place
+│   ├── docs.json                # Site config; its description is the skill's description
+│   ├── SKILL.md                 # GENERATED index of the site (scripts/generate-skills.ts from docs.json)
+│   └── getting-started/, core-concepts/, cli-reference/, sdk-reference/, dashboard/, sdk/, snippets/
+├── docs-agents/                 # The managed-agents docs AND the `agents` skill the CLI serves
+│   ├── SKILL.source.md          # Hand-written: front matter + the guide and chapter index
+│   ├── SKILL.md                 # GENERATED from SKILL.source.md
+│   ├── index.md                 # Landing page
 │   ├── typescript/              # TS SDK reference (6 chapters + index)
 │   └── python/                  # Python SDK reference (6 chapters + index)
 ├── .claude/
-│   └── skills/                  # GENERATED mirror of every folder under skills/ (scripts/generate-skills.ts)
+│   └── skills/evolve/           # GENERATED mirror of the pointer (scripts/generate-skills.ts); an agent in this repo reads docs-evals/SKILL.md directly
 ├── .github/workflows/
-│   ├── sync-docs-to-skill.yml   # Regenerates skills/, .claude/skills/, skills-lock.json from docs/ + docs-mintlify/ (--check on PRs)
+│   ├── sync-docs-to-skill.yml   # Regenerates the two SKILL.md files and .claude/skills/; validates every skill against the spec (--check on PRs)
 │   └── publish.yml              # NPM + PyPI publish (owns versioning)
 ├── logo/                        # Brand assets (PNG, GIF, 3D HTML)
 ├── package.json                 # Monorepo root
@@ -100,5 +107,5 @@ EVOLVE_OPENAPI_SPEC_PATH=/path/to/swarm_dashboard/spec/openapi.yaml npm run test
 
 ### Documentation rules
 
-- **`docs/` and `docs-mintlify/` are the only places documentation is edited.** `skills/evolve-agents/`, `skills/evolve-evals/`, `.claude/skills/` and `skills-lock.json` are generated by `npm run generate:skills` (`scripts/generate-skills.ts`); `.github/workflows/sync-docs-to-skill.yml` checks them on pull requests and regenerates them on push. Hand-editing a generated copy gets overwritten and loses the change. The four hand-written skills (`create-task`, `rewardkit`, `create-adapter`, `publish`) are edited in place under `skills/`; the generator mirrors them.
-- **`docs/typescript/` and `docs/python/` are exact mirrors of each other.** Same sections, same order, same facts, same caveats — only the code differs. A change to one chapter is not finished until the other says the same thing.
+- **The docs folders are the skills.** `docs-evals/` is the Mintlify site and the `evals` skill; `docs-agents/` is the managed-agents docs and the `agents` skill; the CLI reads their pages in place, nothing is copied anywhere. Edit the pages, `docs-evals/docs.json`, `docs-agents/SKILL.source.md` and `skills/*/SKILL.md`; `docs-evals/SKILL.md`, `docs-agents/SKILL.md` and `.claude/skills/` are generated by `npm run generate:skills` (`scripts/generate-skills.ts`), which `.github/workflows/sync-docs-to-skill.yml` checks on pull requests and regenerates on push, then validates every skill folder against the Agent Skills specification. Hand-editing a generated file gets overwritten and loses the change. Every skill but the pointer carries `metadata.internal: true`, so `npx skills add` installs only the pointer; the pointer stays under 500 words with only `name`, `description` and `allowed-tools`.
+- **`docs-agents/typescript/` and `docs-agents/python/` are exact mirrors of each other.** Same sections, same order, same facts, same caveats — only the code differs. A change to one chapter is not finished until the other says the same thing.

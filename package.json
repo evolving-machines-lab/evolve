@@ -1,5 +1,5 @@
 {
-  "name": "evolve-sdk-workspace",
+  "name": "evolve-workspace",
   "private": true,
   "type": "module",
   "version": "0.0.55",
@@ -9,7 +9,8 @@
     "packages/daytona",
     "packages/modal",
     "packages/sdk-ts",
-    "packages/sdk-py/bridge"
+    "packages/sdk-py/bridge",
+    "packages/sdk-alias"
   ],
   "scripts": {
     "build": "npm run generate:image-version && npm run build:e2b && npm run build:daytona && npm run build:modal && npm run build:sdk && npm run build:bridge",
@@ -18,12 +19,12 @@
     "build:e2b": "npm run build --workspace=@evolvingmachines/e2b",
     "build:daytona": "npm run build --workspace=@evolvingmachines/daytona",
     "build:modal": "npm run build --workspace=@evolvingmachines/modal",
-    "build:sdk": "npm run build --workspace=@evolvingmachines/sdk",
-    "build:bridge": "npm run build --workspace=evolve-sdk-python-bridge",
-    "type-check": "npm run type-check --workspace=@evolvingmachines/sdk && npm run type-check --workspace=@evolvingmachines/daytona && npm run type-check --workspace=@evolvingmachines/modal && npm run type-check --workspace=@evolvingmachines/e2b",
-    "test:ts": "npm run test --workspace=@evolvingmachines/sdk",
-    "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/sdk && npm run test:unit --workspace=@evolvingmachines/daytona && npm run test:unit --workspace=@evolvingmachines/modal && npm run test:unit --workspace=@evolvingmachines/e2b",
-    "test:ts:integration": "npm run test:integration --workspace=@evolvingmachines/sdk",
+    "build:sdk": "npm run build --workspace=@evolvingmachines/evolve",
+    "build:bridge": "npm run build --workspace=evolve-python-bridge",
+    "type-check": "npm run type-check --workspace=@evolvingmachines/evolve && npm run type-check --workspace=@evolvingmachines/daytona && npm run type-check --workspace=@evolvingmachines/modal && npm run type-check --workspace=@evolvingmachines/e2b",
+    "test:ts": "npm run test --workspace=@evolvingmachines/evolve",
+    "test:ts:unit": "npm run test:unit --workspace=@evolvingmachines/evolve && npm run test:unit --workspace=@evolvingmachines/daytona && npm run test:unit --workspace=@evolvingmachines/modal && npm run test:unit --workspace=@evolvingmachines/e2b",
+    "test:ts:integration": "npm run test:integration --workspace=@evolvingmachines/evolve",
     "test:py:unit": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/unit -v",
     "test:py:integration": "npm run build:bridge && cd packages/sdk-py && python -m pytest tests/integration -v"
   },

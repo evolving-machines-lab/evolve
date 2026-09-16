@@ -13,7 +13,7 @@
 ### 1. Install the SDK
 
 ```bash
-pip install evolve-sdk
+pip install evolvingmachines-evolve
 ```
 
 **Note:** Requires [Node.js 18+](https://nodejs.org/) (the Python SDK uses a lightweight Node.js bridge).

@@ -1,0 +1,81 @@
+## Documentation
+
+- [TypeScript SDK](./typescript/)
+- [Python SDK](./python/)
+- [Cookbooks](https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks)
+- [Changelog](https://github.com/evolving-machines-lab/evolve/blob/main/CHANGELOG.md)
+
+The SDK has two halves. One runs a CLI agent in a sandbox you control — that is the quickstart below. The other scores agents against datasets of tasks on Evolve's own infrastructure: you start a job, and read back per-trial rewards. Hosted evals are documented at https://docs.evolvingmachines.ai: `jobs()`, `datasets()`, and the `evolve` CLI.
+
+## Get Started
+
+### 1. Install the SDK
+
+```bash
+npm install @evolvingmachines/evolve    # TypeScript
+pip install evolvingmachines-evolve     # Python
+```
+
+**Note:** Requires [Node.js 18+](https://nodejs.org/) (the Python SDK uses a lightweight Node.js bridge).
+
+### 2. Run your first agent
+
+Get your Evolve API key at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) ([see 3. below](#evolve-gateway)):
+```bash
+# .env - Gateway
+EVOLVE_API_KEY=sk-...
+```
+
+To bring your own provider billing while keeping gateway features, save an Anthropic or OpenAI key in Dashboard → Secrets → BYO Provider Keys — those are the two providers this route serves today. Your app still uses only `EVOLVE_API_KEY`.
+
+For fully local direct provider keys:
+```bash
+# .env - Direct Provider Key Mode (local BYOK)
+ANTHROPIC_API_KEY=sk-ant-...         # or CLAUDE_CODE_OAUTH_TOKEN (Claude Max), OPENAI_API_KEY, GEMINI_API_KEY
+E2B_API_KEY=e2b_...                  # sandbox provider, get at https://e2b.dev
+```
+
+Then run:
+```typescript
+import { Evolve } from "@evolvingmachines/evolve";
+
+const evolve = new Evolve();  // auto-resolves env variables
+await evolve.run({ prompt: "Create hello.txt with 'Hello World'" });
+const output = await evolve.getOutputFiles();  // output.files
+```
+
+```python
+from evolve import Evolve
+
+evolve = Evolve()  # auto-resolves env variables
+await evolve.run(prompt="Create hello.txt with 'Hello World'")
+output = await evolve.get_output_files()  # output.files
+```
+
+<a id="evolve-gateway"></a>
+
+### 3. Unlock full power with Evolve API key
+
+Sign up at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai/) and get your **Evolve API key** for:
+- Agent execution traces, observability and analytics
+- Centralized billing across all providers
+- Mix any model with any CLI agent
+- $10 FREE CREDITS, no CC required
+
+### 4. Learn more
+
+Check out the [documentation](https://github.com/evolving-machines-lab/evolve/tree/main/docs) and [cookbooks](https://github.com/evolving-machines-lab/evolve/tree/main/cookbooks).
+
+## Support + Talk with Founders
+
+- [Community Discord](https://discord.gg/Q36D8dGyNF)
+- [Schedule Demo](https://cal.com/brando-magnani/evolve-1-1-onboarding-chat)
+- Email: [brandomagnani@evolvingmachines.ai](mailto:brandomagnani@evolvingmachines.ai)
+
+## Reporting Bugs
+
+We welcome your feedback. File a [GitHub issue](https://github.com/evolving-machines-lab/evolve/issues) to report bugs or request features.
+
+## License
+
+See the [LICENSE](https://github.com/evolving-machines-lab/evolve/blob/main/LICENSE) file for full terms and conditions.

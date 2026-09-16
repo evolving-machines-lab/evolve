@@ -250,8 +250,12 @@ jobs:
           # Update Python bridge package.json
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/sdk-py/bridge/package.json
 
-          # Sync package-lock.json with updated versions
-          npm install --package-lock-only
+          # Update the npm alias @evolvingmachines/sdk (its dependency pin is set below, with the others)
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" packages/sdk-alias/package.json
+
+          # Update the PyPI alias evolve-sdk: its version and its one dependency, the same version exactly
+          sed -i "s/^version = \".*\"/version = \"$PY_VERSION\"/" packages/sdk-py-alias/pyproject.toml
+          sed -i "s/^dependencies = \[\"evolvingmachines-evolve==.*\"\]/dependencies = [\"evolvingmachines-evolve==$PY_VERSION\"]/" packages/sdk-py-alias/pyproject.toml
 
           echo "Updated all version files"
 
@@ -273,7 +277,7 @@ jobs:
             const pkg = JSON.parse(fs.readFileSync(path, 'utf8'))
             pkg.dependencies ??= {}
             for (const name of packages) {
-              // EXACT pin, never a caret. All five packages publish in lockstep
+              // EXACT pin, never a caret. Every package here publishes in lockstep
               // from one commit, so equality is the true contract — and under
               // semver `^0.0.52-<prerelease>` admits stable 0.0.52, which
               // outranks the prerelease, so a caret ships a fresh install the
@@ -286,13 +290,24 @@ jobs:
           updatePackage('packages/sdk-ts/package.json', providerPackages)
           updatePackage('packages/sdk-py/bridge/package.json', [
             ...providerPackages,
-            '@evolvingmachines/sdk',
+            '@evolvingmachines/evolve',
           ])
+          // The alias re-exports the real package at this exact version.
+          updatePackage('packages/sdk-alias/package.json', ['@evolvingmachines/evolve'])
           NODE
 
           echo "Fixed SDK dependencies:"
           grep -E "@evolvingmachines/(e2b|daytona|modal)" packages/sdk-ts/package.json
-          grep -E "@evolvingmachines/(e2b|daytona|modal|sdk)" packages/sdk-py/bridge/package.json
+          grep -E "@evolvingmachines/(e2b|daytona|modal|evolve)" packages/sdk-py/bridge/package.json
+          grep -E "@evolvingmachines/evolve" packages/sdk-alias/package.json
+
+          # Sync package-lock.json only now, AFTER the exact pins: every
+          # workspace dependency equals the bumped workspace version, so npm
+          # links the workspaces. Synced before the pins, the alias's pin and
+          # the bridge's caret name a version of @evolvingmachines/evolve the
+          # registry does not have (the previous one, or none), and the sync
+          # fails with E404 on every run.
+          npm install --package-lock-only
         env:
           VERSION: ${{ steps.version.outputs.new_version }}
 
@@ -405,7 +420,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @evolvingmachines/sdk to npm
+      - name: Publish @evolvingmachines/evolve to npm
         if: inputs.dry_run != true
         run: |
           cd packages/sdk-ts
@@ -413,16 +428,44 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Build Python package
+      # The alias keeps every `@evolvingmachines/sdk` install working: it
+      # depends on @evolvingmachines/evolve at this exact version and
+      # re-exports it, so it goes out right after the real package, on the
+      # same tag, prereleases included. It is never deprecated here.
+      - name: Publish the @evolvingmachines/sdk alias to npm
+        if: inputs.dry_run != true
+        run: |
+          cd packages/sdk-alias
+          npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Build Python packages
         run: |
           cd packages/sdk-py
           rm -rf dist/ build/ *.egg-info
           python -m build
+          cd ../sdk-py-alias
+          rm -rf dist/ build/ *.egg-info
+          python -m build
 
-      - name: Publish to PyPI
+      - name: Publish evolvingmachines-evolve to PyPI
         if: inputs.dry_run != true
         run: |
           cd packages/sdk-py
+          twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+      # The alias evolve-sdk ships no module and depends on
+      # evolvingmachines-evolve at this exact version; it uploads after the
+      # real package so `pip install evolve-sdk` never resolves to a version
+      # whose target is not on PyPI yet.
+      - name: Publish the evolve-sdk alias to PyPI
+        if: inputs.dry_run != true
+        run: |
+          cd packages/sdk-py-alias
           twine upload dist/*
         env:
           TWINE_USERNAME: __token__
@@ -436,8 +479,10 @@ jobs:
           echo "  - @evolvingmachines/e2b@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/daytona@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
           echo "  - @evolvingmachines/modal@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
-          echo "  - @evolvingmachines/sdk@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
-          echo "  - evolve-sdk==${{ steps.version.outputs.py_version }} (PyPI)"
+          echo "  - @evolvingmachines/evolve@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }})"
+          echo "  - @evolvingmachines/sdk@${{ steps.version.outputs.new_version }} (tag: ${{ steps.version.outputs.npm_tag }}; alias of @evolvingmachines/evolve)"
+          echo "  - evolvingmachines-evolve==${{ steps.version.outputs.py_version }} (PyPI)"
+          echo "  - evolve-sdk==${{ steps.version.outputs.py_version }} (PyPI; alias of evolvingmachines-evolve)"
 
       # =======================================================================
       # POST-PUBLISH (stable only)
@@ -461,7 +506,9 @@ jobs:
             packages/modal/package.json \
             packages/sdk-py/pyproject.toml \
             packages/sdk-py/evolve/__init__.py \
-            packages/sdk-py/bridge/package.json
+            packages/sdk-py/bridge/package.json \
+            packages/sdk-alias/package.json \
+            packages/sdk-py-alias/pyproject.toml
 
           git commit -m "Release v$VERSION"
           git tag "v$VERSION"
@@ -483,12 +530,16 @@ jobs:
             echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/daytona | $NPM_VERSION | \`npm install @evolvingmachines/daytona\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/modal | $NPM_VERSION | \`npm install @evolvingmachines/modal\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/evolve | $NPM_VERSION | \`npm install @evolvingmachines/evolve\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/sdk (alias) | $NPM_VERSION | \`npm install @evolvingmachines/sdk\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| evolvingmachines-evolve (PyPI) | $PY_VERSION | \`pip install evolvingmachines-evolve\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| evolve-sdk (PyPI alias) | $PY_VERSION | \`pip install evolve-sdk\` |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| @evolvingmachines/e2b | $NPM_VERSION | \`npm install @evolvingmachines/e2b@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/daytona | $NPM_VERSION | \`npm install @evolvingmachines/daytona@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
             echo "| @evolvingmachines/modal | $NPM_VERSION | \`npm install @evolvingmachines/modal@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| @evolvingmachines/sdk | $NPM_VERSION | \`npm install @evolvingmachines/sdk@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| evolve-sdk (PyPI) | $PY_VERSION | \`pip install evolve-sdk==$PY_VERSION\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/evolve | $NPM_VERSION | \`npm install @evolvingmachines/evolve@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| @evolvingmachines/sdk (alias) | $NPM_VERSION | \`npm install @evolvingmachines/sdk@$NPM_TAG\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| evolvingmachines-evolve (PyPI) | $PY_VERSION | \`pip install evolvingmachines-evolve==$PY_VERSION\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| evolve-sdk (PyPI alias) | $PY_VERSION | \`pip install evolve-sdk==$PY_VERSION\` |" >> $GITHUB_STEP_SUMMARY
           fi

@@ -1,5 +1,5 @@
 {
-  "name": "evolve-sdk-python-bridge",
+  "name": "evolve-python-bridge",
   "version": "0.0.55",
   "private": true,
   "type": "module",
@@ -10,14 +10,14 @@
   "scripts": {
     "build": "tsc && node bundle.mjs",
     "build:standalone": "npm run build:deps && npm run build",
-    "build:deps": "cd ../../../ && npm run build --workspace=@evolvingmachines/e2b --workspace=@evolvingmachines/daytona --workspace=@evolvingmachines/modal --workspace=@evolvingmachines/sdk",
+    "build:deps": "cd ../../../ && npm run build --workspace=@evolvingmachines/e2b --workspace=@evolvingmachines/daytona --workspace=@evolvingmachines/modal --workspace=@evolvingmachines/evolve",
     "dev": "tsc --watch"
   },
   "dependencies": {
     "@evolvingmachines/e2b": "^0.0.55",
     "@evolvingmachines/daytona": "^0.0.55",
     "@evolvingmachines/modal": "^0.0.55",
-    "@evolvingmachines/sdk": "^0.0.55"
+    "@evolvingmachines/evolve": "^0.0.55"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",

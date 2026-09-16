@@ -31,22 +31,17 @@
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...
 
-Add the skills to your coding agent. Six ship in [`skills/`](skills): [`evolve-agents`](skills/evolve-agents/SKILL.md) (the SDK: run agents in sandboxes), [`evolve-evals`](skills/evolve-evals/SKILL.md) (hosted evals: datasets, jobs, trials, the `evolve` CLI), [`create-task`](skills/create-task/SKILL.md), [`rewardkit`](skills/rewardkit/SKILL.md), [`create-adapter`](skills/create-adapter/SKILL.md) and [`publish`](skills/publish/SKILL.md) (write, verify, convert and publish Harbor-format tasks). One command installs any of them with the [`skills` CLI](https://github.com/vercel-labs/skills), into the current project, or into your user-level skills with `-g`:
+Give your coding agent the manual. Two commands install the [`evolve`](skills/evolve/SKILL.md) skill into Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode; the agent then reads the real content (the [hosted evals docs](docs-evals), the [SDK docs](docs-agents) and the [task-authoring skills](skills)) from the `evolve` command, so it always matches the installed version:
+
+```bash
+npm install -g @evolvingmachines/evolve
+evolve skills install
+```
+
+Or install the same skill with the [`skills` CLI](https://github.com/vercel-labs/skills):
 
 ```bash
 npx skills add evolving-machines-lab/evolve
-```
-
-Or copy the folders by hand:
-
-```bash
-git clone https://github.com/evolving-machines-lab/evolve.git
-cp -r evolve/skills/* ~/.claude/skills/            # Claude Code
-cp -r evolve/skills/* ~/.agents/skills/            # Codex
-cp -r evolve/skills/* ~/.gemini/skills/            # Gemini CLI
-cp -r evolve/skills/* ~/.qwen/skills/              # Qwen Code
-cp -r evolve/skills/* ~/.kimi-code/skills/         # Kimi Code
-cp -r evolve/skills/* ~/.config/opencode/skills/   # OpenCode
 ```
 
 ## Get Started
@@ -54,8 +49,8 @@ cp -r evolve/skills/* ~/.config/opencode/skills/   # OpenCode
 ### 1. Install the SDK
 
 ```bash
-npm install @evolvingmachines/sdk    # TypeScript
-pip install evolve-sdk    # Python
+npm install @evolvingmachines/evolve    # TypeScript
+pip install evolvingmachines-evolve     # Python
 ```
 
 **Note:** Requires [Node.js 18+](https://nodejs.org/) (the Python SDK uses a lightweight Node.js bridge).
@@ -79,7 +74,7 @@ E2B_API_KEY=e2b_...                  # sandbox provider, get at https://e2b.dev
 
 Then run:
 ```typescript
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve();  // auto-resolves env variables
 await evolve.run({ prompt: "Create hello.txt with 'Hello World'" });
@@ -107,12 +102,12 @@ Sign up at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai
 
 ### 4. Learn more
 
-Check out the [documentation](./docs) and [cookbooks](./cookbooks).
+Check out the [documentation](./docs-agents) and [cookbooks](./cookbooks).
 
 ## Documentation
 
-- [TypeScript SDK](./docs/typescript/)
-- [Python SDK](./docs/python/)
+- [TypeScript SDK](./docs-agents/typescript/)
+- [Python SDK](./docs-agents/python/)
 - [Hosted evals](https://docs.evolvingmachines.ai)
 - [Cookbooks](./cookbooks)
 - [Skills](./skills)

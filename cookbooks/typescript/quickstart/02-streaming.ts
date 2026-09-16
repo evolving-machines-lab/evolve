@@ -3,7 +3,7 @@
  * Real-time output with all content event types.
  */
 import "dotenv/config";
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const agent = new Evolve();
 

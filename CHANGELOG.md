@@ -4,6 +4,7 @@
 
 ### Highlights
 
+- Renamed the packages. The npm package `@evolvingmachines/sdk` is now `@evolvingmachines/evolve`: one package carrying the TypeScript SDK and the `evolve` CLI. The PyPI package `evolve-sdk` is now `evolvingmachines-evolve`: the Python SDK. What does not change: the `evolve` command, the Python import name `evolve`, and the three provider packages `@evolvingmachines/e2b`, `/daytona` and `/modal`, which the SDK depends on. Both old names keep publishing as aliases at the same version, prereleases included: `@evolvingmachines/sdk` re-exports `@evolvingmachines/evolve` and carries the same `evolve` command; `evolve-sdk` depends on `evolvingmachines-evolve` and ships no module. An existing install keeps working; new installs use the new names. The alias packages exist until the dashboard moves to the new name on its next deploy train; they are removed one release after that.
 - Adopted Harbor's vocabulary across the whole hosted surface: dataset, task, job, trial, agent, reward. `evaluations()` is now `jobs()`, task runs are trials, and scores are rewards.
 - Made the hosted API uniform: one `Job` shape from every call, one `{ items, nextCursor, hasMore }` page on every collection, one error envelope carrying `param` and `details`, and `multipart/form-data` for both upload lanes.
 - Published `GET /api/meta`, an unauthenticated, ETag'd capability document naming every harness, status enum, limit, and error code the platform enforces — so a client stops hardcoding them.

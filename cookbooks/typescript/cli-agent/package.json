@@ -6,7 +6,7 @@
     "start": "tsx agent.ts"
   },
   "dependencies": {
-    "@evolvingmachines/sdk": "latest",
+    "@evolvingmachines/evolve": "latest",
     "boxen": "^8.0.1",
     "chalk": "^5.4.1",
     "dotenv": "^16.4.7",

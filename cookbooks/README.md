@@ -22,8 +22,8 @@
 ### 1. Install the SDK
 
 ```bash
-npm install @evolvingmachines/sdk    # TypeScript
-pip install evolve-sdk         # Python
+npm install @evolvingmachines/evolve    # TypeScript
+pip install evolvingmachines-evolve     # Python
 ```
 
 **Note:** Requires [Node.js 18+](https://nodejs.org/) (the Python SDK uses a lightweight Node.js bridge).
@@ -45,7 +45,7 @@ EVOLVE_API_KEY=sk-...
 
 Then run:
 ```typescript
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve();  // auto-resolves env variables
 await evolve.run({ prompt: "Create hello.txt with 'Hello World'" });

@@ -14,7 +14,7 @@
  * Run: npx tsx swarm.ts
  */
 import "dotenv/config";
-import { Evolve, readLocalDir, saveLocalDir } from "@evolvingmachines/sdk";
+import { Evolve, readLocalDir, saveLocalDir } from "@evolvingmachines/evolve";
 import { mkdirSync } from "fs";
 
 import { makeRenderer, readPrompt, console_, printPanel } from "./ui";

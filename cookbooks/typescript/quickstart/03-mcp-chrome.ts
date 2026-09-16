@@ -3,7 +3,7 @@
  * Browser automation with Chrome DevTools MCP server.
  */
 import "dotenv/config";
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 // MCP servers extend agent capabilities with external tools
 const agent = new Evolve()

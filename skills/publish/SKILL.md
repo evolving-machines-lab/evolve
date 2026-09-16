@@ -1,6 +1,8 @@
 ---
 name: publish
 description: Publish a dataset of Harbor-format tasks to Evolve, or upload a finished job directory. Use when the user wants to publish, upload, or share tasks, datasets/benchmarks, or job results on Evolve.
+metadata:
+  internal: true
 ---
 
 Help the user publish a dataset of tasks to Evolve, or upload a job they ran elsewhere.
@@ -9,7 +11,7 @@ commands that upload.
 
 ## Prerequisites
 
-1. **The CLI**: `npm install -g @evolvingmachines/sdk`; `evolve --version` succeeds.
+1. **The CLI**: `npm install -g @evolvingmachines/evolve`; `evolve --version` succeeds.
 
 2. **API key**: create a key on the dashboard's API keys page
    (https://dashboard.evolvingmachines.ai/api-keys) and export it. Every command reads
@@ -22,7 +24,7 @@ commands that upload.
 
 3. **Task layout**: a dataset is a folder of task directories, each with `task.toml`,
    `instruction.md`, `tests/test.sh`, and an `environment/` folder unless `task.toml`
-   names a prebuilt `docker_image` (the `create-task` skill has the format). The
+   names a prebuilt `docker_image` (`evolve skills get create-task` has the format). The
    directory name is the task's name: letters, digits, `.`, `_` and `-`, at most 128
    characters, starting with a letter or digit; use lowercase (Harbor's convention). A
    `dataset.toml` manifest at the root is optional.

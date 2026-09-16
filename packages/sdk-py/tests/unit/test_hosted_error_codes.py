@@ -12,7 +12,7 @@ diffs. Server -> json (proven in the dashboard repo) -> TypeScript (proven in it
 own test) -> here. No link is a copy nobody checks.
 
 The file lives in the sibling TypeScript package rather than here because that is
-the one copy both repos can reach: the dashboard depends on @evolvingmachines/sdk
+the one copy both repos can reach: the dashboard depends on @evolvingmachines/evolve
 and reads it out of node_modules.
 """
 

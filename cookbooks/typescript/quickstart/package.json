@@ -1,5 +1,5 @@
 {
-    "name": "evolve-sdk-quickstart",
+    "name": "evolve-quickstart",
     "type": "module",
     "scripts": {
         "01": "npx tsx 01-hello-agent.ts",
@@ -12,7 +12,7 @@
         "08": "npx tsx 08-map-filter-reduce.ts"
     },
     "dependencies": {
-        "@evolvingmachines/sdk": "latest",
+        "@evolvingmachines/evolve": "latest",
         "dotenv": "^16.0.0",
         "zod": "^3.23.0"
     },

@@ -3,7 +3,7 @@
  * Sandboxed AI agent.
  */
 import "dotenv/config";
-import { Evolve } from "@evolvingmachines/sdk";
+import { Evolve } from "@evolvingmachines/evolve";
 
 // Auto-resolves EVOLVE_API_KEY from environment
 const agent = new Evolve();

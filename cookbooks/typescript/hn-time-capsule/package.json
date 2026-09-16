@@ -5,7 +5,7 @@
     "start": "npx tsx pipeline.ts"
   },
   "dependencies": {
-    "@evolvingmachines/sdk": "latest",
+    "@evolvingmachines/evolve": "latest",
     "dotenv": "^16.0.0",
     "zod": "^3.22.0"
   },

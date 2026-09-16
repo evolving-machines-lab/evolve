@@ -4,7 +4,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { saveLocalDir, type FileMap, type PipelineResult } from "@evolvingmachines/sdk";
+import { saveLocalDir, type FileMap, type PipelineResult } from "@evolvingmachines/evolve";
 import type { HNPostResult } from "./schema";
 
 interface RunDirResult {

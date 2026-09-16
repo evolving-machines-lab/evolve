@@ -1,14 +1,16 @@
 ---
 name: create-adapter
 description: Convert an existing benchmark into a folder of Harbor-format tasks ready for `evolve dataset publish`. Use when the user wants to port, adapt, or import a benchmark (a paper's task set, a repository of problems, a leaderboard's dataset) onto Evolve. Guides the conversion and its verification with evolve check.
+metadata:
+  internal: true
 ---
 
 # Create Adapter
 
 An adapter is a small program that reads an existing benchmark and writes one task
 directory per task, in the Harbor task format. Its output is a folder of tasks, ready for
-`evolve dataset publish`. This skill guides the conversion; the `create-task` skill has
-the task format in full, and the `publish` skill has every publish option.
+`evolve dataset publish`. This skill guides the conversion; `evolve skills get create-task`
+has the task format in full, and `evolve skills get publish` every publish option.
 
 ## Authoritative reference
 
@@ -23,7 +25,7 @@ Do not invent structure, field names, or workflow beyond what the guide specifie
 
 ## Prerequisites
 
-- The `evolve` CLI: `npm install -g @evolvingmachines/sdk` (`evolve --version` succeeds).
+- The `evolve` CLI: `npm install -g @evolvingmachines/evolve` (`evolve --version` succeeds).
 - `EVOLVE_API_KEY` exported, from the dashboard's API keys page
   (https://dashboard.evolvingmachines.ai/api-keys); `evolve auth status` prints who you are.
 - Docker, to build and enter a task's environment locally (optional).
@@ -136,8 +138,8 @@ storage_mb = 10240
 ```
 
 For LLM-as-a-Judge verifiers, request the judge credential in `[verifier.env]`; on Evolve
-the value resolves at run time to a short-lived token for that model family, never a real
-key (see the `rewardkit` skill):
+you never put a real key in the task, the credential is supplied at run time
+(`evolve skills get rewardkit` has the details):
 
 ```toml
 [verifier.env]
@@ -243,7 +245,7 @@ and every exclusion; benchmark bugs found and how they were handled; prompt
 modifications, environment adjustments and other deviations from the original, with the
 reason; known limitations; the exact commands to regenerate the tasks and to run them.
 
-Then publish the output folder as a dataset (the `publish` skill has every option):
+Then publish the output folder as a dataset (`evolve skills get publish` has every option):
 
 ```bash
 evolve dataset check "<output-dir>"
@@ -279,7 +281,7 @@ questions come up, read the one that matches the benchmark's shape:
 
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
-| `evolve: command not found` | The CLI is not installed | `npm install -g @evolvingmachines/sdk`. |
+| `evolve: command not found` | The CLI is not installed | `npm install -g @evolvingmachines/evolve`. |
 | `evolve dataset check` refuses a task by name | Its `task.toml` breaks a rule (a field, a value, a name) | Fix the converter, regenerate, check again. The refusal names the field. |
 | A task check comes back `has_a_problem` | One criterion failed | `evolve check show <check-id>` prints the criterion, its explanation and its evidence. |
 | Every task fails the check the same way | An error in the task template | Fix `task-template/` in the converter, not the generated tasks. |

@@ -181,7 +181,7 @@ export async function resolveManagedSandbox(
     if (isMissingModule(error)) {
       throw missingProviderPackage(
         "@evolvingmachines/e2b",
-        "npm install @evolvingmachines/sdk",
+        "npm install @evolvingmachines/evolve",
       );
     }
     throw error;
@@ -243,7 +243,7 @@ export async function resolveDefaultSandbox(): Promise<SandboxProvider> {
       if (error.message?.includes("Cannot find module") || error.message?.includes("MODULE_NOT_FOUND")) {
         throw new Error(
           `${ENV_E2B_API_KEY} is set but @evolvingmachines/e2b failed to load.\n` +
-            "Try reinstalling: npm install @evolvingmachines/sdk"
+            "Try reinstalling: npm install @evolvingmachines/evolve"
         );
       }
       throw error;

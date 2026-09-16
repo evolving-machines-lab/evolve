@@ -4,6 +4,8 @@ description: Create a new task in the Harbor task format for evaluating agents o
   scaffold, build, or design a new task, benchmark problem, or eval. Guides through 
   instruction writing, environment setup, verifier design (pytest vs Reward Kit vs 
   custom), solution scripting, checking the task with evolve check, and publishing it.
+metadata:
+  internal: true
 ---
 
 Guide the user through creating a new task end-to-end. Don't just dump commands — 
@@ -118,7 +120,7 @@ docker_image = "ubuntu:24.04"
 ### Option A: Reward Kit (recommended for most cases)
 
 Use when the verifier has multiple criteria, needs partial credit, uses an LLM/agent 
-judge, or would benefit from composable reusable checks. See the `rewardkit` skill.
+judge, or would benefit from composable reusable checks. See `evolve skills get rewardkit`.
 
 Good fit signals:
 - Multiple things to check (file exists + content correct + command works)
@@ -136,7 +138,7 @@ Note: the package is named `harbor-rewardkit` but the executable is `rewardkit`,
 hence `--from 'harbor-rewardkit==0.2.*' rewardkit`. Running
 `uvx harbor-rewardkit` directly will fail.
 
-Then add `tests/checks.py` and/or `tests/judge.toml`. Invoke the `rewardkit` skill to 
+Then add `tests/checks.py` and/or `tests/judge.toml`. Read `evolve skills get rewardkit` to 
 design the criteria.
 
 ### Option B: pytest (good for deterministic unit-style checks)
@@ -294,11 +296,8 @@ For Reward Kit judges needing API keys:
 ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 ```
 
-On Evolve the value is never a real key: the platform resolves this request at run time to
-a short-lived token scoped to the judge's model family (`ANTHROPIC_API_KEY` for
-`anthropic/*` models, `OPENAI_API_KEY` for `openai/*`), and the judge's spend is metered on
-its own. Write the template exactly as above, as the whole value; never put a key in the
-task.
+On Evolve you never put a real key in the task: write the template exactly as above, as
+the whole value, and the judge's credential is supplied at run time.
 
 ## Step 7: Check the task
 
@@ -330,7 +329,7 @@ evolve run -d "<dataset>@1.0" -a codex -m gpt-5.5 --watch
 ```
 
 If the task is too easy (every model 1.0) or impossible (every model 0.0), consider 
-adjusting difficulty. The `publish` skill covers every publish option.
+adjusting difficulty. `evolve skills get publish` covers every publish option.
 
 ## Step 9: Write README.md (always the final step)
 

@@ -1,4 +1,4 @@
-evolve-sdk
+evolvingmachines-evolve
 python-dotenv
 rich
 prompt_toolkit

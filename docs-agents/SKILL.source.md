@@ -1,0 +1,137 @@
+---
+name: docs-agents
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client. For hosted evals (datasets, jobs, trials, checks, analyses, the evolve CLI) read `evolve skills get evals`."
+metadata:
+  internal: true
+---
+
+# Evolve SDK
+
+Build applications that run CLI agents in secure cloud sandboxes.
+
+**Repo:** https://github.com/evolving-machines-lab/evolve
+
+Hosted evals — datasets, jobs, trials, checks, analyses and the `evolve` CLI — are `evolve skills get evals`, not this skill.
+
+## Language Detection
+
+Determine the language from (in priority order):
+
+1. **User specification** — if the user states a language, use it
+2. **Project signals** — imports, file extensions, package.json vs pyproject.toml
+3. **Ask** — if ambiguous, ask the user
+
+- **TypeScript** (`@evolvingmachines/evolve`) — read from [typescript/](typescript/)
+- **Python** (`evolvingmachines-evolve`) — read from [python/](python/)
+
+## Required Reading
+
+Always read these three references **for the detected language** before writing any Evolve code:
+
+**TypeScript:**
+- [01-getting-started.md](typescript/01-getting-started.md) — Installation, authentication (Gateway, managed BYO provider keys, direct provider-key mode), core lifecycle, streaming basics, agent reference table
+- [02-configuration.md](typescript/02-configuration.md) — Sandbox providers, full builder API, agent skills catalog, Managed integrations, MCP servers
+- [03-runtime.md](typescript/03-runtime.md) — run(), executeCommand(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
+
+**Python:**
+- [01-getting-started.md](python/01-getting-started.md) — Installation, authentication (Gateway, managed BYO provider keys, direct provider-key mode), core lifecycle, streaming basics, agent reference table
+- [02-configuration.md](python/02-configuration.md) — Sandbox providers, full constructor API, agent skills catalog, Managed integrations, MCP servers
+- [03-runtime.md](python/03-runtime.md) — run(), execute_command(), upload/download files, session controls, workspace layout, structured output, session management, storage & checkpointing, StorageClient, sessions() client, cost tracking, observability, error handling
+
+## Critical Constraints
+
+- **Model names** — Only use exact names from the Agent Reference table. Do not invent or guess model identifiers.
+  - [TS](typescript/01-getting-started.md#agent-reference) | [PY](python/01-getting-started.md#agent-reference)
+- **Cleanup** — Always call `kill()` when done. Sandboxes bill until destroyed.
+  - [TS](typescript/01-getting-started.md#core-lifecycle) | [PY](python/01-getting-started.md#core-lifecycle)
+
+## Additional References
+
+Read on demand when the user's task requires them:
+
+| When to read | TypeScript | Python |
+|-------------|-----------|--------|
+| Building a UI, handling real-time events | [04-streaming.md](typescript/04-streaming.md) | [04-streaming.md](python/04-streaming.md) |
+| Parallel agents (map/filter/reduce/bestOf/verify), Pipeline chaining | [05-swarm-pipeline.md](typescript/05-swarm-pipeline.md) | [05-swarm-pipeline.md](python/05-swarm-pipeline.md) |
+
+## Topic Index
+
+### Getting Started
+
+| Topic | TypeScript | Python |
+|-------|-----------|--------|
+| Installation & requirements | [TS](typescript/01-getting-started.md#installation) | [PY](python/01-getting-started.md#installation) |
+| Quick start (3 steps) | [TS](typescript/01-getting-started.md#quick-start) | [PY](python/01-getting-started.md#quick-start) |
+| Core lifecycle (run, output, kill) | [TS](typescript/01-getting-started.md#core-lifecycle) | [PY](python/01-getting-started.md#core-lifecycle) |
+| Streaming basics | [TS](typescript/01-getting-started.md#streaming) | [PY](python/01-getting-started.md#streaming) |
+| Gateway, managed BYO provider keys, and direct provider-key mode | [TS](typescript/01-getting-started.md#authentication) | [PY](python/01-getting-started.md#authentication) |
+| BYO subscriptions (Claude Max, Codex, Gemini) | [TS](typescript/01-getting-started.md#byo-claude-max-subscription) | [PY](python/01-getting-started.md#byo-claude-max-subscription) |
+| Supported agents, models & defaults | [TS](typescript/01-getting-started.md#agent-reference) | [PY](python/01-getting-started.md#agent-reference) |
+| Harness and model pairing (per-harness constraints) | [TS](typescript/01-getting-started.md#harness-and-model-pairing) | [PY](python/01-getting-started.md#harness-and-model-pairing) |
+
+### Configuration
+
+| Topic | TypeScript | Python |
+|-------|-----------|--------|
+| Sandbox providers (E2B, Modal, Daytona) | [TS](typescript/02-configuration.md#sandbox-providers) | [PY](python/02-configuration.md#sandbox-providers) |
+| Provider auto-resolution from env | [TS](typescript/02-configuration.md#auto-resolution) | [PY](python/02-configuration.md#auto-resolution) |
+| Sandbox create options (image, network, user, homeDir) | [TS](typescript/02-configuration.md#sandbox-create-options) | [PY](python/02-configuration.md#sandbox-create-options) |
+| Workspace modes (knowledge / swe) | [TS](typescript/02-configuration.md#workspace-modes) | [PY](python/02-configuration.md#workspace-modes) |
+| Full builder/constructor API | [TS](typescript/02-configuration.md#evolve-instance) | [PY](python/02-configuration.md#evolve-instance) |
+| Browser automation guide (setup, live view, replay) | [TS](typescript/02-configuration.md#browser-automation) | [PY](python/02-configuration.md#browser-automation) |
+| Browser credentials (saved website logins) | [TS](typescript/02-configuration.md#browser-credentials) | [PY](python/02-configuration.md#browser-credentials) |
+| Agent plugins/extensions | [TS](typescript/02-configuration.md#agent-plugins) | [PY](python/02-configuration.md#agent-plugins) |
+| Agent skills catalog | [TS](typescript/02-configuration.md#agent-skills) | [PY](python/02-configuration.md#agent-skills) |
+| Managed secrets (Dashboard-stored env secrets) | [TS](typescript/02-configuration.md#managed-secrets) | [PY](python/02-configuration.md#managed-secrets) |
+| Managed integrations (auth paths, tool filtering, types) | [TS](typescript/02-configuration.md#managed-integrations) | [PY](python/02-configuration.md#managed-integrations) |
+| MCP server config (STDIO / HTTP / SSE) | [TS](typescript/02-configuration.md#evolve-instance) | [PY](python/02-configuration.md#evolve-instance) |
+
+### Runtime
+
+| Topic | TypeScript | Python |
+|-------|-----------|--------|
+| run() options (timeout, background, checkpoint) | [TS](typescript/03-runtime.md#run) | [PY](python/03-runtime.md#run) |
+| executeCommand() / execute_command() | [TS](typescript/03-runtime.md#executecommand) | [PY](python/03-runtime.md#execute_command) |
+| Upload files to sandbox | [TS](typescript/03-runtime.md) | [PY](python/03-runtime.md) |
+| Download output files | [TS](typescript/03-runtime.md) | [PY](python/03-runtime.md) |
+| Session controls (interrupt, pause, resume, kill) | [TS](typescript/03-runtime.md#session-controls) | [PY](python/03-runtime.md#session-controls) |
+| Port forwarding | [TS](typescript/03-runtime.md#gethost) | [PY](python/03-runtime.md#get_host) |
+| Workspace filesystem layout | [TS](typescript/03-runtime.md) | [PY](python/03-runtime.md) |
+| Structured output (Zod / Pydantic / JSON Schema) | [TS](typescript/03-runtime.md#structured-output) | [PY](python/03-runtime.md#structured-output) |
+| Multi-turn conversations | [TS](typescript/03-runtime.md#session-management) | [PY](python/03-runtime.md#session-management) |
+| Pause, resume, reconnect, switch sandboxes | [TS](typescript/03-runtime.md#session-management) | [PY](python/03-runtime.md#session-management) |
+| Storage & checkpointing (gateway mode) | [TS](typescript/03-runtime.md#storage--checkpointing) | [PY](python/03-runtime.md#storage--checkpointing) |
+| StorageClient (list, get, download checkpoints) | [TS](typescript/03-runtime.md#listing--browsing-checkpoints) | [PY](python/03-runtime.md#listing--browsing-checkpoints) |
+| Checkpoint lineage & restore | [TS](typescript/03-runtime.md#checkpoint-lineage) | [PY](python/03-runtime.md#checkpoint-lineage) |
+| Historical sessions & trace download | [TS](typescript/03-runtime.md#historical-sessions--trace-download) | [PY](python/03-runtime.md#historical-sessions--trace-download) |
+| Cost tracking (per-run & per-session spend) | [TS](typescript/03-runtime.md#cost-tracking) | [PY](python/03-runtime.md#cost-tracking) |
+| Observability (dashboard + local logs) | [TS](typescript/03-runtime.md#observability) | [PY](python/03-runtime.md#observability) |
+| Error handling | [TS](typescript/03-runtime.md#error-handling) | [PY](python/03-runtime.md#error-handling) |
+
+### Streaming
+
+| Topic | TypeScript | Python |
+|-------|-----------|--------|
+| Event listeners (content, lifecycle, stdout, stderr) | [TS](typescript/04-streaming.md#event-listeners) | [PY](python/04-streaming.md#event-listeners) |
+| LifecycleEvent & LifecycleReason | [TS](typescript/04-streaming.md#lifecycleevent) | [PY](python/04-streaming.md#lifecycleevent-typeddict-shape) |
+| OutputEvent & SessionUpdate types | [TS](typescript/04-streaming.md#sessionupdate-types) | [PY](python/04-streaming.md#event-types-summary) |
+| Tool events (ToolCall, ToolCallUpdate, ToolKind) | [TS](typescript/04-streaming.md#tool-events) | [PY](python/04-streaming.md#toolkind-reference) |
+| Browser lifecycle event fields | [TS](typescript/04-streaming.md#browser-automation-streaming) | [PY](python/04-streaming.md#browser-automation-streaming) |
+| UI integration example | [TS](typescript/04-streaming.md#ui-integration-example) | [PY](python/04-streaming.md#ui-integration-example) |
+
+### Swarm & Pipeline
+
+| Topic | TypeScript | Python |
+|-------|-----------|--------|
+| Swarm setup (config, concurrency, retry) | [TS](typescript/05-swarm-pipeline.md) | [PY](python/05-swarm-pipeline.md) |
+| Input types (FileMap, folders) | [TS](typescript/05-swarm-pipeline.md#input-types) | [PY](python/05-swarm-pipeline.md#input-types) |
+| bestOf / best_of (N candidates + judge) | [TS](typescript/05-swarm-pipeline.md#bestof) | [PY](python/05-swarm-pipeline.md#best_of) |
+| map (parallel processing) | [TS](typescript/05-swarm-pipeline.md#map) | [PY](python/05-swarm-pipeline.md#map) |
+| filter (evaluate + threshold) | [TS](typescript/05-swarm-pipeline.md#filter) | [PY](python/05-swarm-pipeline.md#filter) |
+| reduce (synthesize many to one) | [TS](typescript/05-swarm-pipeline.md#reduce) | [PY](python/05-swarm-pipeline.md#reduce) |
+| verify (quality gate with feedback loop) | [TS](typescript/05-swarm-pipeline.md#verify-quality-gate) | [PY](python/05-swarm-pipeline.md#verify-quality-gate) |
+| Result types (SwarmResult, ReduceResult, BestOfResult) | [TS](typescript/05-swarm-pipeline.md#result-types) | [PY](python/05-swarm-pipeline.md#result-types) |
+| Chaining operations | [TS](typescript/05-swarm-pipeline.md#chaining-operations) | [PY](python/05-swarm-pipeline.md#chaining-operations) |
+| Pipeline (fluent chaining, events, terminal) | [TS](typescript/05-swarm-pipeline.md#pipeline) | [PY](python/05-swarm-pipeline.md#pipeline) |
+
+The installed CLI serves the current version of this skill: `evolve skills get agents --full`.

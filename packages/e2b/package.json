@@ -6,7 +6,7 @@
     "agents",
     "sandbox",
     "e2b",
-    "evolve-sdk",
+    "evolve",
     "orchestration"
   ],
   "homepage": "https://github.com/evolving-machines-lab/evolve",
