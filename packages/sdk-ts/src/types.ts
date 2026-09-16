@@ -258,11 +258,84 @@ export interface SandboxListOptions {
   limit?: number;
 }
 
-/** File or directory entry (capability: SandboxFiles.list). */
+/**
+ * One filesystem entry, the SAME shape on every provider (capability:
+ * SandboxFiles.list / SandboxFiles.stat).
+ *
+ * A symlink is reported as a symlink with its `target`, never as what it
+ * points to. `mode` is the entry's own permission bits as a four-digit octal
+ * string ("0644", "4755"); `mtime` is ISO 8601; `owner`/`group` are as the
+ * box reports them (a name, or a numeric id where the box has no name for
+ * it). `type` is "other" for anything that is not a file, a directory or a
+ * symlink (sockets, devices, pipes) — such entries are metadata only.
+ */
 export interface FileInfo {
   name: string;
   path: string;
-  type: "file" | "dir";
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+  mtime: string;
+  mode: string;
+  owner: string;
+  group: string;
+  /** The link's target, exactly as the box reports it; only on type "symlink". */
+  target?: string;
+}
+
+/** A byte range of a file (capability: SandboxFiles.readRange). */
+export interface FileRange {
+  /** First byte, 0-based. */
+  offset: number;
+  /** Number of bytes wanted; a read that meets the end of the file returns fewer. */
+  length: number;
+}
+
+/**
+ * One filesystem change (capability: SandboxFiles.watchDir). `path` is
+ * absolute; `rename` names the old path or the new one — whichever the box
+ * reported — so a consumer that sees one relists the parent directory.
+ */
+export interface FilesystemEvent {
+  path: string;
+  type: "create" | "write" | "remove" | "rename";
+}
+
+/** Options for watching a directory (capability: SandboxFiles.watchDir). */
+export interface WatchOptions {
+  /** Also report changes in every subdirectory. Default false. */
+  recursive?: boolean;
+}
+
+/** Stops a directory watch (capability: SandboxFiles.watchDir). */
+export interface WatchHandle {
+  stop(): Promise<void>;
+}
+
+/**
+ * One resource-usage sample of a running sandbox (capability:
+ * SandboxInstance.metrics). Memory and disk are in MiB (bytes / 1,048,576, no
+ * rounding); `source` names the provider call the numbers came from
+ * ("e2b:getMetrics", "daytona:getMetricsLatest") and `sampledAt` is the
+ * sample's own timestamp, so a reader can tell a fresh sample from a stale
+ * one. `diskUsedMb` is absent where the provider reports no disk figure.
+ */
+export interface SandboxMetrics {
+  cpuPct: number;
+  memUsedMb: number;
+  memTotalMb: number;
+  diskUsedMb?: number;
+  sampledAt: string;
+  source: string;
+}
+
+/** Options for attaching to a sandbox for reads (capability: SandboxProvider.inspect). */
+export interface SandboxInspectOptions {
+  /**
+   * The OS user the reads run as. Defaults to the user this provider created
+   * the sandbox with, when it knows it (same process), else the provider's
+   * default user.
+   */
+  user?: string;
 }
 
 /**
@@ -340,12 +413,43 @@ export interface SandboxFiles {
 
   /** Check whether a file or directory exists. */
   exists?(path: string): Promise<boolean>;
-  /** List directory contents. */
+  /**
+   * List a directory's entries (not recursive), each in the uniform FileInfo
+   * shape. A missing directory throws SandboxPathNotFoundError — never an
+   * empty list.
+   */
   list?(path: string): Promise<FileInfo[]>;
   /** Delete a file or directory. */
   remove?(path: string): Promise<void>;
   /** Rename or move a file or directory. */
   rename?(oldPath: string, newPath: string): Promise<void>;
+
+  // --- Live observation (all three first-party providers implement these;
+  //     a provider that lacks the underlying ability implements the member
+  //     and throws SandboxFeatureUnsupportedError — never a silent fallback) ---
+
+  /**
+   * The entry at `path` itself: a symlink is reported as a symlink with its
+   * target, never followed. Missing → SandboxPathNotFoundError.
+   */
+  stat?(path: string): Promise<FileInfo>;
+  /**
+   * Exactly the requested bytes of a file, byte for byte, without moving the
+   * whole file when the range is small. A range past the end returns fewer
+   * bytes (or none). Missing → SandboxPathNotFoundError.
+   */
+  readRange?(path: string, range: FileRange): Promise<Uint8Array>;
+  /**
+   * Report changes under `path` until `stop()`. Events are absolute paths in
+   * the four-word vocabulary of FilesystemEvent. Daytona has no watcher and
+   * throws SandboxFeatureUnsupportedError("files.watchDir", "daytona") so a
+   * caller can fall back to polling list().
+   */
+  watchDir?(
+    path: string,
+    onEvent: (event: FilesystemEvent) => void | Promise<void>,
+    options?: WatchOptions
+  ): Promise<WatchHandle>;
 }
 
 /** Sandbox instance */
@@ -364,6 +468,14 @@ export interface SandboxInstance {
   isRunning?(): Promise<boolean>;
   /** Sandbox metadata and timing. */
   getInfo?(): Promise<SandboxInfo>;
+  /**
+   * The newest resource-usage sample the provider has, or null while it has
+   * none yet (E2B publishes its first sample some seconds after boot). A
+   * provider whose only figures would be untrue throws
+   * SandboxFeatureUnsupportedError("metrics", …) with the reason — Modal does,
+   * because /proc and the cgroup files inside its sandbox report the host.
+   */
+  metrics?(): Promise<SandboxMetrics | null>;
 
   /**
    * Replace the sandbox's outbound network policy WITHOUT restarting it, so a
@@ -417,6 +529,19 @@ export interface SandboxProvider {
   readonly supportsBootCommand?: boolean;
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
+
+  /**
+   * Attach to an EXISTING, RUNNING sandbox for reads only. Unlike `connect`,
+   * this never starts a stopped sandbox, never resumes a paused one and never
+   * extends or resets its lifetime: a sandbox that is not running is refused
+   * with SandboxNotRunningError naming its state. What the provider counts as
+   * activity for its own idle clock is unchanged (Daytona's auto-stop and
+   * Modal's idle timeout count file reads; E2B's lifetime is absolute).
+   *
+   * OPTIONAL, on the same terms as `list`: the SDK never calls it, so a
+   * third-party provider may omit it; every first-party provider offers it.
+   */
+  inspect?(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance>;
 
   /**
    * List sandboxes, paginating to exhaustion.
