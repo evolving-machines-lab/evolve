@@ -48,7 +48,7 @@ import {
   isSandboxNotRunningError,
   isSandboxPathNotFoundError,
 } from "./sandbox-errors";
-import { EXIT_EISDIR, EXIT_ENOENT, assertByteRange, isoTime, octalMode, shellQuote } from "./sandbox-observation";
+import { EXIT_EISDIR, EXIT_ENOENT, assertByteRange, entryTypeOfMode, isoTime, octalMode, shellQuote } from "./sandbox-observation";
 
 export {
   SandboxFeatureUnsupportedError,
@@ -1759,8 +1759,8 @@ export class ModalFiles implements SandboxFiles {
 interface ModalEntry {
   name: string;
   path: string;
-  type: string;
   size: number;
+  mode: number;
   permissions: string;
   owner: string;
   group: string;
@@ -1768,9 +1768,9 @@ interface ModalEntry {
   symlinkTarget: string | null;
 }
 
+// The SDK's `type` word calls a fifo and a device "file" (measured 2026-09-16); its `mode` is a POSIX st_mode.
 function toFileInfo(entry: ModalEntry): FileInfo {
-  const type: FileInfo["type"] =
-    entry.type === "file" ? "file" : entry.type === "directory" ? "dir" : entry.type === "symlink" ? "symlink" : "other";
+  const type = entryTypeOfMode(entry.mode);
   const info: FileInfo = {
     name: entry.name,
     path: entry.path,

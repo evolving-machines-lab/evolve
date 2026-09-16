@@ -1,7 +1,11 @@
 // SOURCE of the rules every provider applies when observing files (mode strings, timestamps,
 // ranges); mirrored into the provider packages by `npm run generate:sandbox-errors`.
 
+import { constants as fs } from "node:fs";
 import { SandboxPathNotFoundError } from "./sandbox-errors";
+
+/** The contract's entry types (types.ts FileInfo). */
+export type EntryType = "file" | "dir" | "symlink" | "other";
 
 /** A byte range as the contract states it (types.ts FileRange). */
 export interface ByteRange {
@@ -40,9 +44,15 @@ function pad4(octal: string): string {
   return octal.padStart(4, "0");
 }
 
+/** The entry type a POSIX st_mode carries in its S_IFMT bits (sys/stat.h; the masks are Node's own fs.constants). */
+export function entryTypeOfMode(mode: number): EntryType {
+  const format = mode & fs.S_IFMT;
+  return format === fs.S_IFDIR ? "dir" : format === fs.S_IFLNK ? "symlink" : format === fs.S_IFREG ? "file" : "other";
+}
+
 /** What a Go `os.FileMode.String()` names: the entry's own type and the contract's four-digit octal mode. */
 export interface GoFileMode {
-  type: "file" | "dir" | "symlink" | "other";
+  type: EntryType;
   mode: string;
 }
 
@@ -54,7 +64,7 @@ export function parseGoFileMode(text: string): GoFileMode {
   if (!GO_FILE_MODE.test(text)) throw new RangeError(`not a Go file mode string: ${text}`);
   const prefix = text.slice(0, -9);
   const rwx = text.slice(-9);
-  const type: GoFileMode["type"] = prefix.includes("d")
+  const type: EntryType = prefix.includes("d")
     ? "dir"
     : prefix.includes("L")
       ? "symlink"

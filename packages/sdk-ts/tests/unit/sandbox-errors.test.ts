@@ -17,7 +17,7 @@ import {
   isSandboxPathNotFoundError,
 } from "../../src/sandbox-errors";
 import { SANDBOX_ERRORS_SOURCE, SANDBOX_ERRORS_MIRRORS, SANDBOX_MIRROR_SETS } from "../../../../scripts/generate-sandbox-errors";
-import { assertByteRange, isoTime, joinPath, octalMode, parseGoFileMode, readByteRangeOverUrl } from "../../src/sandbox-observation";
+import { assertByteRange, entryTypeOfMode, isoTime, joinPath, octalMode, parseGoFileMode, readByteRangeOverUrl } from "../../src/sandbox-observation";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../../..");
@@ -113,6 +113,10 @@ console.log("\n[5] the shared observation rules: mode strings, timestamps, range
   for (const [text, type, mode] of goModes) {
     const got = parseGoFileMode(text);
     assert(got.type === type && got.mode === mode, `"${text}" is ${type} ${mode} (got ${got.type} ${got.mode})`);
+  }
+  // st_mode values Modal's filesystem API reported on a live box on 2026-09-16 (fold-2 e2e-modal.json "modal-raw").
+  for (const [mode, type] of [[33188, "file"], [16877, "dir"], [41471, "symlink"], [4516, "other"], [8630, "other"], [49645, "other"], [35309, "file"], [17407, "dir"]] as Array<[number, string]>) {
+    assert(entryTypeOfMode(mode) === type, `st_mode ${mode.toString(8)} is ${type} (got ${entryTypeOfMode(mode)})`);
   }
   for (const bad of ["-rwsr-xr-x", "rwxr-xr-x", "nonsense", "drwxr-xr-", "xrwxr-xr-x", ""]) {
     let threw = false;

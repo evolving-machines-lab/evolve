@@ -59,6 +59,10 @@ const LIVE_ENTRIES = [
   { name: "sp ace.txt", path: "/tmp/p/sp ace.txt", type: "file", size: 1, mode: 33188, permissions: "0644", owner: "root", group: "root", modifiedTime: 1789591686, symlinkTarget: null },
   { name: "sub", path: "/tmp/p/sub", type: "directory", size: 4096, mode: 16877, permissions: "0755", owner: "root", group: "root", modifiedTime: 1789591686, symlinkTarget: null },
   { name: "sock", path: "/tmp/p/sock", type: "socket", size: 0, mode: 49645, permissions: "0755", owner: "root", group: "root", modifiedTime: 1789591686, symlinkTarget: null },
+  // Modal's `type` word says "file" for a fifo and a device; its `mode` is a POSIX st_mode (recorded 2026-09-16, fold 2).
+  { name: "fifo", path: "/tmp/p/fifo", type: "file", size: 0, mode: 4516, permissions: "0644", owner: "root", group: "root", modifiedTime: 1789591686, symlinkTarget: null },
+  { name: "null", path: "/dev/null", type: "file", size: 0, mode: 8630, permissions: "0666", owner: "root", group: "root", modifiedTime: 1789591686, symlinkTarget: null },
+  { name: "setuid", path: "/tmp/p/setuid", type: "file", size: 1, mode: 35309, permissions: "4755", owner: "root", group: "root", modifiedTime: 1789591686, symlinkTarget: null },
 ];
 
 function notFound(path: string): Error {
@@ -84,6 +88,8 @@ async function testListAndStat(): Promise<void> {
   assertEqual([byName["dangling"].type, byName["dangling"].target], ["symlink", "/nonexistent"], "a dangling symlink is listed");
   assertEqual(byName["sub"].type, "dir", "'directory' becomes 'dir'");
   assertEqual(byName["sock"].type, "other", "a socket is 'other'");
+  assertEqual([byName["fifo"].type, byName["null"].type], ["other", "other"], "a fifo and a device are 'other' by st_mode, even though the vendor's type word says 'file'");
+  assertEqual([byName["fifo"].mode, byName["null"].mode, byName["setuid"].mode], ["0644", "0666", "4755"], "…with their own permission bits, the setuid bit kept");
   assertEqual(byName["sp ace.txt"].name, "sp ace.txt", "whitespace names survive (the ls parser split on them)");
   const info = await files.stat("/tmp/p/link");
   assertEqual([info.type, info.target, info.mode], ["symlink", "a.txt", "0777"], "stat reports the link itself");
