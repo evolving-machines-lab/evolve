@@ -66,7 +66,7 @@ Then publish from a local directory, from a git repository, or from a source the
 flowchart TB
   subgraph PUB[At publish]
     direction LR
-    P[Pre-flight: nothing uploaded] --> U[Upload: the version is BUILDING]
+    P[Pre-flight: nothing uploaded] --> U[Upload: the version is IMPORTING, then BUILDING]
     U --> B[Parse and build: one image per task, pinned by digest]
     B --> RD[READY, or FAILED when no task built]
   end
@@ -79,7 +79,7 @@ flowchart TB
 
 The pre-flight sends each task's `task.toml`, and the `dataset.toml` if there is one, to the server, which answers with a verdict per task and writes nothing. A refused task stops the publish before anything is uploaded.
 
-The upload is stored on the server, the new version is recorded as BUILDING, and the dataset is stamped as yours.
+The upload is stored on the server, the new version is recorded as IMPORTING, then BUILDING while the task images build, and the dataset is stamped as yours.
 
 The importer reads every task directory: first the shape of its `task.toml`, against a strict schema, then its meaning.
 

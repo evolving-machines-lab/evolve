@@ -66,9 +66,11 @@ samp {
   border-right-color: #ffffff1a;
 }
 
-/* Pagination: Maple's own tile and behaviour, in our colors. */
+/* Pagination: Maple's own tile and behaviour, in our colors, with the
+   sidebar's hairline as its edge. */
 #pagination {
   background: #ffffff;
+  border: 1px solid #0000000f;
 }
 
 #pagination .font-semibold {
@@ -81,6 +83,7 @@ samp {
 
 .dark #pagination {
   background: #141414;
+  border-color: #ffffff1a;
 }
 
 .dark #pagination .font-semibold {
