@@ -113,7 +113,7 @@ Check out the [documentation](./docs) and [cookbooks](./cookbooks).
 
 - [TypeScript SDK](./docs/typescript/)
 - [Python SDK](./docs/python/)
-- [Hosted Evals](./docs/typescript/06-hosted-evals.md)
+- [Hosted evals](https://docs.evolvingmachines.ai)
 - [Cookbooks](./cookbooks)
 - [Skills](./skills)
 - [Changelog](./CHANGELOG.md)
