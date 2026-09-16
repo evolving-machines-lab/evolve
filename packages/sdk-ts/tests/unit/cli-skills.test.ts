@@ -428,7 +428,10 @@ async function main(): Promise<void> {
       assert(startHere !== -1, "root help carries the Start here block");
       assert(commands !== -1 && startHere < commands, "before the command list");
       assert(text.includes("  evolve skills get evals\n"), "the block names `evolve skills get evals`");
-      assert(text.includes("`skills get create-task`, `rewardkit`, `create-adapter`, `publish`"), "and the task-authoring skills");
+      assert(
+        text.replace(/\s+/g, " ").includes("`skills get create-task`, `rewardkit`, `create-adapter`, `publish`"),
+        "and the task-authoring skills (wrapped to the help width)"
+      );
       assert(/^  skills\s/m.test(text), "the command list has a skills row");
 
       const group = captureIO();

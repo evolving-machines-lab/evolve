@@ -1692,7 +1692,7 @@ async function testHelpAndVersion() {
   assertEqual(await runCli(["job", "start", "--help"], cmd.io), 0, "command --help exits 0");
   const cmdText = cmd.out.join("\n");
   assert(cmdText.includes("-d, --dataset"), "command help shows the short + long flags");
-  assert(cmdText.includes("Example:"), "command help carries a worked example");
+  assert(cmdText.includes("Examples:"), "command help carries worked examples");
   assert(cmdText.includes("evolve job start -d "), "the example is a runnable line");
 
   // `run` is first-class: its help page documents `run`, never `job start`.
@@ -1744,7 +1744,8 @@ async function testHelpAndVersion() {
 
   const trialCmd = captureIO();
   await runCli(["help", "trial", "download"], trialCmd.io);
-  const trialCmdText = trialCmd.out.join("\n");
+  // Help wraps at 80 columns, so the pins below read the words, not the line breaks.
+  const trialCmdText = trialCmd.out.join("\n").replace(/\s+/g, " ");
   assert(trialCmdText.includes("--stream"), "help <group> <verb> resolves the command help");
   assert(
     trialCmdText.includes("trace-atif (the ATIF trajectory)"),
