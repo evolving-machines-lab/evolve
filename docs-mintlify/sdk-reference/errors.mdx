@@ -1,0 +1,197 @@
+---
+title: "Errors"
+description: "The error class every refused request raises, and every code it can carry."
+---
+
+A refused request raises one class. Branch on its `code`, never on the message.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    import { EvolveApiError, HOSTED_ERROR_CODES, isHostedErrorCode } from "@evolvingmachines/sdk";
+
+    class EvolveApiError extends Error {
+      status: number;                 // the HTTP status
+      code: HostedErrorCode | string; // the stable code below; a newer server may send one this SDK does not list
+      message: string;                // the server's sentence; may be shortened when a list is long
+      param?: string;                 // the input the refusal is about: a body path, a query parameter, or a multipart part
+      details?: Record<string, unknown>; // the complete machine-readable data; never shortened
+      retryAfterSec?: number;         // on 429 and 503, from the body first, the Retry-After header second
+      requestId?: string;             // the server's id for this failure, from x-request-id; quote it in support
+      isKnownCode(): boolean;
+    }
+    ```
+
+    ```ts
+    try {
+      await jobs().start({ datasets: [{ name: "terminal-bench-4" }], agents: [{ name: "codex", model_name: "gpt-5.5" }], sandbox_provider: "modal" });
+    } catch (err) {
+      if (err instanceof EvolveApiError && err.code === "provider_unsupported") {
+        const { refused_tasks } = err.details as { refused_tasks: { task_name: string; reason: string }[] };
+      }
+    }
+    ```
+
+    `HOSTED_ERROR_CODES` is the closed list as a runtime array and `isHostedErrorCode(value)` narrows a string to it. The same list is published as `error_codes` in the [capability document](/sdk-reference/meta).
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from evolve import EvolveAPIError, HOSTED_ERROR_CODES, is_hosted_error_code
+
+    class EvolveAPIError(Exception):
+        status: int                        # the HTTP status
+        code: str                          # the stable code below
+        param: Optional[str]               # the input the refusal is about
+        details: Optional[Dict[str, Any]]  # the complete machine-readable data; never shortened
+        retry_after_sec: Optional[float]   # on 429 and 503
+        request_id: Optional[str]          # the server's id for this failure; quote it in support
+        def is_known_code(self) -> bool: ...
+    ```
+
+    ```python
+    try:
+        await jobs().start(datasets=[{"name": "terminal-bench-4"}], agents=[{"name": "codex", "model_name": "gpt-5.5"}], sandbox_provider="modal")
+    except EvolveAPIError as err:
+        if err.code == "provider_unsupported":
+            refused = (err.details or {}).get("refused_tasks", [])
+    ```
+
+    `str(err)` is the server's sentence, which may be shortened when a list is long. `HOSTED_ERROR_CODES` is the closed list and `is_hosted_error_code(value)` tests a string against it.
+  </Tab>
+</Tabs>
+
+Every response, success or failure, carries the same id in its `x-request-id` header. One 429 carries no retry delay: `quota_exceeded`, because the wait is not a number the server knows.
+
+## Errors that are not API refusals
+
+Four errors mean the request succeeded, or never happened, and something else went wrong. They are separate classes, not codes.
+
+- `NoActiveVersionError`: `datasets().getActive()` (Python `get_active`) on a dataset with no active version. Carries `dataset`.
+- `ImportSettleError`: `watchImport()` (Python `watch_import`) reached its settle timeout before the version settled. `code` is `settle_timeout`; carries `importId`, `dataset`, `version` and the last observed `state`. When `state` is `FAILED` the version did settle; read the failure with `getImport()`.
+- `EvolveDigestMismatchError`: a download's bytes do not match the digest the server stated. Carries `expected` and `actual`. Do not trust the stored object.
+- `EvolveIncompleteDownloadError`: fewer bytes arrived than `Content-Length` promised. Carries `expectedBytes` and `receivedBytes`. Retry the download.
+
+## The codes
+
+Grouped by the door that returns them. The HTTP status is stated where it is fixed.
+
+### Keys and limits
+
+| Code | When |
+| --- | --- |
+| `missing_authorization` | No API key on the request. |
+| `invalid_api_key` | The key is not valid. |
+| `read_only_key` | 403. A read-only key on a mutating route. |
+| `credential_service_unavailable` | The key could not be checked; retry. |
+| `rate_limited` | 429. Wait `retryAfterSec`; every SDK watch loop does so on its own. |
+| `insufficient_credits` | 402. The account's credit balance is zero at job create or resume. |
+| `quota_exceeded` | 429, no retry delay. The organization's `max_queued_trials` would be crossed. `details` carry `quota`, `limit`, `used`, `requested` and `org`. The CLI prints `Launch quota exceeded:` and exits 2. |
+
+### Input
+
+| Code | When |
+| --- | --- |
+| `invalid_json` | The body is not JSON. |
+| `invalid_input` | A field is malformed; the message names it and `param` names it when the server can. Also the 413 for a trial home too large to serve as one text view (`details`: `size_bytes`, `max_unranged_bytes`). |
+| `invalid_limit`, `invalid_cursor`, `invalid_after` | A paging parameter is malformed. |
+| `invalid_status`, `invalid_visibility`, `invalid_format` | A filter or selector names a value outside its closed set. |
+| `invalid_ids` | A stop batch that is empty or over 100 ids. |
+| `invalid_multipart` | 400. An upload that is not `multipart/form-data`, or is malformed. |
+| `idempotency_key_reused` | 409. The key already stands for a different request. |
+| `concurrent_update` | The row changed under the request; read it again. |
+
+### Datasets and publishing
+
+| Code | When |
+| --- | --- |
+| `dataset_not_found` | The name does not exist, or belongs to someone else; the two are never told apart. |
+| `dataset_version_not_found` | The version does not exist. |
+| `dataset_name_taken` | 409. The name belongs to another publisher. |
+| `dataset_in_use` | 409. Jobs reference the dataset; `details` name them. |
+| `dataset_not_owned` | The caller does not own it; a platform dataset has no owner. |
+| `dataset_import_in_progress` | 409. A visibility change while a version is importing; `details` name the version. |
+| `upstream_not_watchable` | Auto-import on a dataset with no moving git ref. |
+| `no_active_version` | A bare name on a dataset with no active version. |
+| `version_not_ready` | 409. A job or an activation on a version that is not READY. |
+| `version_not_activatable` | A FAILED or ARCHIVED version. |
+| `unknown_task_names`, `no_tasks` | A selector names tasks the version lacks, or filters every task away. |
+| `task_not_found` | 404. `getTaskBuild()` on a name with no recorded outcome. |
+| `task_failed_to_build` | A job create that names a task whose build FAILED; `details.failed_tasks` quote each reason. |
+| `unpinned_git_ref` | A git publish on a branch; `details.commit` is the sha to pin. |
+| `hub_package_not_found` | 400. The hub package does not exist or is private; `details.hub_package`. |
+| `hub_unreachable` | 502. The hub could not be asked; retry the publish. |
+| `invalid_archive` | The tarball is unreadable or unsafe. |
+| `import_too_large` | 413. A dataset archive over the object store's ceiling. |
+| `import_not_found` | The import id does not exist or is not yours. |
+| `too_many_concurrent_imports` | 429, no retry delay. The server is spooling its bound of corpus uploads; `details.max_concurrent`. |
+| `package_not_retained`, `package_corrupt`, `package_missing` | 409. The original package was never retained, is corrupt, or is gone. Re-publish. |
+| `too_many_concurrent_package_downloads` | 429, no retry delay. `details.max_concurrent`. |
+| `upload_session_not_found`, `upload_offset_mismatch`, `upload_chunk_digest_mismatch`, `upload_incomplete`, `upload_archive_digest_mismatch`, `upload_session_failed`, `too_many_concurrent_upload_chunks` | The resumable upload session behind a large publish or job upload; the SDK drives it and surfaces the refusal as is. |
+
+### Jobs, trials, regrades
+
+| Code | When |
+| --- | --- |
+| `provider_unsupported` | 422. A selected task is refused on the chosen provider; `details.refused_tasks` carry each reason. |
+| `job_not_found` | The job does not exist or is not visible to you. A regrade job id on delete. |
+| `job_not_terminal` | 409. Resume, retry, regrade, analyze or delete on a live job; on delete also a live regrade, listed in `details.regrade_job_ids`. |
+| `no_failed_trials` | 409. Resume, or retry with `failed_only`, found nothing. |
+| `trial_not_found` | 404. A retry names a trial the job does not own; a trace feed id no run owns. |
+| `trial_not_settled` | 409. A retry names a trial still running. |
+| `regrade_source_ineligible` | 409. The trial recorded no verifier inputs; the message says why. |
+| `no_regradable_trials` | 409. A whole-job regrade found nothing eligible. |
+| `org_forbidden` | 403. A member who did not create the job tried to delete it. |
+| `job_uploaded` | 409. Resume, retry or regrade on an uploaded job. |
+| `secret_not_found`, `secret_ambiguous`, `secret_brokered_unsupported`, `secret_exists`, `secret_not_attached` | See [secrets](/core-concepts/secrets). |
+| `agent_version_not_found` | A version pin that does not resolve. |
+| `agent_version_unresolvable` | 502. The latest version could not be looked up; retry the create. |
+| `agent_kwarg_unsupported`, `agent_config_unsupported`, `agent_config_key_refused`, `agent_preset_unsupported` | See [agents](/core-concepts/agents). |
+
+### Analyze and check
+
+| Code | When |
+| --- | --- |
+| `invalid_rubric` | 400. Unknown keys, empty or duplicate criteria, or a length bound exceeded. |
+| `analysis_already_running` | 409. One analysis wave at a time; also blocks delete. |
+| `no_analyzable_trials` | 409. Every trial is CANCELLED, or the filter selects nothing. |
+| `analysis_not_found` | 404. An analysis you cannot read or that never existed. |
+| `analysis_not_terminal` | 409. Download of an analysis still queued or running. |
+| `check_not_found` | 404. Neither a check nor a task check you can read. |
+| `check_not_terminal` | 409. Download of a check or task check not yet settled. |
+| `no_checkable_tasks` | 400. No task directory in the archive, or the globs and the cap left nothing. |
+| `too_many_concurrent_check_uploads` | 429, no retry delay. `details.max_concurrent`. |
+
+### Job upload
+
+These arrive on the import's `failure`, one hop later, except the door's own three: `upload_too_large`, `too_many_concurrent_job_uploads` and `invalid_input`.
+
+| Code | When |
+| --- | --- |
+| `not_a_job_dir` | No `result.json` and `config.json` at the root, or they do not parse. |
+| `invalid_trial` | 422. One trial's `result.json` cannot be ingested; the failure names the trial. |
+| `trial_too_large` | Not a failure: the trial is skipped and listed on `skipped_trials`; `details` carry `file`, `bytes`, `max_bytes`. |
+| `upload_too_large` | 413. The archive is over the object store's ceiling, or the worker's free disk. |
+| `job_already_uploaded` | 409. You already uploaded this archive's job; `details.existing_job_id`. Delete it to replace it. |
+| `too_many_concurrent_job_uploads` | 429, no retry delay. `details.max_concurrent`. |
+| `job_import_not_found` | 404. An import that is not yours or does not exist. |
+
+### Registered agents and skills
+
+| Code | When |
+| --- | --- |
+| `agent_not_found` | Another owner's name reads the same as none. |
+| `agent_name_taken`, `agent_name_reserved`, `agent_invalid_name` | The name is used, collides with a built-in, or breaks the published pattern. |
+| `agent_source_required`, `agent_source_conflict` | Neither an install script nor a directory, or both. |
+| `agent_invalid_env` | The declared env overrides a run-contract key, or looks like a credential. |
+| `agent_too_large`, `agent_limit_reached` | The tarball or the per-user count is over the published limit. |
+| `skill_not_found`, `skill_name_not_found` | An `upload:<id>` or a `name:<skill-name>` that does not resolve. |
+| `skill_ref_invalid`, `skill_unresolvable`, `skill_invalid` | A reference that does not parse, cannot be fetched, or holds no valid skill. |
+| `skill_in_use` | 409. A running job references the upload. |
+| `skill_too_large`, `skill_limit_reached` | The tarball or the per-user count is over the published limit. |
+| `too_many_concurrent_skill_uploads` | 429, no retry delay. `details.max_concurrent`. |
+
+### Organizations
+
+`org_not_found`, `org_slug_taken`, `org_forbidden`, `org_personal_immutable`, `org_last_owner`, `org_in_use`, `org_member_not_found`, `invite_not_found` and `invite_invalid` belong to team accounts. The SDK reads organizations only, so only `org_not_found` and `org_forbidden` can reach it today.
+
+`internal_error` is the server's own failure; quote `requestId`.
