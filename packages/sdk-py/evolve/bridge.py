@@ -122,6 +122,7 @@ class BridgeManager:
             'stderr': [],     # str data
             'content': [],    # dict params
             'lifecycle': [],  # dict params
+            'fs': [],         # dict params: a change under a watched directory (sandbox_view.watch_dir)
         }
         self.reader_task: Optional[asyncio.Task] = None
         self._pid: Optional[int] = None

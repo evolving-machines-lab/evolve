@@ -43,12 +43,13 @@ FILE_ENTRY = {
 }
 
 
-class MockBridgeManager:
-    """Async bridge mock with sandbox observation responses and event delivery."""
+class MockBridgeManager(BridgeManager):
+    """The real BridgeManager with only the process stubbed: on() and _handle_event() are the real registry,
+    so a test cannot pass on an event type the bridge would refuse."""
 
     def __init__(self, responses=None):
+        super().__init__()
         self.calls = []
-        self.callbacks = {}
         self._responses = responses or {}
 
     async def start(self):
@@ -57,12 +58,8 @@ class MockBridgeManager:
     async def stop(self):
         return None
 
-    def on(self, event_type, callback):
-        self.callbacks.setdefault(event_type, []).append(callback)
-
-    def emit(self, event_type, params):
-        for cb in self.callbacks.get(event_type, []):
-            cb(params)
+    def emit(self, params):
+        self._handle_event(params)
 
     async def call(self, method, params=None, timeout_s=None):
         self.calls.append((method, params, timeout_s))
@@ -162,12 +159,12 @@ class TestFiles:
         seen = []
         watch = await view.files.watch_dir('/tmp/p', seen.append, recursive=True)
         assert ('sandbox_watch_dir', {'handle': 'h-1', 'path': '/tmp/p', 'recursive': True}, None) in mock.calls
-        mock.emit('fs', {'type': 'fs', 'watch_id': 'w-1', 'path': '/tmp/p/sub/b.txt', 'event': 'create'})
-        mock.emit('fs', {'type': 'fs', 'watch_id': 'w-other', 'path': '/elsewhere', 'event': 'write'})
+        mock.emit({'type': 'fs', 'watch_id': 'w-1', 'path': '/tmp/p/sub/b.txt', 'event': 'create'})
+        mock.emit({'type': 'fs', 'watch_id': 'w-other', 'path': '/elsewhere', 'event': 'write'})
         assert seen == [FilesystemEvent(path='/tmp/p/sub/b.txt', type='create')]
         await watch.stop()
         assert ('sandbox_watch_stop', {'watch_id': 'w-1'}, None) in mock.calls
-        mock.emit('fs', {'type': 'fs', 'watch_id': 'w-1', 'path': '/tmp/p/late', 'event': 'remove'})
+        mock.emit({'type': 'fs', 'watch_id': 'w-1', 'path': '/tmp/p/late', 'event': 'remove'})
         assert len(seen) == 1
 
 
@@ -186,6 +183,16 @@ class TestMetrics:
         kit = _kit(mock)
         view = await kit.inspect_sandbox('sb-live')
         assert await view.metrics() is None
+
+
+class TestBridgeEvents:
+    def test_fs_is_a_registered_event_type_and_dispatches_whole_params(self):
+        bridge = BridgeManager()
+        seen = []
+        bridge.on('fs', seen.append)
+        event = {'type': 'fs', 'watch_id': 'w-1', 'path': '/tmp/p/a.txt', 'event': 'write'}
+        bridge._handle_event(event)
+        assert seen == [event]
 
 
 class TestTypedErrors:
