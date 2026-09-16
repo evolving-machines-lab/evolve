@@ -135,4 +135,4 @@ Read on demand when the user's task requires them:
 | Chaining operations | [TS](references/typescript/05-swarm-pipeline.md#chaining-operations) | [PY](references/python/05-swarm-pipeline.md#chaining-operations) |
 | Pipeline (fluent chaining, events, terminal) | [TS](references/typescript/05-swarm-pipeline.md#pipeline) | [PY](references/python/05-swarm-pipeline.md#pipeline) |
 
-The installed CLI serves the current version of this skill: `evolve skills get agents --full`.
+This skill installs from the repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`. The hosted-evals manual is `evolve skills get evals`.
