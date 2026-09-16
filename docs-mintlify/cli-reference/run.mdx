@@ -92,11 +92,15 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="--secret" type="NAME[@LABEL][=ENVNAME]">
-  Attach one of your stored env secrets to every agent run. Repeatable. `NAME` is the stored secret's name. `@LABEL` picks a labeled row; omitted, the `default` row or the only row, and several labels with no `default` is refused as ambiguous. `=ENVNAME` renames the env var inside the sandbox. References only: the value never rides the command line or the wire.
+  Attach one of your stored env secrets to every agent run. Repeatable. `NAME` is the stored secret's name.
+
+  `@LABEL` picks a labeled row; omitted, the `default` row or the only row, and several labels with no `default` is refused as ambiguous. `=ENVNAME` renames the env var inside the sandbox. References only: the value never rides the command line or the wire.
 </ParamField>
 
 <ParamField path="--secret-inline" type="NAME[@LABEL]:DELIVERY=VALUE">
-  Save `VALUE` into your vault as an env secret and attach it to this job in one step. Repeatable. `DELIVERY` is `brokered` or `direct` and sits before `=`, so everything after the first `=` is the value, byte for byte. `@LABEL` defaults to `default`. Restating an existing secret exactly attaches it, so re-running the same command converges; a different value or delivery is refused as `secret_exists`. The job stores only the reference.
+  Save `VALUE` into your vault as an env secret and attach it to this job in one step. Repeatable. `DELIVERY` is `brokered` or `direct` and sits before `=`, so everything after the first `=` is the value, byte for byte. `@LABEL` defaults to `default`.
+
+  Restating an existing secret exactly attaches it, so re-running the same command converges; a different value or delivery is refused as `secret_exists`. The job stores only the reference.
 </ParamField>
 
 ## Spend and retries

@@ -67,7 +67,9 @@ evolve trial trace <trial-id> --cursor 140
 
 ## The ATIF trajectory
 
-`agent/trajectory.json` is the same run in ATIF, the Agent Trajectory Interchange Format, the trajectory format Harbor defines, at version `ATIF-v1.7`. The platform builds it from the stored parsed trace. Its top-level fields are `schema_version`, `agent` with the harness's name, version and model, and `steps`, the ordered system, user and agent turns, with `session_id`, `trajectory_id`, `final_metrics`, `subagent_trajectories` and `extra` optional. The instruction becomes the first `user` step. An `agent` step carries its message, its `tool_calls` under the harness's own tool names, and the `observation` those calls returned.
+`agent/trajectory.json` is the same run in ATIF, the Agent Trajectory Interchange Format, the trajectory format Harbor defines, at version `ATIF-v1.7`. The platform builds it from the stored parsed trace.
+
+Its top-level fields are `schema_version`, `agent` with the harness's name, version and model, and `steps`, the ordered system, user and agent turns, with `session_id`, `trajectory_id`, `final_metrics`, `subagent_trajectories` and `extra` optional. The instruction becomes the first `user` step. An `agent` step carries its message, its `tool_calls` under the harness's own tool names, and the `observation` those calls returned.
 
 ```json
 {
