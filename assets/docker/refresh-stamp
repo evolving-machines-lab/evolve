@@ -13,4 +13,4 @@
 # genuine image content and not a hash decoration — a running sandbox can
 # report which refresh built it.
 
-refreshed: 2026-08-16T02:07:55Z — initial stamp — pipeline introduced
+refreshed: 2026-09-16T00:12:33Z — manual run 2026-09-15 by the lead: Claude Code >= 2.1.257 and Codex >= 0.153.1 for Fable 5.1 and GPT-6 Astra
