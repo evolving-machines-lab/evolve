@@ -223,8 +223,19 @@ from .managed_secrets import (
 from .utils import read_local_dir, save_local_dir
 from .bridge import (
     SandboxNotFoundError,
+    SandboxFeatureUnsupportedError,
+    SandboxPathNotFoundError,
+    SandboxNotRunningError,
     BridgeConnectionError,
     BridgeBuildError,
+)
+from .sandbox_view import (
+    SandboxView,
+    SandboxFiles,
+    FileInfo,
+    FilesystemEvent,
+    SandboxMetrics,
+    WatchHandle,
 )
 from .retry import RetryConfig, OnItemRetryCallback, execute_with_retry
 from .swarm import (
@@ -812,8 +823,19 @@ __all__ = [
     'read_local_dir',
     'save_local_dir',
 
+    # Sandbox observation (inspect-only attach)
+    'SandboxView',
+    'SandboxFiles',
+    'FileInfo',
+    'FilesystemEvent',
+    'SandboxMetrics',
+    'WatchHandle',
+
     # Exceptions
     'SandboxNotFoundError',
+    'SandboxFeatureUnsupportedError',
+    'SandboxPathNotFoundError',
+    'SandboxNotRunningError',
     'BridgeConnectionError',
     'BridgeBuildError',
 ]
