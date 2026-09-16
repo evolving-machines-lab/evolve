@@ -14,6 +14,7 @@
   "scripts": {
     "build": "npm run generate:image-version && npm run build:e2b && npm run build:daytona && npm run build:modal && npm run build:sdk && npm run build:bridge",
     "generate:image-version": "tsx assets/docker/generate-image-version.ts",
+    "generate:skills": "tsx scripts/generate-skills.ts",
     "build:e2b": "npm run build --workspace=@evolvingmachines/e2b",
     "build:daytona": "npm run build --workspace=@evolvingmachines/daytona",
     "build:modal": "npm run build --workspace=@evolvingmachines/modal",

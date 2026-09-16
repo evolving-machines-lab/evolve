@@ -1,43 +1,85 @@
-name: Sync docs to skill references
+# The skills folder is generated from the docs — one source, generated copies.
+# scripts/generate-skills.ts (npm run generate:skills) writes skills/evolve-agents
+# from docs/, skills/evolve-evals from docs-mintlify/, the .claude/skills/ mirror
+# of every folder under skills/, and skills-lock.json. Two jobs, one generator:
+#   - pull requests: `--check` fails when a generated copy is stale, missing, or
+#     hand-edited (the same law as the SDK's harness-capabilities --check);
+#   - pushes to a trunk: regenerate and commit, so a docs edit lands in the
+#     skills with no hand step.
+name: Sync docs to skills
 
 on:
   push:
     branches: [main, project-sable]
-    paths:
-      - 'docs/typescript/[0-9]*.md'
-      - 'docs/python/[0-9]*.md'
-      - 'docs/SKILL.md'
+  pull_request:
+    branches: [main, project-sable]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check the generated skills against their sources
+        run: npm run generate:skills -- --check
+
   sync:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # persist-credentials is off so the workflow token is not in .git/config
+      # while `npm ci` runs third-party install scripts (see tests.yml); the
+      # push step below passes the token on its own command line instead.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Sync docs to skill directories
-        run: |
-          cp docs/typescript/[0-9]*.md skills/evolve/references/typescript/
-          cp docs/python/[0-9]*.md skills/evolve/references/python/
-          cp docs/typescript/[0-9]*.md .claude/skills/evolve/references/typescript/
-          cp docs/python/[0-9]*.md .claude/skills/evolve/references/python/
-          cp docs/SKILL.md skills/evolve/SKILL.md
-          cp docs/SKILL.md .claude/skills/evolve/SKILL.md
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate the skills
+        run: npm run generate:skills
 
       - name: Check for changes
         id: diff
         run: |
-          git diff --quiet skills/evolve/ .claude/skills/evolve/ && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+          git add -A skills .claude/skills skills-lock.json
+          git diff --cached --quiet && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push
         if: steps.diff.outputs.changed == 'true'
+        env:
+          TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add skills/evolve/ .claude/skills/evolve/
-          git commit -m "docs: sync skill from docs/"
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin HEAD:"${{ github.ref_name }}"
+          git commit -m "docs: sync skills from docs/ and docs-mintlify/"
+          remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git pull --rebase "$remote" "${GITHUB_REF_NAME}"
+          git push "$remote" HEAD:"${GITHUB_REF_NAME}"

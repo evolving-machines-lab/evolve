@@ -1,0 +1,139 @@
+---
+title: "TypeScript SDK"
+description: "Start a job, wait for it, read the result, and download it from TypeScript."
+---
+
+```bash
+npm install @evolvingmachines/sdk
+```
+
+The hosted surface is a set of clients, one per noun. Each one reads `EVOLVE_API_KEY` from the environment, or takes `{ apiKey, baseUrl }`. Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys).
+
+```ts
+import { jobs, trials, datasets } from "@evolvingmachines/sdk";
+
+const evals = jobs();
+```
+
+## Start a job
+
+```ts
+const job = await evals.start({
+  datasets: [{ name: "terminal-bench-4", version: "4.0", n_tasks: 5 }],
+  agents: [{ name: "codex", model_name: "gpt-5.5" }],
+  n_attempts: 1,
+  n_concurrent_trials: 4,
+  max_trial_spend_usd: 25,
+});
+
+console.log(job.id, job.status);   // "QUEUED"
+```
+
+`datasets` is a list of selectors. A bare `name` resolves to the active version; `task_names`, `exclude_task_names` and `n_tasks` narrow the task set. Every arm in `agents` names a `model_name`, and `version`, `reasoning_effort`, `kwargs`, `preset` and `skills` are optional. `sandbox_provider` picks `"e2b"`, `"daytona"` or `"modal"`. The fields are the same ones a `-c` config file takes on the CLI.
+
+## Wait for it
+
+`watch()` returns a handle you either await, for the final job, or iterate, for each event. Pick one form per call.
+
+```ts
+const final = await evals.watch(job.id);
+console.log(final.status, final.trials.byStatus, final.stats.cost_usd);
+```
+
+```ts
+for await (const event of evals.watch(job.id)) {
+  if (event.type === "trial.settled") {
+    console.log(event.data.task_name, event.data.status, event.data.reward);
+  }
+}
+```
+
+The stream replays from the beginning, so attaching late loses nothing, and it resumes on its own after a disconnect. `event.type` narrows `event.data`, so the fields above are typed.
+
+## Read the result
+
+```ts
+const detail = await evals.get(job.id);
+
+for await (const trial of evals.trials(job.id)) {
+  console.log(trial.task_name, trial.agent_info.name, trial.status, trial.reward);
+}
+
+const failures = await evals.trials(job.id, {
+  status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"],
+});
+```
+
+Every list on this surface works the same way: await it for one page, iterate it to walk every page.
+
+A trial id is global, so `trials()` reaches one without the job.
+
+```ts
+const t = trials();
+
+const trial = await t.get(trialId);
+console.log(trial.reward, trial.exception_info?.exception_type);
+
+const verifierLog = await t.artifact(trialId, "verifier");   // string | null
+const home = await t.artifact(
+  trialId,
+  "agent-home",
+);   // Record<string, string> | null
+
+for await (const event of t.traceEvents(trialId)) {
+  console.log(event.seq, event.type);
+}
+```
+
+`artifact()` takes the same names as `evolve trial download --stream`. Null means the trial never stored that artifact; it is a normal answer, not an error.
+
+## Download
+
+```ts
+const path = await evals.download(
+  job.id,
+  { to: "./results" },
+);   // the saved file's path
+const bytes = await evals.download(job.id);                        // a Buffer
+```
+
+The archive is the standard job directory, the same tree `evolve job download` unpacks.
+
+## Analyze
+
+```ts
+await evals.analyze(
+  job.id,
+  {
+    failing: true,
+    n_trials: 20,
+  },
+);
+const analyzed = await evals.watchAnalysis(job.id);
+```
+
+`analyze()` enqueues one analysis per trial and returns at once. `watchAnalysis()` follows the batch of analyses to its end.
+
+## The catalog
+
+```ts
+const catalog = datasets();
+
+for await (const dataset of catalog.list()) {
+  console.log(dataset.name, dataset.active_version?.version);
+}
+
+const version = await catalog.get("terminal-bench-4@4.0");
+```
+
+## Everything else
+
+`analyses()`, `checks()`, `skills()`, `agents()`, `auth()` and `orgs()` are built the same way. `meta()` fetches the platform's capability document, the live list of harnesses, models and limits, and needs no key. `hosted()` builds every client from one configuration.
+
+```ts
+import { hosted } from "@evolvingmachines/sdk";
+
+const evolve = hosted({ apiKey: process.env.EVOLVE_API_KEY });
+const doc = await evolve.meta();
+const job = await evolve.jobs.start({ /* … */ });
+```

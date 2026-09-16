@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "evolve-agents": {
+      "source": "evolving-machines-lab/evolve",
+      "sourceType": "github",
+      "skillPath": "skills/evolve-agents/SKILL.md",
+      "computedHash": "a120fe0469104a8f42f7a377b758c6c344cb7df50235ad990fac073c23b6dfd2"
+    },
+    "evolve-evals": {
+      "source": "evolving-machines-lab/evolve",
+      "sourceType": "github",
+      "skillPath": "skills/evolve-evals/SKILL.md",
+      "computedHash": "ed1ac38b60f93f850adaa0ee60514eca23fb7b6cb9d7a014b3cd8103a65e3398"
+    }
+  }
+}

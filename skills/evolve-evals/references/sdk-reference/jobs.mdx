@@ -1,0 +1,696 @@
+---
+title: "jobs"
+description: "Start, follow, and derive jobs."
+---
+
+`jobs()` returns the jobs client. Every job method takes a job id, and every derived run returns a new `Job`.
+
+## start
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    start(
+      input: JobCreate,
+      options?: StartJobOptions,
+    ): Promise<Job>
+    ```
+
+    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `n_attempts`, `n_concurrent_trials`, `max_trial_spend_usd`, `sandbox_provider`, `retry`, `analyze`, the five `*_timeout_multiplier` fields, `agent_env`, `verifier_env`, `secrets`. `options.idempotencyKey` makes a repeated call return the same job.
+
+    ```ts
+    const job = await jobs().start({
+      datasets: [{ name: "terminal-bench-4", version: "4.0", n_tasks: 5 }],
+      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+    });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def start(
+        *,
+        datasets: List[DatasetSelector | dict],
+        agents: List[AgentArm | dict],
+        job_name=None,
+        n_attempts=None,
+        n_concurrent_trials=None,
+        max_trial_spend_usd=None,
+        sandbox_provider=None,
+        retry=None,
+        analyze=None,
+        timeout_multiplier=None,
+        agent_timeout_multiplier=None,
+        verifier_timeout_multiplier=None,
+        agent_setup_timeout_multiplier=None,
+        environment_build_timeout_multiplier=None,
+        agent_env=None,
+        verifier_env=None,
+        secrets=None,
+        idempotency_key=None,
+    ) -> Job
+    ```
+
+    The same fields as TypeScript, as keyword arguments. `idempotency_key` makes a repeated call return the same job.
+
+    ```python
+    job = await jobs().start(
+        datasets=[{"name": "terminal-bench-4", "version": "4.0", "n_tasks": 5}],
+        agents=[{"name": "codex", "model_name": "gpt-5.5"}],
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## get
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    get(id: string): Promise<Job>
+    ```
+
+    One job in full.
+
+    ```ts
+    const job = await jobs().get("3e1f9a2c-…");
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def get(id: str) -> Job
+    ```
+
+    One job in full.
+
+    ```python
+    job = await jobs().get("3e1f9a2c-…")
+    ```
+  </Tab>
+</Tabs>
+
+## list
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    list(options?: { search?: string; scope?: "my" | "shared"; limit?: number; cursor?: string }): JobList
+    ```
+
+    Your jobs, newest first. Await one page, or iterate every page.
+
+    ```ts
+    for await (const job of jobs().list({ search: "nightly" })) {
+      console.log(job.id, job.status);
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def list(
+        *,
+        search: Optional[str] = None,
+        scope: Optional[JobListScope] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
+    ```
+
+    Your jobs, newest first. Await one page, or iterate every page.
+
+    ```python
+    async for job in jobs().list(search="nightly"): print(job.id, job.status)
+    ```
+  </Tab>
+</Tabs>
+
+## trials
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    trials(
+      id: string,
+      options?: { status?: TrialStatus[]; dataset?: string; limit?: number; cursor?: string },
+    ): TrialList
+    ```
+
+    A job's trials. `status` and `dataset` filter.
+
+    ```ts
+    const failed = await jobs().trials(
+      job.id,
+      { status: ["INFRASTRUCTURE_ERROR", "SCORING_ERROR"] },
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def trials(
+        id: str,
+        *,
+        status: Optional[List[str]] = None,
+        dataset: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
+    ```
+
+    A job's trials. `status` and `dataset` filter.
+
+    ```python
+    failed = await jobs().trials(
+        job.id,
+        status=["INFRASTRUCTURE_ERROR", "SCORING_ERROR"],
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## tasks
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    tasks(
+      id: string,
+      options?: { limit?: number; cursor?: string },
+    ): JobTaskRollupList
+    ```
+
+    One row per task: its trial tally, mean reward and cost.
+
+    ```ts
+    for await (const row of jobs().tasks(job.id)) {
+      console.log(row.task_name, row.mean_reward);
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def tasks(
+        id: str,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
+    ```
+
+    One row per task: its trial tally, mean reward and cost.
+
+    ```python
+    async for row in jobs().tasks(job.id): print(row.task_name, row.mean_reward)
+    ```
+  </Tab>
+</Tabs>
+
+## watch
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    watch(id: string, options?: { onEvent?: (event: JobEvent) => void; signal?: AbortSignal; reconnectDelayMs?: number; maxReconnectDelayMs?: number }): JobWatch
+    ```
+
+    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call.
+
+    ```ts
+    const final = await jobs().watch(job.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def watch(
+        id: str,
+        *,
+        on_event: Optional[Callable[[JobEvent], None]] = None,
+        timeout_s: Optional[float] = None,
+        reconnect_delay_s: float = 1.0,
+        max_reconnect_delay_s: float = MAX_WATCH_DELAY_SEC,
+    )
+    ```
+
+    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call.
+
+    ```python
+    final = await jobs().watch(job.id)
+    ```
+  </Tab>
+</Tabs>
+
+## cancel
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    cancel(id: string): Promise<Job>
+    ```
+
+    Request cancellation. A finished job is a no-op.
+
+    ```ts
+    await jobs().cancel(job.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def cancel(id: str) -> Job
+    ```
+
+    Request cancellation. A finished job is a no-op.
+
+    ```python
+    await jobs().cancel(job.id)
+    ```
+  </Tab>
+</Tabs>
+
+## resume
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    resume(
+      id: string,
+      request?: { filter_error_types?: string[] },
+      options?: StartJobOptions,
+    ): Promise<Job>
+    ```
+
+    A new job over a finished job's failed or stopped trials.
+
+    ```ts
+    const next = await jobs().resume(
+      job.id,
+      { filter_error_types: ["InfrastructureError"] },
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def resume(
+        id: str,
+        *,
+        filter_error_types: Optional[List[str]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Job
+    ```
+
+    A new job over a finished job's failed or stopped trials.
+
+    ```python
+    next_job = await jobs().resume(
+        job.id,
+        filter_error_types=["InfrastructureError"],
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## retry
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    retry(
+      id: string,
+      request?: { trial_ids?: string[]; failed_only?: boolean },
+      options?: StartJobOptions,
+    ): Promise<Job>
+    ```
+
+    A new job re-running selected trials: named ids, the failed ones, or all of them.
+
+    ```ts
+    const again = await jobs().retry(
+      job.id,
+      { failed_only: true },
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def retry(
+        id: str,
+        *,
+        trial_ids: Optional[List[str]] = None,
+        failed_only: Optional[bool] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Job
+    ```
+
+    A new job re-running selected trials: named ids, the failed ones, or all of them.
+
+    ```python
+    again = await jobs().retry(
+        job.id,
+        failed_only=True,
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## regrade
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    regrade(
+      id: string,
+      request?: { statuses?: TrialStatus[]; task_name?: string },
+    ): Promise<Job>
+    ```
+
+    Verifier-only re-run of a finished job. The result is a job.
+
+    ```ts
+    const regraded = await jobs().regrade(
+      job.id,
+      { task_name: "tricky-task" },
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def regrade(
+        id: str,
+        *,
+        statuses: Optional[List[str]] = None,
+        task_name: Optional[str] = None,
+    ) -> Job
+    ```
+
+    Verifier-only re-run of a finished job. The result is a job.
+
+    ```python
+    regraded = await jobs().regrade(
+        job.id,
+        task_name="tricky-task",
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## analyze
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    analyze(
+      id: string,
+      request?: AnalyzeConfigInput,
+    ): Promise<Job>
+    ```
+
+    Enqueue one trace analysis per trial and return at once. `AnalyzeConfigInput`: `model_name`, `rubric`, `prompt`, `sandbox_provider`, `reasoning_effort`, `n_concurrent`, `passing`, `failing`, `n_trials`, all optional.
+
+    ```ts
+    await jobs().analyze(
+      job.id,
+      {
+        failing: true,
+        n_trials: 20,
+      },
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def analyze(
+        id: str,
+        *,
+        model_name=None,
+        rubric: Optional[Rubric] = None,
+        prompt=None,
+        sandbox_provider=None,
+        reasoning_effort=None,
+        n_concurrent=None,
+        passing=None,
+        failing=None,
+        n_trials=None,
+    ) -> Job
+    ```
+
+    Enqueue one trace analysis per trial and return at once.
+
+    ```python
+    await jobs().analyze(
+        job.id,
+        failing=True,
+        n_trials=20,
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## watchAnalysis
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    watchAnalysis(id: string, options?: { onStats?: (job: Job) => void; signal?: AbortSignal; pollIntervalMs?: number }): Promise<Job>
+    ```
+
+    Poll until no analysis is pending. Resolves with the final job.
+
+    ```ts
+    const analyzed = await jobs().watchAnalysis(job.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def watch_analysis(
+        id: str,
+        *,
+        on_stats: Optional[Callable[[Job], None]] = None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ) -> Job
+    ```
+
+    Poll until no analysis is pending. Resolves with the final job.
+
+    ```python
+    analyzed = await jobs().watch_analysis(job.id)
+    ```
+  </Tab>
+</Tabs>
+
+## compare
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    compare(ids: string[]): Promise<CompareResponse>
+    ```
+
+    Two to ten jobs side by side: per-job aggregates and a per-task matrix.
+
+    ```ts
+    const cmp = await jobs().compare([jobA.id, jobB.id]);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def compare(ids: List[str]) -> CompareResponse
+    ```
+
+    Two to ten jobs side by side: per-job aggregates and a per-task matrix.
+
+    ```python
+    cmp = await jobs().compare([job_a.id, job_b.id])
+    ```
+  </Tab>
+</Tabs>
+
+## download
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    download(id: string): Promise<Buffer>
+    download(
+      id: string,
+      options: { to: string },
+    ): Promise<string>
+    download(
+      id: string,
+      options: { stream: true },
+    ): Promise<ReadableStream<Uint8Array>>
+    ```
+
+    A finished job's results as one `.tar.gz` in the standard job layout: the bytes, the saved file's path, or a stream.
+
+    ```ts
+    const path = await jobs().download(
+      job.id,
+      { to: "./results" },
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def download(
+        id: str,
+        *,
+        to: Optional[str] = None,
+    )
+    ```
+
+    A finished job's results as one `.tar.gz` in the standard job layout: the bytes, or with `to` the saved file's path.
+
+    ```python
+    path = await jobs().download(
+        job.id,
+        to="./results",
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## upload
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    upload(source: string | { archive_url: string }, options?: { dataset?: string; onUploadProgress?: (sentBytes: number, totalBytes: number) => void; onRegistered?: (importId: string) => void }): Promise<JobImport>
+    ```
+
+    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record.
+
+    ```ts
+    const imp = await jobs().upload(
+      "./job-2026-08-27__12-00-00",
+      { dataset: "terminal-bench-4@4.0" },
+    );
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def upload(
+        dir_or_archive: Optional[str] = None,
+        *,
+        archive_url: Optional[str] = None,
+        dataset: Optional[str] = None,
+        on_upload_progress=None,
+        on_registered=None,
+    ) -> JobImport
+    ```
+
+    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record.
+
+    ```python
+    imp = await jobs().upload(
+        "./job-2026-08-27__12-00-00",
+        dataset="terminal-bench-4@4.0",
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## getImport, watchImport, listImports
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    getImport(id: string): Promise<JobImport>
+    watchImport(id: string, options?: { onStatus?: (jobImport: JobImport) => void; onProgress?: (progress: JobImportProgress, jobImport: JobImport) => void; pollIntervalMs?: number; signal?: AbortSignal }): Promise<JobImport>
+    listImports(options?: { status?: DatasetImportStatus; limit?: number; cursor?: string }): JobImportList
+    ```
+
+    Read one upload, follow it until it settles, or list your uploads.
+
+    ```ts
+    const done = await jobs().watchImport(imp.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def get_import(id: str) -> JobImport
+    async def watch_import(
+        id: str,
+        *,
+        on_status=None,
+        on_progress=None,
+        poll_interval_s: float = 2.0,
+        timeout_s: Optional[float] = None,
+    ) -> JobImport
+    def list_imports(
+        *,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    )
+    ```
+
+    Read one upload, follow it until it settles, or list your uploads.
+
+    ```python
+    done = await jobs().watch_import(imp.id)
+    ```
+  </Tab>
+</Tabs>
+
+## delete
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    delete(id: string): Promise<JobDeleteResult>
+    ```
+
+    Permanently delete a job you created: its trials, traces, analyses and stored files.
+
+    ```ts
+    await jobs().delete(job.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def delete(id: str) -> JobDeleteResult
+    ```
+
+    Permanently delete a job you created: its trials, traces, analyses and stored files.
+
+    ```python
+    await jobs().delete(job.id)
+    ```
+  </Tab>
+</Tabs>
+
+## grep
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    grep(
+      id: string,
+      q: string,
+      options?: { type?: string; limit?: number; cursor?: string },
+    ): Promise<JobGrepPage>
+    ```
+
+    Search every trial's parsed trace in one pass.
+
+    ```ts
+    const hits = await jobs().grep(job.id, "permission denied");
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def grep(
+        id: str,
+        q: str,
+        *,
+        type: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> JobGrepPage
+    ```
+
+    Search every trial's parsed trace in one pass.
+
+    ```python
+    hits = await jobs().grep(job.id, "permission denied")
+    ```
+  </Tab>
+</Tabs>

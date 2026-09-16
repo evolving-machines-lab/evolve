@@ -1,0 +1,56 @@
+---
+title: "Clients"
+description: "How the hosted clients are built and configured."
+---
+
+One client per noun, each built by a factory. Every factory reads `EVOLVE_API_KEY` from the environment unless a config names the key. Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys).
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    import { jobs, trials, datasets, analyses, checks, skills, agents, auth, orgs, hosted, meta } from "@evolvingmachines/sdk";
+
+    interface HostedClientConfig {
+      apiKey?: string;   // default: process.env.EVOLVE_API_KEY
+      baseUrl?: string;  // default: the Evolve dashboard API
+    }
+
+    function jobs(config?: HostedClientConfig): JobsClient
+    function hosted(config?: HostedClientConfig): HostedEvolve
+    ```
+
+    `datasets()`, `trials()`, `analyses()`, `checks()`, `skills()`, `agents()`, `auth()` and `orgs()` take the same config. `hosted()` builds every client from one config and exposes them as properties: `datasets`, `agents`, `jobs`, `skills`, `trials`, `analyses`, `checks`, `orgs`, plus `meta()`.
+
+    ```ts
+    const evolve = hosted({ apiKey: process.env.EVOLVE_API_KEY });
+    const job = await evolve.jobs.get("3e1f9a2c-…");
+    ```
+
+    Every list method returns a handle you either await for one page (`{ items, nextCursor, hasMore }`) or iterate with `for await` to walk every page.
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from evolve import jobs, trials, datasets, analyses, checks, skills, agents, auth, orgs, hosted, meta
+    from evolve import HostedClientConfig
+
+    @dataclass
+    class HostedClientConfig:
+        api_key: Optional[str] = None   # default: EVOLVE_API_KEY
+        base_url: Optional[str] = None  # default: the Evolve dashboard API
+
+    def jobs(config: Optional[HostedClientConfig] = None) -> JobsClient
+    def hosted(config: Optional[HostedClientConfig] = None) -> HostedEvolve
+    ```
+
+    `datasets()`, `trials()`, `analyses()`, `checks()`, `skills()`, `agents()`, `auth()` and `orgs()` take the same config. `hosted()` builds every client from one config and exposes them as properties: `datasets`, `agents`, `jobs`, `skills`, `trials`, `analyses`, `checks`, `orgs`, plus `await meta()`.
+
+    ```python
+    evolve = hosted(HostedClientConfig(api_key=os.environ["EVOLVE_API_KEY"]))
+    job = await evolve.jobs.get("3e1f9a2c-…")
+    ```
+
+    Every method is a coroutine. Each client is an async context manager and has `close()`. Every list method returns a handle you either await for one page (`items`, `next_cursor`, `has_more`) or iterate with `async for` to walk every page.
+  </Tab>
+</Tabs>
+
+The config has no timeout setting.
