@@ -9,6 +9,7 @@ A task is a directory. The agent reads the instruction and works inside the envi
 my-task/
 ├── instruction.md    what the agent is asked to do
 ├── task.toml         timeouts, network, resources, verifier mode
+├── pre_artifacts.sh  optional: collects the agent's work after the run
 ├── environment/
 │   └── Dockerfile    the box the agent works in
 ├── tests/
@@ -17,22 +18,28 @@ my-task/
     └── solve.sh      optional reference solution
 ```
 
+`task.toml`, `instruction.md` and `tests/test.sh` are required; a task without `tests/test.sh` fails its import by name.
+
 ## instruction.md
 
 Plain Markdown, handed to the agent unchanged at the start of the trial. Say what done looks like, use absolute paths (`/app/out.json`, not `out.json`), and describe the output's shape, so the instruction and the verifier agree.
 
 ## environment/
 
-A `Dockerfile` that builds the box the agent works in, or a `docker-compose.yaml` when the task needs several containers. The image is built once, when the dataset is published. A task can instead name a prebuilt image with `docker_image` in `task.toml` and omit the folder.
+A `Dockerfile` that builds the box the agent works in, or a `docker-compose.yaml` when the task needs several containers; the agent then runs in the `main` service. The image is built once, when the dataset is published. A task can instead name a prebuilt image with `docker_image` in `task.toml` and omit the folder: any public registry works, with the tag or digest pinned. An untagged or `:latest` reference is refused at import; a reference that parses but cannot be pulled fails the trial as an infrastructure error, never as a zero.
+
+The agent works in `/app`, and its git state is the submission, so seed a git baseline in the Dockerfile: `git init`, `git add -A`, one commit.
+
+The image's `ENTRYPOINT` runs. A task image that starts a service runs it as a supervised process before the agent is installed, under the image's own env and user, with the task's `[environment.env]` literals on top. Keep-alive entrypoints start nothing: `sleep infinity`, `tail -f /dev/null`, a shell, an empty `ENTRYPOINT`, each with or without a `tini` or `dumb-init` shim. An inherited `CMD` is never run. A process that exits before the agent starts fails the trial with its exit code and last output. A task that verifies in a separate box booted from an image whose config starts a process is refused at import: verify in `shared` mode, or give the verifier its own `tests/Dockerfile` with `ENTRYPOINT []`. A prebuilt image whose registry cannot be read fails the import naming the image.
 
 ## tests/
 
 `tests/test.sh` is the verifier. It runs in the task's working directory after the agent finishes, checks the work, and writes the reward to one of two files.
 
-- `/logs/verifier/reward.txt`: one number, usually `1` or `0`.
+- `/logs/verifier/reward.txt`: one number in `[0, 1]`, usually `1` or `0`.
 - `/logs/verifier/reward.json`: a JSON object of named numbers, for a score with several parts.
 
-When both exist, `reward.json` wins. Everything the script prints is kept as the verifier log.
+When both exist, `reward.json` wins. The primary reward is the value under `"reward"`, else the single value when the object has one key. Several named scores with no `"reward"` key are still a valid verdict: the trial settles `SCORED` with the scores as metrics and no primary reward, and its task is left out of pass@k. Everything the script prints is kept as the verifier log.
 
 ```bash
 #!/bin/bash
@@ -45,9 +52,26 @@ else
 fi
 ```
 
+`tests/grader.py`, `tests/config.json` and `tests/test.patch` have named roles; any other file under `tests/` is carried onto the verifier beside `test.sh`.
+
+`tests/Dockerfile` is built only for a `separate` verifier whose environment declares no `docker_image`. A separate verifier that pins an image boots it as is, and a `shared` verifier runs inside the agent's box; in both cases the Dockerfile is never built, the task imports with the `tests_dockerfile_not_built` note, and any dependency the recipe would install must already be in the image the verifier boots.
+
+## pre_artifacts.sh
+
+Optional. It runs in the agent's sandbox after the agent finishes and decides what the work looks like on its way out. Before it runs, the platform commits whatever the agent left uncommitted, so a baseline-to-HEAD diff captures the agent's edits either way.
+
+```bash
+#!/bin/bash
+set -uo pipefail
+mkdir -p /logs/artifacts
+git diff --binary "$(git rev-list --max-parents=0 HEAD)" HEAD > /logs/artifacts/model.patch
+```
+
+Without it the platform supplies a minimal collect step and the `artifacts` manifest carries the work.
+
 ## solution/
 
-Optional. `solution/solve.sh` is a reference solution. `evolve check` runs it to confirm the task is solvable. The agent is never given it.
+Optional. `solution/solve.sh`, or a `solution.patch` to apply, is the reference solution. `evolve check` runs it to confirm the task is solvable. It is archived at publish, gates nothing, and the agent is never given it.
 
 ## task.toml
 
@@ -69,15 +93,125 @@ memory_mb = 4096
 storage_mb = 10240
 ```
 
-- **Timeouts.** `agent.timeout_sec` and `verifier.timeout_sec`, in seconds. A task that declares none gets the platform's defaults; `evolve dataset show` prints the timeouts every task actually has. A job can stretch them with `--timeout-multiplier`.
-- **Network access.** `environment.network_mode` is `no-network` (the agent reaches nothing but its model), `allowlist` (only the hosts in `allowed_hosts`, which is accepted with this mode only), or `public` (the open internet, and the default when omitted). The older spelling `allow_internet = false` means `no-network`, `true` means `public`.
-- **Verifier mode.** `verifier.environment_mode` is `shared`, the verifier runs inside the agent's sandbox after the agent finishes, or `separate`, the verifier boots a fresh copy of the environment and judges only what the task lists under `artifacts`. A `[verifier.environment]` table implies `separate`.
-- **Resources.** `environment.cpus`, `memory_mb`, `storage_mb`, and `gpus` with `gpu_types`. Omitted, the sandbox provider's default sizing applies. A size above a provider's ceiling refuses on that provider, which `evolve dataset show` reports per task.
+- **Timeouts.** `agent.timeout_sec` and `verifier.timeout_sec`, in seconds. A task that declares none gets the platform's defaults, 3600 s for the agent and 600 s for the verifier, published in the [capability document](/sdk-reference/meta) as `limits.job.default_agent_timeout_sec` and `default_verifier_timeout_sec`; a declared value always wins. `evolve dataset show` prints the timeouts every task actually has. A job can stretch them with `--timeout-multiplier`.
+- **Network access.** `environment.network_mode` is `no-network` (the agent reaches nothing but its model), `allowlist` (only the hosts in `allowed_hosts`, which is accepted with this mode only), or `public` (the open internet, and the default when omitted). The older spelling `allow_internet = false` means `no-network`, `true` means `public`. Only `no-network` makes the trial's spend cap airtight; see [models](/core-concepts/models).
+- **Verifier network.** A `shared` verifier runs inside the agent's box and sees exactly the network that box was granted; a `[verifier] network_mode` that differs from that baseline is refused at import. A `separate` verifier box boots under the task's own verifier policy: the `network_mode` of its `[verifier.environment]` table, or a copy of `[environment]` when the task declares none, with `[verifier] network_mode` overriding either. The platform never seals a verifier on its own, so a task that declares `public` runs its verifier, test files and all, with open egress. A regrade re-runs under the policy recorded with the source trial. Each trial records the mode it ran under, and where that decision came from, in `agent_result.metadata`.
+- **Verifier mode.** `verifier.environment_mode` is `shared`, the verifier runs inside the agent's sandbox after the agent finishes and its credentials are revoked, or `separate`, the verifier boots a fresh copy of the environment and judges only what the task lists under `artifacts`. Without that list even the reference solution scores 0 in separate mode. A `[verifier.environment]` table implies `separate`. The mode is recorded on every trial as `verifier_environment_mode`, and only settled separate-mode trials can be [regraded](/core-concepts/jobs#derive-a-new-job).
+- **Resources.** `environment.cpus`, `memory_mb`, `storage_mb`, and `gpus` with `gpu_types`. Omitted, the sandbox provider's default sizing applies. A size above a provider's ceiling refuses on that provider, which `evolve dataset show` reports per task; a size above every ceiling is refused at import. The ceilings are on [sandboxes](/core-concepts/sandboxes).
 - **Artifacts.** A top-level `artifacts = ["/app/out.json"]` list names the paths carried out of the agent's sandbox: into a separate verifier, and into the trial's stored artifacts.
+
+## Environment variables
+
+A task's `[environment.env]` table has two value kinds.
+
+```toml
+[environment.env]
+APP_MODE = "ci"                        # literal: lands in the box as written
+GITHUB_TOKEN = "${GITHUB_TOKEN}"       # template: a secret the job must attach
+LOG_LEVEL = "${LOG_LEVEL:-info}"       # template with a fallback
+```
+
+A literal is dataset content, readable by everyone the dataset is published to, so it must never be a secret. A template, `${VAR}` as the whole value, is a request for a secret, and it resolves only against the secrets attached to the job, matched by env name (the attachment's `as`, or the secret's own name). `${VAR:-default}` is the attached value when the job carries one and the literal default when it does not. A job that cannot satisfy a selected task's templates is refused at create with `secret_not_attached`, naming the variable. A value that embeds `${...}` inside a longer string is refused at import: only a whole-value template is a reference. See [secrets](/core-concepts/secrets).
+
+The table is delivered when the agent starts, not at container creation, so the agent and every process it spawns read it; the image's own start process receives the literals only.
+
+## LLM judges
+
+A verifier can grade with a language model. The task asks for the credential with an environment template in `task.toml`:
+
+```toml
+[verifier.env]
+ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
+```
+
+At verify start the trial mints a short-lived gateway credential, scoped to the requested key's model family and capped with its own budget, and the variable resolves to it; the matching base-URL variable is set beside it, so a `litellm`-style client, `rewardkit` included, reaches the platform's gateway unchanged. `rewardkit` is available offline in the verifier box. The recognized templates are `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` with their companions `ANTHROPIC_API_BASE`, `ANTHROPIC_BASE_URL`, `OPENAI_API_BASE` and `OPENAI_BASE_URL`, each honored only as the entire value: `"Bearer ${ANTHROPIC_API_KEY}"` is refused at import. Any other `${VAR:-default}` template resolves to its default as literal text, and a non-judge template with no default is refused at import.
+
+The platform never chooses a judge model. The rubric names one, or `rewardkit`'s own default, `anthropic/claude-sonnet-4-6`, applies inside the box. The judge credential admits its key's family only: `ANTHROPIC_API_KEY` admits Anthropic models, `OPENAI_API_KEY` admits OpenAI models. To swap the judge for one job without touching the task, `--ve REWARDKIT_JUDGE=<agent>` overrides the rubric's `[judge].judge` and `--ve REWARDKIT_MODEL=<model>` its `[judge].model`; both are delivered in both verifier modes, over any task-declared value of the same name, and derived jobs inherit them. No other `--ve` key is accepted.
+
+Judge spend is measured at the gateway on the judge's own key and itemized apart from the agent's: `judge_result` and `judge_spend_source` on the trial, `stats.judge_cost_usd` on the job. In a sealed verifier box (`no-network`, in either mode) the platform sets `UV_OFFLINE=1`, so a `uv`-based test setup answers from the pre-staged cache and a miss fails fast. Judge tasks are not regradable yet.
 
 ## Multi-step tasks
 
-A task can be split into steps. Each `steps/<name>/` folder holds its own `instruction.md`, `tests/` and optional `solution/`, the root `task.toml` lists them in order as `[[steps]]`, and the trial's reward is the mean of the steps' rewards unless `multi_step_reward_strategy = "final"`.
+A task can walk the agent through ordered steps in one shared environment. A `steps/` directory holds one sub-directory per step in place of the root `instruction.md`, `tests/` and `solution/`, and `[[steps]]` entries in `task.toml` declare them in order. `environment/` stays at the root: it is built once, and the container filesystem persists from step to step.
+
+```text
+migrate-then-prove/
+├── task.toml                [[steps]] entries, in order
+├── environment/
+│   └── Dockerfile
+├── tests/                   optional shared helpers for every step's verifier
+└── steps/
+    ├── 01-migrate/
+    │   ├── instruction.md
+    │   ├── tests/           merged over the shared tests/
+    │   └── workdir/         optional files landed before the step; its setup.sh runs first
+    └── 02-prove/
+        ├── instruction.md
+        └── tests/
+```
+
+```toml
+multi_step_reward_strategy = "mean"    # "mean" (default) or "final"
+
+[[steps]]
+name = "01-migrate"
+min_reward = 0.5                       # below this the trial stops here
+
+[[steps]]
+name = "02-prove"
+
+[steps.agent]
+timeout_sec = 600                      # this step's override of the task-level timeout
+```
+
+Each step carries its own instruction, its own verifier (`tests/` merged over the shared `tests/`), an optional `workdir/` whose reserved `setup.sh` runs before the step's agent, its own healthcheck, its own `[steps.agent]` and `[steps.verifier]` `timeout_sec`, its own `[steps.verifier].env` (judge templates included), and its own `artifacts` list. The step's verifier runs when the step ends, so the trial produces one verifier result per executed step, recorded on the trial as `step_results`.
+
+`multi_step_reward_strategy` rolls the steps into the trial's reward: `"mean"` takes per-key means over the steps that produced a result, `"final"` takes the last executed step's result as is. `min_reward` on a step ends the trial early when the step under-scores: a number gates the primary reward, a map gates each named key. A step that raises without a verifier result, or whose healthcheck fails, ends the trial where it stands. An automatic retry restarts the whole trial from the first step.
+
+Refused at import: a per-step `user`, per-step network declarations, and a per-step verifier environment or mode; every step inherits the task-level verifier mode and the task's one environment. `[[steps]]` and `steps/` must agree both ways: an entry without a directory, a directory without an entry, or an undeclared step directory each fails the import by name.
+
+## MCP servers
+
+A task can hand its agent MCP tools. `[[environment.mcp_servers]]` entries are registered into the harness's native MCP configuration beside any servers the arm carries.
+
+```toml
+[[environment.mcp_servers]]
+name = "docs-search"
+transport = "streamable-http"          # or "sse" (the default); "http" is read as streamable-http
+url = "http://mcp-server:8000/mcp"     # a compose service, reachable with no egress
+
+[[environment.mcp_servers]]
+name = "sqlite"
+transport = "stdio"                    # launched inside the box by the harness
+command = "uvx"
+args = ["mcp-server-sqlite", "--db-path", "/app/data.db"]
+```
+
+A `stdio` server declares `command` and `args`; the harness launches it as a child process, so it inherits `[environment.env]`, and there is no `env` field on a server. A remote server declares an `http` or `https` `url`; a credential in the URL's authority is refused at import. A remote URL must be reachable under the task's own declarations, checked at import: it addresses the agent's own container (`localhost`), a compose service by name, or a public host the task's network policy admits. A `stdio` server that fetches itself from a package index (`npx …`, `uvx …`) imports under a `no-network` task and then fails at run time; bake such servers into the image.
+
+## Healthcheck and the agent user
+
+`[environment.healthcheck]` keeps a slow-starting environment from meeting the agent too early. The command runs after the environment starts and before the agent is installed, with Docker `HEALTHCHECK` semantics, and the agent starts only once it exits `0`.
+
+```toml
+[environment.healthcheck]
+command = "curl -fsS http://localhost:8000/health"
+interval_sec = 5           # every field below command is optional; these are the defaults
+timeout_sec = 30
+start_period_sec = 0
+start_interval_sec = 5
+retries = 3
+```
+
+Inside `start_period_sec` a failure does not count toward `retries` and the next attempt waits `start_interval_sec`; after that, failures count, attempts are spaced by `interval_sec`, and each is bounded by `timeout_sec`. Reaching `retries` fails the trial as an infrastructure failure before any agent spend. On a multi-container task the check sees the `[environment.env]` literals; on a single-container task it sees none of the table, because the table is delivered with the agent. Templates are visible to no healthcheck.
+
+`[agent] user = "dev"` declares who the agent runs as, by name or numeric uid. Only the agent runs as that user; environment start, verification and artifact collection keep the box's default. The user must exist in the image (`RUN useradd -m dev`), and a preflight proves the account and the switch before the agent starts, so a missing user is a typed infrastructure refusal, never an agent silently running as root. Omitted, `root` and `0` mean the image's default, and a Dockerfile whose final stage sets a non-root `USER` makes that user the agent's user. A `USER app:group` form is refused at import; declare the user alone. `[verifier] user` other than `root` is refused: the verifier always runs as root.
+
+## Not supported
+
+- **Computer-use and desktop tasks.** Nothing in the package marks a task as computer-use, so such a task imports and runs, and a coding agent with no display scores zero on it. `[environment].os` other than Linux is refused.
+- **Run-level trajectory seeding.** No job flag names a recorded session to resume from. Task-level seeding is supported: a `trajectory.json` beside `instruction.md` (or in the first step's directory) is validated at import as ATIF and seeded into the agent's session on `claude` and `codex`; on any other harness the trial refuses before any model spend. `[agent] load_trajectory` and `resume_trajectory` keys are refused.
+- **Verifier scripts whose PEP-723 header needs a package index.** In a sealed verifier box (`no-network`, in either mode) there is no index to reach, and the import refuses the task: a judge-enabled task can resolve `rewardkit` and `litellm` from the offline bundle and nothing else; a task without a judge resolves nothing. A verifier under `allowlist` or `public`, or a `tests/` tree that never invokes `uv run` or `uvx`, is left alone.
 
 ## From tasks to a dataset
 

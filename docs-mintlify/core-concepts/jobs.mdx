@@ -15,7 +15,7 @@ evolve run \
   --watch
 ```
 
-`-d` names a dataset and may repeat: one job can span several. `-a` names the agent. `-m` names the model and may repeat too. Each model is one arm, so two models against one agent run every task twice. `-k` is the number of attempts per task and arm (default 1). `-n` is how many trials run in parallel (default 4). `--job-name` gives the job a label; omitted, the server generates one.
+`-d` names a dataset and may repeat: one job can span several. `-a` names the agent. `-m` names the model and may repeat too. Each model is one arm, so two models against one agent run every task twice. `-k` is the number of attempts per task and arm (default 1). `-n` is how many trials run in parallel (default 4, at most 150). `--job-name` gives the job a label; omitted, the server generates one.
 
 ## Narrow the task set
 
@@ -38,7 +38,11 @@ evolve run \
 
 ## Spend and retries
 
-Every trial runs under a model-spend cap, `--max-trial-spend <usd>`. Omitted, the server's default applies, $200. Trials that fail on infrastructure errors are retried automatically: `-r <n>` sets how many times, and `0` turns it off. `--retry-include` and `--retry-exclude` choose by exception type, and exclude wins. Each attempt carries the full trial cap.
+Every trial runs under a model-spend cap, `--max-trial-spend <usd>`. Omitted, the server's default applies, $200. It is the only spend limit the platform enforces: each trial runs on its own gateway key and the cap is that key's budget, so there is no job-wide budget. The job states the cap that applied as `max_trial_spend_usd` and the most it can cost as `worst_case_spend_usd`: the cap times the trials times the attempts the retry policy allows, because every attempt gets the full cap. A trial that exhausts its cap is not a failure; it is scored on what it produced. Underneath every cap sits your credit balance: a job started at a zero balance is refused with `insufficient_credits`, and a balance that runs out stops spending mid-job.
+
+Trials that fail on infrastructure errors are retried automatically. `-r <n>` sets how many times; the fleet default is 2, published as `limits.job.default_max_retries`, and `0` turns it off. No other status re-runs on its own. `--retry-include` and `--retry-exclude` choose by exception type, and exclude wins. A gateway credential refusal adjudicates as `AgentAuthenticationError`, a model that never served as `ModelNotFoundError`, everything else as `InfrastructureError`. A retried trial keeps its receipts: `n_retries` and the `retries` lineage on the trial, `stats.n_retries` on the job, and every retired attempt's spend stays in the job total.
+
+Two infrastructure failures in a row with the same signature break the circuit: the retry is refused, the trial stays `INFRASTRUCTURE_ERROR`, and the rest of the retry budget goes unspent. The signatures are `sandbox_death`, `provider_create_failure`, `stream_disconnect` and `exec_chdir_failure`. The verdict is appended to the trial's exception message, and the event stream carries `trial.retry_circuit_broken` where a `trial.retrying` would have been.
 
 ## Read the results
 
@@ -52,11 +56,17 @@ evolve job list --search nightly
 
 `job show` prints the whole job, with pass@k once every attempt has settled. `job trials` lists the trials, `--status` and `--dataset` narrow the list. `job tasks` is one row per task. `job compare` puts two to ten jobs side by side. `job list` is your jobs, newest first; `--scope shared` lists your organizations' jobs that teammates created.
 
-A trial is `QUEUED`, `RUNNING` or `SCORING` while it runs, and settles as `SCORED`, `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE` or `CANCELLED`. A job is `QUEUED`, `RUNNING`, `CANCELLING`, `COMPLETED`, `CANCELLED` or `FAILED`.
+A job's spend prints as `at least $X` whenever it holds settled trials whose spend nobody measured, because each of those folded a zero into the sum.
+
+pass@k is the chance that k attempts contain at least one success: the standard estimator `1 - C(n-c, k) / C(n, k)` per task, averaged over the group's tasks. The k values are the powers of two and the multiples of five up to the group's sparsest task's attempt count, so a single-attempt job has none. An attempt that produced no reward counts as a failure. A group answers nothing when its rewards are not binary, when no k is eligible, or while attempts are still in flight. The archive's `result.json` carries the same numbers.
+
+## Statuses
+
+A job is `QUEUED` (accepted, waiting for dispatch), `RUNNING`, `CANCELLING` (cancel requested, in-flight trials winding down), `COMPLETED` (every trial settled), `CANCELLED`, or `FAILED`. `FAILED` is reserved: nothing sets it today, so `failure` is null on every job. A job that goes wrong does so one trial at a time and still reaches `COMPLETED`; read `trials.byStatus` for where. Trial statuses are on [trials](/core-concepts/trials#statuses).
 
 ## Derive a new job
 
-Every derived run is a new job linked to its source. The source is never changed.
+Every derived run is a new job linked to its source through `source_jobs`. The source is never changed.
 
 ```bash
 evolve job retry <job-id> --failed-only
@@ -65,7 +75,11 @@ evolve job resume <job-id> -f InfrastructureError
 evolve job regrade <job-id> --task tricky-task
 ```
 
-`retry` runs selected trials again: every trial, only the failed ones with `--failed-only` (`SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`), or exactly the ones named with `-t`. `resume` takes a finished job's failed or stopped trials and runs them; `-f <type>` picks failure types by exception type. `regrade` re-runs only the verifier of a finished job; `--status` and `--task` narrow the set.
+`resume` takes a finished job's failed or stopped trials and runs them. By default that is the exception types `ScoringError`, `InfrastructureError`, `ApiUsageLimitError` and `IncompleteTrialError`, plus stopped trials and the still-queued trials of a cancelled job; `-f <type>` narrows it by exception type. Scored trials are never re-run. A live source is refused with `job_not_terminal`, an empty selection with `no_failed_trials`.
+
+`retry` runs selected trials again: every trial, only the failed ones with `--failed-only` (`SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`), or exactly the ones named with `-t`. A scored trial is a legitimate target. The whole-job and `--failed-only` forms need a finished source; the named form works on a running job, as long as every named trial has settled. A still-live id is refused with `trial_not_settled` and an id the job does not own with `trial_not_found`, both all or nothing. Naming trials and `--failed-only` together is refused.
+
+`regrade` re-runs only the verifier of a finished job, in a fresh separate verifier box, under the network policy recorded with the source trial; `--status` and `--task` narrow the set. Only a trial that recorded its verifier inputs when it settled is eligible: settled separate-mode trials do, shared-mode trials never do, and neither do trials that settled before the platform kept those inputs or a task that grades with an LLM judge. A single-trial regrade of an ineligible source is refused with `regrade_source_ineligible`; a whole-job regrade skips the ineligible trials and answers `no_regradable_trials` when none remain. The result is a job with `is_regrade` true.
 
 ## Stop, cancel, delete
 
@@ -75,7 +89,9 @@ evolve job stop <job-id> --dataset terminal-bench-4
 evolve job delete <job-id> --yes
 ```
 
-`cancel` asks the whole job to stop. `stop` ends one dataset's live trials and leaves the job running. `delete` removes a job you created permanently: its trials, traces, analyses and stored files. Without `--yes` it asks first.
+`cancel` asks the whole job to stop; it is idempotent, and a finished job is a no-op. `stop` ends one dataset's live trials and leaves the job running. `delete` removes a job you created permanently: its trials, traces, analyses and stored files. Without `--yes` it asks first.
+
+Only the job's creator may delete it; another member of the organization is refused with `org_forbidden`. The job must be finished: a live job refuses with `job_not_terminal`, a running analysis wave with `analysis_already_running`, and a live regrade derived from the job with `job_not_terminal` naming the regrade jobs to wait for. What stays after a delete: regrade job rows, the `source_jobs` entries of derived jobs, and the gateway's own spend ledger. A regrade job cannot be deleted this way; its results go from the Traces page. Deleting an uploaded job frees its duplicate lock, so delete then upload is how an [uploaded job](/core-concepts/upload) is replaced.
 
 ## Download
 
@@ -83,11 +99,11 @@ evolve job delete <job-id> --yes
 evolve job download <job-id> -o results/
 ```
 
-The results unpack as the standard job directory, `results/job-<id>/`: the job's `config.json`, `lock.json`, `result.json` and `job.log`, and one directory per trial. See [trials](/core-concepts/trials) for what each trial directory holds.
+The results unpack as the standard job directory, `results/job-<id>/`: the job's `config.json`, `lock.json`, `result.json` and `job.log`, and one directory per trial. See [trial outputs](/core-concepts/trial-outputs) for what each trial directory holds.
 
 ## Config files
 
-Put the job in a file and run it with `-c`. The file is YAML or JSON with the same field names the SDK's `jobs().start()` takes. Flags on the command line override the file's fields. `--print-config` prints the resolved job body as JSON and exits without running anything.
+Put the job in a file and run it with `-c`. The file is YAML or JSON with the same field names the SDK's `jobs().start()` takes. Flags on the command line override the file's fields; `-r`, the retry flags, the analyze flags and the timeout flags each override their own field inside the file's `retry` and `analyze` objects. `--print-config` prints the resolved job body as JSON and exits without running anything.
 
 ```yaml nightly.yaml
 datasets:

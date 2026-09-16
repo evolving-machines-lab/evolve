@@ -23,6 +23,8 @@ evolve run \
 
 `-m` repeats. Each model is one arm, so the second command runs every task twice, once per model. Every arm must name a model; there is no default.
 
+When a managed provider key of your own is enabled for the model's provider, the trial's model calls bill that provider account and draw no credits; the cap still meters and bounds the trial, and the zero-balance check still runs on every job create and resume.
+
 ## The rosters
 
 Each harness has its own roster of model names. These are the names the SDK ships at this release. The platform publishes the live list for each harness in its capability document, which the SDK reads with `meta()`.
@@ -53,7 +55,9 @@ Each harness has its own roster of model names. These are the names the SDK ship
 
 ## Reasoning effort
 
-`--effort <value>` sets the reasoning effort for every arm. The accepted values are listed in the capability document at `GET https://dashboard.evolvingmachines.ai/api/meta`, which needs no key. `gemini` accepts no effort value, `qwen` switches thinking on or off rather than taking a level, and the other five harnesses take a level. An effort a harness cannot honor is refused when the job is created, never silently skipped.
+`--effort <value>` sets the reasoning effort for every arm. The accepted values are listed in the capability document at `GET https://dashboard.evolvingmachines.ai/api/meta`, which needs no key, and each harness's entry there states its `effort_support`: `gemini` accepts no effort value, `qwen` switches thinking on or off rather than taking a level, and the other five harnesses take a level. An effort a harness cannot honor is refused with `invalid_input` when the job is created, never silently skipped.
+
+An omitted effort resolves to the harness's own default and is stamped as if declared: every trial echoes it on `agent_info.reasoning_effort`, and the job's `stats.evals` keys carry it as the segment before the dataset, `agent__model__effort__dataset`. Effort is part of an arm's identity: the same agent and model at two efforts are two arms.
 
 ## The analyzer's and the checker's model
 

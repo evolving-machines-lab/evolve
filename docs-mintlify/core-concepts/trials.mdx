@@ -3,13 +3,15 @@ title: "Trials"
 description: "One agent's attempt at one task: its record, its trace, and its artifacts."
 ---
 
-A trial is one attempt of one task by one agent arm. Trial ids are global: every trial command takes the trial id alone, and the trial's record carries its job id.
+A trial is one attempt of one task by one agent arm. Trial ids are global: every trial command takes the trial id alone, and the trial's record carries its job id. Job and trial ids are UUIDs; older ids use another alphabet and stay valid, so treat every id as opaque.
 
 ```bash
 evolve trial show <trial-id>
 ```
 
 `trial show` prints the task, the agent and model, the status, the reward, the tokens, what the trial spent and, when it failed, the exception. Spend prints as a plain amount once the meter has settled it, as `at least $X` while it is still a lower bound, and as `-` when nobody has measured it yet.
+
+While a trial runs, `attempt_phase` says which step it is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), and its spend is readable before it settles: `live_spent_usd` with `live_spend_at` is a lagging lower bound, written at most every 5 seconds from each model call's own report and raised about every 30 seconds from the gateway's ledger, which also brings the token counts. It only climbs, is cleared at settle, is never part of a job total, and is null, never zero, before the first reading. The whole reading, spend and tokens with a `provisional` flag, is `usage`. Registered agents have no live reading. On a settled trial read `agent_result.cost_usd` with `spend_source`; only `measured` is final.
 
 ## The trace
 
@@ -79,6 +81,22 @@ evolve trial stop <trial-id> <trial-id>
 ```
 
 `retry` runs a settled trial again, `regrade` re-runs only its verifier, and each produces a new job holding the one new trial. `stop` ends in-flight trials without cancelling their job.
+
+## Statuses
+
+A valid reward, 0 included, is `SCORED`; a failure is never reported as a fabricated zero.
+
+- `QUEUED`: waiting for a sandbox slot.
+- `RUNNING`: the agent phase; `attempt_phase` says which step.
+- `SCORING`: the agent finished; the verifier is running.
+- `SCORED`: a valid reward is in `reward`.
+- `SCORING_ERROR`: the verifier crashed or wrote a reward outside `[0, 1]`; read `exception_info`.
+- `INFRASTRUCTURE_ERROR`: the trial was lost before a result was recorded; retried automatically, then `resume`.
+- `BUDGET`: a budget above the trial's own cap refused it. The exception type is `ApiUsageLimitError` and the message carries `user:` (your credits), `team:` (the organization's monthly budget) or `other:` (the platform's global stop). Never retried on its own; add credits or raise the budget, then `resume`.
+- `INDETERMINATE`: the platform cannot tell whether the trial completed.
+- `CANCELLED`: stopped before settling; the exception type is `CancelledError`.
+
+`SCORING_ERROR` and `INDETERMINATE` carry the last few kilobytes of the verifier's own output in `exception_message`, the only record of it once the box is gone. Job statuses are on [jobs](/core-concepts/jobs#statuses).
 
 <Card title="trial reference" icon="terminal" href="/cli-reference/trial">
   Every flag of `evolve trial`.

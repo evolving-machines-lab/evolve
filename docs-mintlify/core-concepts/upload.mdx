@@ -18,7 +18,27 @@ evolve job imports --status RUNNING
 evolve job import <import-id> --watch
 ```
 
-`job imports` lists your uploads, newest first. `job import --watch` re-attaches to one and follows it to the job, or to its typed failure.
+`job imports` lists your uploads, newest first. `job import --watch` re-attaches to one and follows it to the job, or to its typed failure. A directory is packed to a temporary file on disk, never into memory; an archive over 256 MiB rides a resumable upload, and its import id is available before the first byte moves. Uploads of one organization are ingested under its `max_concurrent_imports`, the same ceiling dataset publishes wait under.
+
+## What lands
+
+The trials' facts, never a re-judgment: a rewarded trial arrives `SCORED` with its rewards untouched, a trial with no rewards arrives `INDETERMINATE`, and an errored trial keeps its exception. `agent/trajectory.json`, the harness's stdout tee (`agent/claude-code.txt` or its siblings, or `agent/stdout.log`), `agent/stderr.log`, the captured home under `agent/`, `verifier/test-stdout.txt` and `verifier/reward.txt` are stored in the same slots native trials use, so the trace and artifact surfaces and the analyzer read them with no special casing. Trace events are derived at ingest, from the harness transcript when its format is recognized, else from the trajectory. Agent identity is stored as a display label; an uploaded job is a record, not execution config. The archive itself is deleted once the import settles. Per-trial `lock.json`, `artifacts/`, `steps/` content and any prior `analysis.json` are not ingested.
+
+The ingested job carries `upload`: the archive's own `original_job_id` and `original_job_name`, `uploaded_at`, the uploader's `reported_totals`, and `task_links`. It is null on every job this platform ran. Resume, retry and regrade refuse an uploaded job with `job_uploaded`; analyze works on it unchanged.
+
+An uploaded job never claims an execution: `sandbox_provider` is null at the job and trial level, the CLI renders the provider cell as `ported`, and the platform-metered fields (`agent_result`, `usage`, `spend_source`, `stats.cost_usd` and the token stats) stay null. The archive's own token and cost figures ride `trial.upload.reported_agent_result` and the job's `upload.reported_totals`, labeled reported; `job show` prints them as `reported $X.XX (N/M trials reporting)`.
+
+## Task linkage
+
+Every trial's `lock.json` names its task by a content hash, `task.digest`, and every task the platform imports carries the same hash, so an uploaded job links to the dataset it ran against by itself. When the job's `config.json` names a dataset you can see, each trial links to the task in that version whose hash equals its digest; when nothing is named, a trial links when exactly one visible dataset carries a task with its hash. A linked trial's analyses run with the task folder in `/app/task`; an unlinked trial's run without it, and the record says why: `hash_mismatch`, `task_not_in_dataset`, `no_task_digest`, `no_hash_match`, `no_dataset_named` or `dataset_ambiguous`. A name alone never links. `-d` is the override: it links by task name to that one version, whatever the hashes say, and is how an ambiguous hash is settled. A hint you cannot use fails the import typed.
+
+You hear the outcome three times: the upload follow prints `linked N of M trials to <dataset>` and the not-linked tasks with their reasons; `evolve analyze` prints the same warning per task before it spends; and the record carries it, as the job's `upload.task_links`, the import's `task_links` and each trial's `upload.link`.
+
+## Bounds and duplicates
+
+There is no cap of the platform's on an archive, its trial count or a trial's files. The one ceiling is what the object store can land, published as `limits.uploads.job_archive_bytes`; an archive the worker cannot extract under its own disk fails with `upload_too_large`. Two per-trial bounds are physical and skip the trial instead of failing the job: a single artifact over 5 GiB, and a trajectory whose parse, with the trial's `agent/` tree, would cost more heap than the worker can commit. The import records them as `n_trials_skipped` and `skipped_trials` (`trial_too_large`, with the file, its bytes and the bound), and `job import` prints one line per skipped trial. A trial whose `result.json` cannot be read fails the whole import with `invalid_trial`.
+
+Re-uploading an archive whose job you already uploaded fails with `job_already_uploaded`, naming the existing job: trial rows carry analyses that a silent replacement would destroy. Delete the job, then upload again. Another user uploading the same archive gets their own copy.
 
 <Card title="upload reference" icon="terminal" href="/cli-reference/upload">
   Every flag of `evolve upload`.

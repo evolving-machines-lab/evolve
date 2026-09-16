@@ -3,7 +3,7 @@ title: "Sandboxes"
 description: "Where trials run: e2b, daytona, or modal."
 ---
 
-Every trial runs in its own sandbox on one of three providers. Pick the provider per job with `-e`; the default is `daytona`.
+Every trial runs in its own sandbox on one of three providers. Pick the provider per job with `-e`; the default is `daytona`. Once chosen, the provider is fixed for the job's life, and a resumed job inherits it.
 
 - `e2b`: [E2B](https://e2b.dev/docs)
 - `daytona`: [Daytona](https://www.daytona.io/docs), the default
@@ -27,8 +27,28 @@ Not every task can run on every provider, and the catalog says so before any mon
 evolve dataset show terminal-bench-4@4.0
 ```
 
-A verdict is `ok`, or refused with a reason. A GPU task carries a third form: `ok` with a note that the trial degrades to `modal`, the provider that reserves GPUs. Starting a job whose selected tasks include one that is refused on the chosen provider is rejected at creation with the same reason, so nothing is spent on a trial that cannot execute.
+A verdict is `ok`, or refused with a reason. A GPU task carries a third form: `ok` with a note that the trial degrades to `modal`, the provider that reserves GPUs. Starting a job whose selected tasks include one that is refused on the chosen provider is rejected at creation with `provider_unsupported` and the same reason, so nothing is spent on a trial that cannot execute.
+
+Three refusals are decided from the task's declarations and appear in the verdicts:
+
+- Multi-container tasks run on `e2b` and `daytona`; `modal` cannot host them.
+- A multi-container task under `no-network` is declined on every provider. Run it under `allowlist` or `public`.
+- A size above a provider's ceiling refuses on that provider only.
+
+| Provider | Max vCPUs | Max memory | Disk |
+| --- | --- | --- | --- |
+| `e2b` | 8 | 8192 MB | fixed, 20 GB |
+| `daytona` | 4 | 8192 MB | sized per task, up to 10 GB |
+| `modal` | 16 | 32768 MB | fixed, 512 GB |
+
+Two more limits are decided only when the sandbox is created, so they end a trial as `INFRASTRUCTURE_ERROR` with the reason in its failure detail. On `daytona` an `allowlist` carries one kind of entry per sandbox: a single-container task gets an IP list (IPv4 addresses and CIDRs, at most 10 entries), a multi-container task a hostname list (at most 20 entries, a `*.` prefix covering a domain), and an entry of the other kind fails at creation; `e2b` and `modal` carry both kinds. And each provider keeps a box alive for at most its own plan's lifetime (24 hours on `e2b` Pro and `modal`); a task whose stretched timeout outlives it fails with the provider's message.
+
+## GPU tasks
+
+A task declares `gpus` and `gpu_types` in `[environment]`; `gpu_types` null means any type. GPU compute is paid by the platform; a GPU trial draws your credits for its model calls only. `modal` is the provider that reserves GPUs today, so a GPU task runs on `modal` whatever the job picked: the task's verdict says so up front, and the trial records where it ran in `sandbox_provider` with the move in `sandbox_provider_degrade` (`from`, `to`, `reason`). The fleet caps GPU trials in flight at the [capability document](/sdk-reference/meta)'s `gpu_concurrency_cap`; a queued GPU trial past it waits. A GPU count above `modal`'s per-container ceiling is refused at import.
+
+Every settled GPU trial states its compute as an estimate, `gpu_cost`: the measured sandbox lifetime times a versioned rate card with the provider's list price, its source and the date it was read. It is a separate figure, never added to `agent_result.cost_usd`; the job sums it as `stats.gpu_cost_usd`. When no honest number exists, `unpriced_reason` says why and `estimate_usd` stays null. `evolve trial show` prints a `gpu compute (est.)` row and `evolve job show` the job's sum beside its `spent` row.
 
 ## The analyzer's and the checker's sandbox
 
-Trace analysis and task checks run in sandboxes too. `-e` on `evolve analyze` and on `evolve check`, and `--analyze-provider` on `evolve run`, pick the provider. Omitted, the platform's analysis default applies.
+Trace analysis and task checks run in sandboxes too. `-e` on `evolve analyze` and on `evolve check`, and `--analyze-provider` on `evolve run`, pick the provider. Omitted, the platform's analysis default applies, `daytona`.
