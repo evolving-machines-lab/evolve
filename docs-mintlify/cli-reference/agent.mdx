@@ -49,7 +49,7 @@ Register an agent from an install script or a local directory.
 </ParamField>
 
 <ParamField path="--ae, --agent-env" type="KEY=VALUE">
-  Environment injected at run time. Repeatable.
+  Environment injected at run time. Repeatable. It may not override the six run-contract keys, and a credential-shaped key is refused, both with `agent_invalid_env`; see [the run contract](/core-concepts/agents#the-run-contract).
 </ParamField>
 
 ```bash

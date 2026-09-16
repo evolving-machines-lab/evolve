@@ -10,7 +10,7 @@ import ListFlags from '/snippets/list-flags.mdx';
 evolve analysis <command> [options]
 ```
 
-`show`, `trace` and `download` take an analysis id, or a trial id. An analysis id (or its unambiguous prefix) names that run. A trial id (or prefix) names the trial's latest analysis, the one `trial show` prints on its analysis row. A prefix matching both an analysis and a trial is refused as ambiguous, naming both.
+`show`, `trace` and `download` take an analysis id, or a trial id. An analysis id (or its unambiguous prefix) names that run. A trial id (or prefix) names the trial's latest analysis, the one `trial show` prints on its analysis row. A prefix matching both an analysis and a trial is refused as ambiguous, naming both. A trial nobody analyzed is refused with the remedy, `evolve analyze <job>`; a regrade result's id is refused too, since a regrade is never analyzed. An id you cannot read answers `analysis_not_found`, exactly like one that does not exist, and `download` on a run still queued or running answers `analysis_not_terminal`.
 
 ## analysis list
 

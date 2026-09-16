@@ -52,7 +52,7 @@ evolve run \
 </ParamField>
 
 <ParamField path="-n, --n-concurrent" type="n" default="4">
-  Parallel trials.
+  Parallel trials, 1 to 150.
 </ParamField>
 
 <ParamField path="-e, --env" type="provider" default="daytona">
@@ -72,15 +72,15 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="--preset" type="name">
-  Named settings preset for every arm: `no-internet` turns the vendor's server-side web tools off, `pinned-context` fixes the context window. Applied verbatim: an agent that cannot guarantee it is refused by the server.
+  Named settings preset for every arm: `no-internet` turns the vendor's server-side web tools off, `pinned-context` fixes the context window at 200000 tokens. Only `claude` and `codex` take one; a preset wins over `--ak config` where they disagree. An unknown name is refused with `invalid_input`, a preset the agent cannot guarantee with `agent_preset_unsupported`.
 </ParamField>
 
 <ParamField path="--agent-kwarg, --ak" type="key=value">
-  Agent kwarg for every arm, as `key=value`. Repeatable. The delivered key is `config`: `--ak 'config=<path|inline JSON>'` becomes the harness's native settings file, with your document as the base and the platform's routing on top. The server refuses unsupported kwargs, and config keys touching billing, base URL, routing or env.
+  Agent kwarg for every arm, as `key=value`. Repeatable. The delivered key is `config`: `--ak 'config=<path|inline JSON>'` becomes the harness's native settings file, with your document as the base and the platform's routing on top. A path is read locally, as JSON or as TOML for a Codex config, and sent inline. Only `claude` and `codex` take a config. A key other than `config` is refused with `agent_kwarg_unsupported`, a config on an agent without native settings with `agent_config_unsupported`, and a config key touching billing, base URL, routing or env with `agent_config_key_refused`.
 </ParamField>
 
 <ParamField path="--skills, --skill" type="ref | path">
-  Skill for every agent arm. Repeatable. Accepts `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https git URL, `upload:<id>`, `name:<skill-name>` (your moving name pointer, resolved server-side), or a local folder, which is uploaded first and then referenced.
+  Skill for every agent arm. Repeatable. Accepts `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https git URL, `upload:<id>`, `name:<skill-name>` (your moving name pointer, resolved server-side), or a local folder, which is uploaded first and then referenced; `--print-config` still shows the path you typed.
 </ParamField>
 
 <ParamField path="--ae, --agent-env" type="KEY=VALUE">
@@ -106,15 +106,15 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="-r, --max-retries" type="n">
-  Max automatic retries per trial on infrastructure errors. Defaults to the server's fleet default; `0` turns retries off. Each attempt carries the full trial cap.
+  Max automatic retries per trial on infrastructure errors. Defaults to the fleet default, 2, published as `limits.job.default_max_retries`; `0` turns retries off. Each attempt carries the full trial cap. Over a `-c` file it overrides only its own field of `retry`.
 </ParamField>
 
 <ParamField path="--retry-include" type="exception">
-  Exception types to retry on. Repeatable. Defaults to everything `--retry-exclude` admits.
+  Exception types to retry on. Repeatable. The names are `AgentAuthenticationError` (a gateway credential refusal), `ModelNotFoundError` (a model that never served) and `InfrastructureError` (everything else). Defaults to everything `--retry-exclude` admits.
 </ParamField>
 
 <ParamField path="--retry-exclude" type="exception">
-  Exception types not to retry on. Repeatable, and it wins over `--retry-include`. Defaults to the platform's non-retryable set.
+  Exception types not to retry on. Repeatable, and it wins over `--retry-include`. Defaults to the platform's non-retryable set; an explicit `null` in a `-c` file's `retry` turns exclusions off entirely.
 </ParamField>
 
 ## Embedded analysis
@@ -146,7 +146,7 @@ Each of these applies to every arm of the job.
 ## Timeouts
 
 <ParamField path="--timeout-multiplier" type="x" default="1.0">
-  Multiplier for task timeouts. Any finite number above 0. It multiplies each task's declared timeouts for this job only; the task is never rewritten. A product past the runtime's timer ceiling is refused at create.
+  Multiplier for task timeouts. Any finite number above 0; below 1 shrinks. It multiplies each task's declared timeouts for this job only; the task is never rewritten. A product past the runtime's timer ceiling of 2,147,483,647 ms is refused at create. The multipliers are part of the idempotency identity, and resumed and retried jobs inherit them.
 </ParamField>
 
 <ParamField path="--agent-timeout-multiplier" type="x">
@@ -168,7 +168,9 @@ Each of these applies to every arm of the job.
 ## Config file and output
 
 <ParamField path="-c, --config" type="path">
-  Job config file, YAML or JSON in the spec's vocabulary. Explicit flags override its fields.
+  Job config file, YAML or JSON with the same field names `jobs().start()` takes. Explicit flags override its fields; the retry, analyze and timeout flags each override one field inside the file's `retry` and `analyze` objects. The file may be partial: `-d` and `-a`/`-m` can supply what it omits, but an entry inside it must be complete (a selector needs `name`, an arm `name` and `model_name`).
+
+  YAML is read with the 1.1 schema, as PyYAML reads it: `yes` and `on` are booleans, `012` is octal, a float needs a dot and an exponent needs a sign, an integer may not be zero-padded, and a `%YAML` directive changes nothing. A second document, an unresolvable `!tag`, an unknown `%YAML` version and a duplicate key each refuse with a line number. The body is validated against the contract's `JobCreate` schema before any request: an unknown key is refused by name at every level with the allowed keys listed, a string must be a string (quote `version: "1.10"`), `n_attempts` and `n_tasks` are integers of at least 1, `n_concurrent_trials` is 1 to 150, `job_name` is at most 200 characters, `sandbox_provider` is `e2b`, `daytona` or `modal`. A refusal names the path, the file and the line. A value no JSON body can carry, a bare date, `.inf`, `.nan`, `!!binary`, `!!set` or a self-referencing anchor, is refused rather than rewritten.
 </ParamField>
 
 <ParamField path="--print-config">
