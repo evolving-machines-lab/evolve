@@ -64,7 +64,7 @@ const failures = await evals.trials(job.id, {
 });
 ```
 
-Every list on this surface works the same way: await it for one page, iterate it to walk every page.
+Every list on this surface works the same way: await it for one page, iterate it to walk every page. `passAtK(job)` reads a finished job's pass@k out of its stats as sorted numbers. A refused request throws `EvolveApiError`; see [errors](/sdk-reference/errors).
 
 A trial id is global, so `trials()` reaches one without the job.
 

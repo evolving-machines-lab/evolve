@@ -13,7 +13,7 @@ description: "Register and manage your own agents."
     create(input: { name: string; run_command: string; env?: Record<string, string> } & ({ install_script: string } | { directory: string })): Promise<Agent>
     ```
 
-    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory.
+    Register an agent from an install script's text, or from a local directory, sent as `multipart/form-data` so nothing rides a URL. `run_command` runs with `sh -c` at the task's working directory. Registered agents are private: another account's name reads as `agent_not_found`. Past the published `agent_registration.max_per_user`, registration is refused with `agent_limit_reached`. The run contract is on [agents](/core-concepts/agents#the-run-contract).
 
     ```ts
     const agent = await agents().create({
@@ -35,7 +35,7 @@ description: "Register and manage your own agents."
     ) -> Agent
     ```
 
-    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory.
+    Register an agent from an install script's text, or from a local directory, sent as `multipart/form-data` so nothing rides a URL. `run_command` runs with `sh -c` at the task's working directory. Registered agents are private: another account's name reads as `agent_not_found`. Past the published `agent_registration.max_per_user`, registration is refused with `agent_limit_reached`. The run contract is on [agents](/core-concepts/agents#the-run-contract).
 
     ```python
     agent = await agents().create(
@@ -61,7 +61,7 @@ description: "Register and manage your own agents."
     delete(name: string): Promise<void>
     ```
 
-    Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded.
+    Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
 
     ```ts
     await agents().upsert(
@@ -92,7 +92,7 @@ description: "Register and manage your own agents."
     async def delete(name: str) -> None
     ```
 
-    Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded.
+    Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
 
     ```python
     await agents().upsert(

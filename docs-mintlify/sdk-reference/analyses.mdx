@@ -68,7 +68,7 @@ description: "Read trace-analysis runs."
     ): Promise<Record<string, string> | null>
     ```
 
-    The verdict document, the analyzer's own transcript, or one stored artifact.
+    The verdict document for every analysis, failed ones included, the analyzer's own transcript (everything after `since` in one read, `total` counting all stored rows), or one stored artifact. An analysis stores no verifier log and no ATIF trajectory, so those selectors are refused; an id of a trial or a regrade is refused naming its kind. A run opens to its job's creator and every member of the organization; any other id answers `analysis_not_found` from `get`, `artifact` and `download`, and `trial_not_found` from `transcript`.
 
     ```ts
     const verdict = await analyses().get("a0a1b2c3-…");
@@ -95,7 +95,7 @@ description: "Read trace-analysis runs."
     ): Promise<ReadableStream<Uint8Array>>
     ```
 
-    The run as one `.tar.gz`: the bytes, the saved file's path, or a stream.
+    The run as one `.tar.gz`, `analyze-<analyzed trial>__<7 chars>/`: `config.json`, `lock.json`, `result.json`, `trial.log`, `exception.txt` on an infrastructure failure, `agent/claude-code.txt`, `agent/stderr.log`, `agent/trace-parsed.jsonl`, the home with `agent/agent-home.json`, `verifier/test-stdout.txt`, `reward.txt` and `reward.json` when the validator ruled (1 for a valid result, 0 when refused), and `artifacts/manifest.json` with `artifacts/analysis.json` on a completed run. The bytes, the saved file's path, or a stream, verified as a job download is. `analysis_not_terminal` while the run is queued or running.
 
     ```ts
     const path = await analyses().download(
@@ -113,7 +113,7 @@ description: "Read trace-analysis runs."
     )
     ```
 
-    The run as one `.tar.gz`: the bytes, or with `to` the saved file's path.
+    The run as one `.tar.gz`, `analyze-<analyzed trial>__<7 chars>/`: the bytes, or with `to` the saved file's path, verified as a job download is. `analysis_not_found` for an id you cannot read, `analysis_not_terminal` while the run is queued or running.
 
     ```python
     path = await analyses().download(

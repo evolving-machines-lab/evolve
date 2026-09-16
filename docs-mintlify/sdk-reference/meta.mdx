@@ -3,7 +3,19 @@ title: "meta"
 description: "The platform's capability document, no key needed."
 ---
 
-`meta()` fetches the capability document: the built-in agents with their model rosters and effort support, the sandbox providers with their ceilings, the status vocabularies, the limits, and the error codes. It needs no API key.
+`meta()` fetches the capability document, `GET /api/meta`: everything a client would otherwise hardcode. It needs no API key.
+
+- `agents`: every built-in, with `runnable` and `reason`, `default_model` and `models` (the picker's list; a job still requires an explicit model), `effort_support` (`level`, `binary` or `none`) and `default_effort`, `version_pinnable` and `latest_version` (null means not known right now), `supports_config` and `presets`.
+- `agent_registration`: the rules a registration must satisfy: `name_pattern`, the length and size caps, `max_per_user`, `reserved_names`, `reserved_env_keys`.
+- `sandbox_providers`: each provider's `sizing` ceilings, its `gpus` block, and its `refuses` list; `platform_constraints` beside it holds what no provider runs. `gpu_concurrency_cap` is the fleet's cap on GPU trials in flight.
+- `managed_providers`: the managed sandbox doors this deployment serves, a managed-agents fact.
+- `network_modes`: the three modes a task may declare.
+- `statuses`: the `job`, `trial`, `import` and `dataset_version` vocabularies, each with its `terminal` members.
+- `analyze`: the analyzer's `default_model`, its `reasoning_efforts`, and each roster model's `default_reasoning_effort`.
+- `limits`: `job` (`n_concurrent_trials` default and max, `default_max_trial_spend_usd`, `default_max_retries`, `default_sandbox_provider`, `default_sizing`, `model_required`, `default_agent_timeout_sec`, `default_verifier_timeout_sec`, `default_timeout_multiplier`, the effort vocabulary), `compare` (`min_ids`, `max_ids`), `pagination` (a default and max per collection kind), `uploads` (the one physical ceiling per archive kind with `archive_bytes_source`, the agent tarball and skill caps), `dataset_names`, and `max_items_named_in_error_message`, which is why `details` exists.
+- `error_codes` and `import_warning_codes`: the closed lists.
+
+`schema_version` moves when a field changes meaning, never when a value changes. The response carries an `ETag` and `Cache-Control: public, max-age=300, stale-while-revalidate=300`; send the ETag back as `If-None-Match` and an unchanged document answers 304.
 
 <Tabs>
   <Tab title="TypeScript">

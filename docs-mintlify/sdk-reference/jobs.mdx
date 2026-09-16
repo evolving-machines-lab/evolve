@@ -16,7 +16,9 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `n_attempts`, `n_concurrent_trials`, `max_trial_spend_usd`, `sandbox_provider`, `retry`, `analyze`, the five `*_timeout_multiplier` fields, `agent_env`, `verifier_env`, `secrets`. `options.idempotencyKey` makes a repeated call return the same job.
+    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `n_attempts`, `n_concurrent_trials` (1 to 150), `max_trial_spend_usd`, `sandbox_provider`, `retry` (`max_retries`, `include_exceptions`, `exclude_exceptions`, `wait_multiplier`, `min_wait_sec`, `max_wait_sec`), `analyze`, the five `*_timeout_multiplier` fields, `verifier_env` (`REWARDKIT_JUDGE` and `REWARDKIT_MODEL` only), `secrets`. `agent_env` is in the shape but refused by the server. The response is the [Job](/sdk-reference/types#job): it echoes the resolved cap as `max_trial_spend_usd`, the job's ceiling as `worst_case_spend_usd`, and the resolved `retry`, `analyze` and multipliers.
+
+    `options.idempotencyKey` makes a repeated call return the same job, with `idempotent_replay` true. The server fingerprints the request behind the key: a different request under a used key is refused with `idempotency_key_reused`. The multipliers are part of that identity.
 
     ```ts
     const job = await jobs().start({
@@ -50,7 +52,7 @@ description: "Start, follow, and derive jobs."
     ) -> Job
     ```
 
-    The same fields as TypeScript, as keyword arguments. `idempotency_key` makes a repeated call return the same job.
+    The same fields as TypeScript, as keyword arguments; `datasets` and `agents` take dicts or the `DatasetSelector` and `AgentArm` dataclasses, and `retry` is a `JobRetryConfigInput`. `idempotency_key` makes a repeated call return the same job, with `idempotent_replay` true; a different request under a used key is refused with `idempotency_key_reused`.
 
     ```python
     job = await jobs().start(
@@ -177,7 +179,7 @@ description: "Start, follow, and derive jobs."
     ): JobTaskRollupList
     ```
 
-    One row per task: its trial tally, mean reward and cost.
+    One row per task: its trial tally, mean reward and cost, the dataset it came from (`source`), and its latest quality check (`check`, null when never checked).
 
     ```ts
     for await (const row of jobs().tasks(job.id)) {
@@ -195,7 +197,7 @@ description: "Start, follow, and derive jobs."
     )
     ```
 
-    One row per task: its trial tally, mean reward and cost.
+    One row per task: its trial tally, mean reward and cost, the dataset it came from (`source`), and its latest quality check (`check`, None when never checked).
 
     ```python
     async for row in jobs().tasks(job.id): print(row.task_name, row.mean_reward)
@@ -211,7 +213,7 @@ description: "Start, follow, and derive jobs."
     watch(id: string, options?: { onEvent?: (event: JobEvent) => void; signal?: AbortSignal; reconnectDelayMs?: number; maxReconnectDelayMs?: number }): JobWatch
     ```
 
-    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call.
+    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call. `onEvent` fires in both forms. The stream replays from the beginning and resumes from the last `seq` after a disconnect, backing off from `reconnectDelayMs` (default 1000) up to `maxReconnectDelayMs` (default 30000). Every event type and payload is on [types](/sdk-reference/types#events). A `trial.settled` is not final while a `trial.retrying` can follow it on the same trial; a `trial.retry_circuit_broken` in that place means the trial is terminal.
 
     ```ts
     const final = await jobs().watch(job.id);
@@ -229,7 +231,7 @@ description: "Start, follow, and derive jobs."
     )
     ```
 
-    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call.
+    The job's event stream. Await the handle for the final job, or iterate it for each event; one form per call. The stream replays from the beginning and resumes from the last `seq` after a disconnect, backing off from `reconnect_delay_s` up to `max_reconnect_delay_s` (30 s). Every event type and payload is on [types](/sdk-reference/types#events). A `trial.settled` is not final while a `trial.retrying` can follow it on the same trial.
 
     ```python
     final = await jobs().watch(job.id)
@@ -276,7 +278,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    A new job over a finished job's failed or stopped trials.
+    A new job over a finished job's failed or stopped trials; `source_jobs` records `action: "resume"`. The default set and the refusals are on [jobs](/core-concepts/jobs#derive-a-new-job). Supports `idempotencyKey`.
 
     ```ts
     const next = await jobs().resume(
@@ -318,7 +320,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    A new job re-running selected trials: named ids, the failed ones, or all of them.
+    A new job re-running selected trials: named ids, the failed ones, or all of them; `trial_ids` and `failed_only` together is refused. The named form works on a running job when every named trial has settled (`trial_not_settled`, `trial_not_found` otherwise); the other two need a finished source. The idempotency fingerprint covers the resolved selection under this verb's own namespace, so `trials().retry(id)` and `retry(jobId, { trial_ids: [id] })` replay each other.
 
     ```ts
     const again = await jobs().retry(
@@ -360,7 +362,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    Verifier-only re-run of a finished job. The result is a job.
+    Verifier-only re-run of a finished job, in fresh separate verifier boxes under the recorded network policy. The result is a job with `is_regrade` true. Only settled separate-mode trials are eligible; `no_regradable_trials` when none are. See [jobs](/core-concepts/jobs#derive-a-new-job).
 
     ```ts
     const regraded = await jobs().regrade(
@@ -401,7 +403,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    Enqueue one trace analysis per trial and return at once. `AnalyzeConfigInput`: `model_name`, `rubric`, `prompt`, `sandbox_provider`, `reasoning_effort`, `n_concurrent`, `passing`, `failing`, `n_trials`, all optional.
+    Enqueue one trace analysis per trial and return at once with the job, its `stats.analysis.n_pending` counting the batch. `AnalyzeConfigInput`: `model_name`, `rubric`, `prompt`, `sandbox_provider`, `reasoning_effort`, `n_concurrent`, `passing`, `failing`, `n_trials`, all optional; `{}` is every default. Calling it again is the re-analysis path, one wave at a time. The same object on `start()` as `analyze` arms the embedded trigger.
 
     ```ts
     await jobs().analyze(
@@ -450,7 +452,7 @@ description: "Start, follow, and derive jobs."
     watchAnalysis(id: string, options?: { onStats?: (job: Job) => void; signal?: AbortSignal; pollIntervalMs?: number }): Promise<Job>
     ```
 
-    Poll until no analysis is pending. Resolves with the final job.
+    Poll until no analysis is pending, from `pollIntervalMs` (default 2000) doubling to 30 s while the tally stands still, `onStats` firing on every change. Resolves with the final job. A job that was never analyzed polls forever, so call it after `analyze()`. On a still-running job created with `analyze`, `n_pending` can touch 0 between trial settles, so the watch can return early.
 
     ```ts
     const analyzed = await jobs().watchAnalysis(job.id);
@@ -483,7 +485,7 @@ description: "Start, follow, and derive jobs."
     compare(ids: string[]): Promise<CompareResponse>
     ```
 
-    Two to ten jobs side by side: per-job aggregates and a per-task matrix.
+    Two to ten jobs side by side: per-job aggregates and a per-task matrix, disagreement rows first. Means cover SCORED trials only, with `coverage` beside them. The shape is on [types](/sdk-reference/types#smaller-shapes).
 
     ```ts
     const cmp = await jobs().compare([jobA.id, jobB.id]);
@@ -518,7 +520,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<ReadableStream<Uint8Array>>
     ```
 
-    A finished job's results as one `.tar.gz` in the standard job layout: the bytes, the saved file's path, or a stream.
+    A finished job's results as one `.tar.gz` in the standard job layout: the bytes, the saved file's path, or a stream. The first two shapes are verified against the response's `Content-Length` and, when the server states one, its digest; `{ stream: true }` hands you the raw bytes to verify yourself.
 
     ```ts
     const path = await jobs().download(
@@ -555,7 +557,7 @@ description: "Start, follow, and derive jobs."
     upload(source: string | { archive_url: string }, options?: { dataset?: string; onUploadProgress?: (sentBytes: number, totalBytes: number) => void; onRegistered?: (importId: string) => void }): Promise<JobImport>
     ```
 
-    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record.
+    Upload a job directory, its `.tar.gz`, or a public archive URL as a finished job. Returns the import record; follow it with `watchImport`. A directory is packed to a temporary file, never into memory; over 256 MiB it rides a resumable upload and `onRegistered` hands you the import id before the first byte moves. A directory without `result.json` and `config.json` at its root is refused client-side.
 
     ```ts
     const imp = await jobs().upload(
@@ -638,7 +640,7 @@ description: "Start, follow, and derive jobs."
     delete(id: string): Promise<JobDeleteResult>
     ```
 
-    Permanently delete a job you created: its trials, traces, analyses and stored files.
+    Permanently delete a job you created: its trials, traces, analyses and stored files. The receipt is `{ job_id, trials_deleted, analyses_deleted }`. The refusals are on [jobs](/core-concepts/jobs#stop-cancel-delete).
 
     ```ts
     await jobs().delete(job.id);
@@ -669,7 +671,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<JobGrepPage>
     ```
 
-    Search every trial's parsed trace in one pass.
+    Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. An empty page means no match anywhere. The scan is bounded per request, so keep paging while `hasMore` is true; a pattern too expensive to evaluate is refused with `invalid_input`.
 
     ```ts
     const hits = await jobs().grep(job.id, "permission denied");
@@ -687,10 +689,45 @@ description: "Start, follow, and derive jobs."
     ) -> JobGrepPage
     ```
 
-    Search every trial's parsed trace in one pass.
+    Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. An empty page means no match anywhere. The scan is bounded per request, so keep paging while `has_more` is true; a pattern too expensive to evaluate is refused with `invalid_input`.
 
     ```python
     hits = await jobs().grep(job.id, "permission denied")
+    ```
+  </Tab>
+</Tabs>
+
+## passAtK
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    import { passAtK } from "@evolvingmachines/sdk";
+
+    function passAtK(job: Job): { evals_key: string; points: { k: number; value: number }[] }[]
+    ```
+
+    Reads `stats.evals[key].pass_at_k` off a job you already hold, as sorted numbers; no request is made. Groups that cannot answer are left out, so an empty array means the job has no pass@k to show.
+
+    ```ts
+    for (const group of passAtK(job)) {
+      for (const point of group.points) console.log(group.evals_key, `pass@${point.k}`, point.value.toFixed(3));
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from evolve import pass_at_k
+
+    def pass_at_k(job: Job) -> List[PassAtKGroup]
+    ```
+
+    Reads `stats["evals"][key]["pass_at_k"]` off a job you already hold, as sorted `PassAtKGroup(evals_key, points)` with `PassAtKPoint(k, value)`; no request is made. Groups that cannot answer are left out, so an empty list means the job has no pass@k to show.
+
+    ```python
+    for group in pass_at_k(job):
+        for point in group.points:
+            print(group.evals_key, f"pass@{point.k}", f"{point.value:.3f}")
     ```
   </Tab>
 </Tabs>
