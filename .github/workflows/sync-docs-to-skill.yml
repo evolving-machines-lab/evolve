@@ -1,7 +1,8 @@
-# The skills folder is generated from the docs — one source, generated copies.
-# scripts/generate-skills.ts (npm run generate:skills) writes skills/evolve-agents
-# from docs/, skills/evolve-evals from docs-mintlify/, the .claude/skills/ mirror
-# of every folder under skills/, and skills-lock.json. Two jobs, one generator:
+# The served skills are generated from the docs — one source, generated copies.
+# scripts/generate-skills.ts (npm run generate:skills) writes skill-data/evolve-agents
+# from docs/, skill-data/evolve-evals from docs-mintlify/, the served copy and the
+# .claude/skills/ mirror of the pointer skills/evolve/SKILL.md, and skills-lock.json.
+# Two jobs, one generator:
 #   - pull requests: `--check` fails when a generated copy is stale, missing, or
 #     hand-edited (the same law as the SDK's harness-capabilities --check);
 #   - pushes to a trunk: regenerate and commit, so a docs edit lands in the
@@ -69,7 +70,7 @@ jobs:
       - name: Check for changes
         id: diff
         run: |
-          git add -A skills .claude/skills skills-lock.json
+          git add -A skill-data .claude/skills skills-lock.json
           git diff --cached --quiet && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push

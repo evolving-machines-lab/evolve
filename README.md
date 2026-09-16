@@ -31,22 +31,17 @@
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...
 
-Add the skills to your coding agent. Six ship in [`skills/`](skills): [`evolve-agents`](skills/evolve-agents/SKILL.md) (the SDK: run agents in sandboxes), [`evolve-evals`](skills/evolve-evals/SKILL.md) (hosted evals: datasets, jobs, trials, the `evolve` CLI), [`create-task`](skills/create-task/SKILL.md), [`rewardkit`](skills/rewardkit/SKILL.md), [`create-adapter`](skills/create-adapter/SKILL.md) and [`publish`](skills/publish/SKILL.md) (write, verify, convert and publish Harbor-format tasks). One command installs any of them with the [`skills` CLI](https://github.com/vercel-labs/skills), into the current project, or into your user-level skills with `-g`:
+Give your coding agent the manual. Two commands install the [`evolve`](skills/evolve/SKILL.md) skill into Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode; the agent then reads the real content (hosted evals, the SDK, task authoring — everything under [`skill-data/`](skill-data)) from the `evolve` command, so it always matches the installed version:
+
+```bash
+npm install -g @evolvingmachines/sdk
+evolve skills install
+```
+
+Or install the same skill with the [`skills` CLI](https://github.com/vercel-labs/skills):
 
 ```bash
 npx skills add evolving-machines-lab/evolve
-```
-
-Or copy the folders by hand:
-
-```bash
-git clone https://github.com/evolving-machines-lab/evolve.git
-cp -r evolve/skills/* ~/.claude/skills/            # Claude Code
-cp -r evolve/skills/* ~/.agents/skills/            # Codex
-cp -r evolve/skills/* ~/.gemini/skills/            # Gemini CLI
-cp -r evolve/skills/* ~/.qwen/skills/              # Qwen Code
-cp -r evolve/skills/* ~/.kimi-code/skills/         # Kimi Code
-cp -r evolve/skills/* ~/.config/opencode/skills/   # OpenCode
 ```
 
 ## Get Started
@@ -115,7 +110,7 @@ Check out the [documentation](./docs) and [cookbooks](./cookbooks).
 - [Python SDK](./docs/python/)
 - [Hosted evals](https://docs.evolvingmachines.ai)
 - [Cookbooks](./cookbooks)
-- [Skills](./skills)
+- [Skills](./skill-data)
 - [Changelog](./CHANGELOG.md)
 
 ## Support + Talk with Founders
