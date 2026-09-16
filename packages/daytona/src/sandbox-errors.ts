@@ -1,6 +1,5 @@
-// SOURCE of the sandbox observation errors; the provider packages carry generated copies
-// (`npm run generate:sandbox-errors`) because the SDK depends on them and cannot be imported back.
-// Recognise an instance by NAME (the guards below): a copy's instanceof never matches.
+// SOURCE of the sandbox observation errors, copied into the provider packages by `npm run generate:sandbox-errors`
+// (they cannot import the SDK back); recognise an instance by NAME (the guards below), never by instanceof.
 
 /** A capability this provider lacks: `feature` in dotted form (`files.watchDir`), `provider` type, optional `reason`. */
 export class SandboxFeatureUnsupportedError extends Error {

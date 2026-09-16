@@ -12,9 +12,7 @@
  * - Clear naming (run = blocking, spawn = background)
  *
  * Modal-specific notes:
- * - Reads and writes of file CONTENT go through exec() with stdin/stdout;
- *   listing, stat and watching use the SDK's native filesystem API
- *   (`sandbox.filesystem`, a helper process Modal keeps in every sandbox)
+ * - File content moves over exec() stdin/stdout; list, stat and watch use the SDK's filesystem API
  * - Named Volumes mount at create (`volumes`, keyed by in-box path, read-only
  *   or read-write) — Modal's "upload once, read from many sandboxes" store.
  *   modal@0.9.0 has no upload-to-Volume call, so a Volume is filled from
@@ -813,11 +811,7 @@ export interface SandboxInfo {
   endAt?: string;
 }
 
-/**
- * One filesystem entry, the SAME shape on every provider (the SDK contract's
- * FileInfo). A symlink is reported as a symlink with its `target`; `mode` is
- * the entry's own permission bits as four octal digits; `mtime` is ISO 8601.
- */
+/** The SDK contract's FileInfo (sdk-ts types.ts), the same entry on every provider. */
 export interface FileInfo {
   name: string;
   path: string;

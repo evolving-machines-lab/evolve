@@ -1886,11 +1886,7 @@ export interface SandboxInfo {
   endAt?: string;
 }
 
-/**
- * One filesystem entry, the SAME shape on every provider (the SDK contract's
- * FileInfo). A symlink is reported as a symlink with its `target`; `mode` is
- * the entry's own permission bits as four octal digits; `mtime` is ISO 8601.
- */
+/** The SDK contract's FileInfo (sdk-ts types.ts), the same entry on every provider. */
 export interface FileInfo {
   name: string;
   path: string;
