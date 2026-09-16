@@ -62,7 +62,8 @@ evolve/
 ├── docs/                        # Documentation (SOURCE OF TRUTH — edit here only)
 │   ├── _meta.ts                 # Nextra navigation config
 │   ├── index.md                 # Docs landing page
-│   ├── SKILL.md                 # Skill front matter + topic index
+│   ├── evolve-agents.SKILL.md   # Hand-written SKILL.md of the evolve-agents skill (front matter + index of chapters 01–05)
+│   ├── evolve-evals.SKILL.md    # Hand-written front matter of the evolve-evals skill (its body is generated from docs-mintlify/)
 │   ├── typescript/              # TS SDK reference (6 chapters + index)
 │   └── python/                  # Python SDK reference (6 chapters + index)
 ├── .claude/
