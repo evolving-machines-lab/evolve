@@ -986,6 +986,14 @@ export function registryOwnsModel(registry: AgentRegistryEntry, model: string): 
 }
 
 /**
+ * The wire id the roster declares for `model` when it is a roster alias; any
+ * other name verbatim.
+ */
+export function registryWireId(registry: AgentRegistryEntry, model: string): string {
+  return registry.models.find((entry) => entry.alias === model)?.modelId ?? model;
+}
+
+/**
  * The model string opencode's command line carries for `model`, derived from
  * this file's own roster — not a mirror of the gateway's route spellings,
  * which name more routes than this harness carries.

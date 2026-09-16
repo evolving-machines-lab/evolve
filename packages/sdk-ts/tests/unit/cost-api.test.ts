@@ -1682,24 +1682,46 @@ async function testDroidBuildCommand(): Promise<void> {
 }
 
 async function testDroidGatewayModelAliases(): Promise<void> {
-  console.log("\n[38] Droid gateway model aliases keep Droid-native names usable");
-  const gatewayAgent = new Agent({
-    type: "droid",
-    apiKey: "test-gateway-key",
-    isDirectMode: false,
-  } as any, {});
-  const directAgent = new Agent({
-    type: "droid",
-    apiKey: "factory-direct-key",
-    isDirectMode: true,
-  } as any, {});
+  console.log("\n[38] Droid settings-file model per route: gateway aliases, external-gateway wire ids, direct verbatim");
+  // The request model the Evolve-owned settings file names (agent.ts
+  // droidSettingsModel), per route. Gateway mode: the registry's
+  // gatewayModelAliases (the Evolve gateway's route spellings).
+  const gatewayModel = (model: string): string =>
+    (new Agent({ type: "droid", apiKey: "test-gateway-key", isDirectMode: false, model } as any, {}) as any)
+      .droidSettingsModel();
+  assertEqual(gatewayModel("kimi-k3"), "moonshot/kimi-k3", "gateway maps Kimi to Moonshot route");
+  assertEqual(gatewayModel("glm-5.3"), "openrouter/z-ai/glm-5.3", "gateway maps GLM to OpenRouter route");
+  assertEqual(gatewayModel("glm-5.3-flash"), "glm-5.3-flash", "gateway sends GLM Flash as the bare route name (Fireworks behind it)");
+  assertEqual(gatewayModel("qwen3.7-max"), "dashscope/qwen3.7-max", "gateway maps Qwen to DashScope route");
+  assertEqual(gatewayModel("claude-sonnet-5"), "claude-sonnet-5", "gateway leaves Claude model unchanged");
+  assertEqual(gatewayModel("claude-fable-5.1"), "claude-fable-5-1", "gateway maps Factory's dot-form Fable 5.1 to the dashed Anthropic id");
 
-  assertEqual((gatewayAgent as any).resolveGatewayModel("kimi-k3"), "moonshot/kimi-k3", "gateway maps Kimi to Moonshot route");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.3"), "openrouter/z-ai/glm-5.3", "gateway maps GLM to OpenRouter route");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("glm-5.3-flash"), "glm-5.3-flash", "gateway sends GLM Flash as the bare route name (Fireworks behind it)");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("qwen3.7-max"), "dashscope/qwen3.7-max", "gateway maps Qwen to DashScope route");
-  assertEqual((gatewayAgent as any).resolveGatewayModel("claude-sonnet-5"), "claude-sonnet-5", "gateway leaves Claude model unchanged");
-  assertEqual((directAgent as any).resolveGatewayModel("kimi-k3"), "kimi-k3", "direct mode leaves Droid-native Kimi model unchanged");
+  // External gateway (the hosted worker's route): the roster's wire id for a
+  // roster alias, never the gatewayModelAliases route spelling — the hosted
+  // key admits exactly the alias and its wire id (swarm_dashboard
+  // resolveGatewayModelScope), and kimi-k3 / glm-5.3 / qwen3.7-max are exact
+  // gateway entries under their bare names.
+  const externalModel = (model: string): string =>
+    (new Agent({
+      type: "droid",
+      apiKey: "sk-external",
+      baseUrl: "https://litellm.test/v1",
+      isDirectMode: true,
+      externalGateway: { revoke: async () => {} },
+      model,
+    } as any, {}) as any).droidSettingsModel();
+  assertEqual(externalModel("claude-fable-5.1"), "claude-fable-5-1", "external gateway sends the wire id for Factory's dot-form Fable 5.1 (prod trial 6dd6b56d: the dot form 404'd)");
+  assertEqual(externalModel("claude-haiku-4-5"), "claude-haiku-4-5-20251001", "external gateway sends the roster's dated Haiku wire id");
+  assertEqual(externalModel("kimi-k3"), "kimi-k3", "external gateway sends Kimi bare — never moonshot/kimi-k3, which the hosted key would refuse");
+  assertEqual(externalModel("glm-5.3"), "glm-5.3", "external gateway sends GLM bare — never the OpenRouter route spelling");
+  assertEqual(externalModel("qwen3.7-max"), "qwen3.7-max", "external gateway sends Qwen bare — never the DashScope route spelling");
+  assertEqual(externalModel("gw-droid-model"), "gw-droid-model", "external gateway sends a non-roster name verbatim");
+
+  // Plain direct mode never writes the settings file; the command model is
+  // Droid's own id, untouched by either table.
+  const directAgent = new Agent({ type: "droid", apiKey: "factory-direct-key", isDirectMode: true } as any, {});
+  assertEqual((directAgent as any).resolveCommandModel("kimi-k3"), "kimi-k3", "direct mode leaves Droid-native Kimi model unchanged");
+  assertEqual((directAgent as any).resolveCommandModel("claude-fable-5.1"), "claude-fable-5.1", "direct mode leaves Factory's dot-form Fable 5.1 unchanged");
 }
 
 async function testDroidBuildRunEnvsReturnsUndefined(): Promise<void> {
