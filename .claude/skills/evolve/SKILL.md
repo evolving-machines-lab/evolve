@@ -10,6 +10,8 @@ Hosted evals and the SDK, from the `evolve` command.
 
 Install: `npm i -g @evolvingmachines/evolve`, then `export EVOLVE_API_KEY=<your key>` (create a key at https://dashboard.evolvingmachines.ai/api-keys).
 
+Python SDK: `pip install evolvingmachines-evolve` (`import evolve`). The manual still comes from the `evolve` command.
+
 ## Start here
 
 This file is a pointer, not the manual. The manual ships inside the CLI and always matches the installed version. Before running any `evolve` command, load it:
