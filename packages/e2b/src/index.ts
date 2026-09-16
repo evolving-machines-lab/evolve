@@ -14,6 +14,7 @@
  */
 
 import { Sandbox as E2BSandbox, ApiClient, ConnectionConfig } from "@e2b/code-interpreter";
+import { compareVersions } from "compare-versions";
 import {
   SandboxFeatureUnsupportedError,
   SandboxNotRunningError,
@@ -35,6 +36,14 @@ export {
 
 // 5 min for whole-file reads/writes and the range URL's signature: E2B's 60 s default was measured too short for multi-MB files.
 export const E2B_FILE_REQUEST_TIMEOUT_MS = 300_000;
+
+// Entry permissions, owner, group, mtime and symlink target arrived in envd 0.2.5
+// (e2b-dev/infra 97d10b529f, 2025-07-25: proto EntryInfo fields 4-10, main.go Version 0.2.4 → 0.2.5).
+const E2B_ENVD_ENTRY_INFO_VERSION = "0.2.5";
+
+// envd sends no timestamp for an mtime of 0 (infra packages/shared/pkg/filesystem/entry.go toTimestamp: a zero
+// Timespec is the zero Time, which envd's toTimestamp drops); measured on /usr/bin/busybox, envd 0.6.10, 2026-09-16.
+const E2B_EPOCH = new Date(0);
 
 /**
  * E2B signals an expired command with TimeoutError. Matched by NAME rather than
@@ -732,7 +741,19 @@ export class E2BCommands implements SandboxCommands {
 }
 
 export class E2BFiles implements SandboxFiles {
-  constructor(private sandbox: E2BSandbox, private defaultUser?: string) {}
+  /** inspect() passes the record's envd version; a created or connected sandbox reads its record once. */
+  constructor(private sandbox: E2BSandbox, private defaultUser?: string, private envdVersion?: string) {}
+
+  private async assertEntryInfo(feature: "files.list" | "files.stat"): Promise<void> {
+    this.envdVersion ??= (await this.sandbox.getInfo()).envdVersion;
+    if (compareVersions(this.envdVersion, E2B_ENVD_ENTRY_INFO_VERSION) < 0) {
+      throw new SandboxFeatureUnsupportedError(
+        feature,
+        "e2b",
+        `the sandbox runs envd ${this.envdVersion}; entry permissions, owner, group and mtime need envd ${E2B_ENVD_ENTRY_INFO_VERSION} or later (rebuild the template)`
+      );
+    }
+  }
 
   async read(path: string): Promise<string | Uint8Array> {
     // Always read raw bytes and decide text-vs-binary from CONTENT, never
@@ -791,6 +812,7 @@ export class E2BFiles implements SandboxFiles {
 
   // envd drops a dangling symlink and reports a symlink's size as its target's (measured envd 0.6.10, 2026-09-16); documented for users.
   async list(path: string): Promise<FileInfo[]> {
+    await this.assertEntryInfo("files.list");
     try {
       const entries = await this.sandbox.files.list(path, { user: this.defaultUser });
       return entries.map((entry) => toFileInfo(entry));
@@ -801,6 +823,7 @@ export class E2BFiles implements SandboxFiles {
   }
 
   async stat(path: string): Promise<FileInfo> {
+    await this.assertEntryInfo("files.stat");
     try {
       return toFileInfo(await this.sandbox.files.getInfo(path, { user: this.defaultUser }));
     } catch (err) {
@@ -961,19 +984,12 @@ interface E2BEntry {
 // string is the entry's own (Go FileMode), so type and mode both come from it. A dangling link's "target" is its own path.
 function toFileInfo(entry: E2BEntry): FileInfo {
   const { type, mode } = parseGoFileMode(entry.permissions);
-  if (entry.modifiedTime === undefined) {
-    throw new SandboxFeatureUnsupportedError(
-      "files.list",
-      "e2b",
-      `the sandbox's envd reported no modification time for ${entry.path}; the observation surface needs envd 0.6 or later`
-    );
-  }
   const info: FileInfo = {
     name: entry.name,
     path: entry.path,
     type,
     size: entry.size,
-    mtime: isoTime(entry.modifiedTime),
+    mtime: isoTime(entry.modifiedTime ?? E2B_EPOCH),
     mode,
     owner: entry.owner,
     group: entry.group,
@@ -990,9 +1006,9 @@ class E2BSandboxImpl implements SandboxInstance {
   /** Timestamp of the newest metrics sample seen, so later reads ask only for what is new. */
   private lastMetricsAt?: Date;
 
-  constructor(private sandbox: E2BSandbox, private apiKey: string, private apiUrl?: string, defaultUser?: string) {
+  constructor(private sandbox: E2BSandbox, private apiKey: string, private apiUrl?: string, defaultUser?: string, envdVersion?: string) {
     this.commands = new E2BCommands(sandbox, defaultUser);
-    this.files = new E2BFiles(sandbox, defaultUser);
+    this.files = new E2BFiles(sandbox, defaultUser, envdVersion);
   }
 
   get sandboxId(): string {
@@ -1235,6 +1251,7 @@ export class E2BProvider implements SandboxProvider {
       this.apiKey,
       this.apiUrl,
       options?.user ?? this.sandboxUsers.get(sandboxId),
+      detail.envdVersion,
     );
   }
 

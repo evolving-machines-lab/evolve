@@ -36,7 +36,8 @@
     "test:unit": "tsx tests/unit/e2b-list-pagination.test.ts && tsx tests/unit/e2b-files-read.test.ts && tsx tests/unit/e2b-gpu-rejection.test.ts && tsx tests/unit/e2b-boot-command-rejection.test.ts && tsx tests/unit/e2b-template-refresh.test.ts && tsx tests/unit/e2b-files-observe.test.ts"
   },
   "dependencies": {
-    "@e2b/code-interpreter": "^2.7.1"
+    "@e2b/code-interpreter": "^2.7.1",
+    "compare-versions": "^6.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",

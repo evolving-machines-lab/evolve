@@ -69,12 +69,23 @@ const LIVE_ENTRIES = [
   { name: "null", path: "/dev/null", size: 0, mode: 438, permissions: "Dcrw-rw-rw-", owner: "root", group: "root", modifiedTime: MTIME },
   // envd's answer for `ln -s /nonexistent dangling` (getInfo, 2026-09-16): its own path as the target
   { name: "dangling", path: "/tmp/p/dangling", size: 12, mode: 0, permissions: "Lrwxrwxrwx", owner: "root", group: "root", modifiedTime: MTIME, symlinkTarget: "/tmp/p/dangling" },
+  // chmod 000 / 010 entries and a chmod-000 directory (recorded on box iizah2kr4423bkps32l3m, 2026-09-16, fold-3 e2e-e2b-red.json)
+  { name: "zero", path: "/tmp/p/zero", type: "file", size: 1, mode: 0, permissions: "----------", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "ten", path: "/tmp/p/ten", type: "file", size: 1, mode: 8, permissions: "------x---", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "dzero", path: "/tmp/p/dzero", type: "dir", size: 60, mode: 0, permissions: "d---------", owner: "root", group: "root", modifiedTime: MTIME },
+  // envd sends no modifiedTime for an mtime of 0: `touch -d @0 epoch` and the base template's /usr/bin/busybox (same box; REVIEW-2 box iy9vpb4j8bupv5nhedcpj too).
+  { name: "epoch", path: "/tmp/p/epoch", type: "file", size: 1, mode: 420, permissions: "-rw-r--r--", owner: "root", group: "root" },
+  { name: "busybox", path: "/usr/bin/busybox", type: "file", size: 1210176, mode: 493, permissions: "-rwxr-xr-x", owner: "root", group: "root" },
 ];
+
+/** The sandbox record envd 0.6.10 answers (Sandbox.getInfo), the part the adapter reads. */
+const INFO = { envdVersion: "0.6.10" };
 
 async function testList(): Promise<void> {
   console.log("\n[1] list: the uniform entry, symlinks by the link's own bits, never by the target's type");
   const calls: unknown[] = [];
-  const files = new E2BFiles({ files: { list: async (path: string, opts: unknown) => { calls.push([path, opts]); return LIVE_ENTRIES; } } } as any, "root");
+  let infoReads = 0;
+  const files = new E2BFiles({ files: { list: async (path: string, opts: unknown) => { calls.push([path, opts]); return LIVE_ENTRIES; } }, getInfo: async () => { infoReads++; return INFO; } } as any, "root");
   const entries = await files.list("/tmp/p");
   assertEqual(calls[0], ["/tmp/p", { user: "root" }], "lists through the vendor API as the configured user");
   const byName = Object.fromEntries(entries.map((e) => [e.name, e]));
@@ -91,26 +102,49 @@ async function testList(): Promise<void> {
   assertEqual([byName["fifo"].mode, byName["null"].mode], ["0644", "0666"], "…with their own permission bits");
   assert(!("target" in byName["a.txt"]), "no target field on a non-link");
   assertEqual([byName["dangling"].type, "target" in byName["dangling"]], ["symlink", false], "a dangling link is a symlink whose target is left unset (envd reports its own path)");
-  const missing = new E2BFiles({ files: { list: async () => { const err = new Error("[not_found] path not found: lstat /tmp/nope"); err.name = "FileNotFoundError"; throw err; } } } as any, "root");
+  assertEqual([byName["zero"].mode, byName["ten"].mode, byName["dzero"].type, byName["dzero"].mode], ["0000", "0010", "dir", "0000"], "modes below 0100 come through the Go string as four digits");
+  assertEqual([byName["epoch"].mtime, byName["busybox"].mtime], ["1970-01-01T00:00:00.000Z", "1970-01-01T00:00:00.000Z"], "an entry envd sends no modifiedTime for has an mtime of 0: the epoch, and the listing holds");
+  await files.list("/tmp/p");
+  assertEqual(infoReads, 1, "the envd version is read once per sandbox (Sandbox.getInfo), not per call");
+  const missing = new E2BFiles({ files: { list: async () => { const err = new Error("[not_found] path not found: lstat /tmp/nope"); err.name = "FileNotFoundError"; throw err; } }, getInfo: async () => INFO } as any, "root");
   await rejects(() => missing.list("/tmp/nope"), "SandboxPathNotFoundError", "list on a missing directory is SandboxPathNotFoundError");
 }
 
 async function testStat(): Promise<void> {
   console.log("\n[2] stat: one entry, symlink reported as such; missing paths are typed not_found");
-  const files = new E2BFiles({
+  const vendor = {
     files: {
       getInfo: async (path: string) => {
         if (path === "/tmp/p/link") return LIVE_ENTRIES[2];
+        if (path === "/usr/bin/busybox") return LIVE_ENTRIES[LIVE_ENTRIES.length - 1];
         const err = new Error("[not_found] file not found: lstat /tmp/p/missing: no such file or directory");
         err.name = "FileNotFoundError";
         throw err;
       },
     },
-  } as any, "root");
+  };
+  const files = new E2BFiles({ ...vendor, getInfo: async () => INFO } as any, "root");
   const info = await files.stat("/tmp/p/link");
   assertEqual([info.type, info.target, info.mode], ["symlink", "/tmp/p/a.txt", "0777"], "stat on a symlink reports the link and its target");
+  assertEqual((await files.stat("/usr/bin/busybox")).mtime, "1970-01-01T00:00:00.000Z", "stat on an entry with no modifiedTime is the epoch, not a refusal");
   const err = await rejects(() => files.stat("/tmp/p/missing"), "SandboxPathNotFoundError", "stat on a missing path is SandboxPathNotFoundError");
   assertEqual([(err as SandboxPathNotFoundError).path, (err as SandboxPathNotFoundError).provider], ["/tmp/p/missing", "e2b"], "not_found carries the path and the provider");
+  const known = new E2BFiles({ ...vendor } as any, "root", "0.6.10");
+  assertEqual((await known.stat("/tmp/p/link")).type, "symlink", "a sandbox whose envd version is already known (inspect) never reads the record");
+}
+
+async function testEnvdFloor(): Promise<void> {
+  console.log("\n[2b] the envd floor: entry permissions, owner, group and mtime arrived in envd 0.2.5; older is a typed refusal on the sandbox's version, never on an entry");
+  const old = new E2BFiles({ files: { list: async () => LIVE_ENTRIES, getInfo: async () => LIVE_ENTRIES[0] }, getInfo: async () => ({ envdVersion: "0.2.4" }) } as any, "root");
+  const err = await rejects(() => old.list("/tmp/p"), "SandboxFeatureUnsupportedError", "list on envd 0.2.4 is refused typed");
+  assertEqual([(err as SandboxFeatureUnsupportedError).feature, (err as SandboxFeatureUnsupportedError).provider], ["files.list", "e2b"], "…naming the feature and the provider");
+  assert(String((err as Error).message).includes("0.2.4") && String((err as Error).message).includes("0.2.5"), "…and the sandbox's version and the floor");
+  const err2 = await rejects(() => old.stat("/tmp/p/a.txt"), "SandboxFeatureUnsupportedError", "stat on envd 0.2.4 is refused typed");
+  assertEqual((err2 as SandboxFeatureUnsupportedError).feature, "files.stat", "…naming files.stat, not files.list");
+  const floor = new E2BFiles({ files: { list: async () => LIVE_ENTRIES } } as any, "root", "0.2.5");
+  assertEqual((await floor.list("/tmp/p")).length, LIVE_ENTRIES.length, "envd 0.2.5 itself is accepted");
+  const two = new E2BFiles({ files: { list: async () => LIVE_ENTRIES } } as any, "root", "0.10.0");
+  assertEqual((await two.list("/tmp/p")).length, LIVE_ENTRIES.length, "versions compare numerically (0.10.0 is newer than 0.2.5)");
 }
 
 function fetchStub(handler: (url: string, init: RequestInit) => Response) {
@@ -263,6 +297,7 @@ async function testUnsupportedIsTyped(): Promise<void> {
 (async () => {
   await testList();
   await testStat();
+  await testEnvdFloor();
   await testReadRange();
   await testWatch();
   await testMetrics();
