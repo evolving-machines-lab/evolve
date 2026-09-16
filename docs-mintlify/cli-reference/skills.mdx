@@ -1,0 +1,81 @@
+---
+title: "evolve skills"
+description: "The skills the CLI serves to coding agents."
+---
+
+import GlobalOptions from '/snippets/global-options.mdx';
+
+```bash
+evolve skills <command> [options]
+```
+
+The skills ship with the CLI and match its version. `skills get evals` is the index of these docs and `skills get evals <page>` one page. The `evolve` pointer skill that `skills install` writes is served but never listed. `EVOLVE_SKILLS_DIR` names another directory to serve.
+
+## skills list
+
+```bash
+evolve skills list
+```
+
+List the skills the installed version serves, one line each. Bare `evolve skills` does the same.
+
+## skills get
+
+```bash
+evolve skills get <name> [name...]
+evolve skills get <name> <page>
+```
+
+Print one or more skills, or one reference page. A second word that is not a skill name is a page of the first skill: its path under `references/` without the suffix, as this site spells it.
+
+<ParamField path="--full">
+  Also print every file under `references/` and `templates/`, each behind a `--- <path> ---` line.
+</ParamField>
+
+<ParamField path="--all">
+  Every skill, instead of naming them.
+</ParamField>
+
+```bash
+evolve skills get evals
+evolve skills get evals core-concepts/tasks
+evolve skills get create-task --full
+```
+
+## skills path
+
+```bash
+evolve skills path [name]
+```
+
+Print the skills directory, or one skill's directory.
+
+## skills install
+
+```bash
+evolve skills install [options]
+```
+
+Install the `evolve` pointer skill for your agents. Each target gets `<folder>/evolve/SKILL.md`; the path written is printed. A file already there with different content is left alone unless `--force`.
+
+<ParamField path="--target" type="claude | codex | cursor | copilot | gemini | opencode | agents | all">
+  Which agent home: `~/.claude`, `~/.codex`, `~/.cursor`, `~/.copilot`, `~/.gemini`, `~/.config/opencode` or `~/.agents`, each under `skills/`. Defaults to `all`.
+</ParamField>
+
+<ParamField path="--path" type="dir">
+  A skills directory of your own instead of `--target`.
+</ParamField>
+
+<ParamField path="--force">
+  Overwrite an installed `SKILL.md` whose content differs.
+</ParamField>
+
+```bash
+evolve skills install
+evolve skills install --target claude
+evolve skills install --path ./skills
+```
+
+With the [skills CLI](https://github.com/vercel-labs/skills) instead, the same pointer installs from the repository: `npx skills add evolving-machines-lab/evolve`.
+
+<GlobalOptions />

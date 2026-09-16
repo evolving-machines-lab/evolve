@@ -82,7 +82,6 @@
             "pages": [
               "index",
               "getting-started/installation",
-              "getting-started/skills",
               "getting-started/quick-start"
             ]
           },
@@ -145,6 +144,7 @@
               "cli-reference/analysis",
               "cli-reference/dataset",
               "cli-reference/skill",
+              "cli-reference/skills",
               "cli-reference/agent",
               "cli-reference/auth",
               "cli-reference/secrets"

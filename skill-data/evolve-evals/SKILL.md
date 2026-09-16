@@ -26,7 +26,6 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 | --- | --- |
 | [Evolve documentation](references/index.mdx) | Environment-driven agent evaluations: any model, any harness, any sandbox, one API key. Every task versioned and checked, every trajectory analyzed. |
 | [Installation](references/getting-started/installation.mdx) | Install the evolve command and the SDKs, and set your API key. |
-| [Skills for your coding agent](references/getting-started/skills.mdx) | Two commands give Claude Code, Codex, Cursor and the others the evolve manual. |
 | [Quick start](references/getting-started/quick-start.mdx) | Start your first job, watch it run, and download a trial. |
 
 ### Core concepts
@@ -86,6 +85,7 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 | [evolve analysis](references/cli-reference/analysis.mdx) | List, inspect, and download trace-analysis runs. |
 | [evolve dataset](references/cli-reference/dataset.mdx) | Browse and publish the dataset catalog. |
 | [evolve skill](references/cli-reference/skill.mdx) | Upload and manage platform-stored skills. |
+| [evolve skills](references/cli-reference/skills.mdx) | The skills the CLI serves to coding agents. |
 | [evolve agent](references/cli-reference/agent.mdx) | Register and manage your own agents. |
 | [evolve auth](references/cli-reference/auth.mdx) | Identity, API keys, and your organizations. |
 | [evolve secrets](references/cli-reference/secrets.mdx) | Store and manage env secrets. Values are write-only; reads return metadata. |

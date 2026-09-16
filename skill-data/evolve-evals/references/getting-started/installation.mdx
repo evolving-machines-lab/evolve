@@ -43,6 +43,14 @@ evolve auth status
 
 `auth status` prints who the platform thinks you are and which key is in use. The key itself is never printed back. To use a different key for one call, pass `--api-key <key>` on the command line, or `{ apiKey }` to an SDK client.
 
+## Your coding agent
+
+```bash
+evolve skills install
+```
+
+One small skill, `evolve`, lands in the skill folder of every coding agent on your machine: Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode. From then on, when you mention Evolve, evals, datasets, jobs or tasks, the agent reads the manual from the command itself, `evolve skills get evals`, one page at a time. The manual ships inside the package, so it always matches the version you installed. See [evolve skills](/cli-reference/skills).
+
 <Card title="Quick start" icon="play" href="/getting-started/quick-start">
   Start your first job.
 </Card>
