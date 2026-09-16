@@ -181,6 +181,8 @@ function captureIO(tty = false): { io: CliIO; out: string[]; err: string[] } {
 }
 
 const AUTH = ["--api-key", "test-key", "--base-url", BASE];
+/** The line every API refusal ends with on stderr: the errors page the CLI itself serves (cli-skills.test.ts). */
+const DOCS_FOOTER = "Docs: evolve skills get evals sdk-reference/errors";
 
 // The -c validation vocabulary reads out of the contract itself, and the
 // contract lives in the private server repo — resolvable here through the
@@ -227,7 +229,9 @@ function testGrammarResolution() {
   );
   assertEqual(parseArgs(["agent", "list"]).command, "agent list", "the singular `agent` still resolves");
   assertEqual(parseArgs(["skill", "list"]).command, "skill list", "the skill noun resolves");
-  assertEqual(parseArgs(["skills", "list"]).command, "skill list", "`skills` is a hidden plural alias of `skill`");
+  // `skills` is not the plural of `skill`: it is the group that serves the
+  // bundled skills (cli-skills.test.ts), so the platform noun has no plural alias.
+  assertEqual(parseArgs(["skills", "list"]).command, "skills list", "`skills` is the bundled-skills group, not an alias of `skill`");
   assertEqual(parseArgs([]).command, "help", "bare invocation is help, not an error");
   assertEqual(parseArgs(["help"]).command, "help", "help command");
   assertEqual(parseArgs(["--version"]).command, "version", "--version resolves");
@@ -2523,7 +2527,7 @@ async function testJsonErrorObject() {
     const human = captureIO();
     assertEqual(await runCli([...startArgs, ...AUTH], human.io), 1, "a refused job start is exit 1");
     assertEqual(human.out, [], "human mode prints nothing on stdout");
-    assertEqual(human.err, [`Error: ${sentence}`], "human mode keeps the plain stderr line");
+    assertEqual(human.err, [`Error: ${sentence}`, DOCS_FOOTER], "human mode keeps the plain stderr line, then the docs footer");
 
     // --json: the same refusal, same exit code, but stdout stays parseable —
     // one JSON object reusing the server's envelope fields.
@@ -4859,7 +4863,7 @@ async function testTrialDownloadTrajectoryRefused() {
     const { io, out, err } = captureIO();
     const code = await runCli(["trial", "download", "run-1", "--stream", "trajectory", ...AUTH], io);
     assertEqual(code, 1, "a server refusal is exit 1, not a silent success");
-    assertEqual(err, [`Error: ${sentence}`], "the server's sentence reaches stderr verbatim, one line");
+    assertEqual(err, [`Error: ${sentence}`, DOCS_FOOTER], "the server's sentence reaches stderr verbatim, then the docs footer");
     assertEqual(out, [], "a refusal prints nothing on stdout");
   } finally {
     restoreFetch();
@@ -5558,7 +5562,7 @@ async function testAnalysisShow() {
     });
     const wrong = captureIO();
     assertEqual(await runCli(["analysis", "show", "run-1", ...AUTH], wrong.io), 1, "a feed refusal exits 1");
-    assertEqual(wrong.err, ["Error: analysis.json belongs to an analysis row"], "the server's sentence, clean");
+    assertEqual(wrong.err, ["Error: analysis.json belongs to an analysis row", DOCS_FOOTER], "the server's sentence, clean, then the docs footer");
     const wrongJson = captureIO();
     assertEqual(await runCli(["analysis", "show", "run-1", "--json", ...AUTH], wrongJson.io), 1, "--json exits 1");
     assertEqual(
@@ -7611,7 +7615,7 @@ async function testSkillDeleteInUseVerbatim() {
     const { io, out, err } = captureIO();
     const code = await runCli(["skill", "delete", CLI_SKILL.id, ...AUTH], io);
     assertEqual(code, 1, "a server refusal is exit 1");
-    assertEqual(err, [`Error: ${sentence}`], "the server's sentence reaches stderr VERBATIM, one line");
+    assertEqual(err, [`Error: ${sentence}`, DOCS_FOOTER], "the server's sentence reaches stderr VERBATIM, then the docs footer");
     assertEqual(out, [], "a refusal prints nothing on stdout");
   } finally {
     restoreFetch();
@@ -8658,7 +8662,7 @@ async function testQuotaRefusalExitsTwo() {
     const { io, err } = captureIO();
     const code = await runCli(["trial", "retry", "trial-1", ...AUTH], io);
     assertEqual(code, 2, "exit 2 — Harbor's hosted_jobs.py:615-617 law");
-    assertEqual(err, [`Launch quota exceeded: ${message}`], "one line, Harbor's own words, no Retry-After story");
+    assertEqual(err, [`Launch quota exceeded: ${message}`, DOCS_FOOTER], "Harbor's own words, no Retry-After story, then the docs footer");
 
     const json = captureIO();
     const jsonCode = await runCli(["trial", "retry", "trial-1", "--json", ...AUTH], json.io);

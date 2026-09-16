@@ -7,13 +7,16 @@
  * `job start`'s flags), `analyze`, and `upload`, each spelled, helped and
  * dispatched as a command in its own right (Harbor registers all three the
  * same way, as top-level commands: their cli/main.py). Singular
- * nouns are canonical; `job`/`trial`/`analysis`/`dataset`/`skill` also answer
- * to their plurals as hidden aliases, but `agents` does NOT — that word is
- * reserved for the managed-agents CLI and refuses with the reason. `session`
- * is the managed-agents lane's first noun here — list and inspect the
- * sessions your SDK runs recorded, headless. The CLI speaks ONLY through the
- * SDK clients (datasets() / agents() / jobs() / trials() / analyses() /
- * skills() / auth() / sessions()) — no raw HTTP lives here.
+ * nouns are canonical; `job`/`trial`/`analysis`/`dataset` also answer to
+ * their plurals as hidden aliases, but `agents` does NOT — that word is
+ * reserved for the managed-agents CLI and refuses with the reason — and
+ * `skills` is not the plural of `skill`: it is the one local group, serving
+ * the bundled skill files a coding agent reads as its manual (skills.ts),
+ * with no API call. `session` is the managed-agents lane's first noun here —
+ * list and inspect the sessions your SDK runs recorded, headless. Every
+ * other command speaks ONLY through the SDK clients (datasets() / agents() /
+ * jobs() / trials() / analyses() / skills() / auth() / sessions()) — no raw
+ * HTTP lives here.
  *
  * Output: human tables on a TTY, tab-separated rows when piped, --json for
  * the rendered machine shape (NDJSON for --watch event streams), -q for
@@ -23,6 +26,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync } from "fs";
+import { join, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { LineCounter, type Tags, parse as parseYaml, parseDocument } from "yaml";
 import { parse as parseToml } from "smol-toml";
@@ -122,6 +126,20 @@ import {
 } from "../managed-secrets";
 import { sessions } from "../sessions";
 import type { SessionInfo, SessionsConfig } from "../sessions/types";
+import {
+  INSTALL_TARGETS,
+  type InstallDestination,
+  type InstallTarget,
+  type Skill,
+  contentSkills,
+  findPage,
+  findSkill,
+  hasSkill,
+  installPointer,
+  skillFiles,
+  skillsDir,
+  targetSkillsDir,
+} from "./skills";
 
 // =============================================================================
 // GRAMMAR
@@ -418,10 +436,85 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
 
 interface GroupSpec {
   summary: string;
+  /** A law the group's help states under its summary. */
+  notes?: string;
+  /** The verb a bare `evolve <group>` runs instead of printing the group's help. */
+  defaultVerb?: string;
   commands: Record<string, CommandSpec>;
 }
 
+/** The `--help` topic and refusal footer that name the errors page the CLI serves. */
+const ERRORS_DOCS_COMMAND = "evolve skills get evals sdk-reference/errors";
+
 const GROUPS: Record<string, GroupSpec> = {
+  // The one local group: the skills the package ships, served as the manual
+  // a coding agent reads before running anything else. agent-browser's
+  // `skills [list] | get | path` verbatim, plus `install` (browser-use's
+  // targets) and the page form of get; see skills.ts for the layout.
+  skills: {
+    summary: "The bundled skills: the manual the CLI serves to coding agents (local files, no API call)",
+    notes:
+      "The skills ship with the CLI and match its version. `skills get evals` is the index of the " +
+      "documentation, `skills get evals <page>` one page. The `evolve` pointer skill that `skills " +
+      "install` writes into an agent's skill folder is served but never listed. EVOLVE_SKILLS_DIR " +
+      "names another directory to serve.",
+    defaultVerb: "list",
+    commands: {
+      list: {
+        summary: "List the skills the installed version serves (what a bare `evolve skills` runs)",
+        flags: {},
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve skills list --json",
+      },
+      get: {
+        summary: "Print one or more skills' SKILL.md as they are; `get <skill> <page>` prints one reference page by its site path",
+        notes:
+          "A second word that is not a skill name is a page of the first skill: the path under " +
+          "references/ without its suffix, as the docs site spells it (`core-concepts/tasks`).",
+        flags: {
+          full: {
+            kind: "boolean",
+            help: "Also print every file under references/ and templates/, each behind a `--- <path> ---` line",
+          },
+          all: { kind: "boolean", help: "Every skill, instead of naming them" },
+        },
+        minPositionals: 0,
+        maxPositionals: Infinity,
+        positionalUsage: "<name> [name...] | <name> <page>",
+        example: "evolve skills get evals core-concepts/tasks",
+      },
+      path: {
+        summary: "Print the skills directory, or one skill's directory",
+        flags: {},
+        minPositionals: 0,
+        maxPositionals: 1,
+        positionalUsage: "[name]",
+        example: "evolve skills path evals",
+      },
+      install: {
+        summary: "Write the `evolve` pointer skill into your coding agents' skill folders",
+        flags: {
+          target: {
+            kind: "string",
+            value: `<${[...INSTALL_TARGETS, "all"].join("|")}>`,
+            help:
+              "Which agent home (default all): ~/.claude/skills, ~/.codex/skills, ~/.cursor/skills, " +
+              "~/.copilot/skills, ~/.gemini/skills, ~/.config/opencode/skills, ~/.agents/skills",
+          },
+          path: {
+            kind: "string",
+            value: "<dir>",
+            help: "A skills directory of your own instead of --target; writes <dir>/evolve/SKILL.md",
+          },
+          force: { kind: "boolean", help: "Overwrite an installed SKILL.md whose content differs" },
+        },
+        minPositionals: 0,
+        maxPositionals: 0,
+        example: "evolve skills install --target claude",
+      },
+    },
+  },
   job: {
     summary: "Start, follow, and derive jobs",
     commands: {
@@ -1426,7 +1519,9 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
  * Hidden plural aliases — the singular noun is canonical. `secrets` is the
  * one deliberate exception (plural canonical, singular aliased): the noun
  * names the surface — the dashboard's Secrets page and the managed-secrets
- * API — not one record.
+ * API — not one record. `skill` has no plural alias: `skills` is the
+ * bundled-skills group (GROUPS.skills), a different thing from the
+ * platform-stored skills `skill` manages.
  */
 const GROUP_ALIASES: Record<string, string> = {
   jobs: "job",
@@ -1434,7 +1529,6 @@ const GROUP_ALIASES: Record<string, string> = {
   analyses: "analysis",
   sessions: "session",
   datasets: "dataset",
-  skills: "skill",
   secret: "secrets",
 };
 
@@ -1507,9 +1601,9 @@ function groupHelp(group: string): string {
     `Usage: evolve ${group} <command> [options]`,
     "",
     spec.summary,
-    "",
-    "Commands:",
   ];
+  if (spec.notes !== undefined) lines.push("", spec.notes);
+  lines.push("", "Commands:");
   const width = Math.max(...Object.keys(spec.commands).map((v) => v.length));
   for (const [verb, cmd] of Object.entries(spec.commands)) {
     lines.push(`  ${verb.padEnd(width)}  ${cmd.summary}`);
@@ -1523,6 +1617,15 @@ function rootHelp(): string {
     "evolve — Evolve hosted jobs CLI",
     "",
     "Usage: evolve <command> [options]",
+    "",
+    // agent-browser's opening: the first thing a coding agent reads is where
+    // the manual is, before any command it might guess from the list.
+    "Start here (for AI agents):",
+    "  evolve skills get evals",
+    "",
+    "  Skills ship with the CLI and match its version. `skills get evals` is the index",
+    "  of the documentation; `skills get evals <page>` prints one page; `--full` prints",
+    "  every page. Task authoring: `skills get create-task`, `rewardkit`, `create-adapter`, `publish`.",
     "",
     "Commands:",
   ];
@@ -1549,12 +1652,12 @@ function rootHelp(): string {
 
 export const USAGE = rootHelp();
 
+/** The package root: two levels up from both src/cli/ and dist/cli/ (package.json, skill-data/). */
+const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
 function cliVersion(): string {
-  // Two levels up from both src/cli/ and dist/cli/ sits package.json.
   try {
-    const pkg = JSON.parse(
-      readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf-8")
-    ) as { version?: string };
+    const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf-8")) as { version?: string };
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
@@ -1738,11 +1841,18 @@ export function parseArgs(argv: string[]): Invocation {
     throw new CliUsageError(`Unknown command "${head}"`);
   }
   const rawVerb = argv[1];
-  if (rawVerb === undefined || rawVerb === "--help" || rawVerb === "-h") {
+  if (rawVerb === "--help" || rawVerb === "-h") {
     return { command: "help", positionals: [group], flags: {} };
   }
-  if (rawVerb.startsWith("-")) {
-    throw new CliUsageError(`"${group}" requires a command (run "evolve ${group} --help")`);
+  if (rawVerb === undefined || rawVerb.startsWith("-")) {
+    // A bare group prints its help — except a group with a default verb,
+    // which runs it (`evolve skills` is `evolve skills list`, agent-browser's
+    // `skills [list]`), the flags after the group being that verb's.
+    if (groupSpec.defaultVerb === undefined) {
+      if (rawVerb === undefined) return { command: "help", positionals: [group], flags: {} };
+      throw new CliUsageError(`"${group}" requires a command (run "evolve ${group} --help")`);
+    }
+    return parseCommandArgs(`${group} ${groupSpec.defaultVerb}`, groupSpec.commands[groupSpec.defaultVerb], argv.slice(1));
   }
   const resolved = resolveVerb(groupSpec, argv.slice(1));
   if (!resolved) {
@@ -7575,6 +7685,115 @@ async function cmdSecretsDelete(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 // =============================================================================
+// SKILLS (local: the bundled skill files, skills.ts)
+// =============================================================================
+
+/** A file's bytes through the line-based io: one trailing newline is io.out's. */
+function printDocument(io: CliIO, text: string): void {
+  io.out(text.endsWith("\n") ? text.slice(0, -1) : text);
+}
+
+/** One skill as `get` prints it: SKILL.md, then under --full each extra file behind its separator. */
+function renderSkill(skill: Skill, full: boolean): string {
+  const parts = [skill.content];
+  if (full) for (const file of skillFiles(skill)) parts.push(`\n--- ${file.path} ---\n\n${file.content}`);
+  return parts.join("");
+}
+
+/** The list row's description: whole when it fits, else cut at a word and marked. */
+function cutDescription(description: string, width: number): string {
+  if (description.length <= width) return description;
+  const head = description.slice(0, width - 3);
+  const atWord = head.lastIndexOf(" ");
+  return `${(atWord > 0 ? head.slice(0, atWord) : head).trimEnd()}...`;
+}
+
+async function cmdSkillsList(inv: Invocation, io: CliIO): Promise<number> {
+  const skills = contentSkills(skillsDir(PACKAGE_ROOT));
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, path: s.dir }))));
+    return 0;
+  }
+  const width = Math.max(...skills.map((s) => s.name.length));
+  for (const s of skills) io.out(`  ${s.name.padEnd(width)}  ${cutDescription(s.description, 70)}`);
+  return 0;
+}
+
+async function cmdSkillsGet(inv: Invocation, io: CliIO): Promise<number> {
+  const dir = skillsDir(PACKAGE_ROOT);
+  const full = inv.flags.full === true;
+  const all = inv.flags.all === true;
+  const names = inv.positionals;
+  if (all && names.length > 0) throw new CliUsageError('"skills get" takes either names or --all, not both');
+  if (!all && names.length === 0) throw new CliUsageError('"skills get" requires <name> [name...] or --all');
+
+  // The page form: `get <skill> <page>` — a second word that names no skill.
+  if (!all && names.length === 2 && !hasSkill(dir, names[1])) {
+    if (full) throw new CliUsageError("--full applies to a skill; a page is one file");
+    const skill = findSkill(dir, names[0]);
+    const page = findPage(skill, names[1]);
+    if (inv.flags.json === true) {
+      io.out(JSON.stringify([{ name: skill.name, page: page.page, path: join(skill.dir, page.path), content: page.content }]));
+    } else {
+      printDocument(io, page.content);
+    }
+    return 0;
+  }
+
+  const skills = all ? contentSkills(dir) : names.map((name) => findSkill(dir, name));
+  if (inv.flags.json === true) {
+    io.out(
+      JSON.stringify(
+        skills.map((s) => ({ name: s.name, path: s.dir, content: s.content, ...(full ? { files: skillFiles(s) } : {}) })),
+      ),
+    );
+    return 0;
+  }
+  // Between two skills: a blank line, a rule, a blank line (agent-browser's boundary).
+  printDocument(io, skills.map((s) => renderSkill(s, full)).join("\n---\n\n"));
+  return 0;
+}
+
+async function cmdSkillsPath(inv: Invocation, io: CliIO): Promise<number> {
+  const dir = skillsDir(PACKAGE_ROOT);
+  if (inv.positionals.length === 0) {
+    io.out(inv.flags.json === true ? JSON.stringify({ path: dir }) : dir);
+    return 0;
+  }
+  const skill = findSkill(dir, inv.positionals[0]);
+  io.out(inv.flags.json === true ? JSON.stringify({ name: skill.name, path: skill.dir }) : skill.dir);
+  return 0;
+}
+
+async function cmdSkillsInstall(inv: Invocation, io: CliIO): Promise<number> {
+  const dir = skillsDir(PACKAGE_ROOT);
+  const target = typeof inv.flags.target === "string" ? inv.flags.target : undefined;
+  const path = typeof inv.flags.path === "string" ? inv.flags.path : undefined;
+  if (target !== undefined && path !== undefined) {
+    throw new CliUsageError("--target and --path both name the destination; pass one of them");
+  }
+  let destinations: InstallDestination[];
+  if (path !== undefined) {
+    destinations = [{ target: "path", skillsDir: resolve(path) }];
+  } else {
+    const chosen = target ?? "all";
+    const known = INSTALL_TARGETS as readonly string[];
+    if (chosen !== "all" && !known.includes(chosen)) {
+      throw new CliUsageError(`--target must be one of ${[...INSTALL_TARGETS, "all"].join(", ")}, got "${chosen}"`);
+    }
+    const targets: InstallTarget[] = chosen === "all" ? [...INSTALL_TARGETS] : [chosen as InstallTarget];
+    destinations = targets.map((name) => ({ target: name, skillsDir: targetSkillsDir(name) }));
+  }
+  const results = installPointer(dir, destinations, inv.flags.force === true);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(results));
+  } else {
+    for (const result of results) io.out(result.path);
+  }
+  return 0;
+}
+
+// =============================================================================
 // ENTRY
 // =============================================================================
 
@@ -7603,6 +7822,10 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   analyze: cmdAnalyze,
   check: cmdCheck,
   upload: cmdUpload,
+  "skills list": cmdSkillsList,
+  "skills get": cmdSkillsGet,
+  "skills path": cmdSkillsPath,
+  "skills install": cmdSkillsInstall,
   "job start": cmdJobStart,
   "job list": cmdJobList,
   "job show": cmdJobShow,
@@ -7728,43 +7951,53 @@ export async function runCli(argv: string[], io: CliIO = defaultIO): Promise<num
     if (inv.flags.json === true) {
       io.out(JSON.stringify({ error: jsonErrorBody(error) }));
     }
-    if (error instanceof EvolveApiError && error.code === "quota_exceeded") {
-      // Harbor's own rendering of the hosted quota refusal — `Launch quota
-      // exceeded:` + the server's sentence, exit 2 (cli/hosted_jobs.py:
-      // 615-617). Before the rate-limit arm: this 429 carries no
-      // Retry-After, because the wait is not a known number.
-      io.err(`Launch quota exceeded: ${error.message}`);
-      return 2;
-    }
-    if (error instanceof EvolveApiError && error.status === 429) {
-      // A rate limit is a delay, not a mystery: name it and honor the
-      // server's Retry-After instead of echoing the raw message.
-      const wait = error.retryAfterSec !== undefined ? `retry in ${error.retryAfterSec}s` : "retry shortly";
-      io.err(`Error: rate limited by the server — ${wait}.`);
-      return 1;
-    }
-    io.err(`Error: ${(error as Error).message}`);
-    // A job create that NAMED a task whose build FAILED refuses typed
-    // (partial-publish model), and the refusal's details.failed_tasks quotes
-    // every named task's own build failure — render each one, so the caller
-    // reads the reason here instead of hunting for it.
-    if (error instanceof EvolveApiError && error.code === "task_failed_to_build") {
-      const details = (error.details ?? {}) as Record<string, unknown>;
-      const failedTasks = Array.isArray(details.failed_tasks) ? details.failed_tasks : [];
-      for (const entry of failedTasks as Record<string, unknown>[]) {
-        if (!entry || typeof entry !== "object") continue;
-        const failure = (entry.failure ?? {}) as Record<string, unknown>;
-        const reason =
-          typeof failure.message === "string" && failure.message
-            ? `${failure.code ?? "?"} (${failure.step ?? "?"}): ${failure.message}`
-            : "build failed (reason not recorded)";
-        io.err(`  ${entry.task_name}: ${reason}`);
-      }
-      io.err("  Fix: re-publish a new version, or drop the failed task(s) from --include-task-name.");
-      return 1;
-    }
+    const code = reportFailure(error, io);
+    // Every API refusal ends by naming the errors page the CLI itself serves,
+    // so the code's meaning is one command away. A local failure (a bad path,
+    // an unknown skill) has no page there and gets no footer; a usage error
+    // returned above the same way.
+    if (error instanceof EvolveApiError) io.err(`Docs: ${ERRORS_DOCS_COMMAND}`);
+    return code;
+  }
+}
+
+/** The human rendering of a runtime failure on stderr, and its exit code. */
+function reportFailure(error: unknown, io: CliIO): number {
+  if (error instanceof EvolveApiError && error.code === "quota_exceeded") {
+    // Harbor's own rendering of the hosted quota refusal — `Launch quota
+    // exceeded:` + the server's sentence, exit 2 (cli/hosted_jobs.py:
+    // 615-617). Before the rate-limit arm: this 429 carries no
+    // Retry-After, because the wait is not a known number.
+    io.err(`Launch quota exceeded: ${error.message}`);
+    return 2;
+  }
+  if (error instanceof EvolveApiError && error.status === 429) {
+    // A rate limit is a delay, not a mystery: name it and honor the
+    // server's Retry-After instead of echoing the raw message.
+    const wait = error.retryAfterSec !== undefined ? `retry in ${error.retryAfterSec}s` : "retry shortly";
+    io.err(`Error: rate limited by the server — ${wait}.`);
     return 1;
   }
+  io.err(`Error: ${(error as Error).message}`);
+  // A job create that NAMED a task whose build FAILED refuses typed
+  // (partial-publish model), and the refusal's details.failed_tasks quotes
+  // every named task's own build failure — render each one, so the caller
+  // reads the reason here instead of hunting for it.
+  if (error instanceof EvolveApiError && error.code === "task_failed_to_build") {
+    const details = (error.details ?? {}) as Record<string, unknown>;
+    const failedTasks = Array.isArray(details.failed_tasks) ? details.failed_tasks : [];
+    for (const entry of failedTasks as Record<string, unknown>[]) {
+      if (!entry || typeof entry !== "object") continue;
+      const failure = (entry.failure ?? {}) as Record<string, unknown>;
+      const reason =
+        typeof failure.message === "string" && failure.message
+          ? `${failure.code ?? "?"} (${failure.step ?? "?"}): ${failure.message}`
+          : "build failed (reason not recorded)";
+      io.err(`  ${entry.task_name}: ${reason}`);
+    }
+    io.err("  Fix: re-publish a new version, or drop the failed task(s) from --include-task-name.");
+  }
+  return 1;
 }
 
 // Run only when invoked as the `evolve` bin — never on test/library import.

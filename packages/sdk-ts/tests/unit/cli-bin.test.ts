@@ -160,6 +160,23 @@ try {
     console.log("  - SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH");
   }
 
+  // ---- THE SKILLS DIRECTORY IS FOUND FROM dist/cli/ ----
+  // `skills path` resolves skill-data/ from the running file: the package's
+  // own copy (staged by prepack, absent in a checkout) and then the repo
+  // root's, both reached at "../../" from dist/cli/ exactly like package.json.
+  // Only the built bin can prove the depth survived the build; the src tests
+  // run from src/cli/, which sits at the same depth by construction.
+  const skillsPath = runNode(binLink, ["skills", "path"]);
+  assert(skillsPath.code === 0, `skills path through the .bin link exits 0 (stderr: ${skillsPath.stderr.trim()})`);
+  assert(
+    skillsPath.stdout.trim() === join(PACKAGE_ROOT, "skill-data") ||
+      skillsPath.stdout.trim() === join(PACKAGE_ROOT, "..", "..", "skill-data"),
+    `skills path prints the package's or the checkout's skill-data (got "${skillsPath.stdout.trim()}")`,
+  );
+  const skillsList = runNode(binLink, ["skills", "list", "--json"]);
+  assert(skillsList.code === 0, "skills list --json through the .bin link exits 0");
+  assert(skillsList.stdout.includes('"name":"evals"'), "and serves the evals skill");
+
   // ---- THE GATE STILL SHUTS: importing the module must not run main() ----
   // This is what the gate is for. A fix that simply always ran main() would
   // pass every assertion above and turn every library import into a CLI run.
