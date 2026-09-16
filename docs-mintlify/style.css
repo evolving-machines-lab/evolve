@@ -1,0 +1,289 @@
+@import url("https://fonts.googleapis.com/css2?family=Google+Sans+Code:wght@400;500;600&display=swap");
+
+code,
+kbd,
+pre,
+samp {
+  font-family: "Google Sans Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Inline code, visible on both grounds. Code blocks keep their own frame. */
+:not(pre) > code {
+  background: #edeceb;
+  border: 1px solid #0000000f;
+  color: #191919;
+  padding: 0.1em 0.35em;
+  white-space: nowrap;
+}
+
+.dark :not(pre) > code {
+  background: #1a1a1a;
+  border-color: #ffffff1a;
+  color: #f7f6f5;
+}
+
+/* On a phone a long chip wraps at its spaces rather than widening the page. */
+@media (max-width: 640px) {
+  :not(pre) > code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Body text at the website's full contrast. Maple renders paragraphs as bare spans under #content. */
+#content > span,
+#content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
+  color: #000000;
+}
+
+.dark #content > span,
+.dark #content-area :is(p, li:not([role="tab"]), td, th, blockquote) {
+  color: #f7f6f5;
+}
+
+/* Links: the accent, no underline, in both modes and on hover. */
+#content-area a.link,
+#content-area a.link:hover {
+  color: #b026ff;
+  text-decoration: none;
+}
+
+/* Square corners: the owner's rule. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+/* The sidebar is the website's surface, one step off the page, with a hairline. */
+#sidebar {
+  background: #ffffff;
+  border-right: 1px solid #0000000f;
+}
+
+.dark #sidebar {
+  background: #141414;
+  border-right-color: #ffffff1a;
+}
+
+/* Pagination: Maple's own tile and behaviour, in our colors, with the
+   sidebar's hairline as its edge. */
+#pagination {
+  background: #ffffff;
+  border: 1px solid #0000000f;
+}
+
+#pagination .font-semibold {
+  color: #191919;
+}
+
+#pagination a:not(:hover) span {
+  color: #1919198f;
+}
+
+.dark #pagination {
+  background: #141414;
+  border-color: #ffffff1a;
+}
+
+.dark #pagination .font-semibold {
+  color: #f7f6f5;
+}
+
+.dark #pagination a:not(:hover) span {
+  color: #f7f6f5aa;
+}
+
+/* The sidebar's scroll area keeps room under its last item. */
+#sidebar-content > div {
+  padding-bottom: 4.5rem;
+}
+
+/* Navbar links and the Dashboard button live on the tab bar: topbar.js
+   copies Maple's sidebar-bottom list (#sidebar > ul) into the tab bar's own
+   container as #topbar-cluster; the original is hidden. */
+#sidebar > ul {
+  display: none;
+}
+
+#navbar-transition-maple {
+  right: 0;
+  width: auto;
+}
+
+#topbar-cluster {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  height: 100%;
+  margin-left: auto;
+  padding: 0;
+  list-style: none;
+}
+
+#topbar-cluster > li {
+  padding: 0;
+  margin: 0;
+}
+
+/* GitHub: the icon only, at rest in its hover color. */
+#topbar-cluster a[href^="https://github.com/"],
+#topbar-cluster a[href^="https://github.com/"]:hover {
+  color: #191919;
+}
+
+.dark #topbar-cluster a[href^="https://github.com/"],
+.dark #topbar-cluster a[href^="https://github.com/"]:hover {
+  color: #f7f6f5;
+}
+
+#topbar-cluster a[href^="https://github.com/"] span,
+#topbar-cluster a[href^="https://github.com/"] > div > div + div {
+  display: none;
+}
+
+#topbar-cluster a[href^="https://github.com/"] svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* Dashboard: the website's primary button, square. */
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] {
+  display: inline-flex;
+  align-items: center;
+  height: 2rem;
+  padding: 0 0.875rem;
+  background: #191919;
+  color: #f7f6f5;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+  background: #000000;
+}
+
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] span {
+  color: #f7f6f5;
+}
+
+.dark #topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] {
+  background: #f7f6f5;
+  color: #0a0a0a;
+}
+
+.dark #topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"]:hover {
+  background: #ffffff;
+}
+
+.dark #topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] span {
+  color: #0a0a0a;
+}
+
+#topbar-cluster a[href^="https://dashboard.evolvingmachines.ai"] svg {
+  display: none;
+}
+
+/* Charts: grays and black, in both modes. Size comes from each chart's init. */
+#content svg[id^="mermaid"] {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+#content svg[id^="mermaid"] .node rect,
+#content svg[id^="mermaid"] .node polygon,
+#content svg[id^="mermaid"] .node circle,
+#content svg[id^="mermaid"] .node path {
+  fill: #ffffff;
+  stroke: #191919;
+  stroke-width: 1px;
+}
+
+#content svg[id^="mermaid"] .node .nodeLabel,
+#content svg[id^="mermaid"] .node foreignObject div,
+#content svg[id^="mermaid"] .node foreignObject span {
+  color: #191919;
+}
+
+#content svg[id^="mermaid"] .node text {
+  fill: #191919;
+}
+
+#content svg[id^="mermaid"] .edgePath path,
+#content svg[id^="mermaid"] path.flowchart-link {
+  stroke: #191919;
+  stroke-width: 1px;
+}
+
+#content svg[id^="mermaid"] marker path,
+#content svg[id^="mermaid"] .marker {
+  fill: #191919;
+  stroke: #191919;
+}
+
+#content svg[id^="mermaid"] .cluster rect {
+  fill: #0000000a;
+  stroke: #00000026;
+}
+
+#content svg[id^="mermaid"] .cluster-label .nodeLabel,
+#content svg[id^="mermaid"] .cluster-label span {
+  color: #737373;
+}
+
+#content svg[id^="mermaid"] .cluster-label text {
+  fill: #737373;
+}
+
+.dark #content svg[id^="mermaid"] .node rect,
+.dark #content svg[id^="mermaid"] .node polygon,
+.dark #content svg[id^="mermaid"] .node circle,
+.dark #content svg[id^="mermaid"] .node path {
+  fill: #141414;
+  stroke: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] .node .nodeLabel,
+.dark #content svg[id^="mermaid"] .node foreignObject div,
+.dark #content svg[id^="mermaid"] .node foreignObject span {
+  color: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] .node text {
+  fill: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] .edgePath path,
+.dark #content svg[id^="mermaid"] path.flowchart-link {
+  stroke: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] marker path,
+.dark #content svg[id^="mermaid"] .marker {
+  fill: #f7f6f5;
+  stroke: #f7f6f5;
+}
+
+.dark #content svg[id^="mermaid"] .cluster rect {
+  fill: #ffffff0a;
+  stroke: #ffffff26;
+}
+
+.dark #content svg[id^="mermaid"] .cluster-label .nodeLabel,
+.dark #content svg[id^="mermaid"] .cluster-label span {
+  color: #8c8c8c;
+}
+
+.dark #content svg[id^="mermaid"] .cluster-label text {
+  fill: #8c8c8c;
+}
+
+/* The floating "Ask a question" bar at the bottom of the content column is
+   hidden (the owner's word, 2026-09-15); docs.json has no switch for it. The
+   assistant still opens from its entries beside the search box. */
+.chat-assistant-floating-input,
+div:has(> .chat-assistant-floating-input) {
+  display: none;
+}

@@ -1,0 +1,176 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Evolve",
+  "theme": "maple",
+  "colors": {
+    "primary": "#B026FF",
+    "light": "#B026FF",
+    "dark": "#B026FF"
+  },
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo/wordmark-light.png",
+    "dark": "/logo/wordmark-dark.png",
+    "href": "https://evolvingmachines.ai"
+  },
+  "appearance": {
+    "default": "light"
+  },
+  "background": {
+    "color": {
+      "light": "#f7f6f5",
+      "dark": "#0a0a0a"
+    }
+  },
+  "fonts": {
+    "family": "Google Sans Flex",
+    "weight": 400,
+    "heading": {
+      "family": "Google Sans Flex",
+      "weight": 600
+    }
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "styling": {
+    "eyebrows": "breadcrumbs",
+    "codeblocks": "dark"
+  },
+  "navbar": {
+    "links": [
+      {
+        "type": "github",
+        "href": "https://github.com/evolving-machines-lab/evolve"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Dashboard",
+      "href": "https://dashboard.evolvingmachines.ai"
+    }
+  },
+  "footer": {
+    "socials": {
+      "website": "https://evolvingmachines.ai",
+      "github": "https://github.com/evolving-machines-lab/evolve",
+      "discord": "https://discord.gg/Q36D8dGyNF"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "claude",
+      "chatgpt"
+    ],
+    "display": "header"
+  },
+  "redirects": [
+    {
+      "source": "/core-concepts/tasks-and-datasets",
+      "destination": "/core-concepts/datasets"
+    }
+  ],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Getting started",
+            "pages": [
+              "index",
+              "getting-started/installation",
+              "getting-started/quick-start"
+            ]
+          },
+          {
+            "group": "Core concepts",
+            "pages": [
+              "core-concepts/index",
+              "core-concepts/tasks",
+              "core-concepts/datasets",
+              "core-concepts/jobs",
+              "core-concepts/trials",
+              "core-concepts/trial-outputs",
+              "core-concepts/agents",
+              "core-concepts/models",
+              "core-concepts/sandboxes",
+              "core-concepts/analyze",
+              "core-concepts/check",
+              "core-concepts/skills",
+              "core-concepts/secrets",
+              "core-concepts/upload"
+            ]
+          },
+          {
+            "group": "Dashboard",
+            "pages": [
+              "dashboard/datasets",
+              "dashboard/jobs",
+              "dashboard/trial-viewer",
+              "dashboard/checks",
+              "dashboard/traces"
+            ]
+          },
+          {
+            "group": "SDK",
+            "pages": [
+              "sdk/typescript",
+              "sdk/python"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI reference",
+        "groups": [
+          {
+            "group": "The evolve command",
+            "pages": [
+              "cli-reference/index",
+              "cli-reference/run",
+              "cli-reference/analyze",
+              "cli-reference/check",
+              "cli-reference/upload"
+            ]
+          },
+          {
+            "group": "Command groups",
+            "pages": [
+              "cli-reference/job",
+              "cli-reference/trial",
+              "cli-reference/analysis",
+              "cli-reference/dataset",
+              "cli-reference/skill",
+              "cli-reference/agent",
+              "cli-reference/auth",
+              "cli-reference/secrets"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK reference",
+        "groups": [
+          {
+            "group": "Clients",
+            "pages": [
+              "sdk-reference/index",
+              "sdk-reference/jobs",
+              "sdk-reference/trials",
+              "sdk-reference/datasets",
+              "sdk-reference/analyses",
+              "sdk-reference/checks",
+              "sdk-reference/skills",
+              "sdk-reference/agents",
+              "sdk-reference/auth",
+              "sdk-reference/meta"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
