@@ -1,8 +1,8 @@
 /**
  * E2B Sandbox Provider - Clean Architecture
  *
- * @requires @e2b/code-interpreter >= 2.7.1 (pins e2b >= 2.39.0, the first release with the
- *   filesystem FileType.SYMLINK — absent in 2.38.3's typings, present in 2.39.0, tarballs checked 2026-09-16)
+ * @requires @e2b/code-interpreter >= 2.7.1 (pins e2b 2.39.0); every field and call this adapter uses is already
+ *   in e2b 2.10.3, the version the dashboard resolves (typings 2.10.3…2.39.0 unpacked and checked 2026-09-16)
  * @requires Node.js >= 18 (for ReadableStream support)
  *
  * Design principles:
@@ -22,7 +22,7 @@ import {
   isSandboxNotRunningError,
   isSandboxPathNotFoundError,
 } from "./sandbox-errors";
-import { assertByteRange, isoTime, joinPath, octalMode, readByteRangeOverUrl } from "./sandbox-observation";
+import { assertByteRange, isoTime, joinPath, parseGoFileMode, readByteRangeOverUrl } from "./sandbox-observation";
 
 export {
   SandboxFeatureUnsupportedError,
@@ -953,9 +953,7 @@ function isE2BNotFound(err: unknown): boolean {
 interface E2BEntry {
   name: string;
   path: string;
-  type?: string;
   size: number;
-  mode: number;
   permissions: string;
   owner: string;
   group: string;
@@ -963,17 +961,10 @@ interface E2BEntry {
   symlinkTarget?: string;
 }
 
-// envd types a symlink as its target and gives the target's numeric mode; the permission string and
-// symlinkTarget are the link's own. A dangling link's "target" is its own path (measured), so it is left unset.
+// envd's `type` and numeric `mode` are a symlink's TARGET's and carry no setuid/setgid/sticky bit; its permission
+// string is the entry's own (Go FileMode), so type and mode both come from it. A dangling link's "target" is its own path.
 function toFileInfo(entry: E2BEntry): FileInfo {
-  const isSymlink = entry.symlinkTarget !== undefined || entry.permissions.startsWith("L");
-  const type: FileInfo["type"] = isSymlink
-    ? "symlink"
-    : entry.type === "file"
-      ? "file"
-      : entry.type === "dir"
-        ? "dir"
-        : "other";
+  const { type, mode } = parseGoFileMode(entry.permissions);
   if (entry.modifiedTime === undefined) {
     throw new SandboxFeatureUnsupportedError(
       "files.list",
@@ -987,11 +978,11 @@ function toFileInfo(entry: E2BEntry): FileInfo {
     type,
     size: entry.size,
     mtime: isoTime(entry.modifiedTime),
-    mode: octalMode(entry.permissions),
+    mode,
     owner: entry.owner,
     group: entry.group,
   };
-  if (isSymlink && entry.symlinkTarget !== undefined && entry.symlinkTarget !== entry.path) {
+  if (type === "symlink" && entry.symlinkTarget !== undefined && entry.symlinkTarget !== entry.path) {
     info.target = entry.symlinkTarget;
   }
   return info;

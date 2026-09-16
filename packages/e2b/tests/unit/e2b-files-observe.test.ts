@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Unit Test: E2B live file observation (list/stat, watch, range reads, metrics, inspect).
- * Every vendor answer used as a fixture was recorded from a live sandbox on 2026-09-16.
+ * Every vendor answer used as a fixture was recorded from a live sandbox on 2026-09-16 (lane L2 fold-2 e2e-e2b.json).
  * Usage: npx tsx tests/unit/e2b-files-observe.test.ts
  */
 
@@ -59,8 +59,14 @@ const LIVE_ENTRIES = [
   { name: "link", path: "/tmp/p/link", type: "file", size: 5, mode: 420, permissions: "Lrwxrwxrwx", owner: "root", group: "root", modifiedTime: MTIME, symlinkTarget: "/tmp/p/a.txt" },
   { name: "sp ace.txt", path: "/tmp/p/sp ace.txt", type: "file", size: 1, mode: 420, permissions: "-rw-r--r--", owner: "root", group: "root", modifiedTime: MTIME },
   { name: "sub", path: "/tmp/p/sub", type: "dir", size: 4096, mode: 493, permissions: "drwxr-xr-x", owner: "root", group: "root", modifiedTime: MTIME },
-  { name: "setuid", path: "/tmp/p/setuid", type: "file", size: 1, mode: 2541, permissions: "-rwsr-xr-x", owner: "root", group: "root", modifiedTime: MTIME },
-  { name: "sock", path: "/tmp/p/sock", size: 0, mode: 420, permissions: "Srwxr-xr-x", owner: "root", group: "root", modifiedTime: MTIME },
+  // envd's permission string is Go's FileMode.String(); its numeric mode carries no setuid/setgid/sticky bit.
+  { name: "setuid", path: "/tmp/p/setuid", type: "file", size: 1, mode: 493, permissions: "urwxr-xr-x", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "both", path: "/tmp/p/both", type: "file", size: 1, mode: 493, permissions: "ugrwxr-xr-x", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "sgid", path: "/tmp/p/sgid", type: "dir", size: 60, mode: 493, permissions: "dgrwxr-xr-x", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "sticky", path: "/tmp/p/sticky", type: "dir", size: 60, mode: 511, permissions: "dtrwxrwxrwx", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "fifo", path: "/tmp/p/fifo", size: 0, mode: 420, permissions: "prw-r--r--", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "sock", path: "/tmp/p/sock", size: 0, mode: 493, permissions: "Srwxr-xr-x", owner: "root", group: "root", modifiedTime: MTIME },
+  { name: "null", path: "/dev/null", size: 0, mode: 438, permissions: "Dcrw-rw-rw-", owner: "root", group: "root", modifiedTime: MTIME },
   // envd's answer for `ln -s /nonexistent dangling` (getInfo, 2026-09-16): its own path as the target
   { name: "dangling", path: "/tmp/p/dangling", size: 12, mode: 0, permissions: "Lrwxrwxrwx", owner: "root", group: "root", modifiedTime: MTIME, symlinkTarget: "/tmp/p/dangling" },
 ];
@@ -79,8 +85,10 @@ async function testList(): Promise<void> {
   assertEqual(byName["dirlink"].type, "symlink", "a symlink to a directory is a symlink, not a dir");
   assertEqual(byName["sub"].type, "dir", "a directory is a dir");
   assertEqual(byName["sp ace.txt"].name, "sp ace.txt", "whitespace names survive");
-  assertEqual(byName["setuid"].mode, "4755", "setuid bit is kept in the octal mode");
-  assertEqual(byName["sock"].type, "other", "an entry envd gives no type for is 'other', never 'file'");
+  assertEqual([byName["setuid"].mode, byName["both"].mode, byName["sgid"].mode, byName["sticky"].mode], ["4755", "6755", "2755", "1777"], "setuid, setgid and sticky come from the Go prefix letters (the numeric mode drops them)");
+  assertEqual([byName["sgid"].type, byName["sticky"].type], ["dir", "dir"], "a directory with a special bit is still a dir");
+  assertEqual([byName["fifo"].type, byName["sock"].type, byName["null"].type], ["other", "other", "other"], "a fifo, a socket and a device are 'other', never 'file'");
+  assertEqual([byName["fifo"].mode, byName["null"].mode], ["0644", "0666"], "…with their own permission bits");
   assert(!("target" in byName["a.txt"]), "no target field on a non-link");
   assertEqual([byName["dangling"].type, "target" in byName["dangling"]], ["symlink", false], "a dangling link is a symlink whose target is left unset (envd reports its own path)");
   const missing = new E2BFiles({ files: { list: async () => { const err = new Error("[not_found] path not found: lstat /tmp/nope"); err.name = "FileNotFoundError"; throw err; } } } as any, "root");
