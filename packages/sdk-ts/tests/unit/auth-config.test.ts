@@ -161,17 +161,19 @@ async function runTests(): Promise<void> {
       "OpenCode Fable alias keeps provider-prefixed OpenRouter model"
     );
 
-    // Fable 5 stays pinnable by its explicit id on the claude and opencode
-    // rosters: hosted create admits roster names only.
-    const claudeLegacy = claude.models.find((model) => model.alias === "claude-fable-5");
-    assertEqual(claudeLegacy?.modelId, "claude-fable-5", "Claude roster keeps claude-fable-5 as a legacy row");
-    const opencodeLegacy = AGENT_REGISTRY.opencode.models.find(
-      (model) => model.alias === "openrouter/anthropic/claude-fable-5"
+    // Fable 5 is no longer on any roster (owner 2026-09-15: "we don't need
+    // Fable 5 at all, just leave 5.1"); `fable` is Fable 5.1.
+    assertEqual(
+      claude.models.find((model) => model.alias === "claude-fable-5" || model.modelId === "claude-fable-5"),
+      undefined,
+      "Claude roster carries no claude-fable-5 row",
     );
     assertEqual(
-      opencodeLegacy?.modelId,
-      "openrouter/anthropic/claude-fable-5",
-      "OpenCode roster keeps the OpenRouter Fable 5 id as a legacy row"
+      AGENT_REGISTRY.opencode.models.find(
+        (model) => model.alias === "openrouter/anthropic/claude-fable-5" || model.modelId === "openrouter/anthropic/claude-fable-5"
+      ),
+      undefined,
+      "OpenCode roster carries no OpenRouter Fable 5 row",
     );
 
     // Droid takes Factory's dot-form id (npm latest 0.219.0 accepts
@@ -185,8 +187,11 @@ async function runTests(): Promise<void> {
       "claude-fable-5-1",
       "Droid gateway alias rewrites the dot-form id to the gateway's dashed entry"
     );
-    const droidLegacy = droid.models.find((model) => model.alias === "claude-fable-5");
-    assertEqual(droidLegacy?.modelId, "claude-fable-5", "Droid roster keeps claude-fable-5 as a legacy row");
+    assertEqual(
+      droid.models.find((model) => model.alias === "claude-fable-5" || model.modelId === "claude-fable-5"),
+      undefined,
+      "Droid roster carries no claude-fable-5 row",
+    );
   }
 
   console.log("Registry: GPT-6 Astra");
