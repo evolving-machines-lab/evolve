@@ -177,7 +177,11 @@ assert(
   ),
   `"${FIREWORKS_DEEPSEEK_FLASH}" is a further option, never a harness default (registry and artifact)`,
 );
-for (const retired of RETIRED_DEEPSEEK_NAMES) {
+// Fable 5 left the rosters on the owner's word (2026-09-15: "we don't need
+// Fable 5 at all, just leave 5.1"); `fable` is Fable 5.1, and the three
+// legacy rows that pinned Fable 5 by its explicit id are retired names.
+const RETIRED_FABLE_5_NAMES = ["claude-fable-5", "openrouter/anthropic/claude-fable-5"];
+for (const retired of [...RETIRED_DEEPSEEK_NAMES, ...RETIRED_FABLE_5_NAMES]) {
   assert(
     registryNames.every(
       (name) =>

@@ -27,11 +27,6 @@
           "description": "Highest capability, long-horizon agentic work"
         },
         {
-          "alias": "claude-fable-5",
-          "modelId": "claude-fable-5",
-          "description": "Claude Fable 5 (legacy)"
-        },
-        {
           "alias": "opus",
           "modelId": "claude-opus-5",
           "description": "Complex reasoning, R&D, architecting"
@@ -154,11 +149,6 @@
           "alias": "claude-fable-5.1",
           "modelId": "claude-fable-5-1",
           "description": "Factory-managed Claude Fable 5.1"
-        },
-        {
-          "alias": "claude-fable-5",
-          "modelId": "claude-fable-5",
-          "description": "Factory-managed Claude Fable 5 (legacy)"
         },
         {
           "alias": "claude-opus-5",
@@ -319,11 +309,6 @@
           "alias": "openrouter/anthropic/claude-fable-5.1",
           "modelId": "openrouter/anthropic/claude-fable-5.1",
           "description": "Anthropic Fable 5.1 via OpenRouter"
-        },
-        {
-          "alias": "openrouter/anthropic/claude-fable-5",
-          "modelId": "openrouter/anthropic/claude-fable-5",
-          "description": "Anthropic Fable 5 via OpenRouter (legacy)"
         },
         {
           "alias": "openrouter/anthropic/claude-opus-5",
