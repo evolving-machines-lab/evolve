@@ -198,7 +198,9 @@ export {
 
 // Managed sandboxes — the platform runs the box, the caller holds only an
 // Evolve API key. Which provider backs it is an argument, never an env var.
-export { managedSandbox, resolveDefaultSandbox } from "./utils/sandbox";
+export { managedSandbox } from "./utils/sandbox";
+// The provider the SDK picks when a run is given none (from the provider key present), so inspect() can use the same one.
+export { resolveDefaultSandbox } from "./utils/sandbox";
 export type { ManagedSandboxOptions, ManagedSandboxCreateDefaults } from "./utils/sandbox";
 export {
   MANAGED_SANDBOX_PROVIDERS,

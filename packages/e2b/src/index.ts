@@ -35,7 +35,7 @@ export {
 };
 
 // 5 min for whole-file reads/writes and the range URL's signature: E2B's 60 s default was measured too short for multi-MB files.
-export const E2B_FILE_REQUEST_TIMEOUT_MS = 300_000;
+const E2B_FILE_REQUEST_TIMEOUT_MS = 300_000;
 
 // Entry permissions, owner, group, mtime and symlink target arrived in envd 0.2.5
 // (e2b-dev/infra 97d10b529f, 2025-07-25: proto EntryInfo fields 4-10, main.go Version 0.2.4 → 0.2.5).

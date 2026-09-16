@@ -421,7 +421,7 @@ Look at a running sandbox without touching it: list its files, read a slice of a
 ```python
 from evolve import Evolve, E2BProvider
 
-evolve = Evolve(sandbox=E2BProvider())
+evolve = Evolve(sandbox=E2BProvider())  # or Evolve(): the provider your runs get when you pass none
 view = await evolve.inspect_sandbox('sandbox-id', user='root')  # user: (optional) the OS user the reads run as
 
 # The entries of a directory (not recursive) — the same shape on every provider

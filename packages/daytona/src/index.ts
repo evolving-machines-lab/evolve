@@ -2976,7 +2976,7 @@ const DAYTONA_FIND_FORMAT = "%y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%l\\0%f\\0";
 const DAYTONA_FIND_FIELDS = 8;
 
 // 30 min, the SDK's own download default (FileSystem.d.ts:196).
-export const DAYTONA_FILE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+const DAYTONA_FILE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 
 // The records and find's own status share one base64 stream (a shell variable cannot hold NUL, sh has no
 // pipefail): `STATUS:<n>` after the last record, so a find that could not run is never an empty directory.
