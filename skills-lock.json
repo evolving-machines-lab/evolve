@@ -1,6 +1,18 @@
 {
   "version": 1,
   "skills": {
+    "create-adapter": {
+      "source": "evolving-machines-lab/evolve",
+      "sourceType": "github",
+      "skillPath": "skills/create-adapter/SKILL.md",
+      "computedHash": "b40e95238861b96c5334ca5d463e474d9c4cdfbcc57dba4a081f18eff270e09a"
+    },
+    "create-task": {
+      "source": "evolving-machines-lab/evolve",
+      "sourceType": "github",
+      "skillPath": "skills/create-task/SKILL.md",
+      "computedHash": "38180e25ead0f3d98debcb29de2c9d8b318f927fc800326dc8c7a5891b67cfd1"
+    },
     "evolve-agents": {
       "source": "evolving-machines-lab/evolve",
       "sourceType": "github",
@@ -12,6 +24,18 @@
       "sourceType": "github",
       "skillPath": "skills/evolve-evals/SKILL.md",
       "computedHash": "ed1ac38b60f93f850adaa0ee60514eca23fb7b6cb9d7a014b3cd8103a65e3398"
+    },
+    "publish": {
+      "source": "evolving-machines-lab/evolve",
+      "sourceType": "github",
+      "skillPath": "skills/publish/SKILL.md",
+      "computedHash": "010115a4216280eff6e7e267e8d402a802abc5e4478753ef44d59e14e5e1dc48"
+    },
+    "rewardkit": {
+      "source": "evolving-machines-lab/evolve",
+      "sourceType": "github",
+      "skillPath": "skills/rewardkit/SKILL.md",
+      "computedHash": "9e314a4e90cbd13a4690ad0930d17b5a00b19e3fe4d8697f146372d6209fb2fe"
     }
   }
 }
