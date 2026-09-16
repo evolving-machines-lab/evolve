@@ -16,7 +16,9 @@ evolve dataset show terminal-bench-4@4.0
 
 ## Publish your own
 
-Any folder of task directories can be published. What you publish is private to your organization. Check it first: the pre-flight is a dry run that uploads nothing and writes nothing.
+Any folder of task directories can be published: a single task directory, a directory with a `tasks/` folder, or a directory of task directories. What you publish is private to your organization; another account asking for its name reads `dataset_not_found`. A name belongs to its first publisher: re-publishing your own name adds a version, and a name owned by anyone else is refused with `dataset_name_taken`.
+
+Check it first: the pre-flight is a dry run that uploads nothing and writes nothing.
 
 ```bash
 evolve dataset check ./my-swe
@@ -35,6 +37,8 @@ Then publish from a local directory, from a git repository, or from a source the
     ```
 
     When the folder carries a `dataset.toml` manifest, `--name` and `--version` come from it and may be omitted.
+
+    Everything in the directory is packed, dotfiles included, and executables stay executable. Only `.git`, `.DS_Store` and `.venv` are left out, and symlinks are never packed. A large upload resumes after a dropped connection, and `evolve dataset watch` can follow it from another machine while it uploads: it reads `QUEUED (receiving)` until the corpus has arrived.
   </Tab>
   <Tab title="Git repository">
     ```bash
@@ -46,18 +50,28 @@ Then publish from a local directory, from a git repository, or from a source the
       --watch
     ```
 
-    `--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is refused. `--path <subfolder>` imports one folder of a larger repository.
+    `--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is refused with `unpinned_git_ref`, and the refusal's `details.commit` is the sha to pin. `--path <subfolder>` imports one folder of a larger repository. The URL must be `https://`; for a private repository put a token in it.
   </Tab>
   <Tab title="Fetchable source">
     ```bash
     evolve dataset publish --from hub:cookbook/hello-world --watch
     ```
 
-    `--from` takes a public https tarball URL, or `hub:org/name[@ref]` for a public package on the Harbor hub. For a hub package the name and version default to the package's own.
+    `--from` takes a public https tarball URL, or `hub:org/name[@ref]` for a public package on the Harbor hub. Both are public only, with no credentials in the URL. A tarball may wrap the corpus in one top-level directory, so a repository's archive URL publishes as is.
+
+    For a hub package the name and version default to the package's own, and the ref is pinned when the publish is accepted. A package the hub does not show is refused with `hub_package_not_found`; a hub that cannot be reached is `hub_unreachable`, retry the publish.
   </Tab>
 </Tabs>
 
 `--watch` follows the publish until the version is READY or FAILED. Each task builds on its own, so one broken task does not block the others; `--watch` ends with how many built. If the terminal is gone, `evolve dataset watch <name>` re-attaches to the same follow, from any machine. `--skip-preflight` uploads without the check; a task the check would have refused then fails at import instead.
+
+### The pre-flight
+
+The pre-flight sends each task's `task.toml`, and the `dataset.toml` if there is one, and answers with a verdict per task. It checks what a `task.toml` alone can decide, so an all-ok answer means no config refuses, not that every image will build. A `NOTE` is not a refusal; today it is `tests_dockerfile_not_built`. A refused task stops the publish before anything is uploaded.
+
+### The manifest
+
+A corpus with a `dataset.toml` imports what the manifest says: only the tasks listed under `[[tasks]]`, each verified against its pinned digest. A listed task the checkout lacks fails the publish with `manifest_task_missing`, a digest mismatch with `manifest_digest_mismatch`. The `[dataset]` description reaches the catalog, and every version records the identity it imported under as `manifest`. A `metric.py` custom metric is refused with `custom_metric_not_supported`.
 
 ## What happens when you publish
 
@@ -67,27 +81,35 @@ flowchart TB
   subgraph PUB[At publish]
     direction LR
     P[Pre-flight: nothing uploaded] --> U[Upload: the version is IMPORTING, then BUILDING]
-    U --> B[Parse and build: one image per task, pinned by digest]
+    U --> B[Parse and build: one image per task]
     B --> RD[READY, or FAILED when no task built]
   end
   subgraph RUN[At the first run]
     direction LR
-    F[The first trial on a provider builds its boot image] --> L[Every later trial starts from the cache]
+    F[The first trial on a provider is slower] --> L[Every later trial starts from the cache]
   end
   PUB --> RUN
 ```
 
-The pre-flight sends each task's `task.toml`, and the `dataset.toml` if there is one, to the server, which answers with a verdict per task and writes nothing. A refused task stops the publish before anything is uploaded.
+Every declaration in `task.toml` is honored or refused with the reason; a task never runs on weaker semantics than it declares.
 
-The upload is stored on the server, the new version is recorded as IMPORTING, then BUILDING while the task images build, and the dataset is stamped as yours.
+Each task's `environment/` is built into an image once. Tasks build independently: one that fails any step is recorded FAILED with a typed reason, and the others keep building.
 
-The importer reads every task directory: first the shape of its `task.toml`, against a strict schema, then its meaning.
+The version lands READY when at least one task built, and FAILED only when none did or on a corpus-level refusal; a FAILED version changes nothing, the dataset keeps serving what it served. On your own dataset, READY also makes the version active, so the bare name runs it. A job refuses any version that is not READY with `version_not_ready`.
 
-Each task's `environment/` is built into an image, pushed to the platform's registry and pinned by its digest. Tasks build independently: one that fails any step is recorded FAILED with a typed reason, and the others keep building.
+The first trial of a task on a provider takes a few minutes longer than the rest; it is not a hang.
 
-The version lands READY when at least one task built, and FAILED only when none did. On your own dataset, READY also makes the version active, so the bare name runs it. A job refuses any version that is not READY.
+The import's `warnings` name what a version will permanently lack: `no_solutions_archived` or `partial_solutions_archived` for the reference-solution record, `tasks_failed_to_build` when some tasks failed, `tests_dockerfile_not_built` for the tasks whose verifier never builds their `tests/Dockerfile`.
 
-Nothing is built for any sandbox provider at publish. The first trial of a task on a provider builds that provider's boot image from the task image, once, and every later trial on that provider starts from the cache.
+### Partially built versions
+
+On the version, `task_count` counts the READY tasks and `n_failed_tasks` the rest. `dataset show name@version` lists every failed task with its reason, and `dataset publish --watch` prints each task's outcome. A whole-dataset or glob job on such a version runs the READY tasks and says so in its `build_exclusions`. Naming a failed task explicitly at job create is refused with `task_failed_to_build`; a fix is a new version.
+
+### Version states
+
+A version moves `DRAFT` → `RECEIVING` (a large upload still streaming) → `IMPORTING` → `BUILDING` → `READY`, with `FAILED` and `ARCHIVED` as off-ramps. `READY` is the only state that accepts jobs.
+
+An import is `QUEUED` (`receiving: true` while the corpus is still uploading), `RUNNING`, `COMPLETED` (the version is READY) or `FAILED` (read `failure`). A finished import stays readable as long as its dataset exists.
 
 ## Versions
 
@@ -97,11 +119,19 @@ Each publish creates a version, and a version that lands READY is built and acti
 evolve dataset activate my-swe 1.0
 ```
 
+Activating the version that is already active succeeds without change. A version still building is refused with `version_not_ready`; a FAILED or ARCHIVED one with `version_not_activatable`.
+
 The owner of a dataset can download the original package back:
 
 ```bash
 evolve dataset download my-swe@1.0 -o corpora/
 ```
+
+It is the whole corpus you published, `solution/` included, and the one call that returns task files. Only the owner may: a platform dataset has no owner and cannot be downloaded, and someone else's dataset reads as not found.
+
+Deleting a dataset removes its versions, tasks and archived solutions. You must own it (`dataset_not_owned` on a platform dataset), and a dataset any job ran against is never deleted: `dataset_in_use` names the blocking jobs.
+
+A dataset published from git records what it was built from, and `dataset list` and `dataset show` print one line when the ref has moved upstream. A new version is always one you publish, unless you opt in with `datasets().update(name, { upstream_auto_import: true })`; that is refused with `upstream_not_watchable` on a dataset with no moving git ref.
 
 <Card title="dataset reference" icon="terminal" href="/cli-reference/dataset">
   Every flag of `evolve dataset`.

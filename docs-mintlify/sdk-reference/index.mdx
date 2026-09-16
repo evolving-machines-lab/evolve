@@ -53,4 +53,6 @@ One client per noun, each built by a factory. Every factory reads `EVOLVE_API_KE
   </Tab>
 </Tabs>
 
-The config has no timeout setting.
+The config has no timeout setting. The clients behind `hosted()` are built on first access, so `meta()` works before a key is set. Neither client follows a redirect with your key: Python raises the 3xx, TypeScript drops the `Authorization` header on a cross-origin redirect.
+
+Every object the clients return is catalogued on [types](/sdk-reference/types), and every refusal on [errors](/sdk-reference/errors).
