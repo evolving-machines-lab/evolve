@@ -358,7 +358,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     short: "r",
     value: "<n>",
     help: "Automatic retries per trial on infrastructure errors; 0 turns them off",
-    default: "the fleet default",
+    default: "the platform default",
     group: "Spend and retries",
   },
   "retry-include": {

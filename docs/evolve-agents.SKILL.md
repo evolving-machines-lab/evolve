@@ -132,16 +132,4 @@ Read on demand when the user's task requires them:
 | Chaining operations | [TS](references/typescript/05-swarm-pipeline.md#chaining-operations) | [PY](references/python/05-swarm-pipeline.md#chaining-operations) |
 | Pipeline (fluent chaining, events, terminal) | [TS](references/typescript/05-swarm-pipeline.md#pipeline) | [PY](references/python/05-swarm-pipeline.md#pipeline) |
 
-## Self-Update
-
-Pull the latest skill from the official repo:
-
-```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/evolving-machines-lab/evolve.git /tmp/evolve-update \
-  && cd /tmp/evolve-update \
-  && git sparse-checkout set skills/evolve-agents \
-  && cp -r skills/evolve-agents/* <SKILL_INSTALL_DIR>/evolve-agents/ \
-  && rm -rf /tmp/evolve-update
-```
-
-Replace `<SKILL_INSTALL_DIR>` with the skill installation path (e.g. `~/.claude/skills/`, `~/.agents/skills/`, `~/.gemini/skills/`).
+The installed CLI serves the current version of this skill: `evolve skills get agents --full`.

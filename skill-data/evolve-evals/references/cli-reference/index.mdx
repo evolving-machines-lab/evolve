@@ -7,7 +7,7 @@ description: "Every verb of the evolve command, from its own help output."
 evolve <command> [options]
 ```
 
-The `evolve` command starts jobs and reads everything back. Every verb accepts `--json` for machine-readable output, and `-h` or `--help` prints its flags and one example.
+The `evolve` command starts jobs and reads everything back. Every verb accepts `--json` for machine-readable output, and `-h` or `--help` prints its flags under short headings, with defaults, and one to three examples.
 
 ## Verbs
 
@@ -22,6 +22,7 @@ The `evolve` command starts jobs and reads everything back. Every verb accepts `
 
 | Group | Commands |
 | --- | --- |
+| [`skills`](/getting-started/skills) | `list`, `get`, `path`, `install` |
 | [`job`](/cli-reference/job) | `start`, `list`, `show`, `trials`, `tasks`, `compare`, `cancel`, `delete`, `stop`, `resume`, `retry`, `regrade`, `imports`, `import`, `download`, `grep` |
 | [`trial`](/cli-reference/trial) | `show`, `trace`, `download`, `retry`, `regrade`, `stop` |
 | [`analysis`](/cli-reference/analysis) | `list`, `show`, `trace`, `download` |
@@ -32,7 +33,7 @@ The `evolve` command starts jobs and reads everything back. Every verb accepts `
 | [`auth`](/cli-reference/auth) | `status`, `org list`, `org show` |
 | [`secrets`](/cli-reference/secrets) | `set`, `list`, `delete` |
 
-The singular noun is canonical; `jobs`, `trials`, `analyses`, `datasets` and `skills` are hidden aliases, as are `secret` for `secrets` and `ls` for `list`. `agents` is not an alias: it is reserved for the managed-agents CLI and refuses, pointing at `evolve agent`.
+The singular noun is canonical; `jobs`, `trials`, `analyses` and `datasets` are hidden aliases, as are `secret` for `secrets` and `ls` for `list`. `skills` is not the plural of `skill`: it is the group that serves the bundled skills to your coding agent. `agents` is not an alias: it is reserved for the managed-agents CLI and refuses, pointing at `evolve agent`.
 
 ## Global options
 

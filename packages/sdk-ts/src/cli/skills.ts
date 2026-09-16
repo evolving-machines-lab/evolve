@@ -17,7 +17,7 @@
  * not be shown it as a second skill.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -75,9 +75,10 @@ function isDirectory(path: string): boolean {
   }
 }
 
+/** A regular file: a symlink is not served, whatever it points at, as walkFiles skips it too. */
 function isFile(path: string): boolean {
   try {
-    return statSync(path).isFile();
+    return lstatSync(path).isFile();
   } catch {
     return false;
   }
@@ -190,7 +191,8 @@ export function pageNames(skill: Skill): string[] {
 
 /**
  * One reference page by its site path (`core-concepts/tasks`), the .mdx or
- * .md suffix optional. A path that leaves references/ is unknown, never read.
+ * .md suffix optional. A path that leaves references/, or a symlink, is
+ * unknown, never read.
  */
 export function findPage(skill: Skill, page: string): SkillPage {
   const refs = join(skill.dir, "references");

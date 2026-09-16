@@ -38,14 +38,11 @@ If judge criteria need API keys, request them through `task.toml`:
 ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 ```
 
-On Evolve the value is never a real key: the platform resolves this request at run time to
-a short-lived token scoped to the judge's model family (`ANTHROPIC_API_KEY` for
-`anthropic/*` models, `OPENAI_API_KEY` for `openai/*`), and the judge's spend is metered on
-its own. Write the template exactly as above, as the whole value; never put a key in the
-task. The platform never substitutes a judge model: the rubric names one, or Reward Kit's
-own default applies. A job can override the judge for every verifier with
-`evolve run --ve REWARDKIT_JUDGE=<judge> --ve REWARDKIT_MODEL=<model>`; no other verifier
-env key is accepted on a job.
+On Evolve you never put a real key in the task: write the template exactly as above, as
+the whole value, and the judge's credential is supplied at run time. The rubric names the
+judge model, or Reward Kit's own default applies. A job can override the judge for every
+verifier with `evolve run --ve REWARDKIT_JUDGE=<judge> --ve REWARDKIT_MODEL=<model>`; no
+other verifier env key is accepted on a job.
 
 Ask whether Reward Kit should run in the agent's shared environment or in a
 separate verifier environment. Prefer a separate verifier environment when judge

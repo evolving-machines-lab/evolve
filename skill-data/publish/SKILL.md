@@ -22,7 +22,7 @@ commands that upload.
 
 3. **Task layout**: a dataset is a folder of task directories, each with `task.toml`,
    `instruction.md`, `tests/test.sh`, and an `environment/` folder unless `task.toml`
-   names a prebuilt `docker_image` (the `create-task` skill has the format). The
+   names a prebuilt `docker_image` (`evolve skills get create-task` has the format). The
    directory name is the task's name: letters, digits, `.`, `_` and `-`, at most 128
    characters, starting with a letter or digit; use lowercase (Harbor's convention). A
    `dataset.toml` manifest at the root is optional.

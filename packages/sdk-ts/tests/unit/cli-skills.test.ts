@@ -19,7 +19,7 @@
  *   npx tsx tests/unit/cli-skills.test.ts
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,6 +104,8 @@ function writeFixture(): string {
   put("rewardkit/templates/criteria.toml", TEMPLATE);
   put("README.md", "a stray file at the top level\n");
   mkdirSync(join(dir, "notes"), { recursive: true });
+  // A symlink under references/ points at the stray: neither a page nor part of --full.
+  symlinkSync(join("..", "..", "README.md"), join(dir, "evolve-evals", "references", "linked.mdx"));
   return dir;
 }
 
@@ -189,6 +191,7 @@ async function main(): Promise<void> {
         "\n--- references/snippets/global-options.mdx ---\n\n" + SNIPPET;
       assertEqual(stdout(full), expected, "SKILL.md, then each reference in sorted path order behind its separator");
       assert(!stdout(full).includes("not served by --full"), "a file outside references/ and templates/ is not part of --full");
+      assert(!stdout(full).includes("a stray file at the top level"), "a symlink under references/ is not part of --full");
 
       const templates = captureIO();
       assertEqual(await runCli(["skills", "get", "rewardkit", "--full"], templates.io), 0, "get rewardkit --full exits 0");
@@ -246,6 +249,12 @@ async function main(): Promise<void> {
 
       const escape = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "../SKILL"], escape.io), 1, "a page path that leaves references/ is refused");
+
+      const linked = captureIO();
+      assertEqual(await runCli(["skills", "get", "evals", "linked"], linked.io), 1, "a symlink under references/ is not a page");
+      const listedPages = (/pages: ([^)]*)\)/.exec(linked.err.join("\n"))?.[1] ?? "").split(", ");
+      assert(!listedPages.includes("linked"), "and is not listed among the pages either");
+      assert(stdout(linked) === "", "nothing of the link's target is printed");
 
       const fullPage = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "core-concepts/tasks", "--full"], fullPage.io), 2, "--full on a page is a usage error (a page is one file)");
@@ -390,6 +399,13 @@ async function main(): Promise<void> {
       const missing = captureIO();
       assertEqual(await runCli(["skills", "list"], missing.io), 1, "EVOLVE_SKILLS_DIR pointing at nothing is a refusal");
       assert(missing.err.join("\n").includes("EVOLVE_SKILLS_DIR") && missing.err.join("\n").includes("does-not-exist"), "that names the variable and the path");
+      const missingJson = captureIO();
+      assertEqual(await runCli(["skills", "list", "--json"], missingJson.io), 1, "under --json the refusal still exits 1");
+      assertEqual(
+        JSON.parse(missingJson.out.join("\n")),
+        { error: { message: `EVOLVE_SKILLS_DIR points at nothing: ${join(fixture, "does-not-exist")}` } },
+        "and stdout carries { error: { message } }"
+      );
 
       delete process.env.EVOLVE_SKILLS_DIR;
       const checkout = captureIO();

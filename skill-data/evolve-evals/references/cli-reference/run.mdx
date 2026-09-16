@@ -68,7 +68,7 @@ evolve run \
 Each of these applies to every arm of the job.
 
 <ParamField path="--effort" type="value">
-  Reasoning effort for every arm. The accepted values are listed in the capability document at `GET https://dashboard.evolvingmachines.ai/api/meta`, which needs no key. Applied verbatim: an agent that cannot honor it is refused by the server, never silently skipped.
+  Reasoning effort for every arm, applied verbatim. The values each harness accepts are on the [models](/core-concepts/models#reasoning-effort) page and in the [capability document](/sdk-reference/meta). An agent that cannot honor the value is refused, never silently skipped.
 </ParamField>
 
 <ParamField path="--preset" type="name">

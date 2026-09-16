@@ -21,7 +21,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -176,6 +176,34 @@ try {
   const skillsList = runNode(binLink, ["skills", "list", "--json"]);
   assert(skillsList.code === 0, "skills list --json through the .bin link exits 0");
   assert(skillsList.stdout.includes('"name":"evals"'), "and serves the evals skill");
+
+  // ---- NO SKILLS DIRECTORY ANYWHERE: the typed refusal, human and --json ----
+  // A copy of dist/ under a package root that has no skill-data/ and no
+  // repo root above it: both candidates are absent, so the CLI must refuse
+  // by name instead of serving nothing. node_modules is linked in so the
+  // copy resolves its dependencies like an installed package.
+  const bare = join(workDir, "bare", "pkg");
+  mkdirSync(bare, { recursive: true });
+  cpSync(join(PACKAGE_ROOT, "dist"), join(bare, "dist"), { recursive: true });
+  symlinkSync(join(PACKAGE_ROOT, "..", "..", "node_modules"), join(bare, "node_modules"));
+  const noSkills = runNode(join(bare, "dist", "cli", "index.js"), ["skills", "list"]);
+  assert(noSkills.code === 1, "no skill-data anywhere: skills list exits 1");
+  assert(
+    noSkills.stderr.includes("skills directory not found; set EVOLVE_SKILLS_DIR or reinstall"),
+    `the refusal names the variable and the remedy (stderr: ${noSkills.stderr.trim()})`,
+  );
+  const noSkillsJson = runNode(join(bare, "dist", "cli", "index.js"), ["skills", "list", "--json"]);
+  assert(noSkillsJson.code === 1, "with --json it still exits 1");
+  let body: { error?: { message?: string } } = {};
+  try {
+    body = JSON.parse(noSkillsJson.stdout) as typeof body;
+  } catch {
+    body = {};
+  }
+  assert(
+    typeof body.error?.message === "string" && body.error.message.startsWith("skills directory not found"),
+    "and stdout carries { error: { message } }",
+  );
 
   // ---- THE GATE STILL SHUTS: importing the module must not run main() ----
   // This is what the gate is for. A fix that simply always ran main() would
