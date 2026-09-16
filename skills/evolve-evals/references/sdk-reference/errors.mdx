@@ -24,7 +24,7 @@ A refused request raises one class. Branch on its `code`, never on the message.
 
     ```ts
     try {
-      await jobs().start({ datasets: [{ name: "terminal-bench-4" }], agents: [{ name: "codex", model_name: "gpt-5.5" }], sandbox_provider: "modal" });
+      await jobs().start({ datasets: [{ name: "terminal-bench-4" }], agents: [{ name: "codex", model_name: "gpt-6-astra" }], sandbox_provider: "modal" });
     } catch (err) {
       if (err instanceof EvolveApiError && err.code === "provider_unsupported") {
         const { refused_tasks } = err.details as { refused_tasks: { task_name: string; reason: string }[] };
@@ -50,7 +50,7 @@ A refused request raises one class. Branch on its `code`, never on the message.
 
     ```python
     try:
-        await jobs().start(datasets=[{"name": "terminal-bench-4"}], agents=[{"name": "codex", "model_name": "gpt-5.5"}], sandbox_provider="modal")
+        await jobs().start(datasets=[{"name": "terminal-bench-4"}], agents=[{"name": "codex", "model_name": "gpt-6-astra"}], sandbox_provider="modal")
     except EvolveAPIError as err:
         if err.code == "provider_unsupported":
             refused = (err.details or {}).get("refused_tasks", [])

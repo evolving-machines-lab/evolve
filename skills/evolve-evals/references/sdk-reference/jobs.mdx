@@ -23,7 +23,7 @@ description: "Start, follow, and derive jobs."
     ```ts
     const job = await jobs().start({
       datasets: [{ name: "terminal-bench-4", version: "4.0", n_tasks: 5 }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-astra" }],
     });
     ```
   </Tab>
@@ -57,7 +57,7 @@ description: "Start, follow, and derive jobs."
     ```python
     job = await jobs().start(
         datasets=[{"name": "terminal-bench-4", "version": "4.0", "n_tasks": 5}],
-        agents=[{"name": "codex", "model_name": "gpt-5.5"}],
+        agents=[{"name": "codex", "model_name": "gpt-6-astra"}],
     )
     ```
   </Tab>

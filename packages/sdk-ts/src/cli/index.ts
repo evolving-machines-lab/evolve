@@ -456,7 +456,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
 /** `run` and `job start` share these; `run` spells them as `evolve run`. */
 function jobStartExamples(command: string): string[] {
   return [
-    `${command} -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -l 5 --watch`,
+    `${command} -d terminal-bench-4@4.0 -a codex -m gpt-6-astra -l 5 --watch`,
     `${command} \\\n-d deep-swe@1.1 \\\n-a claude -m fable \\\n--skills skills.sh/acme/skills/pdf \\\n--secret GITHUB_TOKEN \\\n-k 2 -n 8 \\\n--analyze --watch`,
     `${command} -c job.yaml --print-config`,
   ];
@@ -1703,7 +1703,7 @@ function rootHelp(): string {
     ...flagLines({ ...GLOBAL_FLAGS, version: { kind: "boolean", short: "v", help: "Print the CLI version" } }),
     "",
     "Examples:",
-    "  evolve run -d terminal-bench-4@4.0 -a codex -m gpt-5.5 -l 5 --watch",
+    "  evolve run -d terminal-bench-4@4.0 -a codex -m gpt-6-astra -l 5 --watch",
     "  evolve job list",
     "  evolve skills get evals core-concepts/jobs",
   );

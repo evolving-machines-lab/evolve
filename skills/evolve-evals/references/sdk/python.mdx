@@ -23,7 +23,7 @@ evals = jobs()
 ```python
 job = await evals.start(
     datasets=[{"name": "terminal-bench-4", "version": "4.0", "n_tasks": 5}],
-    agents=[{"name": "codex", "model_name": "gpt-5.5"}],
+    agents=[{"name": "codex", "model_name": "gpt-6-astra"}],
     n_attempts=1,
     n_concurrent_trials=4,
     max_trial_spend_usd=25,

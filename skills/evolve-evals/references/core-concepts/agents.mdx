@@ -34,7 +34,7 @@ These flags apply to every arm of the job.
 evolve run \
   -d terminal-bench-4@4.0 \
   -a codex \
-  -m gpt-5.5 \
+  -m gpt-6-astra \
   -l 5 \
   --effort high \
   --preset no-internet \
@@ -56,7 +56,7 @@ evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headle
 evolve run \
   -d terminal-bench-4@4.0 \
   -a acme-cli \
-  -m gpt-5.5 \
+  -m gpt-6-astra \
   -l 5 \
   --watch
 ```
