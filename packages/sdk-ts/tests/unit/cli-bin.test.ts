@@ -187,7 +187,7 @@ try {
   cpSync(join(PACKAGE_ROOT, "dist"), join(bare, "dist"), { recursive: true });
   symlinkSync(join(PACKAGE_ROOT, "..", "..", "node_modules"), join(bare, "node_modules"));
   const noSkills = runNode(join(bare, "dist", "cli", "index.js"), ["skills", "list"]);
-  assert(noSkills.code === 1, "no skill-data anywhere: skills list exits 1");
+  assert(noSkills.code === 1, "no skills root anywhere: skills list exits 1");
   assert(
     noSkills.stderr.includes("skills directory not found; set EVOLVE_SKILLS_DIR or reinstall"),
     `the refusal names the variable and the remedy (stderr: ${noSkills.stderr.trim()})`,

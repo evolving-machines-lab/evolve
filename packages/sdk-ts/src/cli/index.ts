@@ -1713,7 +1713,7 @@ function rootHelp(): string {
 
 export const USAGE = rootHelp();
 
-/** The package root: two levels up from both src/cli/ and dist/cli/ (package.json, skill-data/). */
+/** The package root: two levels up from both src/cli/ and dist/cli/ (package.json, docs-evals/, docs-agents/, skills/). */
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 function cliVersion(): string {
