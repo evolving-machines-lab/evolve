@@ -32,12 +32,14 @@ The `evolve` command starts jobs and reads everything back. Every verb accepts `
 | [`auth`](/cli-reference/auth) | `status`, `org list`, `org show` |
 | [`secrets`](/cli-reference/secrets) | `set`, `list`, `delete` |
 
+The singular noun is canonical; `jobs`, `trials`, `analyses`, `datasets` and `skills` are hidden aliases, as are `secret` for `secrets` and `ls` for `list`. `agents` is not an alias: it is reserved for the managed-agents CLI and refuses, pointing at `evolve agent`.
+
 ## Global options
 
 These work on every command.
 
 <ParamField path="--json">
-  Machine-readable JSON output.
+  Machine-readable JSON output. A refusal then prints one `{"error": {...}}` object on stdout with the server's `code`, `message`, `param`, `details`, `retryAfterSec` and `request_id` when present.
 </ParamField>
 
 <ParamField path="--api-key" type="key">
@@ -51,6 +53,18 @@ These work on every command.
 <ParamField path="-v, --version">
   Print the CLI version.
 </ParamField>
+
+## Ids
+
+Every verb that takes an id (`job`, `trial`, `analysis`, `check` with a check id or a task check id, `skill`) also takes an unambiguous prefix of at least 8 characters. A prefix that matches nothing or more than one row is refused naming the candidates. A full id is never prefix-matched, `name:<skill-name>` is a name, and a job import id is taken as printed.
+
+A trial prefix is resolved against every trial of every job in scope, so on an account with many jobs the lookup can hit the rate limit; the full id, which `evolve job trials <job>` prints, always works.
+
+## Output
+
+Human tables on a TTY, tab-separated rows when piped, `--json` for the machine shape (NDJSON under `--watch`), and `-q` for ids only. `--no-trunc` disables cell truncation and `--no-headers` drops the header row from piped output. A money cell carries its state: `$0.06` is final, `at least $0.06` is still being written, `-` means not measured yet.
+
+`--columns` chooses and orders list columns, comma-separated; `--columns help` prints the keys. For `job list` they are `id`, `name`, `status`, `datasets`, `agents`, `trials`, `spent`, `started`; for `job trials` `task`, `agent`, `attempt`, `status`, `reward`, `spent`, `tokens`, `gpu`, `id`; for `analysis list` `id`, `status`, `task`, `job`, `trial`, `model`, `attempts`, `spent`, `created`, `finished`.
 
 ## Listing flags
 
@@ -79,3 +93,15 @@ Every `list` command, and `job trials`, `job tasks` and `job imports`, share one
 <ParamField path="--no-headers">
   Omit the header row in piped (TSV) output.
 </ParamField>
+
+## Scope
+
+`--scope` on `job list`, `analysis list` and `check list` is `my`, what you created and the default, or `shared`, your organizations' rows that teammates created. `all` is refused. Every id printed under either scope resolves on its `show`, `trace` and `download`; an id outside your organizations answers the noun's not-found code, exactly like an id that does not exist.
+
+## Values
+
+A flag's value may begin with `-`, such as `-x '-*'` or a negative number. Only a token that spells another flag of the same command is refused, and the refusal shows the `--flag=value` form. A typo in `--stream`, `--status`, `--scope` or `run`'s `-e` is a usage error naming the legal values, before any request.
+
+## Exit codes
+
+`0` on success (with `--watch`: the job `COMPLETED`, a publish settled `READY`, every analysis completed, no task check errored). `1` on a runtime or API failure (with `--watch`: `FAILED` or `CANCELLED`, a failed analysis, an errored task check). `2` on a usage error, and on a quota refusal, which prints `Launch quota exceeded:` with the server's sentence. A rate limit prints one line with the wait and exits 1; the SDK's watch loops wait it out on their own.

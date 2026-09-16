@@ -3,7 +3,7 @@ title: "auth and orgs"
 description: "Who you are, and your organizations."
 ---
 
-`auth()` returns the identity client, `orgs()` the organizations client.
+`auth()` returns the identity client, `orgs()` the organizations client. Every job, dataset and analysis belongs to an organization, today your personal one; the API accepts an `org` on a job or a publish, but the SDK and CLI do not name one yet.
 
 ## auth.status
 
@@ -13,7 +13,7 @@ description: "Who you are, and your organizations."
     status(): Promise<AuthStatus>
     ```
 
-    The caller and the API key in use. The key's secret is never returned.
+    The caller and the API key in use: `user_id`, `email`, and `key` with `id`, `label`, `created_at` and `last_used_at`. The key's secret is never returned, and `last_used_at` is always null today.
 
     ```ts
     const me = await auth().status();
@@ -60,3 +60,17 @@ description: "Who you are, and your organizations."
     ```
   </Tab>
 </Tabs>
+
+## Quota and usage
+
+`quota` is nine ceilings, each the value the platform administrator set or the fleet default; only the administrator's dashboard sets them, never a key or the SDK.
+
+- `max_queued_trials`: the one that refuses. A job whose trials would not fit is refused with `quota_exceeded`.
+- `max_concurrent_trials`, `max_concurrent_imports`, `max_concurrent_analyses` (trace analyses and task checks under one count): work beyond them waits.
+- `monthly_budget_usd`: model spend allowed per UTC calendar month; a trial it refuses settles `BUDGET` with `team:` in its message. Null means no monthly budget.
+- `max_concurrent_sandboxes_e2b`, `_daytona`, `_modal`: the organization's sandboxes in flight per provider, trials, analyses, regrade verifiers and managed sessions together; work beyond one waits, and an organization with no value of its own reads the platform's fleet ceiling.
+- `max_concurrent_sessions`: managed-agent sessions open at once; recorded, not yet enforced.
+
+A `0` pauses that kind of work: creates are refused at `max_queued_trials` 0, work waits at 0 on the concurrency ceilings, and `monthly_budget_usd` 0 pauses all model spend for the month.
+
+`usage` is the live load: `in_flight_trials`, `queued_trials`, `in_flight_imports`, `in_flight_analyses`, `active_sessions` (always 0 on a shared organization), and `month_spend_usd` with `month_spend_as_of`, the month-to-date model spend as of that time (UTC calendar month, reset on the 1st); it may lag by a few minutes. It is null, never 0, when no reading is held; `evolve auth org show` prints `unavailable` then.

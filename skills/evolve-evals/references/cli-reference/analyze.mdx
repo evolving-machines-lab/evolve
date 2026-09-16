@@ -9,7 +9,7 @@ import GlobalOptions from '/snippets/global-options.mdx';
 evolve analyze <job-id> [options]
 ```
 
-Analyze a terminal job's trial traces against a rubric. The analyses run server-side; add `--watch` to follow the batch of analyses.
+Analyze a terminal job's trial traces against a rubric, server-side. Without `--watch` the command returns at once with the job block and the hint `Follow it with: evolve job show <id>`; `--json` prints the accepted job body. Exit 0 on an accepted wave; with `--watch`, exit 1 when any analysis failed.
 
 ```bash
 evolve analyze 3e1f9a2c-… \
@@ -32,19 +32,19 @@ evolve analyze 3e1f9a2c-… \
 </ParamField>
 
 <ParamField path="-r, --rubric" type="path">
-  Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's analyze rubric, seven criteria with `score_is_earned` first.
+  Rubric file: TOML (one `[[criteria]]` table per criterion), YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape, parsed at the keyboard with unknown fields refused by name; the server owns the bounds. Defaults to the platform's analyze rubric, seven criteria with `score_is_earned` first.
 </ParamField>
 
 <ParamField path="-p, --prompt" type="path">
-  Prompt file for the evaluator agent. Its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
+  Prompt file for the evaluator agent; its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered, `{{` and `}}` writing a literal brace, and an unknown `{token}` rendering empty. The instructions for writing the result are appended after it. An empty file is refused; there is no length bound. Defaults to the built-in prompt.
 </ParamField>
 
 <ParamField path="-e, --env" type="provider">
-  Sandbox provider the analyzer runs on. Defaults to the platform's analysis default.
+  Sandbox provider the analyzer runs on. Defaults to `daytona`.
 </ParamField>
 
 <ParamField path="-n, --n-concurrent" type="n">
-  Max concurrent trial analyses, beneath the organization's ceiling. Defaults to the ceiling.
+  Max concurrent trial analyses, 1 to 150, beneath the organization's `max_concurrent_analyses` (fleet default 60). Defaults to the ceiling.
 </ParamField>
 
 <ParamField path="--passing">
@@ -60,7 +60,7 @@ evolve analyze 3e1f9a2c-… \
 </ParamField>
 
 <ParamField path="--watch">
-  Poll until every analysis settles: 2 seconds between reads, backing off to 30 seconds while nothing changes.
+  Poll until every analysis settles, then print one row per analyzed trial: the label (`custom rubric` when there is none), the criterion outcomes, the analyzer's cost and a summary excerpt, with failed analyses listed below. With `--json`, NDJSON envelopes: `analysis.accepted`, `analysis.stats` per change, `analysis.final` with the job and the analyzed trials.
 </ParamField>
 
 <ParamField path="-q, --quiet">

@@ -17,7 +17,9 @@ Every command below takes the [global options](/cli-reference#global-options).
 evolve trial show <trial-id>
 ```
 
-Show one trial in full detail.
+Show one trial in full detail: its status, reward, `tokens`, `spent` and `spent (judge)` rows, `gpu compute (est.)` on a GPU trial, the exception when it failed, and its latest analysis with the verdicts, the summary and the typed failure. An uploaded trial prints its provider as `ported` and its reported figures apart from the metered ones.
+
+There is no `trial files` or `trial read` verb; listing and reading a trial's stored files is SDK-only, `trials().files()` and `file()`.
 
 ## trial trace
 
@@ -28,23 +30,23 @@ evolve trial trace <trial-id> [options]
 Print a trial's parsed trace, filtered server-side.
 
 <ParamField path="--type" type="event-type">
-  Only events of exactly this type.
+  Only events of exactly this type. At most 100 characters.
 </ParamField>
 
 <ParamField path="--grep" type="pattern">
-  Only events matching this case-insensitive regex over type and content. A plain string is a plain substring.
+  Only events matching this case-insensitive regex over type and content. A plain string is a plain substring. At most 512 characters; an invalid pattern is refused by the server with `invalid_input`.
 </ParamField>
 
 <ParamField path="--tail" type="n">
-  Only the last N matching events.
+  Only the last N matching events, 1 to 10000, then paged oldest first.
 </ParamField>
 
 <ParamField path="--cursor" type="seq">
-  Resume after this sequence number.
+  Resume after this sequence number. The filters compose with it.
 </ParamField>
 
 <ParamField path="-l, --limit" type="n" default="200">
-  Events per page fetch. Max 1000.
+  Events per page fetch, not a total: the command drains the filtered trace. Max 1000.
 </ParamField>
 
 ```bash

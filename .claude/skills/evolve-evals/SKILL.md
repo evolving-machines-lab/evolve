@@ -104,3 +104,5 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 | [agents](references/sdk-reference/agents.mdx) | Register and manage your own agents. |
 | [auth and orgs](references/sdk-reference/auth.mdx) | Who you are, and your organizations. |
 | [meta](references/sdk-reference/meta.mdx) | The platform's capability document, no key needed. |
+| [Types](references/sdk-reference/types.mdx) | Every field of the objects the clients return: name, type, meaning, and when it is null. |
+| [Errors](references/sdk-reference/errors.mdx) | The error class every refused request raises, and every code it can carry. |

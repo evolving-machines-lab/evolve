@@ -48,7 +48,7 @@ evolve job list --limit 20 -q
 evolve job show <id> [id...]
 ```
 
-Show one or more jobs in full, including pass@k once every attempt has settled.
+Show one or more jobs in full. It ends with a pass@k block, one line per arm and dataset that has numbers; `--json` carries the raw `stats.evals[].pass_at_k`. An `analyze` row holds the embedded policy and an `analysis` row the tally with the analyzer's spend. An uploaded job prints its provider as `ported` and its spend as `reported $X.XX (N/M trials reporting)`.
 
 ## job trials
 
@@ -104,10 +104,10 @@ Request cancellation of a job.
 evolve job delete <id> [options]
 ```
 
-Permanently delete a job you created: its trials, traces, analyses and stored files.
+Permanently delete a job you created: its trials, traces, analyses and stored files. It names the job, then asks. Another member of the organization is refused with `org_forbidden`; a live job, a running analysis wave or a live regrade refuses as on [jobs](/core-concepts/jobs#stop-cancel-delete).
 
 <ParamField path="-y, --yes">
-  Delete without a confirmation prompt.
+  Delete without a confirmation prompt. On a non-interactive stdin the command refuses without it, rather than guessing. With `--json` the receipt is `{"job_id", "trials_deleted", "analyses_deleted"}`.
 </ParamField>
 
 ## job stop
@@ -116,7 +116,7 @@ Permanently delete a job you created: its trials, traces, analyses and stored fi
 evolve job stop <id> --dataset <name>
 ```
 
-Stop one dataset's live trials without cancelling the job.
+Stop one dataset's live trials without cancelling the job. Trials already settled are reported as already terminal, and a dataset the job never spanned is refused. If the command fails part way (a rate limit, say), the report prints first, marked `PARTIAL` with the trials no answer came back for (`partial: true` and `unreported` under `--json`), then the error, exit 1; re-running the same command finishes the rest.
 
 <ParamField path="--dataset" type="name" required>
   The dataset whose live trials to stop.
@@ -190,7 +190,7 @@ List your job imports (uploads), newest first. This is how an import id is found
 evolve job import <import-id> [options]
 ```
 
-Show one job import, an upload's record.
+Show one job import, an upload's record, with a `skipped` count and one line per skipped trial when the ingest left any out.
 
 <ParamField path="--watch">
   Poll until the import settles: `COMPLETED`, and the job is printed, or `FAILED`.
@@ -218,7 +218,7 @@ Download the job's results, unpacked as the standard job-directory tree plus `ev
 evolve job grep <id> <pattern> [options]
 ```
 
-Search every trial's parsed trace in one server-side pass.
+Search every trial's parsed trace in one server-side pass and print one line per matching trial with its sampled events. The pattern grammar and the page semantics are on [`jobs().grep()`](/sdk-reference/jobs#grep).
 
 <ParamField path="--type" type="event-type">
   Only search events of exactly this type.

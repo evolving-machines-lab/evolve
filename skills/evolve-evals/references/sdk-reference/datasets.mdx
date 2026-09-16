@@ -21,7 +21,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     ): Promise<ActiveDataset>
     ```
 
-    The catalog, one dataset with one page of its tasks, or the active version alone. `getActive` throws `NoActiveVersionError` when nothing is runnable.
+    The catalog, one dataset with one page of its tasks (default 200, at most 500), or the active version alone. `getActive` throws `NoActiveVersionError` when nothing is runnable. A task row carries public fields only; see [Task](/sdk-reference/types#task).
 
     ```ts
     const dataset = await datasets().get("terminal-bench-4@4.0");
@@ -128,7 +128,9 @@ description: "The catalog: list, read, publish, download, activate, delete."
     publish(input: { source: DatasetSource; name?: string; version?: string }, options?: { onUploadProgress?: (sentBytes: number, totalBytes: number) => void; onRegistered?: (importId: string) => void }): Promise<DatasetImport>
     ```
 
-    Publish a version. `source` is `{ git_url, git_ref, git_path? }`, `{ directory }`, `{ archive_url }` or `{ hub_package }`. Returns the import record; follow it with `watchImport`.
+    Publish a version from one `source`: `{ git_url, git_ref, git_path? }` (an `https://` URL, and a subfolder that exists at the ref), `{ directory }`, `{ archive_url }` or `{ hub_package }`. Returns the import record; follow it with `watchImport`.
+
+    `onUploadProgress` reports sent bytes for a directory source, and `onRegistered` fires once with the import id when a large upload begins. What is packed is on [datasets](/core-concepts/datasets#publish-your-own).
 
     ```ts
     const imp = await datasets().publish({
@@ -177,7 +179,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     listImports(options?: { status?: DatasetImportStatus; dataset?: string; limit?: number; cursor?: string }): DatasetImportList
     ```
 
-    Read one publish, follow it until the version is READY or FAILED, or list your publishes.
+    Read one publish, follow it until the version is READY or FAILED, or list your publishes. `watchImport` polls every `pollIntervalMs` (default 2000): `onStatus` fires on every status change, `onProgress` on every change of the five-phase `progress` (`extracting`, `parsing`, `building`, `copying`, `verifying`), `onVersion` on the version's state. `settleTimeoutMs` (default 30 minutes) bounds the wait; past it the watch throws `ImportSettleError` with the last observed state. `listImports` filters by `status` and `dataset`.
 
     ```ts
     const done = await datasets().watchImport(imp.id);
@@ -205,7 +207,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     )
     ```
 
-    Read one publish, follow it until the version is READY or FAILED, or list your publishes.
+    Read one publish, follow it until the version is READY or FAILED, or list your publishes. `watch_import` polls every `poll_interval_s`: `on_status` fires on every status change, `on_progress` on every change of the five-phase `progress` (`extracting`, `parsing`, `building`, `copying`, `verifying`), `on_version` on the version's state. `settle_timeout_s` (default 30 minutes) bounds the wait; past it the watch raises `ImportSettleError` with the last observed state. `list_imports` filters by `status` and `dataset`.
 
     ```python
     done = await datasets().watch_import(imp.id)
@@ -229,7 +231,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     ): Promise<ReadableStream<Uint8Array>>
     ```
 
-    The original package of a dataset you own: the bytes, the saved file's path, or a stream.
+    The original package of a dataset you own: the bytes, the saved file's path, or a stream. The Buffer and `{ to }` shapes verify the download against the digest the server states and throw `EvolveDigestMismatchError` on a mismatch; `{ stream: true }` is unverified. A version published before packages were retained answers `package_not_retained`. Prefer `{ to }` for anything sizeable.
 
     ```ts
     const path = await datasets().download(
@@ -247,7 +249,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     )
     ```
 
-    The original package of a dataset you own: the bytes, or with `to` the saved file's path.
+    The original package of a dataset you own: the bytes, or with `to` the saved file's path. Both shapes verify the download against the digest the server states, raising `EvolveDigestMismatchError` on a mismatch. A version published before packages were retained answers `package_not_retained`. Prefer `to` for anything sizeable.
 
     ```python
     path = await datasets().download(
@@ -274,7 +276,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     delete(name: string): Promise<void>
     ```
 
-    Make a READY version the active one, switch automatic import of new upstream versions, or delete a dataset you own.
+    Make a READY version the active one (`version_not_ready` while building, `version_not_activatable` for FAILED or ARCHIVED), switch automatic import of new upstream versions (`upstream_not_watchable` without a moving git ref), or delete a dataset you own (`dataset_not_owned` on a platform dataset, `dataset_in_use` naming the jobs that reference it).
 
     ```ts
     await datasets().activate("my-swe", "1.0");
@@ -294,7 +296,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     async def delete(name: str) -> None
     ```
 
-    Make a READY version the active one, switch automatic import of new upstream versions, or delete a dataset you own.
+    Make a READY version the active one (`version_not_ready` while building, `version_not_activatable` for FAILED or ARCHIVED), switch automatic import of new upstream versions (`upstream_not_watchable` without a moving git ref), or delete a dataset you own (`dataset_not_owned` on a platform dataset, `dataset_in_use` naming the jobs that reference it).
 
     ```python
     await datasets().activate("my-swe", "1.0")

@@ -29,7 +29,9 @@ const job = await evals.start({
 console.log(job.id, job.status);   // "QUEUED"
 ```
 
-`datasets` is a list of selectors. A bare `name` resolves to the active version; `task_names`, `exclude_task_names` and `n_tasks` narrow the task set. Every arm in `agents` names a `model_name`, and `version`, `reasoning_effort`, `kwargs`, `preset` and `skills` are optional. `sandbox_provider` picks `"e2b"`, `"daytona"` or `"modal"`. The fields are the same ones a `-c` config file takes on the CLI.
+`datasets` is a list of selectors. A bare `name` resolves to the active version; `task_names`, `exclude_task_names` and `n_tasks` narrow the task set.
+
+Every arm in `agents` names a `model_name`, and `version`, `reasoning_effort`, `kwargs`, `preset` and `skills` are optional. `sandbox_provider` picks `"e2b"`, `"daytona"` or `"modal"`. The fields are the same ones a `-c` config file takes on the CLI.
 
 ## Wait for it
 
@@ -64,7 +66,7 @@ const failures = await evals.trials(job.id, {
 });
 ```
 
-Every list on this surface works the same way: await it for one page, iterate it to walk every page.
+Every list on this surface works the same way: await it for one page, iterate it to walk every page. `passAtK(job)` reads a finished job's pass@k out of its stats as sorted numbers. A refused request throws `EvolveApiError`; see [errors](/sdk-reference/errors).
 
 A trial id is global, so `trials()` reaches one without the job.
 
