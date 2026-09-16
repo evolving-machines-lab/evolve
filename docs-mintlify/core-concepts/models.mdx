@@ -3,7 +3,7 @@ title: "Models"
 description: "How a model is named on -m, and why one API key covers every provider."
 ---
 
-`-m` names the model an arm runs, as the harness knows it. One `EVOLVE_API_KEY` covers every provider: you never configure a provider key for a job, and every model call a trial makes is metered against the trial's spend cap.
+`-m` names the model an arm runs, as the harness knows it. One `EVOLVE_API_KEY` covers every provider: you never configure a provider key for a job, and every model call that goes through the platform's gateway is metered against the trial's spend cap. The cap is airtight only on a task that declares `no-network`; under `allowlist` or `public` an agent can reach a provider directly with a key of its own, and that traffic is neither metered nor capped.
 
 ```bash
 evolve run \

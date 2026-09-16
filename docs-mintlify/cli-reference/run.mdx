@@ -84,7 +84,7 @@ Each of these applies to every arm of the job.
 </ParamField>
 
 <ParamField path="--ae, --agent-env" type="KEY=VALUE">
-  Environment for every agent run. Repeatable. A pass-through slot the server owns.
+  Sent as the job's `agent_env`, which the server refuses on this deployment: the create fails naming the two `--ve` keys it honors instead. Agent environment comes from the task's `[environment.env]` table or an attached `--secret`.
 </ParamField>
 
 <ParamField path="--ve, --verifier-env" type="KEY=VALUE">

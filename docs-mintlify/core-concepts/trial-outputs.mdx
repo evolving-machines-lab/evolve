@@ -40,11 +40,11 @@ The trial download carries the text view of the home. A file that is not UTF-8 t
 Every harness prints its run in its own format. The platform parses that stream into one vocabulary, the parsed trace, which the dashboard shows and `evolve trial trace` prints. Each event is one JSON object: `seq`, a position that also serves as a resume cursor; `type`, the kind of event; and `data`, the harness's update as parsed.
 
 ```json
-{"seq": 1, "type": "prompt", "data": {"_prompt": {"text": "Create hello.txt containing Hello."}}}
-{"seq": 2, "type": "agent_message_chunk", "data": {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "I'll create the file."}}}}
-{"seq": 3, "type": "tool_call", "data": {"update": {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Write hello.txt", "kind": "edit", "status": "pending"}}}
-{"seq": 4, "type": "tool_call_update", "data": {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed"}}}
-{"seq": 5, "type": "usage", "data": {"update": {"sessionUpdate": "usage", "scope": "call", "usage": {"promptTokens": 812, "completionTokens": 64}}}}
+{"seq": 0, "type": "prompt", "data": {"_prompt": {"text": "Create hello.txt containing Hello."}}}
+{"seq": 1, "type": "agent_message_chunk", "data": {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "I'll create the file."}}}}
+{"seq": 2, "type": "tool_call", "data": {"update": {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Write hello.txt", "kind": "edit", "status": "pending"}}}
+{"seq": 3, "type": "tool_call_update", "data": {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed"}}}
+{"seq": 4, "type": "usage", "data": {"update": {"sessionUpdate": "usage", "scope": "call", "usage": {"promptTokens": 812, "completionTokens": 64}}}}
 ```
 
 The kinds are `prompt` for the instruction the agent received, `user_message_chunk`, `agent_message_chunk` and `agent_thought_chunk` for text, `tool_call` and `tool_call_update` for a tool call and its later status and output, `plan` for the agent's plan entries, `usage` for token counts, `error` for a failure the harness reported, and `trace_loss` when events were lost. A tool call's `kind` is one of the parser's kinds, such as `read`, `edit` or `execute`, and its `status` moves through `pending`, `in_progress`, `completed` or `failed`. Once the trial is finished, the gateway's own `usage` events follow the harness's, one per model call, with the tokens and the cost as the gateway priced them.

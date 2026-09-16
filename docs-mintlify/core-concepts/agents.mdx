@@ -38,13 +38,14 @@ evolve run \
   -l 5 \
   --effort high \
   --preset no-internet \
-  --ak config=./codex-settings.json \
-  --ae RUST_LOG=info
+  --ak config=./codex-settings.json
 ```
 
-`--effort <value>` sets the reasoning effort. `--preset <name>` applies a named settings bundle: `no-internet` turns the vendor's server-side web tools off, `pinned-context` fixes the context window. `--ak config=<path|inline JSON>` becomes the harness's native settings file inside the sandbox; your document is the base and the platform's routing sits on top. `--ae KEY=VALUE` sets an environment variable for every agent run.
+`--effort <value>` sets the reasoning effort. `--preset <name>` applies a named settings bundle: `no-internet` turns the vendor's server-side web tools off, `pinned-context` fixes the context window. `--ak config=<path|inline JSON>` becomes the harness's native settings file inside the sandbox; your document is the base and the platform's routing sits on top.
 
 An effort or preset a harness cannot honor is refused when the job is created, never silently skipped. So is a config key that touches billing, base URLs, routing or environment.
+
+Environment for the agent comes from two places, and a job cannot add a third: a task's own `[environment.env]` table, and a secret attached with `--secret`. The server refuses `agent_env` (the `--ae` flag) on job create. See [secrets](/core-concepts/secrets) and [tasks](/core-concepts/tasks#environment-variables).
 
 ## Register your own agent
 
