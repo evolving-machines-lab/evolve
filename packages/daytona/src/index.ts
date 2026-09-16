@@ -55,6 +55,33 @@ import type {
   SandboxState as DaytonaApiSandboxState,
 } from "@daytonaio/sdk";
 import { randomUUID } from "node:crypto";
+import {
+  SandboxFeatureUnsupportedError,
+  SandboxNotRunningError,
+  SandboxPathNotFoundError,
+  isSandboxFeatureUnsupportedError,
+  isSandboxNotRunningError,
+  isSandboxPathNotFoundError,
+} from "./sandbox-errors";
+import {
+  EXIT_ENOENT,
+  EXIT_ENOTDIR,
+  assertByteRange,
+  isoTime,
+  joinPath,
+  octalMode,
+  readByteRangeOverUrl,
+  shellQuote,
+} from "./sandbox-observation";
+
+export {
+  SandboxFeatureUnsupportedError,
+  SandboxNotRunningError,
+  SandboxPathNotFoundError,
+  isSandboxFeatureUnsupportedError,
+  isSandboxNotRunningError,
+  isSandboxPathNotFoundError,
+};
 
 // ============================================================
 // CONSTANTS
@@ -1859,11 +1886,59 @@ export interface SandboxInfo {
   endAt?: string;
 }
 
-/** File or directory entry info */
+/**
+ * One filesystem entry, the SAME shape on every provider (the SDK contract's
+ * FileInfo). A symlink is reported as a symlink with its `target`; `mode` is
+ * the entry's own permission bits as four octal digits; `mtime` is ISO 8601.
+ */
 export interface FileInfo {
   name: string;
   path: string;
-  type: "file" | "dir";
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+  mtime: string;
+  mode: string;
+  owner: string;
+  group: string;
+  target?: string;
+}
+
+/** A byte range of a file (the SDK contract's FileRange). */
+export interface FileRange {
+  offset: number;
+  length: number;
+}
+
+/** One filesystem change from watchDir: an absolute path, four kinds. */
+export interface FilesystemEvent {
+  path: string;
+  type: "create" | "write" | "remove" | "rename";
+}
+
+/** Handle to stop watching a directory */
+export interface WatchHandle {
+  stop(): Promise<void>;
+}
+
+/** Options for watching a directory */
+export interface WatchOptions {
+  /** Also report changes in every subdirectory. Default false. */
+  recursive?: boolean;
+}
+
+/** One resource-usage sample (the SDK contract's SandboxMetrics). */
+export interface SandboxMetrics {
+  cpuPct: number;
+  memUsedMb: number;
+  memTotalMb: number;
+  diskUsedMb?: number;
+  sampledAt: string;
+  source: string;
+}
+
+/** Options for an inspect-only attach (the SDK contract's SandboxInspectOptions). */
+export interface SandboxInspectOptions {
+  user?: string;
 }
 
 /** Options for blocking sandbox command execution */
@@ -2032,6 +2107,16 @@ export interface SandboxFiles {
   list(path: string): Promise<FileInfo[]>;
   remove(path: string): Promise<void>;
   rename(oldPath: string, newPath: string): Promise<void>;
+  /** The entry at `path` itself; a symlink is never followed */
+  stat(path: string): Promise<FileInfo>;
+  /** Exactly the requested bytes, without moving the whole file when the range is small */
+  readRange(path: string, range: FileRange): Promise<Uint8Array>;
+  /** Always a typed refusal here: the Daytona SDK has no filesystem watcher */
+  watchDir(
+    path: string,
+    onEvent: (event: FilesystemEvent) => void | Promise<void>,
+    options?: WatchOptions
+  ): Promise<WatchHandle>;
 }
 
 /** Sandbox instance */
@@ -2042,6 +2127,8 @@ export interface SandboxInstance {
   getHost(port: number): Promise<string>;
   isRunning(): Promise<boolean>;
   getInfo(): Promise<SandboxInfo>;
+  /** The newest resource-usage sample the daemon has */
+  metrics(): Promise<SandboxMetrics | null>;
   kill(): Promise<void>;
   pause(): Promise<void>;
   /** Replace the outbound network policy of the running sandbox. */
@@ -2054,6 +2141,8 @@ export interface SandboxProvider {
   readonly name?: string;
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
+  /** Attach to a STARTED sandbox for reads; never starts a stopped one */
+  inspect(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance>;
   /** List sandboxes, paginating to exhaustion. `limit` bounds items returned. */
   list(options?: SandboxListOptions): Promise<SandboxInfo[]>;
   /** The same enumeration for fleet bookkeeping: never throws, reports completeness. */
@@ -2882,8 +2971,83 @@ export class DaytonaCommands implements SandboxCommands {
   }
 }
 
+/**
+ * What the file observation needs from the command runner: one blocking,
+ * whole-output run. The sandbox's own DaytonaCommands provides it; a test
+ * passes a double.
+ */
+export type DaytonaCommandRunner = Pick<DaytonaCommands, "run">;
+
+/**
+ * What one `find -printf` record carries per entry, in order, NUL-terminated:
+ * type letter, size, mtime as epoch seconds with a fraction, octal mode,
+ * owner name, group name, symlink target (empty for non-links), base name.
+ * NUL is the one byte a name cannot contain, so a name with a newline or a
+ * space parses whole; `%y`/`%l` come from lstat, so a symlink is itself.
+ */
+const DAYTONA_FIND_FORMAT = "%y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%l\\0%f\\0";
+const DAYTONA_FIND_FIELDS = 8;
+
+/**
+ * Daytona's SDK downloads default to 30 minutes ("Timeout for the download
+ * operation in seconds ... Default is 30 minutes", FileSystem.d.ts:196); the
+ * range read over the signed URL keeps the same leash.
+ */
+export const DAYTONA_FILE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * The listing script. Exit codes say why nothing was produced (EXIT_ENOENT,
+ * EXIT_ENOTDIR — errno values, see sandbox-observation.ts); the records and
+ * find's own status ride ONE base64 stream, because a shell variable cannot
+ * hold NUL and `sh` has no pipefail: `STATUS:<n>` after the last record is
+ * find's exit code, so a find that could not run (no GNU -printf) is a
+ * refusal, never an empty directory.
+ */
+function findListingScript(path: string, mode: "children" | "self"): string {
+  const p = shellQuote(path);
+  const existence =
+    mode === "children"
+      ? `[ -e ${p} ] || exit ${EXIT_ENOENT}; [ -d ${p} ] || exit ${EXIT_ENOTDIR};`
+      : `[ -e ${p} ] || [ -L ${p} ] || exit ${EXIT_ENOENT};`;
+  // -H follows the LISTED directory when it is itself a symlink (its
+  // children are what the caller asked for); stat never follows.
+  const find =
+    mode === "children"
+      ? `find -H ${p} -mindepth 1 -maxdepth 1 -printf '${DAYTONA_FIND_FORMAT}'`
+      : `find ${p} -maxdepth 0 -printf '${DAYTONA_FIND_FORMAT}'`;
+  return `${existence} ( ${find}; printf 'STATUS:%d' "$?" ) | base64`;
+}
+
+function parseFindListing(dir: string, stdout: string, mode: "children" | "self"): FileInfo[] {
+  const text = Buffer.from(stdout.replace(/\s+/g, ""), "base64").toString("utf-8");
+  const parts = text.split("\0");
+  const status = parts.pop() ?? "";
+  const match = /^STATUS:(\d+)$/.exec(status);
+  if (!match) throw new Error(`daytona: the listing of ${dir} ended without find's status (${status.slice(0, 40)})`);
+  if (match[1] !== "0") throw new Error(`daytona: find exited ${match[1]} listing ${dir}`);
+  const entries: FileInfo[] = [];
+  for (let at = 0; at + DAYTONA_FIND_FIELDS <= parts.length; at += DAYTONA_FIND_FIELDS) {
+    const [typeLetter, size, mtime, modeOctal, owner, group, target, name] = parts.slice(at, at + DAYTONA_FIND_FIELDS);
+    const type: FileInfo["type"] =
+      typeLetter === "f" ? "file" : typeLetter === "d" ? "dir" : typeLetter === "l" ? "symlink" : "other";
+    const info: FileInfo = {
+      name,
+      path: mode === "children" ? joinPath(dir, name) : dir,
+      type,
+      size: Number(size),
+      mtime: isoTime(Number(mtime)),
+      mode: octalMode(modeOctal),
+      owner,
+      group,
+    };
+    if (type === "symlink") info.target = target;
+    entries.push(info);
+  }
+  return entries;
+}
+
 export class DaytonaFiles implements SandboxFiles {
-  constructor(private sandbox: DaytonaSandbox) {}
+  constructor(private sandbox: DaytonaSandbox, private commands: DaytonaCommandRunner) {}
 
   async read(path: string): Promise<string | Uint8Array> {
     // Evidence: Daytona SDK downloadFile(remotePath) returns Buffer.
@@ -2972,14 +3136,78 @@ export class DaytonaFiles implements SandboxFiles {
     }
   }
 
+  /**
+   * List through ONE read-only `find -printf` in the box, not the daemon's
+   * own list. The daemon follows symlinks (list_files.go:41-48 calls
+   * getFileInfo → os.Stat, get_file_info.go:57) and drops any entry it cannot
+   * stat, so a symlink comes back as its target and a dangling one is not
+   * there at all — measured 2026-09-16: `dirlink → sub` listed as a
+   * directory, `dangling → /nonexistent` absent. `find` reads lstat, so every
+   * entry is itself. The command rides the sandbox's blocking run (whole
+   * output, sentinel-checked), never the streamed one.
+   */
   async list(path: string): Promise<FileInfo[]> {
-    // Evidence: Daytona SDK listFiles(path) returns FileInfo[] with { name, isDir, size, ... }
-    const files = await this.sandbox.fs.listFiles(path);
-    return files.map(f => ({
-      name: f.name,
-      path: path.endsWith("/") ? `${path}${f.name}` : `${path}/${f.name}`,
-      type: f.isDir ? "dir" as const : "file" as const,
-    }));
+    return this.findListing(path, "children");
+  }
+
+  async stat(path: string): Promise<FileInfo> {
+    const [entry] = await this.findListing(path, "self");
+    if (!entry) throw new SandboxPathNotFoundError(path, "daytona");
+    return entry;
+  }
+
+  private async findListing(path: string, mode: "children" | "self"): Promise<FileInfo[]> {
+    const result = await this.commands.run(findListingScript(path, mode));
+    if (result.exitCode === EXIT_ENOENT) throw new SandboxPathNotFoundError(path, "daytona");
+    if (result.exitCode === EXIT_ENOTDIR) throw new Error(`daytona: ${path} is not a directory`);
+    if (result.exitCode !== 0) {
+      throw new Error(`daytona: listing ${path} failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
+    }
+    try {
+      return parseFindListing(path, result.stdout, mode);
+    } catch (err) {
+      if (/printf|unrecognized|invalid option/i.test(result.stderr)) {
+        throw new SandboxFeatureUnsupportedError(
+          "files.list",
+          "daytona",
+          `this image's find has no -printf (GNU findutils is needed to list entries as themselves): ${result.stderr.trim()}`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * A `Range` request on the sandbox's signed download URL (`downloadUrl`,
+   * Sandbox.d.ts:587). The daemon serves the file with gin's `c.File`
+   * (download_file.go:65), which honours Range: 64 KiB at offset 150 MB of a
+   * 200 MB file came back as 206 in 0.27 s, byte-exact, while the SDK's
+   * streamed download had to move 157 MB in 15 s to reach the same bytes
+   * (both measured 2026-09-16).
+   */
+  async readRange(path: string, range: FileRange): Promise<Uint8Array> {
+    assertByteRange(range);
+    if (range.length === 0) return new Uint8Array(0);
+    const url = await this.sandbox.downloadUrl(path);
+    return readByteRangeOverUrl(url, range, { provider: "daytona", path, timeoutMs: DAYTONA_FILE_DOWNLOAD_TIMEOUT_MS });
+  }
+
+  /**
+   * Daytona has no filesystem watcher: @daytonaio/sdk 0.203.0's FileSystem
+   * exposes none (FileSystem.d.ts, whole file), and the toolbox daemon has no
+   * watch handler under apps/daemon/pkg/toolbox/fs. A typed refusal, so a
+   * caller can poll list() on the folders it has open instead.
+   */
+  async watchDir(
+    _path: string,
+    _onEvent: (event: FilesystemEvent) => void | Promise<void>,
+    _options?: WatchOptions
+  ): Promise<WatchHandle> {
+    throw new SandboxFeatureUnsupportedError(
+      "files.watchDir",
+      "daytona",
+      "the Daytona SDK has no filesystem watcher; poll files.list() on the directories you have open"
+    );
   }
 
   async remove(path: string): Promise<void> {
@@ -3002,8 +3230,9 @@ class DaytonaSandboxImpl implements SandboxInstance {
     user?: string,
     managedStream?: ManagedStreamContext,
   ) {
-    this.commands = new DaytonaCommands(sandbox, user, managedStream);
-    this.files = new DaytonaFiles(sandbox);
+    const commands = new DaytonaCommands(sandbox, user, managedStream);
+    this.commands = commands;
+    this.files = new DaytonaFiles(sandbox, commands);
   }
 
   get sandboxId(): string {
@@ -3033,6 +3262,24 @@ class DaytonaSandboxImpl implements SandboxInstance {
     // client-side timestamp. API errors propagate.
     await this.sandbox.refreshData();
     return toSandboxInfo(this.sandbox);
+  }
+
+  /**
+   * The daemon's most recent sample — `getMetricsLatest()`, "the single
+   * current reading without going through the telemetry backend"
+   * (Sandbox.d.ts:140-150), so it is never stale by the telemetry pipeline's
+   * lag. Bytes become MiB by division, no rounding.
+   */
+  async metrics(): Promise<SandboxMetrics | null> {
+    const m = await this.sandbox.getMetricsLatest();
+    return {
+      cpuPct: m.cpuUsedPct,
+      memUsedMb: m.memUsed / MIB,
+      memTotalMb: m.memTotal / MIB,
+      diskUsedMb: m.diskUsed / MIB,
+      sampledAt: isoTime(m.timestamp),
+      source: "daytona:getMetricsLatest",
+    };
   }
 
   /**
@@ -3625,6 +3872,26 @@ export class DaytonaProvider implements SandboxProvider {
   }
 
   /**
+   * Attach for reads: the record is READ (`Daytona.get`, a GET) and a state
+   * other than `started` is refused typed — connect() above would have
+   * started it, which an observer must never do. Nothing here touches the
+   * sandbox's clocks; Daytona's own auto-stop counts file reads as activity,
+   * and that is the provider's definition, not an extension by this call.
+   */
+  async inspect(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance> {
+    const sandbox = await this.getSandboxRecord(sandboxId);
+    if (sandbox.state !== "started") {
+      throw new SandboxNotRunningError(sandboxId, "daytona", sandbox.state ?? "unknown");
+    }
+    return new DaytonaSandboxImpl(sandbox, options?.user ?? this.sandboxUsers.get(sandboxId), this.managedStream);
+  }
+
+  /** The sandbox record by id (a GET). A seam so the refusal path is unit-testable. */
+  protected async getSandboxRecord(sandboxId: string): Promise<DaytonaSandbox> {
+    return this.client.get(sandboxId);
+  }
+
+  /**
    * List sandboxes, walking the cursor stream to exhaustion.
    *
    * An early version requested page 1 and stopped, discarding the rest — an
@@ -3861,4 +4128,10 @@ export const _testReadCommandStreams = readCommandStreams;
  * the type (never the constructor) gives the seam the real methods to pin.
  */
 export type _testDaytonaSandboxImpl = DaytonaSandboxImpl;
+
+/** The constructor, for the metrics unit test (a vendor sandbox double goes in). */
+export const _testDaytonaSandboxImplCtor = DaytonaSandboxImpl;
+
+/** Bytes per MiB — the unit of every memory and disk figure in SandboxMetrics. */
+const MIB = 1024 * 1024;
 
