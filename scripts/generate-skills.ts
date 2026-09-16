@@ -32,9 +32,8 @@
  * .github/workflows/sync-docs-to-skill.yml runs --check on pull requests and
  * regenerates + commits on pushes to main and project-sable.
  *
- * Dependencies: `tsx` (a root devDependency) and `yaml` (a dependency of
- * packages/sdk-ts, hoisted to the root node_modules by the workspace lock —
- * the same way the root `generate:image-version` script finds tsx).
+ * Dependencies: `tsx` and `yaml`, both root devDependencies (`yaml` at the
+ * same version packages/sdk-ts pins).
  */
 
 import { createHash } from "node:crypto";
@@ -137,7 +136,7 @@ function requireString(data: Record<string, unknown>, key: string, where: string
 }
 
 // ---------------------------------------------------------------------------
-// evolve-agents: docs/SKILL.md + chapters 01–05 of both languages
+// evolve-agents: docs/evolve-agents.SKILL.md + chapters 01–05 of both languages
 
 function agentsSkill(): Map<string, Buffer> {
   const files = new Map<string, Buffer>();

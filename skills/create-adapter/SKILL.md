@@ -192,10 +192,10 @@ run each task.
 
 ### 4. Keep task names right
 
-- **Every task directory name is the task's name on Evolve.** Lowercase letters, digits,
-  `.`, `_` and `-`, at most 128 characters, starting with a letter or digit. Put the same
-  identifier in `[task] name` as `<adapter-name>/<task-id>`. A `[metadata] task_id`, when
-  present, must equal the directory name.
+- **Every task directory name is the task's name on Evolve.** Letters, digits, `.`, `_`
+  and `-`, at most 128 characters, starting with a letter or digit; use lowercase (Harbor's
+  convention). Put the same identifier in `[task] name` as `<adapter-name>/<task-id>`. A
+  `[metadata] task_id`, when present, must equal the directory name.
 - **Task names must be unique within the dataset and stable across adapter runs.** An
   unstable name makes the same task look like a different one on republish. If upstream
   lacks stable identifiers, mint a deterministic scheme in adapter code (e.g.,
@@ -209,9 +209,9 @@ run each task.
 
 ### 5. Verify the conversion
 
-Check the generated tasks. The check runs each task's environment, its `solution/solve.sh`
-and its verifier, then rules on every criterion of a rubric; every task should come back
-`no_problem_found`.
+Check the generated tasks. The check reads each task and, when it can, runs its
+environment, its `solution/solve.sh` and its verifier, then rules on every criterion of a
+rubric; every task should come back `no_problem_found` with `executed` true.
 
 ```bash
 evolve check "<output-dir>" --watch
@@ -272,8 +272,8 @@ questions come up, read the one that matches the benchmark's shape:
 
 - Implement `adapter.py`, `main.py`, or the task-template files. Those are the
   contributor's work, guided by the rules above.
-- Run `evolve check` or publish on its own. Both spend the user's credits and require
-  explicit user intent.
+- Run `evolve check` or publish on its own. Both act on the user's account and need the
+  user's explicit intent; a check spends credits (it runs a checker model).
 
 ## Failure modes
 

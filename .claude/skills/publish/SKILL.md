@@ -21,10 +21,11 @@ commands that upload.
    `auth status` prints who the platform thinks you are and which key is in use.
 
 3. **Task layout**: a dataset is a folder of task directories, each with `task.toml`,
-   `instruction.md`, `environment/` and `tests/test.sh` (the `create-task` skill has the
-   format). The directory name is the task's name: lowercase letters, digits, `.`, `_`
-   and `-`, at most 128 characters, starting with a letter or digit. A `dataset.toml`
-   manifest at the root is optional.
+   `instruction.md`, `tests/test.sh`, and an `environment/` folder unless `task.toml`
+   names a prebuilt `docker_image` (the `create-task` skill has the format). The
+   directory name is the task's name: letters, digits, `.`, `_` and `-`, at most 128
+   characters, starting with a letter or digit; use lowercase (Harbor's convention). A
+   `dataset.toml` manifest at the root is optional.
 
 ## Publishing a dataset
 
@@ -39,8 +40,9 @@ evolve dataset check "<path/to/tasks>"
 
 A dry run: the pre-flight sends each task's `task.toml`, and the `dataset.toml` if there
 is one, to the server, which answers with a verdict per task and writes nothing. A refused
-task names the field to fix. `evolve check "<path/to/tasks>" --watch` goes further and
-runs each task's environment, reference solution and verifier against a rubric.
+task names the field to fix. `evolve check "<path/to/tasks>" --watch` goes further: it
+reads each task and, when it can, runs its environment, reference solution and verifier,
+then rules on a rubric.
 
 ### 2. Publish
 

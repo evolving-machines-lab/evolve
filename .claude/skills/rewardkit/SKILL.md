@@ -77,7 +77,8 @@ the verifier environment. Programmatic checks that only read local files can use
 In separate mode with no `[verifier.environment].docker_image`, `tests/` is the
 verifier image's build context and its `tests/Dockerfile` must provide
 `/tests/test.sh`. When the verifier pins the task's own image, the platform
-uploads `tests/` to `/tests` instead.
+uploads `tests/` to `/tests` instead. When it pins a distinct image, that image
+boots as it is with nothing uploaded, so it must carry `/tests/test.sh` itself.
 
 ## Programmatic criteria
 

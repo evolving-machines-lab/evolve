@@ -31,8 +31,8 @@ The files to write, one per step below:
 └── tests/test.sh          # Verifier script
 ```
 
-The directory name is the task's name on the platform: lowercase letters, digits, `.`, `_` 
-and `-`, at most 128 characters, starting with a letter or digit.
+The directory name is the task's name on the platform: letters, digits, `.`, `_` and `-`, 
+at most 128 characters, starting with a letter or digit; use lowercase (Harbor's convention).
 
 Where Harbor is installed, `harbor task init "<org>/<task-name>"` produces the same layout 
 (optional).
@@ -101,8 +101,11 @@ separate verifier environment?"*
 
 For a separate verifier container with no pinned `[verifier.environment] docker_image`,
 `tests/` is the verifier image's build context and its `tests/Dockerfile` must provide
-`/tests/test.sh`. A separate verifier judges only what the task lists under a top-level
-`artifacts = ["/app/out.json"]` in `task.toml`, never the agent's whole workspace.
+`/tests/test.sh`. A verifier that pins the task's own image gets `tests/` uploaded to
+`/tests`; one that pins a distinct image boots as it is with nothing uploaded, so that
+image must carry `/tests/test.sh` itself. A separate verifier judges only what the task
+lists under a top-level `artifacts = ["/app/out.json"]` in `task.toml`, never the agent's
+whole workspace.
 
 ```toml
 [verifier]
@@ -303,8 +306,9 @@ task.
 evolve check "<task-path>" --watch
 ```
 
-The check runs the environment, `solution/solve.sh` and the verifier, then rules on every
-criterion of a rubric (eleven by default). `evolve check show <check-id>` prints one entry
+The check reads the task and, when it can, runs the environment, `solution/solve.sh` and
+the verifier, then rules on every criterion of a rubric (eleven by default); `executed` in
+the result says whether it ran the task. `evolve check show <check-id>` prints one entry
 per criterion, with an `outcome`, an `explanation` and `evidence`, and one label per task:
 `has_a_problem`, `unclear` or `no_problem_found`.
 
