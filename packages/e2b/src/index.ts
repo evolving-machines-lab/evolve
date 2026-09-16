@@ -963,9 +963,10 @@ export class E2BFiles implements SandboxFiles {
   }
 }
 
-/** envd's FileNotFoundError, matched by name (see isTimeoutError). */
+/** envd's not-found, matched by name: FileNotFoundError from e2b 2.15.0, NotFoundError before it (see isTimeoutError). */
 function isE2BNotFound(err: unknown): boolean {
-  return !!err && typeof err === "object" && (err as { name?: unknown }).name === "FileNotFoundError";
+  const name = !!err && typeof err === "object" ? (err as { name?: unknown }).name : undefined;
+  return name === "FileNotFoundError" || name === "NotFoundError";
 }
 
 /** The vendor entry fields this adapter reads (EntryInfo, e2b index.d.ts). */

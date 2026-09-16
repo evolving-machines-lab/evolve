@@ -108,6 +108,8 @@ async function testList(): Promise<void> {
   assertEqual(infoReads, 1, "the envd version is read once per sandbox (Sandbox.getInfo), not per call");
   const missing = new E2BFiles({ files: { list: async () => { const err = new Error("[not_found] path not found: lstat /tmp/nope"); err.name = "FileNotFoundError"; throw err; } }, getInfo: async () => INFO } as any, "root");
   await rejects(() => missing.list("/tmp/nope"), "SandboxPathNotFoundError", "list on a missing directory is SandboxPathNotFoundError");
+  const missingOld = new E2BFiles({ files: { list: async () => { const err = new Error("[not_found] path not found: lstat /tmp/nope"); err.name = "NotFoundError"; throw err; } }, getInfo: async () => INFO } as any, "root");
+  await rejects(() => missingOld.list("/tmp/nope"), "SandboxPathNotFoundError", "e2b before 2.15.0 throws NotFoundError; still SandboxPathNotFoundError");
 }
 
 async function testStat(): Promise<void> {
