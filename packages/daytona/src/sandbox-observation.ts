@@ -36,7 +36,8 @@ export function assertByteRange(range: ByteRange): void {
 /** The contract's four-digit octal mode from a numeric st_mode or an octal string; anything else is refused. */
 export function octalMode(input: number | string): string {
   if (typeof input === "number") return pad4((input & 0o7777).toString(8));
-  if (/^[0-7]{3,4}$/.test(input)) return pad4(input);
+  // One to four digits: GNU find's %m prints the mode unpadded ("0" for chmod 000, "10" for 010; measured 2026-09-16).
+  if (/^[0-7]{1,4}$/.test(input)) return pad4(input);
   throw new RangeError(`not an octal mode: ${input}`);
 }
 

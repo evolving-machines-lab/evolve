@@ -72,6 +72,12 @@ const LIVE_LISTING = records([
   ["d", "4096", "1789591683.7105480630", "755", "daytona", "daytona", "", "sub"],
   ["s", "0", "1789591683.0000000000", "755", "root", "root", "", "sock"],
   ["f", "1", "1789591683.0000000000", "4755", "root", "root", "", "setuid"],
+  // find prints %m unpadded: chmod 000 → "0", chmod 010 → "10", a chmod-000 directory → "0"; touch -d @0 → %T@ "0.0000000000"
+  // (the product's own find record, recorded on box 111caa7f-5fbc-421b-b471-db04370abe63, 2026-09-16, fold-3 e2e-daytona-red.json).
+  ["f", "1", "1789599834.6186756830", "0", "root", "root", "", "zero"],
+  ["f", "1", "1789599834.6196236450", "10", "root", "root", "", "ten"],
+  ["d", "6", "1789599834.6213716710", "0", "root", "root", "", "dzero"],
+  ["f", "1", "0.0000000000", "644", "root", "root", "", "epoch"],
 ]);
 
 async function testList(): Promise<void> {
@@ -88,7 +94,9 @@ async function testList(): Promise<void> {
   assertEqual(byName["sp ace.txt"].size, 1, "whitespace names survive the NUL framing");
   assertEqual(byName["sock"].type, "other", "a socket is 'other'");
   assertEqual(byName["setuid"].mode, "4755", "setuid stays in the mode");
-  assertEqual(entries.length, 7, "every record is an entry");
+  assertEqual([byName["zero"].mode, byName["ten"].mode, byName["dzero"].type, byName["dzero"].mode], ["0000", "0010", "dir", "0000"], "modes below 0100 (find prints them as '0' and '10') are four-digit modes, and the listing holds");
+  assertEqual(byName["epoch"].mtime, "1970-01-01T00:00:00.000Z", "an mtime of 0 is the epoch");
+  assertEqual(entries.length, 11, "every record is an entry");
   const empty = new DaytonaFiles({} as any, fakeRunner(() => ({ exitCode: 0, stdout: b64("STATUS:0"), stderr: "" })) as any);
   assertEqual(await empty.list("/tmp/empty"), [], "an empty directory is an empty list");
 }

@@ -91,6 +91,8 @@ console.log("\n[5] the shared observation rules: mode strings, timestamps, range
 {
   assert(octalMode(420) === "0644" && octalMode(33188) === "0644" && octalMode(41471) === "0777", "numeric st_mode → permission bits only, four digits");
   assert(octalMode("644") === "0644" && octalMode("0755") === "0755" && octalMode("1777") === "1777", "bare or padded octal strings are padded");
+  // GNU find prints %m unpadded: "0" for chmod 000, "10" for chmod 010 (measured on Daytona, 2026-09-16, REVIEW-2).
+  assert(octalMode("0") === "0000" && octalMode("10") === "0010" && octalMode("7") === "0007", "one- and two-digit octal strings (find's %m below 0100) are padded, not refused");
   for (const bad of ["-rw-r--r--", "nonsense", "12345"]) {
     let threw = false;
     try { octalMode(bad); } catch (e) { threw = e instanceof RangeError; }
