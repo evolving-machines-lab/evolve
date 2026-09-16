@@ -17,7 +17,7 @@ import {
   isSandboxPathNotFoundError,
 } from "../../src/sandbox-errors";
 import { SANDBOX_ERRORS_SOURCE, SANDBOX_ERRORS_MIRRORS, SANDBOX_MIRROR_SETS } from "../../../../scripts/generate-sandbox-errors";
-import { assertByteRange, isoTime, joinPath, octalMode, readByteRangeOverUrl } from "../../src/sandbox-observation";
+import { assertByteRange, isoTime, joinPath, octalMode, parseGoFileMode, readByteRangeOverUrl } from "../../src/sandbox-observation";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../../..");
@@ -90,12 +90,35 @@ console.log("\n[4] every provider mirror is byte-equal to its source (npm run ge
 console.log("\n[5] the shared observation rules: mode strings, timestamps, ranges");
 {
   assert(octalMode(420) === "0644" && octalMode(33188) === "0644" && octalMode(41471) === "0777", "numeric st_mode → permission bits only, four digits");
-  assert(octalMode("644") === "0644" && octalMode("0755") === "0755", "bare or padded octal strings are padded");
-  assert(octalMode("-rw-r--r--") === "0644" && octalMode("Lrwxrwxrwx") === "0777" && octalMode("drwxr-xr-x") === "0755", "ls-style strings, with a type character, are read as bits");
-  assert(octalMode("-rwsr-xr-x") === "4755" && octalMode("rwxrwsr-x") === "2775" && octalMode("rwxrwxrwt") === "1777" && octalMode("rwSr--r--") === "4644", "setuid / setgid / sticky, executable or not");
-  let threw = false;
-  try { octalMode("nonsense"); } catch (e) { threw = e instanceof RangeError; }
-  assert(threw, "a string that is neither octal nor a permission string is refused");
+  assert(octalMode("644") === "0644" && octalMode("0755") === "0755" && octalMode("1777") === "1777", "bare or padded octal strings are padded");
+  for (const bad of ["-rw-r--r--", "nonsense", "12345"]) {
+    let threw = false;
+    try { octalMode(bad); } catch (e) { threw = e instanceof RangeError; }
+    assert(threw, `octalMode refuses "${bad}" (neither a number nor octal digits)`);
+  }
+  // Go's os.FileMode.String(), as envd answered on live E2B boxes on 2026-09-16 (fold-2 e2e-e2b.json "e2b-raw").
+  const goModes: Array<[string, string, string]> = [
+    ["-rw-r--r--", "file", "0644"],
+    ["drwxr-xr-x", "dir", "0755"],
+    ["dtrwxrwxrwx", "dir", "1777"],
+    ["dgrwxr-xr-x", "dir", "2755"],
+    ["urwxr-xr-x", "file", "4755"],
+    ["ugrwxr-xr-x", "file", "6755"],
+    ["Lrwxrwxrwx", "symlink", "0777"],
+    ["Dcrw-rw-rw-", "other", "0666"],
+    ["prw-r--r--", "other", "0644"],
+    ["Srwxr-xr-x", "other", "0755"],
+    ["ugtrwxrwxrwx", "file", "7777"],
+  ];
+  for (const [text, type, mode] of goModes) {
+    const got = parseGoFileMode(text);
+    assert(got.type === type && got.mode === mode, `"${text}" is ${type} ${mode} (got ${got.type} ${got.mode})`);
+  }
+  for (const bad of ["-rwsr-xr-x", "rwxr-xr-x", "nonsense", "drwxr-xr-", "xrwxr-xr-x", ""]) {
+    let threw = false;
+    try { parseGoFileMode(bad); } catch (e) { threw = e instanceof RangeError; }
+    assert(threw, `"${bad}" is not a Go mode string (ls-style s/S/t/T and bare triplets are refused)`);
+  }
   assert(isoTime(new Date("2026-09-16T20:47:59.627Z")) === "2026-09-16T20:47:59.627Z", "a Date passes through");
   assert(isoTime(1789591686) === "2026-09-16T20:48:06.000Z", "epoch seconds become ISO");
   assert(isoTime(1789591683.710548063) === "2026-09-16T20:48:03.710Z", "fractional epoch seconds keep milliseconds");

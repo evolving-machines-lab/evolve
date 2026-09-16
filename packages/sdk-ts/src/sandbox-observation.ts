@@ -29,37 +29,41 @@ export function assertByteRange(range: ByteRange): void {
   }
 }
 
-/** The contract's four-digit octal mode from what a provider reports: numeric st_mode, octal string, or an `ls -l` permission string. */
+/** The contract's four-digit octal mode from a numeric st_mode or an octal string; anything else is refused. */
 export function octalMode(input: number | string): string {
   if (typeof input === "number") return pad4((input & 0o7777).toString(8));
   if (/^[0-7]{3,4}$/.test(input)) return pad4(input);
-  return pad4(bitsOfPermissionString(input).toString(8));
+  throw new RangeError(`not an octal mode: ${input}`);
 }
 
 function pad4(octal: string): string {
   return octal.padStart(4, "0");
 }
 
-function bitsOfPermissionString(perms: string): number {
-  const p = perms.length === 10 ? perms.slice(1) : perms;
-  if (p.length !== 9) throw new RangeError(`not a permission string: ${perms}`);
-  let bits = 0;
-  const triplets: Array<[number, number]> = [
-    [0, 0o4000], // owner: setuid
-    [3, 0o2000], // group: setgid
-    [6, 0o1000], // other: sticky
-  ];
-  for (const [at, special] of triplets) {
-    const r = p[at] === "r";
-    const w = p[at + 1] === "w";
-    const x = p[at + 2];
-    const shift = 6 - at;
-    if (r) bits |= 0o4 << shift;
-    if (w) bits |= 0o2 << shift;
-    if (x === "x" || x === "s" || x === "t") bits |= 0o1 << shift;
-    if (x === "s" || x === "S" || x === "t" || x === "T") bits |= special;
-  }
-  return bits;
+/** What a Go `os.FileMode.String()` names: the entry's own type and the contract's four-digit octal mode. */
+export interface GoFileMode {
+  type: "file" | "dir" | "symlink" | "other";
+  mode: string;
+}
+
+// Go prints one letter per set bit from "dalTLDpSugct?" (or "-" when none), then nine rwx characters
+// (go/src/io/fs/fs.go:238-259); E2B's envd is Go and reports this string. No npm package parses it.
+const GO_FILE_MODE = /^(-|[dalTLDpSugct?]+)([-r][-w][-x]){3}$/;
+
+export function parseGoFileMode(text: string): GoFileMode {
+  if (!GO_FILE_MODE.test(text)) throw new RangeError(`not a Go file mode string: ${text}`);
+  const prefix = text.slice(0, -9);
+  const rwx = text.slice(-9);
+  const type: GoFileMode["type"] = prefix.includes("d")
+    ? "dir"
+    : prefix.includes("L")
+      ? "symlink"
+      : /[DpSc?]/.test(prefix)
+        ? "other"
+        : "file";
+  let bits = (prefix.includes("u") ? 0o4000 : 0) | (prefix.includes("g") ? 0o2000 : 0) | (prefix.includes("t") ? 0o1000 : 0);
+  for (let i = 0; i < 9; i++) if (rwx[i] !== "-") bits |= 1 << (8 - i);
+  return { type, mode: pad4(bits.toString(8)) };
 }
 
 /** ISO 8601 at millisecond precision from a Date, epoch seconds, or an RFC 3339 string, so timestamps compare across providers. */
