@@ -1,10 +1,4 @@
-"""Read-only view of a running sandbox — files, changes and resource usage.
-
-The Python mirror of the TypeScript provider surface (`provider.inspect()`,
-`files.list / stat / readRange / watchDir`, `metrics()`), reached through
-the bridge by a handle. Meaning is equal to the TypeScript side: the same
-entry shape, the same four event kinds, the same typed refusals.
-"""
+"""Read-only view of a running sandbox: files, changes, resource usage (the Python mirror of provider.inspect)."""
 
 import base64
 from dataclasses import dataclass
@@ -15,21 +9,8 @@ from .bridge import BridgeManager
 
 @dataclass
 class FileInfo:
-    """One filesystem entry, the same shape on every provider.
-
-    Matches the TypeScript SDK's FileInfo (packages/sdk-ts/src/types.ts).
-
-    Attributes:
-        name: Entry name
-        path: Absolute path
-        type: 'file', 'dir', 'symlink' or 'other' (sockets, devices, pipes)
-        size: Size in bytes
-        mtime: Last modification time, ISO 8601
-        mode: Permission bits as four octal digits, e.g. '0644'
-        owner: Owner as the sandbox reports it (a name, or a numeric id)
-        group: Group as the sandbox reports it
-        target: The link's target, only on type 'symlink'
-    """
+    """One filesystem entry, the same shape on every provider (TypeScript FileInfo): a symlink is itself,
+    never followed; mode is four octal digits; mtime ISO 8601; 'other' covers sockets, devices, pipes."""
     name: str
     path: str
     type: Literal['file', 'dir', 'symlink', 'other']
@@ -50,12 +31,7 @@ class FilesystemEvent:
 
 @dataclass
 class SandboxMetrics:
-    """One resource-usage sample of a running sandbox.
-
-    Memory and disk are in MiB; `source` names the provider call the numbers
-    came from and `sampled_at` is the sample's own timestamp. `disk_used_mb`
-    is None where the provider reports no disk figure.
-    """
+    """One resource-usage sample (MiB); `source` names the provider call, `sampled_at` is the sample's own time."""
     cpu_pct: float
     mem_used_mb: float
     mem_total_mb: float
@@ -110,8 +86,7 @@ class SandboxFiles:
     def __init__(self, bridge: BridgeManager, handle: str):
         self._bridge = bridge
         self._handle = handle
-        # One 'fs' dispatcher per view, registered on first use; active watches
-        # are looked up by id, and a stopped one is simply no longer there.
+        # one 'fs' dispatcher per view; a stopped watch is simply no longer in the dict
         self._watch_callbacks: Dict[str, Callable[[FilesystemEvent], None]] = {}
         self._dispatching = False
 
@@ -177,11 +152,7 @@ class SandboxFiles:
 
 
 class SandboxView:
-    """A running sandbox, attached for reads only.
-
-    Obtained from `Evolve.inspect_sandbox()`. Attaching never starts a stopped
-    sandbox, never resumes a paused one and never extends its lifetime.
-    """
+    """A running sandbox attached for reads only (Evolve.inspect_sandbox): never started, resumed or extended."""
 
     def __init__(self, bridge: BridgeManager, handle: str, sandbox_id: str):
         self._bridge = bridge

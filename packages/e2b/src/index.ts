@@ -1,15 +1,8 @@
 /**
  * E2B Sandbox Provider - Clean Architecture
  *
- * @requires @e2b/code-interpreter >= 2.7.1, which pins e2b >= 2.39.0 — the
- *   first e2b release whose filesystem FileType carries SYMLINK (absent from
- *   the published typings of 2.38.3, present in 2.39.0; checked by unpacking
- *   both tarballs on 2026-09-16). Everything else this package uses —
- *   watchDir's `recursive`, getMetrics, EntryInfo's owner/group/mode/
- *   modifiedTime/symlinkTarget, the static getInfo with `state` — is already
- *   in 2.10.3. A client below 2.39.0 still lists a symlink as a symlink here:
- *   the adapter reads the link's own permission string and symlinkTarget,
- *   which older clients also return.
+ * @requires @e2b/code-interpreter >= 2.7.1 (pins e2b >= 2.39.0, the first release with the
+ *   filesystem FileType.SYMLINK — absent in 2.38.3's typings, present in 2.39.0, tarballs checked 2026-09-16)
  * @requires Node.js >= 18 (for ReadableStream support)
  *
  * Design principles:
@@ -40,14 +33,7 @@ export {
   isSandboxPathNotFoundError,
 };
 
-/**
- * Request timeout for whole-file reads and writes, and the signature lifetime
- * of the URL a range read is served from. E2B's own default is 60 s
- * (FilesystemReadOpts `streamIdleTimeoutMs` documents it as "the request
- * timeout (60s)"), which the multi-MB uploads this provider makes were
- * measured to exceed; 5 minutes is the value the read/write paths have used
- * since, kept as ONE constant so the range path cannot outlive its URL.
- */
+// 5 min for whole-file reads/writes and the range URL's signature: E2B's 60 s default was measured too short for multi-MB files.
 export const E2B_FILE_REQUEST_TIMEOUT_MS = 300_000;
 
 /**
@@ -807,16 +793,7 @@ export class E2BFiles implements SandboxFiles {
     return this.sandbox.files.exists(path, { user: this.defaultUser });
   }
 
-  /**
-   * List through envd's own filesystem API — every entry in the contract's
-   * shape. Two limits of the vendor API, measured on envd 0.6.10 (2026-09-16)
-   * and stated here rather than papered over: a symlink whose target is
-   * missing is not listed at all (envd stats the target and skips the entry),
-   * and a symlink's `size` is its target's. Its TYPE, though, is honest here:
-   * envd types a symlink as what it points to ("file"/"dir") while reporting
-   * the link's own permission string ("Lrwxrwxrwx") and its target, and it is
-   * those two that decide `type: "symlink"` and `mode`.
-   */
+  // envd drops a dangling symlink and reports a symlink's size as its target's (measured envd 0.6.10, 2026-09-16); documented for users.
   async list(path: string): Promise<FileInfo[]> {
     try {
       const entries = await this.sandbox.files.list(path, { user: this.defaultUser });
@@ -836,14 +813,7 @@ export class E2BFiles implements SandboxFiles {
     }
   }
 
-  /**
-   * A `Range` request on the sandbox's signed download URL. Chosen over the
-   * SDK's streamed read because a stream can only be cut short, never
-   * started late: reading 64 KiB at offset 150 MB of a 200 MB file moved
-   * 157 MB in 40 s through `files.read({format: "stream"})` and 64 KiB in
-   * 0.37 s through the URL (both measured 2026-09-16, byte-exact). The URL's
-   * signature and the request share one lifetime (E2B_FILE_REQUEST_TIMEOUT_MS).
-   */
+  // Range on the signed URL: 64 KiB at 150 MB took 0.37 s, the SDK stream had to move 157 MB in 40 s (measured 2026-09-16).
   async readRange(path: string, range: FileRange): Promise<Uint8Array> {
     assertByteRange(range);
     if (range.length === 0) return new Uint8Array(0);
@@ -943,17 +913,8 @@ export class E2BFiles implements SandboxFiles {
     }
   }
 
-  /**
-   * envd's native watch. `timeoutMs: 0` because the vendor default ends a
-   * watch after 60 s (WatchOpts.timeoutMs "@default 60_000") and a watch here
-   * lives until stop(). Events arrive with a name RELATIVE to the watched
-   * directory ("sub/b.txt" on a recursive watch, measured 2026-09-16) and are
-   * reported as absolute paths; a `chmod` is reported as a `write` — the
-   * entry changed in place and a consumer refreshes it the same way — because
-   * the four-word vocabulary has no metadata kind and dropping it would hide
-   * a change the listing shows. On a rename envd emits `rename` for the old
-   * name and `create` for the new one.
-   */
+  // timeoutMs 0: envd's default ends a watch after 60 s. Names arrive relative to the watched dir;
+  // chmod is reported as write so a metadata change is not hidden.
   async watchDir(
     path: string,
     onEvent: (event: FilesystemEvent) => void | Promise<void>,
@@ -983,7 +944,7 @@ export class E2BFiles implements SandboxFiles {
   }
 }
 
-/** True for envd's FileNotFoundError, matched by name (see isTimeoutError for why). */
+/** envd's FileNotFoundError, matched by name (see isTimeoutError). */
 function isE2BNotFound(err: unknown): boolean {
   return !!err && typeof err === "object" && (err as { name?: unknown }).name === "FileNotFoundError";
 }
@@ -1002,16 +963,8 @@ interface E2BEntry {
   symlinkTarget?: string;
 }
 
-/**
- * The contract's entry from envd's. `type` comes from the link's own
- * permission string and target first (envd types a symlink as its target),
- * then from envd's type word; anything else is "other". `mode` is read from
- * the permission string because that one is the entry's own (lstat) while the
- * numeric `mode` of a symlink is its target's. A dangling link comes back
- * from envd with its OWN path as `symlinkTarget` (measured 2026-09-16: `ln
- * -s /nonexistent dangling` → target "/tmp/p/dangling"); that is not a
- * target, so `target` is left unset for it rather than published.
- */
+// envd types a symlink as its target and gives the target's numeric mode; the permission string and
+// symlinkTarget are the link's own. A dangling link's "target" is its own path (measured), so it is left unset.
 function toFileInfo(entry: E2BEntry): FileInfo {
   const isSymlink = entry.symlinkTarget !== undefined || entry.permissions.startsWith("L");
   const type: FileInfo["type"] = isSymlink
@@ -1059,14 +1012,8 @@ class E2BSandboxImpl implements SandboxInstance {
     return this.sandbox.sandboxId;
   }
 
-  /**
-   * E2B's own sandbox metrics (`Sandbox.getMetrics`), newest sample first.
-   * The API returns samples from a start time to now; the first read asks for
-   * everything (the sandbox's whole life so far) and every later read asks
-   * from the newest sample seen, so a long-lived sandbox is not re-fetched
-   * whole on every poll. No sample yet — measured on a fresh sandbox
-   * 2026-09-16: an empty array ~10 s after boot — is `null`, never zeros.
-   */
+  // Later reads ask from the newest sample seen, so a long-lived sandbox is not re-fetched whole;
+  // no sample yet (empty ~10 s after boot, measured) is null, never zeros.
   async metrics(): Promise<SandboxMetrics | null> {
     const samples = await this.sandbox.getMetrics(this.lastMetricsAt ? { start: this.lastMetricsAt } : {});
     let newest: (typeof samples)[number] | undefined;
@@ -1280,18 +1227,8 @@ export class E2BProvider implements SandboxProvider {
     );
   }
 
-  /**
-   * Attach for reads WITHOUT the connect call. `Sandbox.connect` is not a
-   * read: the SDK POSTs /sandboxes/{id}/connect with a timeout on every call
-   * (e2b index.mjs SandboxApi.connectSandbox — `body: { timeout }`, 300 s
-   * when none is given), which sets the sandbox's lifetime, and on a paused
-   * sandbox it resumes it. Neither is something an observer may do. So the
-   * sandbox record is READ (GET /sandboxes/{id}, the call behind
-   * Sandbox.getInfo), a state other than `running` is refused typed, and the
-   * client object is built from the record's own connection fields — the
-   * same fields connect() would have returned — through the SDK's constructor.
-   * Measured 2026-09-16: `endAt` unchanged after inspect and after reads.
-   */
+  // Not Sandbox.connect: it POSTs /connect with a timeout on every call (300 s default) and resumes a
+  // paused sandbox. The record is read instead and the client built from its fields (endAt unchanged, measured).
   async inspect(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance> {
     const detail = await this.fetchSandboxDetail(sandboxId);
     if (detail.state !== "running") {
@@ -1314,12 +1251,7 @@ export class E2BProvider implements SandboxProvider {
     );
   }
 
-  /**
-   * The sandbox record, read through the SDK's own API client (a GET; the
-   * response schema is SandboxDetail — it carries the envd access token a
-   * secured sandbox needs, which Sandbox.getInfo() maps away). A seam so the
-   * refusal path can be unit-tested without a network.
-   */
+  // A GET; SandboxDetail carries the envd access token that Sandbox.getInfo() maps away. Seam for the unit test.
   protected async fetchSandboxDetail(sandboxId: string): Promise<E2BSandboxDetail> {
     const config = new ConnectionConfig({ apiKey: this.apiKey, apiUrl: this.apiUrl });
     const res = await new ApiClient(config).api.GET("/sandboxes/{sandboxID}", {
@@ -1530,11 +1462,7 @@ interface E2BSandboxDetail {
   trafficAccessToken?: string | null;
 }
 
-/**
- * The one way to build a Sandbox client from a record instead of a connect
- * call: the SDK's constructor is protected, so a subclass exposes it. The
- * instance is a plain E2B Sandbox in every other respect.
- */
+/** The SDK's constructor is protected; a subclass is the one way to build a client from a record. */
 class E2BInspectSandbox extends E2BSandbox {
   static attach(opts: ConstructorParameters<typeof E2BSandbox>[0]): E2BSandbox {
     return new E2BInspectSandbox(opts);

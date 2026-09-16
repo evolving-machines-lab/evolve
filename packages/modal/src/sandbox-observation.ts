@@ -1,16 +1,5 @@
-/**
- * The rules every provider applies when it observes a sandbox's files — ONE
- * home, three declared mirrors (same arrangement as ./sandbox-errors.ts: the
- * provider packages cannot import the SDK, so `npm run generate:sandbox-errors`
- * copies this file into each of them and packages/sdk-ts/tests/unit/
- * sandbox-errors.test.ts fails the suite when a copy is stale). Edit the
- * source, never a mirror.
- *
- * What lives here is deliberately small: the checks and conversions that the
- * contract (types.ts FileInfo / FileRange) fixes for every provider, so that
- * "0644" means the same bits and a range read answers the same way whichever
- * box served it. Provider-specific transport stays in each adapter.
- */
+// SOURCE of the rules every provider applies when observing files (mode strings, timestamps,
+// ranges); mirrored into the provider packages by `npm run generate:sandbox-errors`.
 
 import { SandboxPathNotFoundError } from "./sandbox-errors";
 
@@ -20,26 +9,17 @@ export interface ByteRange {
   length: number;
 }
 
-/**
- * Exit codes the read-only in-box scripts (Daytona's find listing, Modal's
- * range read) use to say WHY they stopped before producing anything. They are
- * the errno values of the same conditions (`errno(3)`: ENOENT 2, ENOTDIR 20,
- * EISDIR 21), so a reader of the script or of a raw exit code recognises
- * them without a table of our own.
- */
+// Exit codes of the in-box read-only scripts: the errno values of the same conditions (errno(3)).
 export const EXIT_ENOENT = 2;
 export const EXIT_ENOTDIR = 20;
 export const EXIT_EISDIR = 21;
 
-/** Single-quote a path for a POSIX shell: the only quoting that needs no escaping but the quote itself. */
+/** Single-quote a path for a POSIX shell. */
 export function shellQuote(path: string): string {
   return `'${path.replace(/'/g, "'\\''")}'`;
 }
 
-/**
- * Refuse a range that cannot name bytes — before any request is made, so a
- * caller's bug never costs a round trip or reads the wrong bytes.
- */
+/** Refused before any request, so a caller's bug never reads the wrong bytes. */
 export function assertByteRange(range: ByteRange): void {
   if (!Number.isInteger(range.offset) || range.offset < 0) {
     throw new RangeError(`offset must be a non-negative integer, got ${range.offset}`);
@@ -49,15 +29,7 @@ export function assertByteRange(range: ByteRange): void {
   }
 }
 
-/**
- * The contract's mode string: the permission bits (setuid, setgid, sticky,
- * rwx ×3) as four octal digits — "0644", "4755". Accepts what the three
- * providers report: a numeric st_mode (Modal's 33188, E2B's 420 — type bits
- * are masked off), a bare or padded octal string (Daytona's "644" / "0644"),
- * or an `ls -l`-style permission string ("-rw-r--r--", "Lrwxrwxrwx",
- * "rwsr-xr-x" — a leading type character is skipped, s/S/t/T carry the
- * special bits).
- */
+/** The contract's four-digit octal mode from what a provider reports: numeric st_mode, octal string, or an `ls -l` permission string. */
 export function octalMode(input: number | string): string {
   if (typeof input === "number") return pad4((input & 0o7777).toString(8));
   if (/^[0-7]{3,4}$/.test(input)) return pad4(input);
@@ -90,12 +62,7 @@ function bitsOfPermissionString(perms: string): number {
   return bits;
 }
 
-/**
- * ISO 8601 from whatever the provider hands over: a Date (E2B), epoch seconds
- * with an optional fraction (Modal's integer seconds, find's `%T@`), or an
- * already-formatted timestamp (Daytona's RFC 3339). Millisecond precision on
- * every provider, so timestamps compare across boxes.
- */
+/** ISO 8601 at millisecond precision from a Date, epoch seconds, or an RFC 3339 string, so timestamps compare across providers. */
 export function isoTime(input: Date | number | string): string {
   const date =
     input instanceof Date ? input : typeof input === "number" ? new Date(input * 1000) : new Date(input);
@@ -103,25 +70,13 @@ export function isoTime(input: Date | number | string): string {
   return date.toISOString();
 }
 
-/** The parent-relative join every list() uses: `dir/name`, never `dir//name`. */
+/** `dir/name`, never `dir//name`. */
 export function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
 }
 
-/**
- * Exactly the bytes of `range` from a file served over HTTP, asked for with a
- * `Range` header (the byte-exact, small-transfer path both E2B's envd and
- * Daytona's daemon honour: 206, measured on 200 MB files on 2026-09-16).
- *
- * Every status has one meaning:
- *   206 — the range, possibly shortened at the end of the file;
- *   200 — the server ignored Range and is sending the whole file: the slice
- *         is cut out of the stream and the rest cancelled, so the answer is
- *         still exact, only slower (the caller pays `offset + length` bytes);
- *   416 — the range starts past the end: an empty read, like read(2) at EOF;
- *   404 — SandboxPathNotFoundError;
- *   anything else — an Error naming the status.
- */
+/** A `Range` request on a file URL (E2B's envd and Daytona's daemon both answer 206, measured 2026-09-16).
+ *  206 → the bytes; 200 → the slice cut from the stream; 416 → empty (past EOF); 404 → not found. */
 export async function readByteRangeOverUrl(
   url: string,
   range: ByteRange,

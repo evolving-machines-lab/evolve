@@ -1,29 +1,8 @@
-/**
- * The typed refusals of the sandbox observation surface — ONE home, three
- * declared mirrors.
- *
- * SOURCE: packages/sdk-ts/src/sandbox-errors.ts. The provider packages
- * (@evolvingmachines/e2b, /daytona, /modal) cannot import this package — the
- * SDK depends on them, so the build order is providers → sdk — and each
- * therefore carries a GENERATED copy at packages/<provider>/src/sandbox-errors.ts.
- * `npm run generate:sandbox-errors` (repo root) rewrites the copies from this
- * file; packages/sdk-ts/tests/unit/sandbox-errors.test.ts fails the unit suite
- * whenever a copy is stale. Edit the source, never a mirror.
- *
- * Because the copies are separate classes, `instanceof` cannot recognise an
- * instance across a package boundary. Match by NAME through the guards below —
- * the same rule the e2b adapter applies to the vendor's TimeoutError, and for
- * the same reason: a duplicated class must not turn a typed refusal back into
- * an unrecognised throw.
- */
+// SOURCE of the sandbox observation errors; the provider packages carry generated copies
+// (`npm run generate:sandbox-errors`) because the SDK depends on them and cannot be imported back.
+// Recognise an instance by NAME (the guards below): a copy's instanceof never matches.
 
-/**
- * A capability this provider does not have — full support or a typed
- * refusal, never a silent fallback (the honesty law). `feature` is the
- * contract member in dotted form (`files.watchDir`, `commands.kill`,
- * `metrics`), `provider` the provider type (`e2b`, `daytona`, `modal`), and
- * `reason`, when given, says why and what to do instead.
- */
+/** A capability this provider lacks: `feature` in dotted form (`files.watchDir`), `provider` type, optional `reason`. */
 export class SandboxFeatureUnsupportedError extends Error {
   readonly feature: string;
   readonly provider: string;
@@ -38,7 +17,7 @@ export class SandboxFeatureUnsupportedError extends Error {
   }
 }
 
-/** A path the sandbox does not have — `not_found`, never an empty success. */
+/** A path the sandbox does not have — never an empty success. */
 export class SandboxPathNotFoundError extends Error {
   readonly path: string;
   readonly provider: string;
@@ -51,12 +30,7 @@ export class SandboxPathNotFoundError extends Error {
   }
 }
 
-/**
- * An inspect-only attach refused because the sandbox is not running.
- * `state` is the provider's own word for what it is instead (`paused`,
- * `stopped`, `exited with code 137`); attaching would have meant starting
- * or resuming it, which an observer must never do.
- */
+/** An inspect refused because the sandbox is not running; `state` is the provider's own word (`paused`, `exited with code 137`). */
 export class SandboxNotRunningError extends Error {
   readonly sandboxId: string;
   readonly provider: string;

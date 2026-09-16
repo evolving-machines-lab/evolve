@@ -1284,20 +1284,8 @@ export class ModalCommands implements SandboxCommands {
     return { exitCode, stdout, stderr };
   }
 
-  /**
-   * Background process. Modal's SDK has no way to signal a running exec
-   * (modal@0.9.0 and 0.10.1: the command-router protocol carries start, wait,
-   * poll, stdio read and stdin write — no kill; checked in both packages'
-   * typings on 2026-09-16), so a process here can be stopped only through a
-   * channel the SDK does have: its stdin. A spawn with `stdin: false` — "this
-   * process reads no input", the same meaning as on e2b — is wrapped so that
-   * closing the exec's stdin ends it (MODAL_STDIN_EOF_WRAPPER), and kill() is
-   * that close: measured 2026-09-16, a `tail -F` reader followed lines
-   * appended after its start, stopped in about 0.2 s with exit 143 and no
-   * process left behind; a wrapped command that ends by itself keeps its own
-   * exit code (3 stayed 3). Any other spawn is untouched and its kill() is a
-   * typed refusal, never a `false` that reads as "already gone".
-   */
+  // The Modal SDK cannot signal a process (no kill RPC in 0.9.0 or 0.10.1), only close its stdin:
+  // a spawn with stdin:false is wrapped so that close ends it; any other spawn's kill() refuses typed.
   async spawn(command: string, options?: SandboxSpawnOptions): Promise<SandboxCommandHandle> {
     // Wrap command for the configured sandbox user with shell features.
     // Envs are inlined by wrapCommand (su doesn't preserve env like sudo -E).
@@ -1620,15 +1608,7 @@ export class ModalFiles implements SandboxFiles {
     return exitCode === 0;
   }
 
-  /**
-   * The SDK's native listing (`SandboxFilesystem.listFiles`, modal index.d.ts
-   * FileInfo: type file|directory|symlink, permissions "0644", owner, group,
-   * epoch-second modifiedTime, symlinkTarget). It replaced an `ls -la` text
-   * parser that split on whitespace — a name with a space came back cut —
-   * and knew nothing of links. Every entry is itself: a symlink is typed
-   * "symlink" with its target as written, and a dangling one is listed
-   * (measured 2026-09-16).
-   */
+  // The native listing replaced an `ls -la` parser that split names on whitespace and knew nothing of links.
   async list(path: string): Promise<FileInfo[]> {
     try {
       const entries = await this.sandbox.filesystem.listFiles(path);
@@ -1639,7 +1619,7 @@ export class ModalFiles implements SandboxFiles {
     }
   }
 
-  /** `SandboxFilesystem.stat`: "If remotePath is a symlink, the returned FileInfo describes the symlink itself". */
+  /** stat describes a symlink itself, never its target (modal index.d.ts). */
   async stat(path: string): Promise<FileInfo> {
     try {
       return toFileInfo(await this.sandbox.filesystem.stat(path));
@@ -1649,20 +1629,8 @@ export class ModalFiles implements SandboxFiles {
     }
   }
 
-  /**
-   * Exactly the requested bytes through one bounded, read-only pipeline in
-   * binary mode: `tail -c +offset+1 | head -c length` (POSIX; busybox has
-   * both). The SDK's readBytes moves the whole file and has a size ceiling
-   * (SandboxFilesystemFileTooLargeError), so it cannot serve a slice of a
-   * large file. Measured 2026-09-16: 64 KiB at offset 150 MB of a 200 MB
-   * file in 0.69 s, byte-exact. bash, so both pipeline statuses can be read
-   * (PIPESTATUS): a `tail` that fails cannot hide behind `head`'s clean
-   * exit, while `tail` ending with SIGPIPE (128+13 = 141) because `head`
-   * already took its bytes is the normal end of this pipeline and not a
-   * failure — measured on the 200 MB read (2026-09-16): under `pipefail`
-   * alone the exact bytes came back and the exit was 141. The script's own
-   * exit codes say why nothing came back (errno values, sandbox-observation.ts).
-   */
+  // readBytes moves the whole file under a size ceiling, so a bounded tail|head in binary mode (0.5 s for 64 KiB
+  // at 150 MB, measured). Both PIPESTATUS are read: tail's SIGPIPE (141) once head is done is the normal end.
   async readRange(path: string, range: FileRange): Promise<Uint8Array> {
     assertByteRange(range);
     if (range.length === 0) return new Uint8Array(0);
@@ -1752,32 +1720,14 @@ export class ModalFiles implements SandboxFiles {
     throw new SandboxFeatureUnsupportedError("files.downloadUrl", "modal", "Modal issues no signed download URLs");
   }
 
-  /**
-   * The SDK's native watch (`SandboxFilesystem.watch`, an async iterator over
-   * Create/Modify/Remove/Access events with `recursive`), asked at the source
-   * for the three change kinds only — Access was half of everything the
-   * probe saw. A one-path Modify is a write; a two-path Modify is how the SDK
-   * reports a rename ("paths holds [source, destination]", index.d.ts
-   * FileWatchEvent) and becomes a `rename` for each path. The watch follows
-   * symlinked directories inside the tree and may report a change under the
-   * link's path rather than the real one (measured: a write to sub/b.txt
-   * arrived as dirlink/b.txt); consumers refresh the parent they have open.
-   *
-   * STOP IS PROMPT FOR THE CALLER, LATE IN THE BOX. The SDK's iterator ends
-   * its helper process in a `finally` that only runs once the pending read
-   * returns (modal index.js `watch`: `for await (readLines(stdout))` …
-   * `finally { closeStdin() }`), so `return()` on an idle watch is queued
-   * until the next event or the sandbox's end. stop() therefore returns at
-   * once and stops delivering, and the box-side watcher (one small helper,
-   * ~6 MB RSS in the POC's process list) goes away at the next change under
-   * the path. Recorded, not hidden.
-   */
+  // Access is filtered at the source (half of all events, measured). The SDK's iterator releases its
+  // helper only after the pending read returns, so stop() stops delivery now and the box lets go at the next change.
   async watchDir(
     path: string,
     onEvent: (event: FilesystemEvent) => void | Promise<void>,
     options?: WatchOptions
   ): Promise<WatchHandle> {
-    await this.stat(path); // a missing path is a typed not_found now, not a silent dead watch
+    await this.stat(path); // a missing path refuses typed instead of watching nothing
     const iterator = this.sandbox.filesystem
       .watch(path, { recursive: options?.recursive ?? false, filter: [...MODAL_WATCH_EVENT_KINDS] })
       [Symbol.asyncIterator]();
@@ -1789,7 +1739,7 @@ export class ModalFiles implements SandboxFiles {
         for (const event of normalizeModalWatchEvent(value)) await onEvent(event);
       }
     })().catch(() => {
-      // The watch ended with the sandbox, or after stop(); nothing to deliver.
+      // ended with the sandbox or after stop(); nothing to deliver
     });
     return {
       stop: async () => {
@@ -1808,11 +1758,7 @@ export class ModalFiles implements SandboxFiles {
   }
 }
 
-/**
- * The shape modal@0.9.0's SandboxFilesystem returns (index.d.ts FileInfo):
- * `mode` is the full st_mode, `permissions` the octal string, `modifiedTime`
- * epoch seconds, `symlinkTarget` null for non-links.
- */
+/** modal@0.9.0's FileInfo (index.d.ts): octal `permissions`, epoch-second `modifiedTime`, null symlinkTarget for non-links. */
 interface ModalEntry {
   name: string;
   path: string;
@@ -1842,7 +1788,7 @@ function toFileInfo(entry: ModalEntry): FileInfo {
   return info;
 }
 
-/** The SDK's not-found, matched by name (a duplicated SDK copy must not turn it into an unknown throw). */
+/** The SDK's not-found, matched by name. */
 function isModalNotFound(err: unknown): boolean {
   return !!err && typeof err === "object" && (err as { name?: unknown }).name === "SandboxFilesystemNotFoundError";
 }
@@ -1860,38 +1806,14 @@ function normalizeModalWatchEvent(event: { eventType: string; paths: string[] })
   return [];
 }
 
-/** Exit status of a process ended by SIGPIPE: 128 + 13 (signal(7)); the normal end of `tail` once `head` is done. */
+/** 128 + SIGPIPE (signal(7)): tail's normal end once head is done. */
 const MODAL_SIGPIPE_EXIT = 128 + 13;
 
-/**
- * Timeout of whole-file content reads over exec (`cat`, and the bounded
- * range pipeline). The same 5 minutes the e2b adapter gives a whole-file read
- * for the same reason: the vendor default is far too short for multi-MB
- * files, and one leash serves both shapes.
- */
+// 5 min for content reads over exec, the same leash the e2b adapter gives a whole-file read.
 const MODAL_FILE_READ_TIMEOUT_MS = 300_000;
 
-/**
- * Makes a process end when the exec's stdin is closed — the one channel the
- * Modal SDK offers to reach a running process (see ModalCommands.spawn).
- * `cat` waits for EOF on the exec's stdin and then signals `$$`, which after
- * `exec "$@"` IS the command; the command itself gets /dev/null, so a spawn
- * declared `stdin: false` never competes with the watcher for input. When
- * the command ends on its own, the exec's stdin is closed by the runner and
- * the watcher goes with it (measured: no `cat` left behind).
- *
- * THE STDIN IS HANDED OVER ON FD 3, on purpose. A background command in a
- * non-interactive shell gets /dev/null as its stdin unless it is redirected
- * explicitly (POSIX 2.9.3.1; bash: "the standard input for asynchronous
- * commands, in the absence of any explicit redirections, is redirected from
- * /dev/null"), so a plain `( cat >/dev/null … ) &` hit EOF at once and
- * signalled the command while it was still starting — measured 2026-09-16:
- * a `tail -F` reader delivered nothing or only its first line and exited
- * 143 within milliseconds. With `exec 3<&0` before the job and `cat <&3`
- * inside it, the watcher reads the exec's real stdin: the reader delivered
- * lines appended 1.5 s after start, ran until the close, stopped in 0.2 s
- * with exit 143, and a command that ended by itself kept its code (3).
- */
+// `cat` waits for EOF on the exec's stdin, then signals $$, which after exec IS the command. The stdin is handed over
+// on fd 3 because a background job's own stdin is /dev/null (POSIX 2.9.3.1) — a plain `cat` killed the reader at start (measured).
 const MODAL_STDIN_EOF_WRAPPER =
   'exec 3<&0; ( cat <&3 >/dev/null; kill -TERM $$ 2>/dev/null ) & exec "$@" </dev/null 3<&-';
 
@@ -1910,16 +1832,8 @@ class ModalSandboxImpl implements SandboxInstance {
     return this.sandbox.sandboxId;
   }
 
-  /**
-   * A typed refusal, on evidence. The Modal SDK has no sandbox metrics call
-   * (modal@0.9.0 and 0.10.1 typings: none), and what a process inside the
-   * sandbox can read is not the sandbox's: measured 2026-09-16 on a
-   * 1 GiB / 1 CPU sandbox, /proc/meminfo said MemTotal 1 TiB (376 GiB on
-   * another run), /proc/loadavg stayed 0.00 under a busy loop, the cgroup
-   * files reported a 1 TiB limit and a 17-CPU quota, and cpuacct.usage did
-   * not move. Numbers from there would be published as the sandbox's and be
-   * false, so none are.
-   */
+  // No metrics call in the SDK, and /proc, /proc/loadavg and the cgroup files inside a 1 GiB sandbox reported
+  // 1 TiB, 0.00 under load and a 17-CPU quota (measured 2026-09-16): those numbers would be false.
   async metrics(): Promise<SandboxMetrics | null> {
     throw new SandboxFeatureUnsupportedError(
       "metrics",
@@ -2366,14 +2280,7 @@ export class ModalProvider implements SandboxProvider {
     return new ModalSandboxImpl(sandbox, undefined, user);
   }
 
-  /**
-   * Attach for reads. `sandboxes.fromId` is already a read (it answers for a
-   * finished sandbox too — measured: poll() returned 137 after terminate), so
-   * the state check is `poll()`: null means running, anything else is the
-   * exit code and a typed refusal. Modal's idle timeout counts a running
-   * exec as activity, and the file API runs a helper process per call; that
-   * is the provider's own clock, not something this call sets.
-   */
+  // fromId answers for a finished sandbox too (poll() gave 137 after terminate, measured), so poll() is the state check.
   async inspect(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance> {
     const sandbox = await this.attachSandbox(sandboxId);
     const exitCode = await sandbox.poll();
@@ -2384,7 +2291,7 @@ export class ModalProvider implements SandboxProvider {
     return new ModalSandboxImpl(sandbox, undefined, user);
   }
 
-  /** The sandbox object by id (a read). A seam so the refusal path is unit-testable. */
+  /** A read; seam for the unit test. */
   protected async attachSandbox(sandboxId: string): Promise<Sandbox> {
     return this.client.sandboxes.fromId(sandboxId);
   }

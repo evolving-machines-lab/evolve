@@ -1,15 +1,5 @@
-/**
- * The generator behind the sandbox-observation mirrors — `npm run
- * generate:sandbox-errors` (repo root).
- *
- * packages/sdk-ts/src/sandbox-errors.ts (the typed refusals) and
- * packages/sdk-ts/src/sandbox-observation.ts (the contract's shared rules for
- * observing files) each have ONE home. The provider packages cannot import the
- * SDK (it depends on them), so each carries a byte-equal copy; this script
- * writes those copies, and packages/sdk-ts/tests/unit/sandbox-errors.test.ts
- * fails the unit suite whenever a copy is stale — the same generated-mirror
- * pattern as assets/docker/generate-image-version.ts.
- */
+// `npm run generate:sandbox-errors`: copies the two sdk-ts sources into the provider packages,
+// which cannot import the SDK; tests/unit/sandbox-errors.test.ts fails on a stale copy.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

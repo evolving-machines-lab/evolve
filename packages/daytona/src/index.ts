@@ -2971,46 +2971,26 @@ export class DaytonaCommands implements SandboxCommands {
   }
 }
 
-/**
- * What the file observation needs from the command runner: one blocking,
- * whole-output run. The sandbox's own DaytonaCommands provides it; a test
- * passes a double.
- */
+/** One blocking, whole-output run — what the file observation needs; a test passes a double. */
 export type DaytonaCommandRunner = Pick<DaytonaCommands, "run">;
 
-/**
- * What one `find -printf` record carries per entry, in order, NUL-terminated:
- * type letter, size, mtime as epoch seconds with a fraction, octal mode,
- * owner name, group name, symlink target (empty for non-links), base name.
- * NUL is the one byte a name cannot contain, so a name with a newline or a
- * space parses whole; `%y`/`%l` come from lstat, so a symlink is itself.
- */
+// One NUL-terminated record per entry: type, size, mtime, octal mode, owner, group, link target, name.
+// NUL is the one byte a name cannot contain; %y/%l come from lstat.
 const DAYTONA_FIND_FORMAT = "%y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%l\\0%f\\0";
 const DAYTONA_FIND_FIELDS = 8;
 
-/**
- * Daytona's SDK downloads default to 30 minutes ("Timeout for the download
- * operation in seconds ... Default is 30 minutes", FileSystem.d.ts:196); the
- * range read over the signed URL keeps the same leash.
- */
+// 30 min, the SDK's own download default (FileSystem.d.ts:196).
 export const DAYTONA_FILE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 
-/**
- * The listing script. Exit codes say why nothing was produced (EXIT_ENOENT,
- * EXIT_ENOTDIR — errno values, see sandbox-observation.ts); the records and
- * find's own status ride ONE base64 stream, because a shell variable cannot
- * hold NUL and `sh` has no pipefail: `STATUS:<n>` after the last record is
- * find's exit code, so a find that could not run (no GNU -printf) is a
- * refusal, never an empty directory.
- */
+// The records and find's own status share one base64 stream (a shell variable cannot hold NUL, sh has no
+// pipefail): `STATUS:<n>` after the last record, so a find that could not run is never an empty directory.
 function findListingScript(path: string, mode: "children" | "self"): string {
   const p = shellQuote(path);
   const existence =
     mode === "children"
       ? `[ -e ${p} ] || exit ${EXIT_ENOENT}; [ -d ${p} ] || exit ${EXIT_ENOTDIR};`
       : `[ -e ${p} ] || [ -L ${p} ] || exit ${EXIT_ENOENT};`;
-  // -H follows the LISTED directory when it is itself a symlink (its
-  // children are what the caller asked for); stat never follows.
+  // -H follows only the listed directory when it is a symlink; stat never follows.
   const find =
     mode === "children"
       ? `find -H ${p} -mindepth 1 -maxdepth 1 -printf '${DAYTONA_FIND_FORMAT}'`
@@ -3136,16 +3116,8 @@ export class DaytonaFiles implements SandboxFiles {
     }
   }
 
-  /**
-   * List through ONE read-only `find -printf` in the box, not the daemon's
-   * own list. The daemon follows symlinks (list_files.go:41-48 calls
-   * getFileInfo → os.Stat, get_file_info.go:57) and drops any entry it cannot
-   * stat, so a symlink comes back as its target and a dangling one is not
-   * there at all — measured 2026-09-16: `dirlink → sub` listed as a
-   * directory, `dangling → /nonexistent` absent. `find` reads lstat, so every
-   * entry is itself. The command rides the sandbox's blocking run (whole
-   * output, sentinel-checked), never the streamed one.
-   */
+  // Not the daemon's list: it follows symlinks and drops dangling ones (list_files.go:41-48 → os.Stat,
+  // measured 2026-09-16). One read-only find over the blocking run, whose output is whole (B127).
   async list(path: string): Promise<FileInfo[]> {
     return this.findListing(path, "children");
   }
@@ -3177,14 +3149,8 @@ export class DaytonaFiles implements SandboxFiles {
     }
   }
 
-  /**
-   * A `Range` request on the sandbox's signed download URL (`downloadUrl`,
-   * Sandbox.d.ts:587). The daemon serves the file with gin's `c.File`
-   * (download_file.go:65), which honours Range: 64 KiB at offset 150 MB of a
-   * 200 MB file came back as 206 in 0.27 s, byte-exact, while the SDK's
-   * streamed download had to move 157 MB in 15 s to reach the same bytes
-   * (both measured 2026-09-16).
-   */
+  // Range on the signed URL (gin's c.File honours it, download_file.go:65): 64 KiB at 150 MB in 0.27 s,
+  // where the SDK stream had to move 157 MB in 15 s (measured 2026-09-16).
   async readRange(path: string, range: FileRange): Promise<Uint8Array> {
     assertByteRange(range);
     if (range.length === 0) return new Uint8Array(0);
@@ -3192,12 +3158,7 @@ export class DaytonaFiles implements SandboxFiles {
     return readByteRangeOverUrl(url, range, { provider: "daytona", path, timeoutMs: DAYTONA_FILE_DOWNLOAD_TIMEOUT_MS });
   }
 
-  /**
-   * Daytona has no filesystem watcher: @daytonaio/sdk 0.203.0's FileSystem
-   * exposes none (FileSystem.d.ts, whole file), and the toolbox daemon has no
-   * watch handler under apps/daemon/pkg/toolbox/fs. A typed refusal, so a
-   * caller can poll list() on the folders it has open instead.
-   */
+  // No watcher in @daytonaio/sdk 0.203.0 (FileSystem.d.ts) nor in the daemon's fs handlers.
   async watchDir(
     _path: string,
     _onEvent: (event: FilesystemEvent) => void | Promise<void>,
@@ -3264,12 +3225,7 @@ class DaytonaSandboxImpl implements SandboxInstance {
     return toSandboxInfo(this.sandbox);
   }
 
-  /**
-   * The daemon's most recent sample — `getMetricsLatest()`, "the single
-   * current reading without going through the telemetry backend"
-   * (Sandbox.d.ts:140-150), so it is never stale by the telemetry pipeline's
-   * lag. Bytes become MiB by division, no rounding.
-   */
+  // getMetricsLatest is the daemon's current reading, not the telemetry backend's (Sandbox.d.ts:140-150).
   async metrics(): Promise<SandboxMetrics | null> {
     const m = await this.sandbox.getMetricsLatest();
     return {
@@ -3871,13 +3827,7 @@ export class DaytonaProvider implements SandboxProvider {
     return new DaytonaSandboxImpl(sandbox, this.sandboxUsers.get(sandboxId), this.managedStream);
   }
 
-  /**
-   * Attach for reads: the record is READ (`Daytona.get`, a GET) and a state
-   * other than `started` is refused typed — connect() above would have
-   * started it, which an observer must never do. Nothing here touches the
-   * sandbox's clocks; Daytona's own auto-stop counts file reads as activity,
-   * and that is the provider's definition, not an extension by this call.
-   */
+  // A GET plus a state check; connect() above would start a stopped sandbox, which an observer must never do.
   async inspect(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance> {
     const sandbox = await this.getSandboxRecord(sandboxId);
     if (sandbox.state !== "started") {
@@ -3886,7 +3836,7 @@ export class DaytonaProvider implements SandboxProvider {
     return new DaytonaSandboxImpl(sandbox, options?.user ?? this.sandboxUsers.get(sandboxId), this.managedStream);
   }
 
-  /** The sandbox record by id (a GET). A seam so the refusal path is unit-testable. */
+  /** A GET; seam for the unit test. */
   protected async getSandboxRecord(sandboxId: string): Promise<DaytonaSandbox> {
     return this.client.get(sandboxId);
   }
@@ -4132,6 +4082,6 @@ export type _testDaytonaSandboxImpl = DaytonaSandboxImpl;
 /** The constructor, for the metrics unit test (a vendor sandbox double goes in). */
 export const _testDaytonaSandboxImplCtor = DaytonaSandboxImpl;
 
-/** Bytes per MiB — the unit of every memory and disk figure in SandboxMetrics. */
+/** Bytes per MiB, the unit of SandboxMetrics. */
 const MIB = 1024 * 1024;
 

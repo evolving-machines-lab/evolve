@@ -38,13 +38,7 @@ import type {
   InitializeParams,
 } from './types';
 
-/**
- * The fields the sandbox observation errors carry (SandboxFeatureUnsupportedError:
- * feature, provider, reason; SandboxPathNotFoundError: path, provider;
- * SandboxNotRunningError: sandboxId, provider, state), copied into the
- * JSON-RPC error's data when present so the Python side can raise the same
- * typed exception with the same fields.
- */
+// The fields of the typed sandbox errors, copied into the JSON-RPC error data so Python raises the same exception.
 const TYPED_ERROR_FIELDS = ['feature', 'provider', 'reason', 'path', 'sandboxId', 'state'] as const;
 
 function pickTypedErrorFields(error: unknown): Record<string, string> {
@@ -291,7 +285,7 @@ class Bridge {
     }).catch(() => {});
   }
 
-  /** One filesystem change from a sandbox watch (sandbox_watch_dir), keyed by its watch id. */
+  /** One change from a sandbox watch, keyed by watch id. */
   private emitFsEvent(event: { watch_id: string; path: string; event: string }) {
     void this.sendNotification({
       jsonrpc: '2.0',
@@ -389,8 +383,7 @@ class Bridge {
           onLifecycle: params.forward_lifecycle
             ? (event: any) => this.emitLifecycleEvent(event)
             : undefined,
-          // A watch is asked for explicitly (sandbox_watch_dir), so its
-          // events always flow; there is no forwarding flag to set.
+          // a watch is explicit (sandbox_watch_dir), so its events always flow
           onFsEvent: (event) => this.emitFsEvent(event),
         });
         return {
@@ -418,10 +411,7 @@ class Bridge {
           code: errorCode,
           message: error instanceof Error ? error.message : String(error),
           data: {
-            // The class name as the SDK sets it (`error.name`), so a typed
-            // refusal from a provider package's generated copy of the sandbox
-            // errors is named the same as the SDK's own; plus the fields
-            // those errors carry, so the Python side rebuilds them typed.
+            // `error.name`, so a provider package's copy of a typed error is named like the SDK's own
             errorType: error instanceof Error && error.name ? error.name : errorName,
             ...pickTypedErrorFields(error),
             stack: error instanceof Error ? error.stack : undefined,

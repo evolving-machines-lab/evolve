@@ -1,16 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: Daytona live file observation — list/stat through one read-only
- * `find -printf` (the daemon's own list follows symlinks and drops dangling
- * ones: apps/daemon/pkg/toolbox/fs/list_files.go:41-48, get_file_info.go:57),
- * the typed watch refusal (no watcher in @daytonaio/sdk 0.203.0), metrics
- * from getMetricsLatest, byte-exact range reads over the signed download URL
- * (the daemon serves files with gin's c.File, download_file.go:65, which
- * honours Range — measured 206 on 2026-09-16), and the inspect-only attach
- * that never starts a stopped sandbox.
- *
- * Usage:
- *   npx tsx tests/unit/daytona-files-observe.test.ts
+ * Unit Test: Daytona live file observation (find-based list/stat, typed watch refusal, range reads, metrics, inspect).
+ * Fixtures are the vendor answers recorded on a live sandbox on 2026-09-16.
+ * Usage: npx tsx tests/unit/daytona-files-observe.test.ts
  */
 
 import {

@@ -1,18 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: E2B live file observation — list/stat entry shape, watch event
- * normalization, byte-exact range reads over a signed URL, metrics, and the
- * inspect-only attach that never touches the sandbox's lifetime.
- *
- * Every vendor answer used here was recorded from a live sandbox on
- * 2026-09-16 (lane L2 probe): envd lists a symlink with the TARGET's type and
- * the link's own permission string ("Lrwxrwxrwx"), drops a dangling link,
- * reports watch names relative to the watched directory, answers a `Range`
- * request on the signed download URL with 206, and returns no metrics sample
- * for the first seconds of a sandbox's life.
- *
- * Usage:
- *   npx tsx tests/unit/e2b-files-observe.test.ts
+ * Unit Test: E2B live file observation (list/stat, watch, range reads, metrics, inspect).
+ * Every vendor answer used as a fixture was recorded from a live sandbox on 2026-09-16.
+ * Usage: npx tsx tests/unit/e2b-files-observe.test.ts
  */
 
 import {

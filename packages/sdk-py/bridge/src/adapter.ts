@@ -155,9 +155,7 @@ export class EvolveAdapter {
   // Multi-instance support for Swarm operations
   private instances: Map<string, Evolve> = new Map();
 
-  // Sandbox observation: the provider the Python side configured (or the one
-  // the environment resolves, the same rule Evolve itself applies), the
-  // inspect-only attachments by handle, and their watches by id.
+  // Sandbox observation: inspect-only views by handle, their watches by id, one provider built lazily.
   private observationProviderConfig: InitializeParams['sandbox_provider'] | null = null;
   private observationProvider: SandboxProvider | null = null;
   private views: Map<string, { sandbox: SandboxInstance; providerType: string; watches: Set<string> }> = new Map();
@@ -998,12 +996,10 @@ export class EvolveAdapter {
   }
 
   // ===========================================================================
-  // SANDBOX OBSERVATION (Python's mirror of provider.inspect + files.list /
-  // stat / readRange / watchDir + metrics; the Python side holds a handle,
-  // never a provider instance)
+  // SANDBOX OBSERVATION (the Python side holds a handle, never a provider)
   // ===========================================================================
 
-  /** The provider Python configured at initialize, or the environment's — built once. */
+  /** Python's configured provider, else the environment's (the SDK's own rule); built once. */
   private async observationSandboxProvider(): Promise<SandboxProvider> {
     if (!this.observationProvider) {
       this.observationProvider = this.observationProviderConfig

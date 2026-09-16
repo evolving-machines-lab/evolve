@@ -1,18 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: the sandbox observation errors — one home, three declared
- * mirrors, matched by NAME across package boundaries.
- *
- * The provider packages cannot import @evolvingmachines/sdk (the SDK depends
- * on them; build order is providers → sdk), so the one class each of them
- * throws for an unsupported capability is a GENERATED copy of
- * packages/sdk-ts/src/sandbox-errors.ts. This test is the forcing function
- * that keeps the copies byte-equal to the source, and pins the name-based
- * matching that lets a caller recognise a mirror's instance without a shared
- * prototype.
- *
- * Usage:
- *   npx tsx tests/unit/sandbox-errors.test.ts
+ * Unit Test: the sandbox observation errors and rules — one home, generated mirrors pinned
+ * byte-equal, instances matched by name across packages.
+ * Usage: npx tsx tests/unit/sandbox-errors.test.ts
  */
 
 import { readFileSync } from "node:fs";

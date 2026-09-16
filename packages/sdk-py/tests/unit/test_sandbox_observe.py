@@ -1,17 +1,4 @@
-"""
-Unit tests for sandbox observation — Python SDK parity with the TypeScript
-provider surface (files.list / stat / readRange / watchDir, metrics, inspect).
-
-Mirrors the meaning of packages/{e2b,daytona,modal}/tests/unit/*-files-observe.test.ts
-through the bridge:
-- inspect_sandbox() attaches by id and returns a SandboxView bound to a handle
-- files.list()/stat() parse the uniform entry into FileInfo
-- files.read_range() returns exact bytes decoded from the bridge's base64
-- files.watch_dir() registers a watch, delivers 'fs' bridge events to the callback, stop() releases it
-- metrics() returns SandboxMetrics or None (no sample yet)
-- close() releases the handle
-- bridge errors carrying a typed name become the matching Python exceptions
-"""
+"""Unit tests for sandbox observation — the Python mirror of the provider surface (inspect, files, watch, metrics, typed errors)."""
 
 import asyncio
 import base64

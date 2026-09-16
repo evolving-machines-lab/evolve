@@ -42,13 +42,7 @@ class SandboxNotFoundError(Exception):
 
 
 class SandboxFeatureUnsupportedError(Exception):
-    """A capability this sandbox provider does not have — a typed refusal, never a silent fallback.
-
-    Mirrors the TypeScript SDK's SandboxFeatureUnsupportedError: `feature` is
-    the contract member in dotted form ('files.watchDir', 'commands.kill',
-    'metrics'), `provider` the provider type ('e2b', 'daytona', 'modal'), and
-    `reason`, when given, says why and what to do instead.
-    """
+    """A capability this provider lacks: `feature` in dotted form ('files.watchDir'), `provider` type, optional `reason`."""
 
     def __init__(self, message: str, *, feature: str = '', provider: str = '', reason: Optional[str] = None):
         super().__init__(message)
@@ -67,11 +61,7 @@ class SandboxPathNotFoundError(Exception):
 
 
 class SandboxNotRunningError(Exception):
-    """An inspect-only attach was refused because the sandbox is not running.
-
-    `state` is the provider's own word for what it is instead ('paused',
-    'stopped', 'exited with code 137'); inspecting never starts or resumes it.
-    """
+    """An inspect refused because the sandbox is not running; `state` is the provider's own word."""
 
     def __init__(self, message: str, *, sandbox_id: str = '', provider: str = '', state: str = ''):
         super().__init__(message)
@@ -493,8 +483,7 @@ class BridgeManager:
             error_code = error.get('code', -32603)
             error_message = error.get('message', 'Unknown error')
 
-            # A typed sandbox error (feature unsupported, path not found, not
-            # running) is rebuilt with its fields before any message matching.
+            # a typed sandbox error is rebuilt with its fields before any message matching
             typed = _typed_bridge_error(error_message, error.get('data'))
             if typed is not None:
                 try:

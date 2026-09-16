@@ -1,16 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: Modal live file observation — native listFiles/stat replacing
- * the `ls -la` parser, the native watch mapped into the 4-word vocabulary
- * (Access filtered at the source), byte-exact range reads through a bounded
- * `tail | head` in binary mode, the typed metrics refusal (measured
- * 2026-09-16: /proc/meminfo and the cgroup files inside a Modal sandbox
- * report host-wide figures), the stdin-EOF stop for readers spawned with
- * `stdin: false`, the inspect-only attach, and the migration of every bare
- * "Modal does not support" throw onto the shared typed refusal.
- *
- * Usage:
- *   npx tsx tests/unit/modal-files-observe.test.ts
+ * Unit Test: Modal live file observation (native list/stat/watch, range reads, metrics refusal, stoppable readers,
+ * inspect, typed refusals). Fixtures are the vendor answers recorded on a live sandbox on 2026-09-16.
+ * Usage: npx tsx tests/unit/modal-files-observe.test.ts
  */
 
 import {
