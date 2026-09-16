@@ -83,6 +83,7 @@ const INDEX_PAGE = "---\ntitle: Evolve documentation\n---\n\nThe landing page.\n
 const SNIPPET = "Shared snippet.\n";
 const TS_CHAPTER = "# Getting started (TypeScript)\n";
 const TEMPLATE = "criterion = 1\n";
+const OUTSIDE_PAGE = "a file outside the skill, behind a symlinked directory\n";
 
 function writeFixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "evolve-skills-"));
@@ -106,6 +107,12 @@ function writeFixture(): string {
   mkdirSync(join(dir, "notes"), { recursive: true });
   // A symlink under references/ points at the stray: neither a page nor part of --full.
   symlinkSync(join("..", "..", "README.md"), join(dir, "evolve-evals", "references", "linked.mdx"));
+  // A symlinked DIRECTORY under references/ leads outside the skill: the files
+  // behind it are regular files, and still not pages.
+  const outside = join(dir, "outside");
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "hosts.mdx"), OUTSIDE_PAGE);
+  symlinkSync(outside, join(dir, "evolve-evals", "references", "linkeddir"));
   return dir;
 }
 
@@ -192,6 +199,7 @@ async function main(): Promise<void> {
       assertEqual(stdout(full), expected, "SKILL.md, then each reference in sorted path order behind its separator");
       assert(!stdout(full).includes("not served by --full"), "a file outside references/ and templates/ is not part of --full");
       assert(!stdout(full).includes("a stray file at the top level"), "a symlink under references/ is not part of --full");
+      assert(!stdout(full).includes(OUTSIDE_PAGE), "a symlinked directory under references/ is not part of --full");
 
       const templates = captureIO();
       assertEqual(await runCli(["skills", "get", "rewardkit", "--full"], templates.io), 0, "get rewardkit --full exits 0");
@@ -249,6 +257,12 @@ async function main(): Promise<void> {
 
       const escape = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "../SKILL"], escape.io), 1, "a page path that leaves references/ is refused");
+
+      const linkedDir = captureIO();
+      assertEqual(await runCli(["skills", "get", "evals", "linkeddir/hosts"], linkedDir.io), 1, "a file behind a symlinked directory under references/ is not a page");
+      assert(stdout(linkedDir) === "", "nothing behind the directory link is printed");
+      const listedBehindDir = (/pages: ([^)]*)\)/.exec(linkedDir.err.join("\n"))?.[1] ?? "").split(", ");
+      assert(!listedBehindDir.some((name) => name.startsWith("linkeddir")), "and nothing behind it is listed among the pages");
 
       const linked = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "linked"], linked.io), 1, "a symlink under references/ is not a page");

@@ -17,7 +17,7 @@
  * not be shown it as a second skill.
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -191,17 +191,20 @@ export function pageNames(skill: Skill): string[] {
 
 /**
  * One reference page by its site path (`core-concepts/tasks`), the .mdx or
- * .md suffix optional. A path that leaves references/, or a symlink, is
- * unknown, never read.
+ * .md suffix optional. Only a regular file whose real path lies under the real
+ * references/ is a page: a `..` path, a symlinked file, and a file reached
+ * through a symlinked directory are all unknown, never read — the same files
+ * `--full` and the page list never show.
  */
 export function findPage(skill: Skill, page: string): SkillPage {
   const refs = join(skill.dir, "references");
   const unknown = () =>
     new SkillsError(`no page "${page}" in skill ${skill.name} (pages: ${pageNames(skill).join(", ")})`);
   const target = resolve(refs, page);
-  if (!target.startsWith(refs + sep)) throw unknown();
+  if (!target.startsWith(refs + sep) || !isDirectory(refs)) throw unknown();
+  const realRefs = realpathSync(refs);
   for (const candidate of [target, ...PAGE_SUFFIXES.map((suffix) => target + suffix)]) {
-    if (!isFile(candidate)) continue;
+    if (!isFile(candidate) || !realpathSync(candidate).startsWith(realRefs + sep)) continue;
     const path = relPath(skill.dir, candidate);
     return { page: relPath(refs, candidate).replace(/\.mdx?$/, ""), path, content: readFileSync(candidate, "utf8") };
   }
