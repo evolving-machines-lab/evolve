@@ -95,7 +95,7 @@ The new version is recorded as IMPORTING, then BUILDING while the task images bu
 
 The version lands READY when at least one task built, and FAILED only when none did or on a corpus-level refusal; a FAILED version changes nothing, the dataset keeps serving what it served. On your own dataset, READY also makes the version active, so the bare name runs it. A job refuses any version that is not READY with `version_not_ready`.
 
-Nothing is built for a sandbox provider at publish. The first trial of a task on a provider takes one to three minutes longer while that provider's image is prepared; every later trial starts from the cache.
+Nothing is built for a sandbox provider at publish. The first trial of a task on a provider takes a few minutes longer than the rest while that provider's image is prepared; it is not a hang, and every later trial starts from the cache.
 
 The import's `warnings` name what a version will permanently lack: `no_solutions_archived` or `partial_solutions_archived` for the reference-solution record, `tasks_failed_to_build` when some tasks failed, `tests_dockerfile_not_built` for the tasks whose verifier never builds their `tests/Dockerfile`.
 

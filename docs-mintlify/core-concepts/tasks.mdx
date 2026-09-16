@@ -205,7 +205,7 @@ Inside `start_period_sec` a failure does not count. After it, `retries` failures
 
 ## Not supported
 
-- **Computer-use and desktop tasks.** `[environment].os` other than Linux is refused at import. A task whose instruction assumes a desktop imports and runs, and scores zero.
+- **Computer-use and desktop tasks.** `[environment].os` other than Linux is refused at import. A task whose instruction assumes a desktop is not refused; it runs on a Linux box without one.
 - **Run-level trajectory seeding.** No job flag names a session to resume from. Task-level seeding works: a `trajectory.json` beside `instruction.md` (or in the first step's directory) is seeded into the agent's session on `claude` and `codex`; other harnesses refuse before any spend. `[agent] load_trajectory` and `resume_trajectory` keys are refused.
 - **Verifier scripts whose PEP-723 header needs a package index.** Under `no-network` there is none to reach, and the import refuses the task; only a judge task can resolve `rewardkit` and `litellm` offline. A verifier under `allowlist` or `public`, or a `tests/` tree that never invokes `uv run` or `uvx`, is fine.
 
