@@ -743,8 +743,9 @@ class Evolve:
 
         Uses the sandbox provider this Evolve was configured with (or the one
         the environment resolves). Never starts a stopped sandbox, never
-        resumes a paused one, never extends its lifetime: a sandbox that is
-        not running raises SandboxNotRunningError naming its state.
+        resumes a paused one, never extends its lifetime (on Modal, reads count
+        as activity for an idle timeout): a sandbox that is not running raises
+        SandboxNotRunningError naming its state.
 
         Args:
             sandbox_id: The sandbox to observe

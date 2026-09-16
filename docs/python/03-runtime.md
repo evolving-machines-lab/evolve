@@ -416,7 +416,7 @@ await evolve.run(prompt='Compare results')  # Back to sandbox A
 
 ## Sandbox Observation
 
-Look at a running sandbox without touching it: list its files, read a slice of a file, follow changes, and read its resource usage. `inspect_sandbox()` attaches to an existing sandbox for reads only — it never starts a stopped sandbox, never resumes a paused one, and never extends its lifetime. A sandbox that is not running is refused with `SandboxNotRunningError`, which names its state.
+Look at a running sandbox without touching it: list its files, read a slice of a file, follow changes, and read its resource usage. `inspect_sandbox()` attaches to an existing sandbox for reads only — it never starts a stopped sandbox, never resumes a paused one, and never extends its lifetime. One exception: on Modal, reads count as activity for a sandbox's idle timeout (see the caveats below). A sandbox that is not running is refused with `SandboxNotRunningError`, which names its state.
 
 ```python
 from evolve import Evolve, E2BProvider
@@ -457,7 +457,7 @@ A long-running reader — `tail -F` on a log — is a background process the Typ
 **Provider caveats:**
 - **E2B** — `list()` leaves out a fifo, a socket and a symlink whose target is missing (`stat()` still reads each), and a symlink's `size` is its target's. `list()` and `stat()` need a template built with envd 0.2.5 or later (July 2025); an older template gets `SandboxFeatureUnsupportedError` naming its envd version.
 - **Daytona** — `watch_dir()` is refused with `SandboxFeatureUnsupportedError`; poll `files.list()` on the directories you have open. `list()` and `stat()` need GNU `find` in the image (every Debian and Ubuntu image has it); an image without it gets the same typed refusal.
-- **Modal** — `metrics()` is refused with `SandboxFeatureUnsupportedError` (Modal reports no usage figures for a sandbox). A stopped watch stops delivering at once; the sandbox lets go of it at the next change under the watched path.
+- **Modal** — `metrics()` is refused with `SandboxFeatureUnsupportedError` (Modal reports no usage figures for a sandbox). Reads count as activity: a sandbox created with an idle timeout stays alive while you `list()`, `stat()`, `read_range()` or hold a `watch_dir()` open, and a stopped watch keeps it alive until the next change under the watched path; a sandbox with only a lifetime is unaffected. A stopped watch stops delivering at once; the sandbox lets go of it at the next change under the watched path.
 
 Every refusal is typed and carries its facts: `SandboxFeatureUnsupportedError` (`feature`, `provider`, `reason`), `SandboxPathNotFoundError` (`path`, `provider`), `SandboxNotRunningError` (`sandbox_id`, `provider`, `state`).
 

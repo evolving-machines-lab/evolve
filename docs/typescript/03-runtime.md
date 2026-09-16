@@ -395,7 +395,7 @@ await evolve.run({ prompt: 'Compare results' });  // Back to sandbox A
 
 ## Sandbox Observation
 
-Look at a running sandbox without touching it: list its files, read a slice of a file, follow changes, and read its resource usage. `inspect()` attaches to an existing sandbox for reads only — it never starts a stopped sandbox, never resumes a paused one, and never extends its lifetime. A sandbox that is not running is refused with `SandboxNotRunningError`, which names its state.
+Look at a running sandbox without touching it: list its files, read a slice of a file, follow changes, and read its resource usage. `inspect()` attaches to an existing sandbox for reads only — it never starts a stopped sandbox, never resumes a paused one, and never extends its lifetime. One exception: on Modal, reads count as activity for a sandbox's idle timeout (see the caveats below). A sandbox that is not running is refused with `SandboxNotRunningError`, which names its state.
 
 ```ts
 import { createE2BProvider, resolveDefaultSandbox } from "@evolvingmachines/sdk";
@@ -444,7 +444,7 @@ await reader.kill();
 **Provider caveats:**
 - **E2B** — `list()` leaves out a fifo, a socket and a symlink whose target is missing (`stat()` still reads each), and a symlink's `size` is its target's. `list()` and `stat()` need a template built with envd 0.2.5 or later (July 2025); an older template gets `SandboxFeatureUnsupportedError` naming its envd version.
 - **Daytona** — `watchDir()` is refused with `SandboxFeatureUnsupportedError`; poll `files.list()` on the directories you have open. `list()` and `stat()` need GNU `find` in the image (every Debian and Ubuntu image has it); an image without it gets the same typed refusal.
-- **Modal** — `metrics()` is refused with `SandboxFeatureUnsupportedError` (Modal reports no usage figures for a sandbox). A stopped watch stops delivering at once; the sandbox lets go of it at the next change under the watched path. `kill()` works for processes spawned with `stdin: false`; any other spawn's `kill()` is a typed refusal.
+- **Modal** — `metrics()` is refused with `SandboxFeatureUnsupportedError` (Modal reports no usage figures for a sandbox). Reads count as activity: a sandbox created with an idle timeout (`idleTimeoutMs`) stays alive while you `list()`, `stat()`, `readRange()` or hold a `watchDir()` open, and a stopped watch keeps it alive until the next change under the watched path; a sandbox with only a lifetime (`timeoutMs`) is unaffected. A stopped watch stops delivering at once; the sandbox lets go of it at the next change under the watched path. `kill()` works for processes spawned with `stdin: false`; any other spawn's `kill()` is a typed refusal.
 
 Every refusal is typed and carries its facts: `SandboxFeatureUnsupportedError` (`feature`, `provider`, `reason`), `SandboxPathNotFoundError` (`path`, `provider`), `SandboxNotRunningError` (`sandboxId`, `provider`, `state`). Recognise one with `isSandboxFeatureUnsupportedError(err)`, `isSandboxPathNotFoundError(err)` or `isSandboxNotRunningError(err)` — they work whichever package threw it.
 

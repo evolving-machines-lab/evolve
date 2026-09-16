@@ -152,7 +152,7 @@ class SandboxFiles:
 
 
 class SandboxView:
-    """A running sandbox attached for reads only (Evolve.inspect_sandbox): never started, resumed or extended."""
+    """A running sandbox attached for reads only (Evolve.inspect_sandbox): never started or resumed; Modal's idle timer still counts reads."""
 
     def __init__(self, bridge: BridgeManager, handle: str, sandbox_id: str):
         self._bridge = bridge

@@ -484,8 +484,8 @@ export interface SandboxProvider {
   create(options: SandboxCreateOptions): Promise<SandboxInstance>;
   connect(sandboxId: string, timeoutMs?: number): Promise<SandboxInstance>;
 
-  /** Attach to a RUNNING sandbox for reads: unlike connect(), never starts, resumes or extends it;
-   *  not running → SandboxNotRunningError. Optional on the same terms as `list`. */
+  /** Attach to a RUNNING sandbox for reads: unlike connect(), never starts or resumes it, never extends its lifetime
+   *  (modal's idle timer still counts reads as activity); not running → SandboxNotRunningError. Optional like `list`. */
   inspect?(sandboxId: string, options?: SandboxInspectOptions): Promise<SandboxInstance>;
 
   /**
