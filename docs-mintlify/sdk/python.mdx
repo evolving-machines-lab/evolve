@@ -124,6 +124,28 @@ async for dataset in catalog.list():
 version = await catalog.get("terminal-bench-4@4.0")
 ```
 
+## Browse the run's files
+
+Every trial has a file system you can read while the box runs and after it is gone, plus its sandbox logs and process list. `filesystem(id)` returns one object for all of it.
+
+```python
+fs = t.filesystem(trial_id)
+print((await fs.status()).state)   # "live" | "captured" | "capturing" | "none"
+
+folder = await fs.list(path="/app/work")
+main = (await fs.read("/app/work/main.py")).decode()
+hits = await fs.search("permission denied", path="/app/work")
+changed = await fs.changes()
+await fs.archive(path="/app/work", to="./archives")
+
+async for frame in fs.events():
+    if frame.event == "fs":
+        print(frame.data["type"], frame.data["path"])
+agent_log = await fs.logs("agent")
+```
+
+Analysis runs (`analyses().filesystem(id)`) and task checks (`checks().task_filesystem(check_id, task_check_id)`) have the same surface; a published task's own files are `datasets().task_files("name@version", task)`.
+
 ## Everything else
 
 `analyses()`, `checks()`, `skills()`, `agents()`, `auth()` and `orgs()` are built the same way. `meta()` fetches the platform's capability document, the live list of harnesses, models and limits, and needs no key. `hosted()` builds every client from one configuration.

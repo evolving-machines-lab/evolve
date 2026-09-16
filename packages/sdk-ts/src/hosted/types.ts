@@ -725,6 +725,8 @@ export interface JobCreate {
    * means no embedded analysis — `jobs().analyze()` remains the manual door.
    */
   analyze?: AnalyzeConfigInput;
+  /** Record the box's own system log stream (read back with `logs({ stream: "system" })`); off by default. */
+  system_log?: boolean;
   /**
    * Multiplier for task timeouts — Harbor's `--timeout-multiplier`, all five
    * fields flat on this body exactly as Harbor's JobConfig carries them. The
@@ -1355,6 +1357,8 @@ export interface Job {
    */
   sandbox_provider: EvalSandboxProvider | null;
   /** Entity cardinality only — things with no status of their own. */
+  /** The create's `system_log`; derived jobs inherit it, a regrade and every pre-switch job answer false. */
+  system_log: boolean;
   counts: { agents: number; tasks: number };
   /**
    * THE RESULTS-HONESTY LABEL of the partial-publish model: one entry per
@@ -3734,6 +3738,8 @@ export interface DatasetsClient {
    * — answers 404 `task_not_found`.
    */
   getTaskBuild(ref: string, taskName: string): Promise<TaskBuild>;
+  /** A task's files from the retained package (the bytes every trial ran against); `ref` must pin the version. */
+  taskFiles(ref: string, taskName: string): TaskPackageFiles;
   /**
    * Pre-flight a local corpus BEFORE publishing (dry run): collect only the
    * metadata files (each task's task.toml + the optional dataset.toml —
@@ -4148,6 +4154,8 @@ export const TRIAL_ARTIFACT_STREAMS = [
   "trace-atif",
   "trajectory",
   "agent-home",
+  // The run's file system as one .tar.gz: filesystem(id).archive() is the SDK door, `trial download --stream filesystem` the CLI's.
+  "filesystem",
 ] as const;
 
 /** One `?stream=` selector on the trace route. */
@@ -4189,7 +4197,7 @@ export interface TrialsClient {
    */
   artifact(
     trialId: string,
-    stream: Exclude<TrialArtifactStream, "trace-parsed" | "agent-home">
+    stream: Exclude<TrialArtifactStream, "trace-parsed" | "agent-home" | "filesystem">
   ): Promise<string | null>;
   artifact(trialId: string, stream: "agent-home"): Promise<Record<string, string> | null>;
   /**
@@ -4236,6 +4244,274 @@ export interface TrialsClient {
    * the API's typed 404.
    */
   file(trialId: string, path: string, range?: TrialFileRange): Promise<Buffer>;
+  /** The trial's file system, sandbox logs and process list: the running box while it lives, the kept tree after. */
+  filesystem(trialId: string): RunFilesystem;
+}
+
+// ===== THE RUN'S FILE SYSTEM + SANDBOX LOGS — one surface under every run owner =====
+
+/** `live` = the box runs; `captured` = the tree was kept; `capturing` = still being written; `none` = nothing yet. */
+export type FilesystemState = "live" | "captured" | "none" | "capturing";
+
+/** The running box a live file system reads. */
+export interface FilesystemBox {
+  provider: EvalSandboxProvider;
+  id: string;
+  role: "agent" | "verifier" | "analyzer" | "checker";
+  /** ISO instant the box started. */
+  since: string;
+}
+
+/** The kept tree's record. */
+export interface FilesystemCapture {
+  id: string;
+  at: string;
+  phase: "after_verifier" | "after_seal";
+  entries: number;
+  changed_files: number;
+  changed_bytes: number;
+  /** `incomplete` = `left_out` names what did not fit the capture budget. */
+  status: "ready" | "incomplete" | "failed";
+  left_out: string[];
+}
+
+/** `GET {owner}/filesystem` — what the other file system reads will answer from. */
+export interface FilesystemStatus {
+  state: FilesystemState;
+  box: FilesystemBox | null;
+  /** How live change events arrive: from the provider, or from polling the folders you declared open. */
+  watcher: "native" | "poll" | null;
+  root: string;
+  /** Where the run works (`/app`). */
+  work_dir: string;
+  capture: FilesystemCapture | null;
+}
+
+/** One entry of a folder listing. */
+export interface FilesystemEntry {
+  name: string;
+  type: "dir" | "file" | "symlink" | "other";
+  size: number;
+  mtime: string;
+  /** Octal, e.g. `0644`. */
+  mode: string;
+  owner: string;
+  /** What the run did to it since the box started; null when not known for the source. */
+  changed: "created" | "modified" | null;
+  phase: "agent" | "verifier" | null;
+  /** Captured source: false = only the image holds it, it lists but does not open. Live: null. Package: true. */
+  captured: boolean | null;
+  /** A symlink's target. */
+  target?: string;
+}
+
+/** One page of a folder (`next_cursor` null = no next page). */
+export interface FilesystemListing {
+  path: string;
+  source: "live" | "capture" | "package";
+  entries: FilesystemEntry[];
+  next_cursor: string | null;
+  /** Server time spent, milliseconds. */
+  ms: number;
+}
+
+export interface FilesystemSearchHit {
+  path: string;
+  line: number;
+  snippet: string;
+}
+
+export interface FilesystemSearchResult {
+  hits: FilesystemSearchHit[];
+  /** More hits exist, or the search budget ran out — narrow the path or the text. */
+  truncated: boolean;
+  /** `box` = the whole box was searched (seconds); `path` = one folder. */
+  scope: "path" | "box";
+  source: "live" | "capture";
+  /** Captured source only: files the run never touched were not searchable. */
+  image_files_excluded?: boolean;
+  ms: number;
+}
+
+/** One row of the changed-files list. */
+export interface FilesystemChange {
+  path: string;
+  type: "dir" | "file" | "symlink" | "other";
+  changed: "created" | "modified" | "removed";
+  phase: "agent" | "verifier";
+  size: number;
+  mtime: string;
+}
+
+export interface FilesystemChanges {
+  source: "live" | "capture";
+  /** The whole list's count and bytes; `items` is one page of it. */
+  total: number;
+  changed_bytes: number;
+  items: FilesystemChange[];
+  next_cursor: string | null;
+}
+
+export interface FilesystemWatchResult {
+  watcher: "native" | "poll";
+  paths: string[];
+}
+
+/** The source a read may force; omitted = whichever the run has. */
+export type FilesystemSource = "live" | "capture";
+
+export interface FilesystemListOptions {
+  /** Absolute box path (default `/`). */
+  path?: string;
+  source?: FilesystemSource;
+  /** The previous page's `next_cursor`. */
+  cursor?: string;
+  /** Default 500, max 1000. */
+  limit?: number;
+}
+
+export interface FilesystemReadOptions {
+  source?: FilesystemSource;
+  /** A byte range (the wire's single `Range` grammar): `{ start, end }`, `{ start }`, or `{ suffix }`. */
+  range?: TrialFileRange;
+}
+
+export interface FilesystemSearchOptions {
+  /** The text to find; a regular expression with `regex: true`. */
+  q: string;
+  /** The folder to search under (default `/`, the whole box — seconds). */
+  path?: string;
+  regex?: boolean;
+  /** Hit cap (default 200, max 1000). */
+  limit?: number;
+  source?: FilesystemSource;
+}
+
+export interface FilesystemChangesOptions {
+  source?: FilesystemSource;
+  /** Only one phase's changes (default all). */
+  phase?: "agent" | "verifier" | "all";
+  cursor?: string;
+  /** Default 500, max 1000. */
+  limit?: number;
+}
+
+export interface FilesystemArchiveOptions {
+  /** The subtree to archive (default `/`, the whole tree). */
+  path?: string;
+  source?: FilesystemSource;
+}
+
+/** Resume + cancellation for the two live streams. */
+export interface FilesystemStreamOptions {
+  /** Resume after this event id (`fs` events: the seq; log lines: `<stream>:<seq>`). */
+  lastEventId?: string;
+  signal?: AbortSignal;
+}
+
+/** One frame of `GET {owner}/filesystem/events`. */
+export type FilesystemEvent =
+  | { event: "state"; id?: string; data: { state: FilesystemState; box: FilesystemBox | null } }
+  | {
+      event: "fs";
+      id: string;
+      data: { seq: number; t: string; path: string; type: "create" | "write" | "remove" | "rename"; source: "watch" | "poll" };
+    }
+  | { event: "ping"; id?: string; data: Record<string, never> };
+
+/** The named sandbox streams a run records. Runtime list so the CLI validates `--stream` against it. */
+export const SANDBOX_LOG_STREAMS = ["agent", "verifier", "setup", "system", "metrics"] as const;
+
+export type SandboxLogStream = (typeof SANDBOX_LOG_STREAMS)[number];
+
+export interface SandboxLogLine {
+  seq: number;
+  t: string;
+  fd: "out" | "err";
+  line: string;
+}
+
+export interface SandboxMetricsSample {
+  seq: number;
+  t: string;
+  cpu_pct: number | null;
+  mem_used_mb: number | null;
+  mem_total_mb: number | null;
+  /** Where the sample came from (the provider's meter, or the box's /proc). */
+  source: string;
+}
+
+/** One page of a stream — lines, or metrics samples for `stream: "metrics"`. */
+export interface SandboxLogLines {
+  stream: SandboxLogStream;
+  lines: (SandboxLogLine | SandboxMetricsSample)[];
+  next_cursor: string | null;
+}
+
+export interface SandboxLogOptions {
+  stream: SandboxLogStream;
+  /** The last `seq` you hold. */
+  cursor?: string;
+  /** Default 1000, max 1000. */
+  limit?: number;
+}
+
+/** One frame of `GET {owner}/logs/events`. */
+export type SandboxLogEvent =
+  | { event: "line"; id: string; data: SandboxLogLine & { stream: SandboxLogStream } }
+  | { event: "metrics"; id: string; data: SandboxMetricsSample & { stream: "metrics" } }
+  | { event: "state"; id?: string; data: { state: FilesystemState; box: FilesystemBox | null } }
+  | { event: "ping"; id?: string; data: Record<string, never> };
+
+export interface SandboxProcs {
+  /** The process listing as text. */
+  text: string;
+  ms: number;
+}
+
+/** Reads answer from the running box while it lives and the kept tree after; `source` forces one (else `filesystem_state`). */
+export interface RunFilesystem {
+  /** Which source the run has, its box, and its capture record. */
+  status(): Promise<FilesystemStatus>;
+  /** One page of a folder, sorted by name. A folder that is not there is 404 `not_found`. */
+  list(options?: FilesystemListOptions): Promise<FilesystemListing>;
+  /** Raw bytes, byte-exact; an unranged read over the server's ceiling is 413 — read it in slices. */
+  read(path: string, options?: FilesystemReadOptions): Promise<Buffer>;
+  /** Content search under a folder (fast) or over the whole box (seconds); `truncated` says when there was more. */
+  search(options: FilesystemSearchOptions): Promise<FilesystemSearchResult>;
+  /** The files the run created, modified or removed, with the phase; served from the kept tree. */
+  changes(options?: FilesystemChangesOptions): Promise<FilesystemChanges>;
+  /** A `.tar.gz` of one subtree — in memory, saved under `to`, or as a stream (jobs().download()'s three shapes). */
+  archive(options?: FilesystemArchiveOptions): Promise<Buffer>;
+  archive(options: FilesystemArchiveOptions & { to: string }): Promise<string>;
+  archive(options: FilesystemArchiveOptions & { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  /** The folders you have open, so change events cover them where the watcher is `poll`; replaces the set, at most 8. */
+  watch(paths: string[]): Promise<FilesystemWatchResult>;
+  /** `state`, then one `fs` frame per change, `ping` every 15 s; a `state` reply to `lastEventId` means relist. */
+  events(options?: FilesystemStreamOptions): AsyncIterableIterator<FilesystemEvent>;
+  /** One page of a named sandbox stream. A stream never recorded is 404 `not_found`. */
+  logs(options: SandboxLogOptions): Promise<SandboxLogLines>;
+  /** Every stream at once; ends once the box is gone and every recorded line was sent. `lastEventId` = `<stream>:<seq>`. */
+  logEvents(options?: FilesystemStreamOptions): AsyncIterableIterator<SandboxLogEvent>;
+  /** The box's process list, live only (409 `filesystem_state` once it is gone). */
+  procs(): Promise<SandboxProcs>;
+}
+
+/** `GET …/tasks/{task}/filesystem` — the task package owner's status: `state` always `none`. */
+export interface TaskPackageFilesystemStatus extends FilesystemStatus {
+  state: "none";
+  source: "package";
+  /** False when the version keeps no package — its files cannot be served (409 `task_package_not_retained`). */
+  package_retained: boolean;
+}
+
+/** A task's files from the retained package — a read-only owner: no live source, no events, no logs. */
+export interface TaskPackageFiles {
+  status(): Promise<TaskPackageFilesystemStatus>;
+  /** One page of a folder of the task directory (`/` holds instruction.md, task.toml, environment/, tests/). */
+  list(options?: Omit<FilesystemListOptions, "source">): Promise<FilesystemListing>;
+  /** RAW BYTES of one file of the task directory; `range` reads a slice. */
+  read(path: string, options?: { range?: TrialFileRange }): Promise<Buffer>;
 }
 
 // =============================================================================
@@ -4406,6 +4682,8 @@ export interface AnalysesClient {
   download(analysisId: string): Promise<Buffer>;
   download(analysisId: string, options: { to: string }): Promise<string>;
   download(analysisId: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  /** The analysis run's FILE SYSTEM, sandbox logs and process list (RunFilesystem): the analyzer's box while it runs, the kept tree after. */
+  filesystem(analysisId: string): RunFilesystem;
   download(
     analysisId: string,
     options?: DownloadJobOptions
@@ -4698,6 +4976,8 @@ export interface ChecksClient {
   download(id: string): Promise<Buffer>;
   download(id: string, options: { to: string }): Promise<string>;
   download(id: string, options: { stream: true }): Promise<ReadableStream<Uint8Array>>;
+  /** The task check's FILE SYSTEM, sandbox logs and process list (RunFilesystem), under the check that owns it. */
+  taskFilesystem(checkId: string, taskCheckId: string): RunFilesystem;
   download(
     id: string,
     options?: DownloadJobOptions
@@ -5046,6 +5326,13 @@ export const HOSTED_ERROR_CODES = [
   "org_member_not_found",
   "invite_not_found",
   "invite_invalid",
+  // The file system family (UI-CONTRACT §7, §11).
+  "not_found",
+  "not_captured",
+  "filesystem_state",
+  "feature_unsupported",
+  "provider_unreachable",
+  "task_package_not_retained",
   "internal_error",
 ] as const;
 

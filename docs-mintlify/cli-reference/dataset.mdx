@@ -122,6 +122,19 @@ Download the original corpus package. Owner only.
   Directory to save into. Defaults to the current directory.
 </ParamField>
 
+## dataset files
+
+```bash
+evolve dataset files <status|ls|cat> <name@version> <task> [path] [options]
+```
+
+A published task's files, exactly as the platform stored them and as every trial ran against them: `files ls` lists one folder of the task directory (default `/`: `instruction.md`, `task.toml`, `environment/`, `tests/`), `files cat` prints one file's bytes (`--range bytes=a-b` reads a slice), `files status` says whether the version keeps its package (`package_retained`). A version imported before packages were kept is refused with `task_package_not_retained`. The version must be named: `name@version`.
+
+```bash
+evolve dataset files ls my-swe@1.0 abs-1 /tests
+evolve dataset files cat my-swe@1.0 abs-1 /tests/test.sh
+```
+
 ## dataset activate
 
 ```bash

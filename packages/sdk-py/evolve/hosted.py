@@ -361,6 +361,14 @@ HostedErrorCode = Literal[
     'org_member_not_found',
     'invite_not_found',
     'invite_invalid',
+    # The file system + sandbox logs family (every run owner's /filesystem,
+    # /logs, /procs routes, and the task package's).
+    'not_found',
+    'not_captured',
+    'filesystem_state',
+    'feature_unsupported',
+    'provider_unreachable',
+    'task_package_not_retained',
     'internal_error',
 ]
 
@@ -2132,6 +2140,9 @@ class Job:
     #: platform sandbox, and naming a provider would be an execution claim.
     #: Never None on a job this platform ran.
     sandbox_provider: Optional[EvalSandboxProvider]
+    #: Whether the run records the box's own SYSTEM log stream (``system_log``
+    #: on :meth:`JobsClient.start`); always False on a regrade job.
+    system_log: bool
     counts: JobCounts
     #: THE RESULTS-HONESTY LABEL of the partial-publish model: one entry per
     #: dataset of this job whose selection excluded tasks that FAILED to
@@ -2741,6 +2752,285 @@ class TrialFilePage:
     items: List[TrialFile]
     next_cursor: Optional[str]
     has_more: bool
+
+# ===== THE RUN'S FILE SYSTEM + SANDBOX LOGS — shapes, one surface under every run owner =====
+
+#: ``'live'`` = the box runs; ``'captured'`` = the tree was kept; ``'capturing'`` = still being written; ``'none'`` = nothing yet.
+FilesystemState = Literal['live', 'captured', 'none', 'capturing']
+
+#: The source a read may force; omitted = whichever the run has.
+FilesystemSource = Literal['live', 'capture']
+
+#: The named sandbox streams a run records.
+SandboxLogStream = Literal['agent', 'verifier', 'setup', 'system', 'metrics']
+
+#: The stream names as a closed runtime list, derived from the Literal.
+SANDBOX_LOG_STREAMS: 'tuple[str, ...]' = get_args(SandboxLogStream)
+
+
+@dataclass
+class FilesystemBox:
+    """The running box a live file system reads."""
+    provider: str
+    id: str
+    role: str
+    #: ISO instant the box started.
+    since: str
+
+
+@dataclass
+class FilesystemCapture:
+    """The kept tree's record."""
+    id: str
+    at: str
+    phase: str
+    entries: int
+    changed_files: int
+    changed_bytes: int
+    #: ``'incomplete'`` = ``left_out`` names what did not fit the capture budget.
+    status: str
+    left_out: List[str]
+
+
+@dataclass
+class FilesystemStatus:
+    """``GET {owner}/filesystem`` — what the other file system reads will answer from."""
+    state: str
+    box: Optional[FilesystemBox]
+    #: How live change events arrive: from the provider, or from polling the
+    #: folders you declared open. None when not live.
+    watcher: Optional[str]
+    root: str
+    #: Where the run works (``/app``).
+    work_dir: str
+    capture: Optional[FilesystemCapture]
+
+
+@dataclass
+class TaskPackageFilesystemStatus(FilesystemStatus):
+    """The task package owner's status: ``state`` is always ``'none'``."""
+    source: str = 'package'
+    #: False when the version keeps no package — its files cannot be served
+    #: (409 ``task_package_not_retained``).
+    package_retained: bool = False
+
+
+@dataclass
+class FilesystemEntry:
+    """One entry of a folder listing."""
+    name: str
+    type: str
+    size: int
+    mtime: str
+    #: Octal, e.g. ``0644``.
+    mode: str
+    owner: str
+    #: What the run did to it since the box started; None when not known
+    #: for the source.
+    changed: Optional[str]
+    phase: Optional[str]
+    #: Captured source: False = the run never touched it, only the image
+    #: holds it — it lists but does not open. Live: None. Package: True.
+    captured: Optional[bool]
+    #: A symlink's target.
+    target: Optional[str] = None
+
+
+@dataclass
+class FilesystemListing:
+    """One page of a folder (``next_cursor`` None = no next page)."""
+    path: str
+    source: str
+    entries: List[FilesystemEntry]
+    next_cursor: Optional[str]
+    #: Server time spent, milliseconds.
+    ms: int
+
+
+@dataclass
+class FilesystemSearchHit:
+    path: str
+    line: int
+    snippet: str
+
+
+@dataclass
+class FilesystemSearchResult:
+    hits: List[FilesystemSearchHit]
+    #: More hits exist, or the search budget ran out — narrow the path or the text.
+    truncated: bool
+    #: ``'box'`` = the whole box was searched (seconds); ``'path'`` = one folder.
+    scope: str
+    source: str
+    ms: int
+    #: Captured source only: files the run never touched were not searchable.
+    image_files_excluded: bool = False
+
+
+@dataclass
+class FilesystemChange:
+    """One row of the changed-files list."""
+    path: str
+    type: str
+    changed: str
+    phase: str
+    size: int
+    mtime: str
+
+
+@dataclass
+class FilesystemChanges:
+    source: str
+    #: The whole list's count and bytes; ``items`` is one page of it.
+    total: int
+    changed_bytes: int
+    items: List[FilesystemChange]
+    next_cursor: Optional[str]
+
+
+@dataclass
+class FilesystemWatchResult:
+    watcher: str
+    paths: List[str]
+
+
+@dataclass
+class FilesystemEvent:
+    """One frame of the change-event stream: ``event`` is ``'state'``, ``'fs'`` or ``'ping'``;
+    ``id`` is the resume position of an ``fs`` frame."""
+    event: str
+    id: Optional[str]
+    data: Dict[str, Any]
+
+
+@dataclass
+class SandboxLogLine:
+    seq: int
+    t: str
+    fd: str
+    line: str
+
+
+@dataclass
+class SandboxMetricsSample:
+    seq: int
+    t: str
+    cpu_pct: Optional[float]
+    mem_used_mb: Optional[float]
+    mem_total_mb: Optional[float]
+    #: Where the sample came from (the provider's meter, or the box's /proc).
+    source: str
+
+
+@dataclass
+class SandboxLogLines:
+    """One page of a stream — lines, or metrics samples for ``stream='metrics'``."""
+    stream: str
+    lines: List[Union[SandboxLogLine, SandboxMetricsSample]]
+    next_cursor: Optional[str]
+
+
+@dataclass
+class SandboxLogEvent:
+    """One frame of the log stream: ``event`` is ``'line'`` (``data`` a log
+    line plus ``stream``), ``'metrics'`` (a sample plus ``stream``),
+    ``'state'`` or ``'ping'``; ``id`` is ``'<stream>:<seq>'`` on a line."""
+    event: str
+    id: Optional[str]
+    data: Dict[str, Any]
+
+
+@dataclass
+class SandboxProcs:
+    #: The process listing as text.
+    text: str
+    ms: int
+
+
+def _map_filesystem_status(data: Dict[str, Any]) -> FilesystemStatus:
+    box = data.get('box')
+    capture = data.get('capture')
+    return FilesystemStatus(
+        state=str(data.get('state', 'none')),
+        box=(
+            FilesystemBox(
+                provider=str(box.get('provider', '')),
+                id=str(box.get('id', '')),
+                role=str(box.get('role', '')),
+                since=str(box.get('since', '')),
+            )
+            if isinstance(box, dict)
+            else None
+        ),
+        watcher=data.get('watcher'),
+        root=str(data.get('root', '/')),
+        work_dir=str(data.get('work_dir', '/')),
+        capture=(
+            FilesystemCapture(
+                id=str(capture.get('id', '')),
+                at=str(capture.get('at', '')),
+                phase=str(capture.get('phase', '')),
+                entries=int(capture.get('entries', 0)),
+                changed_files=int(capture.get('changed_files', 0)),
+                changed_bytes=int(capture.get('changed_bytes', 0)),
+                status=str(capture.get('status', '')),
+                left_out=[str(item) for item in (capture.get('left_out') or [])],
+            )
+            if isinstance(capture, dict)
+            else None
+        ),
+    )
+
+
+def _map_filesystem_entry(data: Dict[str, Any]) -> FilesystemEntry:
+    return FilesystemEntry(
+        name=str(data.get('name', '')),
+        type=str(data.get('type', 'other')),
+        size=int(data.get('size', 0)),
+        mtime=str(data.get('mtime', '')),
+        mode=str(data.get('mode', '')),
+        owner=str(data.get('owner', '')),
+        changed=data.get('changed'),
+        phase=data.get('phase'),
+        captured=data.get('captured'),
+        target=data.get('target'),
+    )
+
+
+def _map_filesystem_listing(data: Dict[str, Any]) -> FilesystemListing:
+    entries = data.get('entries')
+    return FilesystemListing(
+        path=str(data.get('path', '/')),
+        source=str(data.get('source', '')),
+        entries=[_map_filesystem_entry(item) for item in entries] if isinstance(entries, list) else [],
+        next_cursor=data.get('next_cursor'),
+        ms=int(data.get('ms', 0)),
+    )
+
+
+def _map_log_page(data: Dict[str, Any]) -> SandboxLogLines:
+    stream = str(data.get('stream', ''))
+    rows = data.get('lines')
+    lines: List[Union[SandboxLogLine, SandboxMetricsSample]] = []
+    for item in rows if isinstance(rows, list) else []:
+        if stream == 'metrics':
+            lines.append(SandboxMetricsSample(
+                seq=int(item.get('seq', 0)),
+                t=str(item.get('t', '')),
+                cpu_pct=item.get('cpu_pct'),
+                mem_used_mb=item.get('mem_used_mb'),
+                mem_total_mb=item.get('mem_total_mb'),
+                source=str(item.get('source', '')),
+            ))
+        else:
+            lines.append(SandboxLogLine(
+                seq=int(item.get('seq', 0)),
+                t=str(item.get('t', '')),
+                fd=str(item.get('fd', 'out')),
+                line=str(item.get('line', '')),
+            ))
+    return SandboxLogLines(stream=stream, lines=lines, next_cursor=data.get('next_cursor'))
+
 
 
 @dataclass
@@ -3984,6 +4274,8 @@ def _map_job(data: Dict[str, Any]) -> Job:
             if isinstance(data.get('sandbox_provider'), str)
             else None
         ),
+        # An older server that sends nothing reads as off, which is how it behaves.
+        system_log=data.get('system_log') is True,
         counts=_map_counts(data.get('counts')),
         # THE RESULTS-HONESTY LABEL (partial-publish model): always a list —
         # absent (an older server) reads as "nothing was excluded".
@@ -6008,6 +6300,21 @@ class DatasetsClient:
             ),
         )
 
+    def task_files(self, ref: str, task_name: str) -> 'TaskPackageFiles':
+        """A task's files from the retained package (the bytes every trial ran against);
+        ``ref`` must pin the version (``"name@version"``)."""
+        name, version = _parse_dataset_ref(ref)
+        if version is None:
+            raise ValueError(
+                'task_files() needs "name@version" — a task\'s files belong to one '
+                f'immutable version (got "{ref}")'
+            )
+        return TaskPackageFiles(
+            self._http,
+            f'/api/datasets/{urllib.parse.quote(name, safe="")}/versions/'
+            f'{urllib.parse.quote(version, safe="")}/tasks/{urllib.parse.quote(task_name, safe="")}',
+        )
+
     async def preflight(self, *, directory: str) -> DatasetPreflight:
         """Pre-flight a local corpus BEFORE publishing (dry run).
 
@@ -6964,6 +7271,7 @@ class JobsClient:
         sandbox_provider: Optional[str] = None,
         retry: Optional[JobRetryConfigInput] = None,
         analyze: Optional[AnalyzeConfigInput] = None,
+        system_log: Optional[bool] = None,
         timeout_multiplier: Optional[float] = None,
         agent_timeout_multiplier: Optional[float] = None,
         verifier_timeout_multiplier: Optional[float] = None,
@@ -7092,6 +7400,8 @@ class JobsClient:
             body['retry'] = retry
         if analyze is not None:
             body['analyze'] = analyze
+        if system_log is not None:
+            body['system_log'] = system_log
         if timeout_multiplier is not None:
             body['timeout_multiplier'] = timeout_multiplier
         if agent_timeout_multiplier is not None:
@@ -8208,7 +8518,7 @@ class TrialsClient:
     async def artifact(
         self,
         trial_id: str,
-        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home'],
+        stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home', 'filesystem'],
     ) -> Optional[Union[str, Dict[str, str]]]:
         """One raw trace artifact for a trial, by the trace route's ``?stream=``
         selector.
@@ -8239,6 +8549,11 @@ class TrialsClient:
             raise ValueError(
                 "'trace-parsed' is the parsed event trace — use trace() / trace_events(), "
                 'not artifact()'
+            )
+        if stream == 'filesystem':
+            raise ValueError(
+                "'filesystem' is the run's file system as one .tar.gz — use "
+                'filesystem(trial_id).archive(), not artifact()'
             )
         raw = await self._http.request_json(
             f'/api/trials/{urllib.parse.quote(trial_id)}/trace?stream={stream}'
@@ -8327,6 +8642,332 @@ class TrialsClient:
             already_terminal=raw.get('already_terminal') or [],
             not_found=raw.get('not_found') or [],
         )
+
+
+    def filesystem(self, trial_id: str) -> 'RunFilesystem':
+        """The trial's file system, sandbox logs and process list (:class:`RunFilesystem`):
+        the running box while it lives, the kept tree after."""
+        return RunFilesystem(self._http, f'/api/trials/{urllib.parse.quote(trial_id)}')
+
+
+# ===== THE RUN'S FILE SYSTEM + SANDBOX LOGS — one implementation under every owner =====
+
+def _filesystem_query(**params: Any) -> str:
+    """The ``?…`` of the file system reads — every option spelled as the
+    contract spells it; a boolean rides as ``true``/``false``."""
+    query: Dict[str, str] = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        query[key] = 'true' if value is True else 'false' if value is False else str(value)
+    encoded = urllib.parse.urlencode(query)
+    return f'?{encoded}' if encoded else ''
+
+
+def _encode_box_path(path: str) -> str:
+    """Each segment encodes separately — the slashes ARE the route."""
+    return '/'.join(urllib.parse.quote(segment) for segment in path.split('/') if segment)
+
+
+def _range_header(start: Optional[int], end: Optional[int], suffix: Optional[int]) -> Optional[Dict[str, str]]:
+    if suffix is not None:
+        return {'Range': f'bytes=-{suffix}'}
+    if start is not None:
+        return {'Range': f'bytes={start}-{end if end is not None else ""}'}
+    return None
+
+
+class _SseFeed:
+    """Connects once and ends when the server ends; reconnecting is the caller's, so this never invents
+    a position the server did not hand out. The blocking read runs on a worker thread (the job watch's pattern)."""
+
+    def __init__(self, http: '_HostedHttp', path: str, last_event_id: Optional[str]):
+        self._http = http
+        self._path = path
+        self._last_event_id = last_event_id
+
+    def _read(self, loop: asyncio.AbstractEventLoop, queue: 'asyncio.Queue', connection: _SseConnection) -> None:
+        def put(item: Any) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+
+        headers = {
+            'Authorization': f'Bearer {self._http.api_key()}',
+            'Accept': 'text/event-stream',
+        }
+        if self._last_event_id is not None:
+            headers['Last-Event-ID'] = self._last_event_id
+        request = urllib.request.Request(f'{self._http.base_url()}{self._path}', headers=headers)
+        try:
+            with _http.urlopen(request, timeout=SSE_SOCKET_TIMEOUT_SEC) as response:
+                connection.response = response
+                event_id: Optional[str] = None
+                event_type: Optional[str] = None
+                data_lines: List[str] = []
+                for line in _iter_sse_lines(response):
+                    if line == '':
+                        if event_id is not None or event_type is not None or data_lines:
+                            put(('frame', event_type or 'message', event_id, _parse_sse_data('\n'.join(data_lines))))
+                        event_id = None
+                        event_type = None
+                        data_lines = []
+                        continue
+                    if line.startswith(':'):
+                        continue
+                    fieldname, _, value = line.partition(':')
+                    if value.startswith(' '):
+                        value = value[1:]
+                    if fieldname == 'id':
+                        event_id = value
+                    elif fieldname == 'event':
+                        event_type = value
+                    elif fieldname == 'data':
+                        data_lines.append(value)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode('utf-8', errors='replace')
+            parsed = _parse_error_body(detail, str(exc.reason))
+            if parsed.get('retry_after_sec') is None:
+                parsed['retry_after_sec'] = _header_retry_after_sec(getattr(exc, 'headers', None))
+            put(('http_error', exc.code, parsed))
+        except Exception as exc:  # a closed socket ends the stream; the caller reconnects with the last id
+            if connection.response is None:
+                put(('error', exc))
+        finally:
+            put(('end',))
+
+    async def frames(self) -> 'AsyncIterator[tuple[str, Optional[str], Dict[str, Any]]]':
+        loop = asyncio.get_running_loop()
+        queue: 'asyncio.Queue' = asyncio.Queue()
+        connection = _SseConnection()
+        task = loop.run_in_executor(None, self._read, loop, queue, connection)
+        try:
+            while True:
+                item = await queue.get()
+                if item[0] == 'frame':
+                    yield item[1], item[2], item[3]
+                elif item[0] == 'http_error':
+                    parsed = item[2]
+                    raise EvolveAPIError(
+                        item[1],
+                        parsed.get('code') or 'unknown_error',
+                        parsed.get('message') or f'HTTP {item[1]}',
+                        param=parsed.get('param'),
+                        details=parsed.get('details'),
+                        retry_after_sec=parsed.get('retry_after_sec'),
+                        request_id=parsed.get('request_id'),
+                    )
+                elif item[0] == 'error':
+                    raise item[1]
+                else:
+                    return
+        finally:
+            connection.close()
+            await task
+
+
+class RunFilesystem:
+    """One run's file system, sandbox logs and process list, the same surface under every run owner.
+    Reads answer from the running box while it lives and the kept tree after; ``source`` forces one."""
+
+    def __init__(self, http: '_HostedHttp', owner_path: str):
+        self._http = http
+        self._owner_path = owner_path
+
+    async def status(self) -> FilesystemStatus:
+        """Which source the run has, its box, and its capture record."""
+        raw = await self._http.request_json(f'{self._owner_path}/filesystem')
+        return _map_filesystem_status(raw)
+
+    async def list(
+        self,
+        *,
+        path: str = '/',
+        source: Optional[FilesystemSource] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> FilesystemListing:
+        """One page of a folder, sorted by name (``limit`` default 500, max
+        1000; ``cursor`` = the previous page's ``next_cursor``). A folder
+        that is not there is 404 ``not_found``."""
+        raw = await self._http.request_json(
+            f'{self._owner_path}/filesystem/files'
+            f'{_filesystem_query(path=path, source=source, cursor=cursor, limit=limit)}'
+        )
+        return _map_filesystem_listing(raw)
+
+    async def read(
+        self,
+        path: str,
+        *,
+        source: Optional[FilesystemSource] = None,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        suffix: Optional[int] = None,
+    ) -> bytes:
+        """Raw bytes, byte-exact; ``start``/``end`` an inclusive slice, ``suffix`` the last N bytes.
+        An unranged read over the server's ceiling is 413 — read it in slices."""
+        payload, _headers = await self._http.request_bytes(
+            f'{self._owner_path}/filesystem/files/{_encode_box_path(path)}'
+            f'{_filesystem_query(source=source)}',
+            headers=_range_header(start, end, suffix),
+        )
+        return payload
+
+    async def search(
+        self,
+        q: str,
+        *,
+        path: str = '/',
+        regex: bool = False,
+        limit: Optional[int] = None,
+        source: Optional[FilesystemSource] = None,
+    ) -> FilesystemSearchResult:
+        """Content search under ``path`` (fast) or over the whole box (the
+        default ``'/'`` — seconds); ``truncated`` says when there was more."""
+        raw = await self._http.request_json(
+            f'{self._owner_path}/filesystem/search'
+            f'{_filesystem_query(q=q, path=path, regex=regex, limit=limit, source=source)}'
+        )
+        hits = raw.get('hits')
+        return FilesystemSearchResult(
+            hits=[
+                FilesystemSearchHit(path=str(h.get('path', '')), line=int(h.get('line', 0)), snippet=str(h.get('snippet', '')))
+                for h in hits
+            ] if isinstance(hits, list) else [],
+            truncated=raw.get('truncated') is True,
+            scope=str(raw.get('scope', 'path')),
+            source=str(raw.get('source', '')),
+            ms=int(raw.get('ms', 0)),
+            image_files_excluded=raw.get('image_files_excluded') is True,
+        )
+
+    async def changes(
+        self,
+        *,
+        source: Optional[FilesystemSource] = None,
+        phase: Optional[Literal['agent', 'verifier', 'all']] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> FilesystemChanges:
+        """The files the run created, modified or removed, with the phase;
+        served from the kept tree."""
+        raw = await self._http.request_json(
+            f'{self._owner_path}/filesystem/changes'
+            f'{_filesystem_query(source=source, phase=phase, cursor=cursor, limit=limit)}'
+        )
+        items = raw.get('items')
+        return FilesystemChanges(
+            source=str(raw.get('source', '')),
+            total=int(raw.get('total', 0)),
+            changed_bytes=int(raw.get('changed_bytes', 0)),
+            items=[
+                FilesystemChange(
+                    path=str(i.get('path', '')),
+                    type=str(i.get('type', 'other')),
+                    changed=str(i.get('changed', '')),
+                    phase=str(i.get('phase', '')),
+                    size=int(i.get('size', 0)),
+                    mtime=str(i.get('mtime', '')),
+                )
+                for i in items
+            ] if isinstance(items, list) else [],
+            next_cursor=raw.get('next_cursor'),
+        )
+
+    async def archive(
+        self,
+        *,
+        path: str = '/',
+        source: Optional[FilesystemSource] = None,
+        to: Optional[str] = None,
+    ):
+        """A ``.tar.gz`` of one subtree (default the whole tree): the bytes,
+        or with ``to`` (a directory) streamed straight to disk and the saved
+        path returned — :meth:`JobsClient.download`'s two shapes."""
+        return await self._http.download_archive(
+            f'{self._owner_path}/filesystem/archive{_filesystem_query(path=path, source=source)}',
+            to,
+            'filesystem.tar.gz',
+        )
+
+    async def watch(self, paths: List[str]) -> FilesystemWatchResult:
+        """Declare the folders you have open, so change events cover them on
+        a provider without a native watcher (``status().watcher == 'poll'``).
+        Replaces the set; at most 8 folders."""
+        raw = await self._http.request_json(
+            f'{self._owner_path}/filesystem/watch', method='POST', body={'paths': paths}
+        )
+        return FilesystemWatchResult(watcher=str(raw.get('watcher', '')), paths=[str(p) for p in (raw.get('paths') or [])])
+
+    async def events(self, *, last_event_id: Optional[str] = None) -> 'AsyncIterator[FilesystemEvent]':
+        """``state``, then one ``fs`` frame per change, ``ping`` every 15 s; ends once the file system settles.
+        A ``state`` frame in reply to ``last_event_id`` means relist."""
+        async for event, event_id, data in _SseFeed(self._http, f'{self._owner_path}/filesystem/events', last_event_id).frames():
+            yield FilesystemEvent(event=event, id=event_id, data=data)
+
+    async def logs(
+        self,
+        stream: SandboxLogStream,
+        *,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> SandboxLogLines:
+        """One page of a named sandbox stream (``cursor`` = the last ``seq``
+        you hold; ``limit`` default 1000). A stream never recorded is 404
+        ``not_found``."""
+        raw = await self._http.request_json(
+            f'{self._owner_path}/logs{_filesystem_query(stream=stream, cursor=cursor, limit=limit)}'
+        )
+        return _map_log_page(raw)
+
+    async def log_events(self, *, last_event_id: Optional[str] = None) -> 'AsyncIterator[SandboxLogEvent]':
+        """Every stream at once; ends once the box is gone and every recorded line was sent.
+        ``last_event_id`` is a line's id, ``'<stream>:<seq>'``."""
+        async for event, event_id, data in _SseFeed(self._http, f'{self._owner_path}/logs/events', last_event_id).frames():
+            yield SandboxLogEvent(event=event, id=event_id, data=data)
+
+    async def procs(self) -> SandboxProcs:
+        """The box's process list, live only (409 ``filesystem_state`` once it is gone)."""
+        raw = await self._http.request_json(f'{self._owner_path}/procs')
+        return SandboxProcs(text=str(raw.get('text', '')), ms=int(raw.get('ms', 0)))
+
+
+class TaskPackageFiles:
+    """A task's files from the retained package — a read-only owner: no live source, no events, no logs."""
+
+    def __init__(self, http: '_HostedHttp', owner_path: str):
+        self._http = http
+        self._owner_path = owner_path
+
+    async def status(self) -> TaskPackageFilesystemStatus:
+        raw = await self._http.request_json(f'{self._owner_path}/filesystem')
+        base = _map_filesystem_status(raw)
+        return TaskPackageFilesystemStatus(
+            state='none',
+            box=None,
+            watcher=None,
+            root=base.root,
+            work_dir=base.work_dir,
+            capture=None,
+            source='package',
+            package_retained=raw.get('package_retained') is True,
+        )
+
+    async def list(self, *, path: str = '/', cursor: Optional[str] = None, limit: Optional[int] = None) -> FilesystemListing:
+        """One page of a folder of the task directory (``/`` holds
+        instruction.md, task.toml, environment/, tests/)."""
+        raw = await self._http.request_json(
+            f'{self._owner_path}/filesystem/files{_filesystem_query(path=path, cursor=cursor, limit=limit)}'
+        )
+        return _map_filesystem_listing(raw)
+
+    async def read(self, path: str, *, start: Optional[int] = None, end: Optional[int] = None, suffix: Optional[int] = None) -> bytes:
+        """RAW BYTES of one file of the task directory; a slice with
+        ``start``/``end`` or ``suffix``."""
+        payload, _headers = await self._http.request_bytes(
+            f'{self._owner_path}/filesystem/files/{_encode_box_path(path)}',
+            headers=_range_header(start, end, suffix),
+        )
+        return payload
 
 
 # =============================================================================
@@ -8452,6 +9093,12 @@ class AnalysesClient:
         """
         path = f'/api/analyses/{urllib.parse.quote(analysis_id)}/download'
         return await self._http.download_archive(path, to, f'analysis-{analysis_id}.tar.gz')
+
+    def filesystem(self, analysis_id: str) -> 'RunFilesystem':
+        """The analysis run's FILE SYSTEM, sandbox logs and process list
+        (:class:`RunFilesystem`): the analyzer's box while it runs, the kept
+        tree after."""
+        return RunFilesystem(self._http, f'/api/analyses/{urllib.parse.quote(analysis_id)}')
 
 
 class ChecksClient:
@@ -8737,6 +9384,15 @@ class ChecksClient:
         """
         path = f'/api/checks/{urllib.parse.quote(id)}/download'
         return await self._http.download_archive(path, to, f'check-{id}.tar.gz')
+
+    def task_filesystem(self, check_id: str, task_check_id: str) -> 'RunFilesystem':
+        """The task check's FILE SYSTEM, sandbox logs and process list
+        (:class:`RunFilesystem`), under the check that owns it — the
+        (check, task check) pair is the identity."""
+        return RunFilesystem(
+            self._http,
+            f'/api/checks/{urllib.parse.quote(check_id)}/tasks/{urllib.parse.quote(task_check_id)}',
+        )
 
 
 class AuthClient:

@@ -88,6 +88,17 @@ Grouped by the door that returns them. The HTTP status is stated where it is fix
 | `insufficient_credits` | 402. The account's credit balance is zero at job create, resume or retry. |
 | `quota_exceeded` | 429, no retry delay. The organization's `max_queued_trials` would be crossed. `details` carry `quota`, `limit`, `used`, `requested` and `org`. The CLI prints `Launch quota exceeded:` and exits 2. |
 
+### Files and logs
+
+| Code | When |
+| --- | --- |
+| `not_found` | 404. A path the run's file system does not hold. |
+| `not_captured` | 404. A read of a file on the kept tree that the run never touched; only the image holds it. |
+| `filesystem_state` | 409. `source=live` while the box is gone, or `source=capture` before the kept tree exists; `details.state` says what the run has. |
+| `feature_unsupported` | 422. The provider or the run's shape has no live view of what was asked; `details.cause` names it. |
+| `provider_unreachable` | 503. The box's provider did not answer; wait `retryAfterSec`. |
+| `task_package_not_retained` | 409. The dataset version keeps no task package, so its task files cannot be served. |
+
 ### Input
 
 | Code | When |
