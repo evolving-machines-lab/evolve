@@ -167,6 +167,7 @@
               "sdk-reference/agents",
               "sdk-reference/auth",
               "sdk-reference/meta",
+              "sdk-reference/types",
               "sdk-reference/errors"
             ]
           }
