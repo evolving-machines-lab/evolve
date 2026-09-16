@@ -246,7 +246,7 @@ const evolve = new Evolve()
     // Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     .withAgent({
         type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid" - defaults to "claude"
-        model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "fable" for Claude Fable 5 or "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
+        model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "fable" for Claude Fable 5.1 or "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
         reasoningEffort: "medium",            // (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve stamps its pinned per-harness default (see Getting Started → Agent Reference)
         // maxContextSize: 128000,            // (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
         apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
