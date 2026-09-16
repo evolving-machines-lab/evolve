@@ -1,0 +1,51 @@
+---
+title: "Check"
+description: "Check the quality of tasks against a rubric before you spend a job on them."
+---
+
+A check reads a task and, when it can, runs its environment, its reference solution and its verifier, then rules on every criterion of a rubric. Point it at a task directory, or at a directory of tasks:
+
+```bash
+evolve check ./tasks \
+  -i 'abs-*' \
+  -l 5 \
+  --watch
+```
+
+Or at a published dataset version. Nothing is uploaded; the checker reads the retained task package.
+
+```bash
+evolve check -d my-swe@1.0 --watch
+```
+
+When the path is a task directory, that task is checked; otherwise every top-level directory that is one, in sorted order. `-i` and `-x` are globs over task names and `-l` caps the count, in that order; a selection that leaves nothing is refused with `no_checkable_tasks`. There is no task-count ceiling.
+
+`-r` is a rubric file, `-p` a prompt file. `-m` and `--effort` set the checker's model and effort, `-e` its sandbox provider, `-n` how many checks run at once, beneath the organization's `max_concurrent_analyses`.
+
+The default rubric has eleven criteria: `instruction_is_sufficient`, `tests_match_the_instruction`, `verifier_is_correct`, `no_answer_leakage`, `grader_is_out_of_reach`, `reference_solution_is_valid`, `verifier_rejects_non_solutions`, `environment_builds_and_runs`, `verification_is_stable`, `limits_allow_the_task` and `task_is_solvable`. The checker's default model is the analyzer's; a custom rubric, model, prompt and effort follow the same rules and refusals as [analyze](/core-concepts/analyze).
+
+## The result
+
+Each task gets one entry per criterion, with an `outcome` (`pass`, `fail`, `not_applicable` or `unknown`), an `explanation` and `evidence`. Under the default rubric, one label is derived:
+
+- `has_a_problem`: a fail on any criterion
+- `unclear`: otherwise, an unknown on any of the six file-based criteria
+- `no_problem_found`: everything else
+
+`executed` says whether the checker actually ran the task's environment, so a reading-only `no_problem_found` is never mistaken for a run. A check never fails as a whole: refusals happen at accept, and a task's failure is on that task. A check is readable by its creator and by every member of the organization; anyone else reads `check_not_found`.
+
+## Read it back
+
+```bash
+evolve check list --status running
+evolve check show <check-id>
+evolve check trace <task-check-id> --since 200
+evolve check download <check-id> -o checks/
+evolve check download <task-check-id> --stream task-check
+```
+
+`check show` prints the check with one result per task. `check trace` prints the checker's transcript for one task check. `check download` saves the whole check as a check folder by its check id, one task's folder by its task check id, or streams one artifact of a task check: `task-check`, `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
+
+<Card title="check reference" icon="terminal" href="/cli-reference/check">
+  Every flag of `evolve check`.
+</Card>

@@ -27,15 +27,14 @@ Read the index first, then the page for your topic, then write the command. Ever
 ## The other skills
 
 ```bash
-evolve skills get agents           # the SDK: run agents (Claude, Codex, Gemini, ...) in sandboxes from TypeScript or Python
 evolve skills get create-task      # write a new task in the Harbor format, verifier included
 evolve skills get rewardkit        # write a task's verifier with Reward Kit
 evolve skills get create-adapter   # convert an existing benchmark into a folder of Harbor-format tasks
 evolve skills get publish          # publish a dataset of tasks, or upload a job you ran elsewhere
 ```
 
-`evolve skills list` names everything the installed version serves; `--full` on any skill adds its pages.
+`evolve skills list` names everything the installed version serves; `--full` on any skill adds its pages. The SDK skill (run agents in sandboxes from TypeScript or Python) is not served by the command; install it from the repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`.
 
 ## Inside the evolve repository
 
-An agent working in a checkout of https://github.com/evolving-machines-lab/evolve reads the same content directly: `docs-evals/SKILL.md` (the evals index; the pages sit beside it), `docs-agents/SKILL.md`, and `skills/<name>/SKILL.md` for the others; nothing needs to be installed.
+An agent working in a checkout of https://github.com/evolving-machines-lab/evolve reads the same content directly from `skills/<name>/SKILL.md` (`evolve-evals` is the evals index, its pages under `references/`); nothing needs to be installed.

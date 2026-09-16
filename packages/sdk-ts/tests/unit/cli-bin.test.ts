@@ -160,28 +160,28 @@ try {
     console.log("  - SKIP: spec not present — gate runs in private CI or with EVOLVE_OPENAPI_SPEC_PATH");
   }
 
-  // ---- THE SKILLS ROOT IS FOUND FROM dist/cli/ ----
-  // `skills path` resolves the root holding docs-evals/, docs-agents/ and
-  // skills/ from the running file: the package itself (its copies staged by
-  // every build and pack) and then the repo root, both reached at "../../"
-  // from dist/cli/ exactly like package.json. Only the built bin can prove
-  // the depth survived the build; the src tests run from src/cli/, which
-  // sits at the same depth by construction.
+  // ---- THE SKILLS DIRECTORY IS FOUND FROM dist/cli/ ----
+  // `skills path` resolves skills/ from the running file: the package's own
+  // copy (staged by every build and pack, absent in a bare checkout) and then
+  // the repo root's, both reached at "../../" from dist/cli/ exactly like
+  // package.json. Only the built bin can prove the depth survived the build;
+  // the src tests run from src/cli/, which sits at the same depth by
+  // construction.
   const skillsPath = runNode(binLink, ["skills", "path"]);
   assert(skillsPath.code === 0, `skills path through the .bin link exits 0 (stderr: ${skillsPath.stderr.trim()})`);
   assert(
-    skillsPath.stdout.trim() === PACKAGE_ROOT || skillsPath.stdout.trim() === join(PACKAGE_ROOT, "..", ".."),
-    `skills path prints the package or the checkout (got "${skillsPath.stdout.trim()}")`,
+    skillsPath.stdout.trim() === join(PACKAGE_ROOT, "skills") || skillsPath.stdout.trim() === join(PACKAGE_ROOT, "..", "..", "skills"),
+    `skills path prints the package's or the checkout's skills/ (got "${skillsPath.stdout.trim()}")`,
   );
   const skillsList = runNode(binLink, ["skills", "list", "--json"]);
   assert(skillsList.code === 0, "skills list --json through the .bin link exits 0");
   assert(skillsList.stdout.includes('"name":"evals"'), "and serves the evals skill");
 
-  // ---- NO SKILLS ROOT ANYWHERE: the typed refusal, human and --json ----
-  // A copy of dist/ under a package root without docs-evals/, docs-agents/
-  // and skills/, and no repo root above it: both candidates are absent, so
-  // the CLI must refuse by name instead of serving nothing. node_modules is
-  // linked in so the copy resolves its dependencies like an installed package.
+  // ---- NO SKILLS DIRECTORY ANYWHERE: the typed refusal, human and --json ----
+  // A copy of dist/ under a package root with no skills/ and no repo root
+  // above it: both candidates are absent, so the CLI must refuse by name
+  // instead of serving nothing. node_modules is linked in so the copy
+  // resolves its dependencies like an installed package.
   const bare = join(workDir, "bare", "pkg");
   mkdirSync(bare, { recursive: true });
   cpSync(join(PACKAGE_ROOT, "dist"), join(bare, "dist"), { recursive: true });
