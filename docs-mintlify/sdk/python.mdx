@@ -7,7 +7,7 @@ description: "Start a job, wait for it, read the result, and download it from Py
 pip install evolve-sdk
 ```
 
-The hosted surface is a set of clients, one per noun. Each one reads `EVOLVE_API_KEY` from the environment, or takes a `HostedClientConfig(api_key=..., base_url=...)`. Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys). Every call is a coroutine.
+The hosted surface is a set of clients, one per noun. Each one reads `EVOLVE_API_KEY` from the environment, or takes a `HostedClientConfig(api_key=..., base_url=...)`. Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys). Every call is a coroutine, and every client is an async context manager with `close()`. A request never follows a redirect: the client refuses every 3xx and raises it as an error, so the key only reaches the host you configured.
 
 ```python
 import asyncio
@@ -30,7 +30,9 @@ job = await evals.start(
 print(job.id, job.status)   # "QUEUED"
 ```
 
-`datasets` is a list of selectors. A bare `name` resolves to the active version; `task_names`, `exclude_task_names` and `n_tasks` narrow the task set. Every arm in `agents` names a `model_name`, and `version`, `reasoning_effort`, `kwargs`, `preset` and `skills` are optional. `sandbox_provider` picks `"e2b"`, `"daytona"` or `"modal"`. The fields are the same ones a `-c` config file takes on the CLI.
+`datasets` is a list of selectors, as dicts or `DatasetSelector` dataclasses. A bare `name` resolves to the active version; `task_names`, `exclude_task_names` and `n_tasks` narrow the task set. Every arm in `agents`, a dict or an `AgentArm`, names a `model_name`, and `version`, `reasoning_effort`, `kwargs`, `preset` and `skills` are optional. `sandbox_provider` picks `"e2b"`, `"daytona"` or `"modal"`. The retry policy is a `JobRetryConfigInput` dict and comes back resolved as `JobRetryConfig`; the pair is named that way because `evolve.RetryConfig` already names the Swarm retry helper. The fields are the same ones a `-c` config file takes on the CLI.
+
+Results are dataclasses with the wire's `snake_case` names and `Literal` vocabularies for every closed set. Four keys the wire spells in camelCase are mapped: `next_cursor`, `has_more`, `by_status` and `task_matrix`. A refused request raises `EvolveAPIError`; see [errors](/sdk-reference/errors).
 
 ## Wait for it
 
@@ -63,7 +65,7 @@ failures = await evals.trials(
 )
 ```
 
-Every list on this surface works the same way: await it for one page, iterate it to walk every page.
+Every list on this surface works the same way: await it for one page, iterate it to walk every page. `pass_at_k(job)` reads a finished job's pass@k out of its stats as sorted numbers.
 
 A trial id is global, so `trials()` reaches one without the job.
 
