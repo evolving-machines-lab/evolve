@@ -42,6 +42,7 @@ import {
   getOpenCodeReasoningVariant,
   isThinkingEnabled,
   registryOwnsModel,
+  registryWireId,
   resolveReasoningEffort,
   type AgentRegistryEntry,
 } from "./registry";
@@ -1618,16 +1619,46 @@ export class Agent {
     );
   }
 
-  private resolveGatewayModel(model: string): string {
-    if (this.agentConfig.isDirectMode) return model;
-    return this.registry.gatewayModelAliases?.[model] ?? model;
-  }
-
   private resolveCommandModel(model: string): string {
     const aliases = this.agentConfig.isDirectMode
       ? this.registry.directModelAliases
       : this.registry.gatewayModelAliases;
     return aliases?.[model] ?? model;
+  }
+
+  /**
+   * The request model the Evolve-owned Droid settings file names. Droid
+   * resolves nothing on this route — the custom model's `model` field is the
+   * literal name the gateway receives — so the roster word becomes the
+   * gateway's name HERE, per route:
+   *
+   *   gateway mode       the registry's gatewayModelAliases (the Evolve
+   *                      gateway's route spellings, e.g. kimi-k3 →
+   *                      moonshot/kimi-k3), any other name verbatim.
+   *   external gateway   the roster's wire id for a roster alias, any other
+   *                      name verbatim. Factory spells Fable 5.1 with a dot
+   *                      (claude-fable-5.1, Droid's own id, what direct mode
+   *                      sends); no gateway names an Anthropic model that way,
+   *                      and the dot form 404'd through the platform gateway's
+   *                      anthropic/* wildcard (prod trial 6dd6b56d,
+   *                      2026-09-15). NOT gatewayModelAliases on this route:
+   *                      the hosted worker drives Droid in external-gateway
+   *                      mode on a key that admits exactly the alias and its
+   *                      wire id (swarm_dashboard harness-registry
+   *                      resolveGatewayModelScope), and three of that table's
+   *                      four rows name a route spelling such a key refuses —
+   *                      kimi-k3, glm-5.3 and qwen3.7-max are exact gateway
+   *                      entries under their bare names. A caller's own
+   *                      gateway likewise knows the vendor id, not an Evolve
+   *                      route spelling.
+   *
+   * Plain direct mode never writes the file: Factory's own id rides --model.
+   */
+  private droidSettingsModel(): string {
+    const model = this.agentConfig.model || this.registry.defaultModel;
+    return this.agentConfig.externalGateway
+      ? registryWireId(this.registry, model)
+      : this.resolveCommandModel(model);
   }
 
   /**
@@ -2344,9 +2375,7 @@ export class Agent {
         sandbox,
         {
           ...this.registry.droidGatewaySettings,
-          model: this.resolveCommandModel(
-            this.agentConfig.model || this.registry.defaultModel,
-          ),
+          model: this.droidSettingsModel(),
           baseUrl: isExternalGateway
             ? this.agentConfig.baseUrl ?? getGatewayUrl()
             : withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl()),

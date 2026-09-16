@@ -2883,6 +2883,55 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
       "droid command routes through the Evolve-owned settings file",
     );
     assert(droid.command.includes("custom:Evolve-Gateway-0"), "droid command selects the gateway custom model");
+
+    // droid on a ROSTER alias: the settings file's custom model IS the request
+    // model (droid resolves nothing itself on this route), so a roster alias
+    // rides as the roster's wire id — Factory's dot-form Fable 5.1 becomes the
+    // gateway's dashed Anthropic id (prod trial 6dd6b56d, 2026-09-15: the dot
+    // form 404'd through the gateway's anthropic/* wildcard). NOT the
+    // gatewayModelAliases table: a hosted run's key admits exactly the alias
+    // and its wire id (swarm_dashboard resolveGatewayModelScope), and three of
+    // that table's four rows name a route spelling the key would refuse.
+    const settingsModel = (files: Map<string, string>): string | undefined => {
+      const raw = files.get("/home/user/.factory/evolve-settings.json") ?? "{}";
+      return (JSON.parse(raw) as { customModels?: Array<{ model?: string }> }).customModels?.[0]?.model;
+    };
+    const droidFable = await runHarness("droid", "claude-fable-5.1");
+    assertEqual(
+      settingsModel(droidFable.files),
+      "claude-fable-5-1",
+      "droid externalGateway settings carry the roster wire id for Factory's dot-form alias",
+    );
+    assert(droidFable.command.includes("custom:Evolve-Gateway-0"), "droid command still selects the gateway custom model for a roster alias");
+    const droidKimi = await runHarness("droid", "kimi-k3");
+    assertEqual(
+      settingsModel(droidKimi.files),
+      "kimi-k3",
+      "droid externalGateway sends an alias that IS its wire id verbatim — never the gatewayModelAliases route spelling",
+    );
+
+    // Plain direct mode is untouched: Factory's own dot id rides --model and
+    // no settings file is written.
+    const directCommands = new MockCommands();
+    const directSandbox = new MockSandbox("direct-droid", directCommands);
+    const directKit = new Evolve()
+      .withAgent({ type: "droid", model: "claude-fable-5.1", providerApiKey: "fk-direct" })
+      .withSandbox(new MockProvider(directSandbox))
+      .withWorkspaceMode("task")
+      .withWorkingDirectory("/task");
+    try {
+      await directKit.run({ prompt: "solve", timeoutMs: 10_000 });
+    } finally {
+      await directKit.kill().catch(() => {});
+    }
+    assert(
+      (directCommands.spawned[0] ?? "").includes("--model 'claude-fable-5.1'"),
+      "droid direct mode passes Factory's dot id to --model verbatim",
+    );
+    assert(
+      !directSandbox.files.writes.has("/home/user/.factory/evolve-settings.json"),
+      "droid direct mode writes no Evolve-owned settings file",
+    );
   } finally {
     globalThis.fetch = previousFetch;
   }
