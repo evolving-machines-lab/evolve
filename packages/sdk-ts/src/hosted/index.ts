@@ -4285,7 +4285,7 @@ export interface HostedEvolve {
  * const { agents } = await evolve.meta();     // no key needed for this one
  * const job = await evolve.jobs.start({
  *   datasets: [{ name: "deep-swe" }],
- *   agents: [{ name: "claude", model_name: "claude-fable-5" }],
+ *   agents: [{ name: "claude", model_name: "claude-fable-5-1" }],
  * });
  * ```
  */

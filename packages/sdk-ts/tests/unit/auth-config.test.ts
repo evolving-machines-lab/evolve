@@ -149,17 +149,68 @@ async function runTests(): Promise<void> {
     const fable = claude.models.find((model) => model.alias === "fable");
     assertEqual(claude.defaultModel, "opus", "Claude default stays opus");
     assert(fable !== undefined, "Claude registry includes fable alias");
-    assertEqual(fable?.modelId, "claude-fable-5", "fable maps to claude-fable-5");
+    assertEqual(fable?.modelId, "claude-fable-5-1", "fable maps to claude-fable-5-1");
 
     const opencodeFable = AGENT_REGISTRY.opencode.models.find(
-      (model) => model.alias === "openrouter/anthropic/claude-fable-5"
+      (model) => model.alias === "openrouter/anthropic/claude-fable-5.1"
     );
     assert(opencodeFable !== undefined, "OpenCode registry includes OpenRouter Fable alias");
     assertEqual(
       opencodeFable?.modelId,
-      "openrouter/anthropic/claude-fable-5",
+      "openrouter/anthropic/claude-fable-5.1",
       "OpenCode Fable alias keeps provider-prefixed OpenRouter model"
     );
+
+    // Fable 5 stays pinnable by its explicit id on the claude and opencode
+    // rosters: hosted create admits roster names only.
+    const claudeLegacy = claude.models.find((model) => model.alias === "claude-fable-5");
+    assertEqual(claudeLegacy?.modelId, "claude-fable-5", "Claude roster keeps claude-fable-5 as a legacy row");
+    const opencodeLegacy = AGENT_REGISTRY.opencode.models.find(
+      (model) => model.alias === "openrouter/anthropic/claude-fable-5"
+    );
+    assertEqual(
+      opencodeLegacy?.modelId,
+      "openrouter/anthropic/claude-fable-5",
+      "OpenCode roster keeps the OpenRouter Fable 5 id as a legacy row"
+    );
+
+    // Droid takes Factory's dot-form id (npm latest 0.219.0 accepts
+    // claude-fable-5.1 and refuses the dashed form, 2026-09-15); the gateway
+    // route rewrites it to the dashed Anthropic entry.
+    const droid = AGENT_REGISTRY.droid;
+    const droidFable = droid.models.find((model) => model.alias === "claude-fable-5.1");
+    assertEqual(droidFable?.modelId, "claude-fable-5-1", "Droid claude-fable-5.1 maps to claude-fable-5-1");
+    assertEqual(
+      droid.gatewayModelAliases?.["claude-fable-5.1"],
+      "claude-fable-5-1",
+      "Droid gateway alias rewrites the dot-form id to the gateway's dashed entry"
+    );
+    const droidLegacy = droid.models.find((model) => model.alias === "claude-fable-5");
+    assertEqual(droidLegacy?.modelId, "claude-fable-5", "Droid roster keeps claude-fable-5 as a legacy row");
+  }
+
+  console.log("Registry: GPT-6 Astra");
+
+  {
+    const codex = AGENT_REGISTRY.codex;
+    const astra = codex.models.find((model) => model.alias === "gpt-6-astra");
+    assertEqual(codex.defaultModel, "gpt-5.6-sol", "Codex default stays gpt-5.6-sol");
+    assert(astra !== undefined, "Codex registry includes gpt-6-astra");
+    assertEqual(astra?.modelId, "gpt-6-astra", "gpt-6-astra maps to itself");
+
+    const opencodeAstra = AGENT_REGISTRY.opencode.models.find(
+      (model) => model.alias === "openrouter/openai/gpt-6-astra"
+    );
+    assert(opencodeAstra !== undefined, "OpenCode registry includes OpenRouter Astra alias");
+    assertEqual(
+      opencodeAstra?.modelId,
+      "openrouter/openai/gpt-6-astra",
+      "OpenCode Astra alias keeps provider-prefixed OpenRouter model"
+    );
+
+    // Droid npm latest 0.219.0 accepts gpt-6-astra (2026-09-15).
+    const droidAstra = AGENT_REGISTRY.droid.models.find((model) => model.alias === "gpt-6-astra");
+    assertEqual(droidAstra?.modelId, "gpt-6-astra", "Droid roster includes gpt-6-astra");
   }
 
   // ─────────────────────────────────────────────────────────────────────────

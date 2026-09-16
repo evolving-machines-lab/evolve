@@ -408,7 +408,25 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // default for all of them — stamped explicitly via --effort.
     defaultReasoningEffort: "high",
     models: [
-      { alias: "fable", modelId: "claude-fable-5", description: "Highest capability, long-horizon agentic work" },
+      // The alias rides to Claude Code verbatim (resolveCommandModel applies
+      // only gatewayModelAliases, never this modelId), so Claude Code's own
+      // version resolves it. This modelId records that resolution — the wire
+      // name the platform's per-arm gateway key must admit (swarm_dashboard
+      // resolveGatewayModelScope reads it from harness-capabilities.json).
+      // Vendor doc (code.claude.com/docs/en/model-config, read 2026-09-15):
+      // "Unless you set ANTHROPIC_DEFAULT_FABLE_MODEL, the `fable` alias
+      // resolves to Fable 5.1, except in Claude apps gateway sessions, where
+      // `fable` and `best` resolve to Fable 5", and "Fable 5.1 requires
+      // Claude Code v2.1.257 or later" — an older Claude Code still answers
+      // the alias with claude-fable-5 (the evolve-all image carried 2.1.233
+      // on 2026-09-15 and served claude-fable-5 for `fable`; the measurement
+      // is in team/dev-items/fable-astra-lane-report-2026-09-15.md).
+      { alias: "fable", modelId: "claude-fable-5-1", description: "Highest capability, long-horizon agentic work" },
+      // Fable 5 stays reachable by its explicit id: hosted create admits only
+      // roster names (swarm_dashboard lib/evaluations/agent-models.ts
+      // validateAgentModel), so a user who must pin the older model needs
+      // this row; the gateway keeps its claude-fable-5 entry.
+      { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Claude Fable 5 (legacy)" },
       { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-5", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
@@ -507,10 +525,22 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // vendor-side default change cannot move results.
     defaultReasoningEffort: "high",
     models: [
-      { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Newest frontier flagship" },
+      // GPT-6 Astra (released 2026-09-03). Vendor doc, read 2026-09-15
+      // (platform.openai.com/docs/models/gpt-6-astra): "Model ID: gpt-6-astra
+      // ... our most capable model, built for the hardest end-to-end work";
+      // reasoning.effort low/medium/high/xhigh/max; 1,050,000 context. Codex
+      // CLI: configurable from 0.153.1 (2026-09-03, "Added support for
+      // configuring GPT-6-Astra through the API without changing the default
+      // model or showing it in the model picker"), Codex's own bundled default
+      // from 0.153.4 (2026-09-04), in its model picker from 0.154.0 —
+      // learn.chatgpt.com/docs/changelog (developers.openai.com/codex/changelog
+      // redirects there), read 2026-09-15. The Evolve default stays gpt-5.6-sol
+      // (owner's word 2026-09-15).
+      { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Newest frontier flagship" },
+      { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "GPT-5.6 flagship (previous generation)" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Balances intelligence and cost" },
       { alias: "gpt-5.6-luna", modelId: "gpt-5.6-luna", description: "High-volume, cost-sensitive tier" },
-      { alias: "gpt-5.5", modelId: "gpt-5.5", description: "Previous frontier model" },
+      { alias: "gpt-5.5", modelId: "gpt-5.5", description: "GPT-5.5 frontier model (two generations back)" },
       { alias: "gpt-5.3-codex", modelId: "gpt-5.3-codex", description: "Industry-leading code-optimized" },
     ],
     systemPromptFile: "AGENTS.md",
@@ -751,10 +781,17 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
-      { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable via OpenRouter" },
+      // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models,
+      // read 2026-09-15: anthropic/claude-fable-5.1). Fable 5 keeps a legacy
+      // row so hosted create (roster names only) can still pin it.
+      { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
+      { alias: "openrouter/anthropic/claude-fable-5", modelId: "openrouter/anthropic/claude-fable-5", description: "Anthropic Fable 5 via OpenRouter (legacy)" },
       { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
       { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
+      // GPT-6 Astra under OpenRouter's id (openrouter.ai/api/v1/models, read
+      // 2026-09-15: openai/gpt-6-astra, listed at OpenAI's own rate).
+      { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
       { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
@@ -831,10 +868,25 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // so results cannot drift on a vendor-side change.
     defaultReasoningEffort: "high",
     models: [
-      { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Factory-managed Claude Fable 5" },
+      // Droid's version is not pinned anywhere in the platform: hosted
+      // bundles resolve @factory/cli@latest at job creation (swarm_dashboard
+      // lib/evaluations/worker/harness-bundles.ts resolveLatestSourceVersion)
+      // and the evolve-all image installs Droid at image build. Measured
+      // 2026-09-15 on npm latest 0.219.0: `npx @factory/cli@0.219.0 exec -m
+      // claude-fable-5.1 --list-tools` answers "Available tools for Fable
+      // 5.1", `-m gpt-6-astra` "Available tools for GPT-6 Astra", and the
+      // dashed `claude-fable-5-1` "Invalid model" (docs.factory.ai/models.md
+      // lists both accepted ids). Factory spells Fable 5.1 with a dot, so the
+      // alias is Factory's id (direct mode passes it to Droid verbatim) and
+      // gatewayModelAliases below rewrites it to the gateway's dashed entry
+      // for the settings-file route — the kimi-k3 pattern. Full record:
+      // team/dev-items/fable-astra-lane-report-2026-09-15.md.
+      { alias: "claude-fable-5.1", modelId: "claude-fable-5-1", description: "Factory-managed Claude Fable 5.1" },
+      { alias: "claude-fable-5", modelId: "claude-fable-5", description: "Factory-managed Claude Fable 5 (legacy)" },
       { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
       { alias: "claude-sonnet-5", modelId: "claude-sonnet-5", description: "Factory-managed Claude Sonnet 5" },
       { alias: "claude-haiku-4-5", modelId: "claude-haiku-4-5-20251001", description: "Factory-managed Claude Haiku 4.5" },
+      { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Factory-managed GPT-6 Astra" },
       { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Factory-managed GPT-5.6 Sol" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Factory-managed GPT-5.6 Terra" },
       { alias: "gpt-5.6-luna", modelId: "gpt-5.6-luna", description: "Factory-managed GPT-5.6 Luna" },
@@ -866,6 +918,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     skipApiKeyEnvInGateway: true,
     gatewayModelAliases: {
+      // Factory's dot-form Fable 5.1 id becomes the gateway's dashed
+      // Anthropic entry inside the Evolve-owned settings file.
+      "claude-fable-5.1": "claude-fable-5-1",
       "kimi-k3": "moonshot/kimi-k3",
       "glm-5.3": "openrouter/z-ai/glm-5.3",
       // glm-5.3-flash rides bare: the gateway's plain name is the platform's
