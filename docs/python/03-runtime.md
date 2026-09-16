@@ -455,7 +455,7 @@ await view.close()  # or: async with await evolve.inspect_sandbox('sandbox-id') 
 A long-running reader — `tail -F` on a log — is a background process the TypeScript SDK starts with `spawn(..., { stdin: false })` and stops with `kill()`; the Python SDK has no process-handle surface, so readers are a TypeScript feature today.
 
 **Provider caveats:**
-- **E2B** — a symlink whose target is missing does not appear in `list()`, and a symlink's `size` is its target's.
+- **E2B** — `list()` leaves out a fifo, a socket and a symlink whose target is missing (`stat()` still reads each), and a symlink's `size` is its target's.
 - **Daytona** — `watch_dir()` is refused with `SandboxFeatureUnsupportedError`; poll `files.list()` on the directories you have open. `list()` and `stat()` need GNU `find` in the image (every Debian and Ubuntu image has it); an image without it gets the same typed refusal.
 - **Modal** — `metrics()` is refused with `SandboxFeatureUnsupportedError` (Modal reports no usage figures for a sandbox). A stopped watch stops delivering at once; the sandbox lets go of it at the next change under the watched path.
 
