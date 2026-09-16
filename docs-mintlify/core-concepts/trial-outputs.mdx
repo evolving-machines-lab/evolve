@@ -55,7 +55,7 @@ Every harness prints its run in its own format. The platform parses that stream 
 
 The kinds are `prompt` for the instruction the agent received, `user_message_chunk`, `agent_message_chunk` and `agent_thought_chunk` for text, `tool_call` and `tool_call_update` for a tool call and its later status and output, `plan` for the agent's plan entries, `usage` for token counts, `error` for a failure the harness reported, and `trace_loss` when events were lost. A tool call's `kind` is one of the parser's kinds, such as `read`, `edit` or `execute`, and its `status` moves through `pending`, `in_progress`, `completed` or `failed`.
 
-Once the trial is finished, the gateway's own `usage` events follow the harness's, one per model call, with the tokens and the cost as priced. Their `data.update.source` is `gateway`, their `seq` starts at 1000000000, and they are the only usage lines that carry tokens and money.
+Once the trial is finished, the gateway's own `usage` events follow the harness's, one per model call, with the tokens and the cost as priced. Their `data.update.source` is `gateway`, and they are the only usage lines that carry tokens and money.
 
 ```bash
 evolve trial trace <trial-id>
