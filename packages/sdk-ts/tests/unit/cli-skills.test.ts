@@ -3,16 +3,19 @@
  * Unit Test: `evolve skills` — the CLI serves the bundled skills
  * (src/cli/skills.ts, wired in src/cli/index.ts).
  *
- * The skills directory is a fixture built here, handed to the CLI through
- * EVOLVE_SKILLS_DIR, so every assertion reads bytes this file wrote. One
- * section drops the override and proves the default resolution lands on the
- * checkout's own skill-data/. Covered: list (bare `skills` is list), the
- * hidden pointer, get (one skill, several, --all, --full with agent-browser's
+ * The skills root is a fixture built here — docs-evals/, docs-agents/ and
+ * skills/ under one directory — handed to the CLI through EVOLVE_SKILLS_DIR,
+ * so every assertion reads bytes this file wrote. One section drops the
+ * override and proves the default resolution lands on the checkout (or the
+ * package's staged copies). Covered: list (bare `skills` is list), the hidden
+ * pointer, get (one skill, several, --all, --full with agent-browser's
  * `--- path ---` separator), get <skill> <page> with and without the file
- * suffix, path, install (--path, --target, --force, the seven agent homes),
- * --json on every verb, the unknown-name errors that list what exists, the
- * root help's "Start here" block, the API-refusal footer (and its absence on a
- * usage error), and `skills` no longer aliasing the platform `skill` noun.
+ * suffix, what is not a page (the skill's own files, a symlink, a file behind
+ * a symlinked directory), path, install (--path, --target, --force, the seven
+ * agent homes), --json on every verb, the unknown-name errors that list what
+ * exists, the root help's "Start here" block, the API-refusal footer (and its
+ * absence on a usage error), and `skills` no longer aliasing the platform
+ * `skill` noun.
  *
  * Usage:
  *   npm run test:unit:cli-skills
@@ -60,60 +63,72 @@ function stdout(capture: { out: string[] }): string {
   return capture.out.map((l) => l + "\n").join("");
 }
 
+/** The pages a refusal lists: the text after `pages: ` up to the closing parenthesis. */
+function listedPages(capture: { err: string[] }): string[] {
+  return (/pages: ([^)]*)\)/.exec(capture.err.join("\n"))?.[1] ?? "").split(", ");
+}
+
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO_ROOT = join(PACKAGE_ROOT, "..", "..");
 
 // =============================================================================
-// FIXTURE: a skills directory with a hidden pointer, two skills that carry
-// references, one that carries templates, one bare, and two strays
+// FIXTURE: a skills root — the two docs folders and skills/ with the hidden
+// pointer, one skill carrying references and templates, one bare — plus the
+// files that must never be served: config and assets in the docs folder, the
+// generator's source, strays, a symlinked file and a symlinked directory.
 // =============================================================================
 
 /** A SKILL.md with the description quoted, as the shipped skills quote theirs (a ": " inside a bare YAML scalar is a parse error). */
-function skillMd(name: string, description: string, body: string): string {
-  return `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}\n`;
+function skillMd(name: string, description: string, body: string, internal = true): string {
+  const metadata = internal ? "metadata:\n  internal: true\n" : "";
+  return `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n${metadata}---\n\n${body}\n`;
 }
 
 const POINTER = `---\nname: evolve\ndescription: The pointer skill an agent installs.\nallowed-tools: Bash(evolve:*), Bash(npx evolve:*)\n---\n\n# evolve\n\nRun \`evolve skills get evals\`.\n`;
-const EVALS_SKILL = skillMd("evolve-evals", "Hosted evals: datasets, jobs, trials. A description long enough to be cut at seventy characters in the list.", "# Evals\n\nThe index.");
-const AGENTS_SKILL = skillMd("evolve-agents", "The SDK: run agents in sandboxes.", "# Agents");
+const EVALS_SKILL = skillMd("docs-evals", "Hosted evals: datasets, jobs, trials. A description long enough to be cut at seventy characters in the list.", "# Evals\n\nThe index.");
+const AGENTS_SKILL = skillMd("docs-agents", "The SDK: run agents in sandboxes.", "# Agents");
+const AGENTS_SOURCE = skillMd("docs-agents", "The SDK: run agents in sandboxes.", "# Agents (the hand-written source)");
 const CREATE_TASK_SKILL = skillMd("create-task", "Create a task.", "# Create a task");
 const REWARDKIT_SKILL = skillMd("rewardkit", "Write verifiers.", "# Reward Kit");
 const TASKS_PAGE = "---\ntitle: Tasks\n---\n\nA task is one directory.\n";
 const INDEX_PAGE = "---\ntitle: Evolve documentation\n---\n\nThe landing page.\n";
 const SNIPPET = "Shared snippet.\n";
 const TS_CHAPTER = "# Getting started (TypeScript)\n";
+const GUIDE = "# A guide under references/\n";
 const TEMPLATE = "criterion = 1\n";
 const OUTSIDE_PAGE = "a file outside the skill, behind a symlinked directory\n";
 
 function writeFixture(): string {
-  const dir = mkdtempSync(join(tmpdir(), "evolve-skills-"));
+  const root = mkdtempSync(join(tmpdir(), "evolve-skills-"));
   const put = (rel: string, content: string) => {
-    const abs = join(dir, rel);
+    const abs = join(root, rel);
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, content);
   };
-  put("evolve/SKILL.md", POINTER);
-  put("evolve-evals/SKILL.md", EVALS_SKILL);
-  put("evolve-evals/references/core-concepts/tasks.mdx", TASKS_PAGE);
-  put("evolve-evals/references/index.mdx", INDEX_PAGE);
-  put("evolve-evals/references/snippets/global-options.mdx", SNIPPET);
-  put("evolve-evals/notes.txt", "not served by --full\n");
-  put("evolve-agents/SKILL.md", AGENTS_SKILL);
-  put("evolve-agents/references/typescript/01-getting-started.md", TS_CHAPTER);
-  put("create-task/SKILL.md", CREATE_TASK_SKILL);
-  put("rewardkit/SKILL.md", REWARDKIT_SKILL);
-  put("rewardkit/templates/criteria.toml", TEMPLATE);
-  put("README.md", "a stray file at the top level\n");
-  mkdirSync(join(dir, "notes"), { recursive: true });
-  // A symlink under references/ points at the stray: neither a page nor part of --full.
-  symlinkSync(join("..", "..", "README.md"), join(dir, "evolve-evals", "references", "linked.mdx"));
-  // A symlinked DIRECTORY under references/ leads outside the skill: the files
-  // behind it are regular files, and still not pages.
-  const outside = join(dir, "outside");
-  mkdirSync(outside, { recursive: true });
-  writeFileSync(join(outside, "hosts.mdx"), OUTSIDE_PAGE);
-  symlinkSync(outside, join(dir, "evolve-evals", "references", "linkeddir"));
-  return dir;
+  put("docs-evals/SKILL.md", EVALS_SKILL);
+  put("docs-evals/docs.json", '{"name": "Evolve"}\n');
+  put("docs-evals/index.mdx", INDEX_PAGE);
+  put("docs-evals/core-concepts/tasks.mdx", TASKS_PAGE);
+  put("docs-evals/snippets/global-options.mdx", SNIPPET);
+  put("docs-evals/images/jobs.png", "not a page\n");
+  put("docs-evals/style.css", "body {}\n");
+  put("docs-agents/SKILL.md", AGENTS_SKILL);
+  put("docs-agents/SKILL.source.md", AGENTS_SOURCE);
+  put("docs-agents/_meta.ts", "export default {};\n");
+  put("docs-agents/typescript/01-getting-started.md", TS_CHAPTER);
+  put("skills/evolve/SKILL.md", POINTER);
+  put("skills/create-task/SKILL.md", CREATE_TASK_SKILL);
+  put("skills/rewardkit/SKILL.md", REWARDKIT_SKILL);
+  put("skills/rewardkit/references/guide.md", GUIDE);
+  put("skills/rewardkit/templates/criteria.toml", TEMPLATE);
+  put("skills/rewardkit/notes.txt", "not served by --full\n");
+  put("skills/README.md", "a stray file among the skills\n");
+  mkdirSync(join(root, "skills", "notes"), { recursive: true });
+  // A symlinked file and a symlinked directory in the docs folder lead outside it: never served.
+  put("outside/hosts.mdx", OUTSIDE_PAGE);
+  symlinkSync(join("..", "outside", "hosts.mdx"), join(root, "docs-evals", "linked.mdx"));
+  symlinkSync(join("..", "outside"), join(root, "docs-evals", "linkeddir"));
+  return root;
 }
 
 const SERVED_NAMES = ["agents", "create-task", "evals", "rewardkit"];
@@ -137,7 +152,7 @@ async function main(): Promise<void> {
       assertEqual(await runCli(["skills", "list"], list.io), 0, "`skills list` exits 0");
       assertEqual(bare.out, list.out, "bare `skills` prints exactly what `skills list` prints");
       const names = list.out.map((l) => l.trim().split(/\s+/)[0]);
-      assertEqual(names, SERVED_NAMES, "one row per content skill, sorted, served names (evolve- prefix dropped)");
+      assertEqual(names, SERVED_NAMES, "one row per skill, sorted: the docs folders by their served names, the rest by folder");
       assert(!list.out.some((l) => /^\s*evolve\s/.test(l)), "the pointer `evolve` is not listed");
       const evalsRow = list.out.find((l) => l.trim().startsWith("evals")) ?? "";
       const description = evalsRow.trim().replace(/^evals\s+/, "");
@@ -163,7 +178,8 @@ async function main(): Promise<void> {
       );
       const evals = rows.find((r) => r.name === "evals")!;
       assert(evals.description.startsWith("Hosted evals: datasets, jobs, trials. A description long enough"), "--json carries the whole description, never cut");
-      assertEqual(evals.path, join(fixture, "evolve-evals"), "path is the skill's directory (the folder keeps its evolve- name)");
+      assertEqual(evals.path, join(fixture, "docs-evals"), "path is the skill's folder: the docs folder itself");
+      assertEqual(rows.find((r) => r.name === "rewardkit")!.path, join(fixture, "skills", "rewardkit"), "a hand-written skill's path is its folder under skills/");
       assert(!rows.some((r) => r.name === "evolve"), "--json hides the pointer too");
     }
 
@@ -183,27 +199,35 @@ async function main(): Promise<void> {
       assertEqual(stdout(two), `${CREATE_TASK_SKILL}\n---\n\n${REWARDKIT_SKILL}`, "two skills are joined by a blank line, a --- rule and a blank line (agent-browser's boundary)");
 
       const folderName = captureIO();
-      assertEqual(await runCli(["skills", "get", "evolve-evals"], folderName.io), 1, "the folder name evolve-evals is not a served name (one name per skill)");
+      assertEqual(await runCli(["skills", "get", "docs-evals"], folderName.io), 1, "the folder name docs-evals is not a served name (one name per skill)");
       assert(folderName.err.join("\n").includes("evals"), "the refusal lists the served names");
     }
 
-    console.log("\n--- get --full: every file under references/ and templates/, each behind `--- <path> ---` ---");
+    console.log("\n--- get --full: every page of a docs folder, every reference of a skill, each behind `--- <path> ---` ---");
     {
       const full = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "--full"], full.io), 0, "get evals --full exits 0");
       const expected =
         EVALS_SKILL +
-        "\n--- references/core-concepts/tasks.mdx ---\n\n" + TASKS_PAGE +
-        "\n--- references/index.mdx ---\n\n" + INDEX_PAGE +
-        "\n--- references/snippets/global-options.mdx ---\n\n" + SNIPPET;
-      assertEqual(stdout(full), expected, "SKILL.md, then each reference in sorted path order behind its separator");
-      assert(!stdout(full).includes("not served by --full"), "a file outside references/ and templates/ is not part of --full");
-      assert(!stdout(full).includes("a stray file at the top level"), "a symlink under references/ is not part of --full");
-      assert(!stdout(full).includes(OUTSIDE_PAGE), "a symlinked directory under references/ is not part of --full");
+        "\n--- core-concepts/tasks.mdx ---\n\n" + TASKS_PAGE +
+        "\n--- index.mdx ---\n\n" + INDEX_PAGE +
+        "\n--- snippets/global-options.mdx ---\n\n" + SNIPPET;
+      assertEqual(stdout(full), expected, "SKILL.md, then every page in sorted path order behind its separator");
+      const text = stdout(full);
+      assert(!text.includes("docs.json") && !text.includes("body {}") && !text.includes("not a page"), "the site's config and assets are not pages");
+      assert(!text.includes(OUTSIDE_PAGE), "a symlinked file and a symlinked directory are not pages");
 
-      const templates = captureIO();
-      assertEqual(await runCli(["skills", "get", "rewardkit", "--full"], templates.io), 0, "get rewardkit --full exits 0");
-      assertEqual(stdout(templates), REWARDKIT_SKILL + "\n--- templates/criteria.toml ---\n\n" + TEMPLATE, "templates/ rides --full the same way");
+      const agents = captureIO();
+      assertEqual(await runCli(["skills", "get", "agents", "--full"], agents.io), 0, "get agents --full exits 0");
+      assertEqual(stdout(agents), AGENTS_SKILL + "\n--- typescript/01-getting-started.md ---\n\n" + TS_CHAPTER, "the chapters are the pages; the generator's source and the Nextra config are not");
+
+      const references = captureIO();
+      assertEqual(await runCli(["skills", "get", "rewardkit", "--full"], references.io), 0, "get rewardkit --full exits 0");
+      assertEqual(
+        stdout(references),
+        REWARDKIT_SKILL + "\n--- references/guide.md ---\n\n" + GUIDE + "\n--- templates/criteria.toml ---\n\n" + TEMPLATE,
+        "a hand-written skill's --full is references/ then templates/, and nothing else in its folder"
+      );
 
       const bare = captureIO();
       assertEqual(await runCli(["skills", "get", "create-task", "--full"], bare.io), 0, "--full on a skill with no extra files exits 0");
@@ -224,7 +248,7 @@ async function main(): Promise<void> {
 
       const allFull = captureIO();
       assertEqual(await runCli(["skills", "get", "--all", "--full"], allFull.io), 0, "get --all --full exits 0");
-      assert(stdout(allFull).includes("--- references/typescript/01-getting-started.md ---"), "--all --full carries every skill's references");
+      assert(stdout(allFull).includes("--- typescript/01-getting-started.md ---"), "--all --full carries every skill's pages");
 
       const both = captureIO();
       assertEqual(await runCli(["skills", "get", "--all", "evals"], both.io), 2, "--all with a name is a usage error");
@@ -233,7 +257,7 @@ async function main(): Promise<void> {
       assert(none.err.join("\n").includes("--all"), "the usage error names --all as the other form");
     }
 
-    console.log("\n--- get <skill> <page>: one reference by its site path, suffix optional ---");
+    console.log("\n--- get <skill> <page>: one page by its site path, suffix optional ---");
     {
       const page = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "core-concepts/tasks"], page.io), 0, "get evals core-concepts/tasks exits 0");
@@ -242,33 +266,37 @@ async function main(): Promise<void> {
       assertEqual(await runCli(["skills", "get", "evals", "core-concepts/tasks.mdx"], suffixed.io), 0, "the .mdx suffix is accepted");
       assertEqual(stdout(suffixed), TASKS_PAGE, "and names the same page");
       const index = captureIO();
-      assertEqual(await runCli(["skills", "get", "evals", "index"], index.io), 0, "a top-level page (index) resolves");
-      assertEqual(stdout(index), INDEX_PAGE, "to references/index.mdx");
+      assertEqual(await runCli(["skills", "get", "evals", "index"], index.io), 0, "the site's landing page resolves");
+      assertEqual(stdout(index), INDEX_PAGE, "to index.mdx");
       const md = captureIO();
-      assertEqual(await runCli(["skills", "get", "agents", "typescript/01-getting-started"], md.io), 0, "a .md reference resolves without its suffix too");
-      assertEqual(stdout(md), TS_CHAPTER, "to references/typescript/01-getting-started.md");
+      assertEqual(await runCli(["skills", "get", "agents", "typescript/01-getting-started"], md.io), 0, "a .md chapter resolves without its suffix too");
+      assertEqual(stdout(md), TS_CHAPTER, "to typescript/01-getting-started.md");
+      const reference = captureIO();
+      assertEqual(await runCli(["skills", "get", "rewardkit", "references/guide"], reference.io), 0, "a hand-written skill's reference is a page by its references/ path");
+      assertEqual(stdout(reference), GUIDE, "and prints it");
 
       const unknown = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "core-concepts/nope"], unknown.io), 1, "an unknown page exits 1");
       const err = unknown.err.join("\n");
       assert(err.includes("core-concepts/nope"), "the error names the page asked for");
-      assert(err.includes("core-concepts/tasks") && err.includes("index") && err.includes("snippets/global-options"), "the error lists the skill's pages");
-      assert(!err.includes(".mdx"), "pages are listed by site path, without the suffix");
+      assertEqual(listedPages(unknown), ["core-concepts/tasks", "index", "snippets/global-options"], "the error lists the skill's pages by site path, without suffixes");
 
+      const own = captureIO();
+      assertEqual(await runCli(["skills", "get", "evals", "SKILL"], own.io), 1, "the skill's own SKILL.md is not a page");
+      const source = captureIO();
+      assertEqual(await runCli(["skills", "get", "agents", "SKILL.source"], source.io), 1, "the generator's source is not a page");
+      const config = captureIO();
+      assertEqual(await runCli(["skills", "get", "evals", "docs.json"], config.io), 1, "the site's config is not a page");
       const escape = captureIO();
-      assertEqual(await runCli(["skills", "get", "evals", "../SKILL"], escape.io), 1, "a page path that leaves references/ is refused");
-
-      const linkedDir = captureIO();
-      assertEqual(await runCli(["skills", "get", "evals", "linkeddir/hosts"], linkedDir.io), 1, "a file behind a symlinked directory under references/ is not a page");
-      assert(stdout(linkedDir) === "", "nothing behind the directory link is printed");
-      const listedBehindDir = (/pages: ([^)]*)\)/.exec(linkedDir.err.join("\n"))?.[1] ?? "").split(", ");
-      assert(!listedBehindDir.some((name) => name.startsWith("linkeddir")), "and nothing behind it is listed among the pages");
-
+      assertEqual(await runCli(["skills", "get", "evals", "../outside/hosts"], escape.io), 1, "a page path that leaves the folder is refused");
       const linked = captureIO();
-      assertEqual(await runCli(["skills", "get", "evals", "linked"], linked.io), 1, "a symlink under references/ is not a page");
-      const listedPages = (/pages: ([^)]*)\)/.exec(linked.err.join("\n"))?.[1] ?? "").split(", ");
-      assert(!listedPages.includes("linked"), "and is not listed among the pages either");
+      assertEqual(await runCli(["skills", "get", "evals", "linked"], linked.io), 1, "a symlinked file is not a page");
       assert(stdout(linked) === "", "nothing of the link's target is printed");
+      assert(!listedPages(linked).includes("linked"), "and it is not listed among the pages either");
+      const linkedDir = captureIO();
+      assertEqual(await runCli(["skills", "get", "evals", "linkeddir/hosts"], linkedDir.io), 1, "a file behind a symlinked directory is not a page");
+      assert(stdout(linkedDir) === "", "nothing behind the directory link is printed");
+      assert(!listedPages(linkedDir).some((name) => name.startsWith("linkeddir")), "and nothing behind it is listed among the pages");
 
       const fullPage = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "core-concepts/tasks", "--full"], fullPage.io), 2, "--full on a page is a usage error (a page is one file)");
@@ -277,7 +305,7 @@ async function main(): Promise<void> {
       assertEqual(await runCli(["skills", "get", "evals", "index", "--json"], pageJson.io), 0, "get <skill> <page> --json exits 0");
       assertEqual(
         JSON.parse(pageJson.out.join("\n")),
-        [{ name: "evals", page: "index", path: join(fixture, "evolve-evals", "references", "index.mdx"), content: INDEX_PAGE }],
+        [{ name: "evals", page: "index", path: join(fixture, "docs-evals", "index.mdx"), content: INDEX_PAGE }],
         "--json on a page is [{ name, page, path, content }]"
       );
     }
@@ -288,14 +316,14 @@ async function main(): Promise<void> {
       assertEqual(await runCli(["skills", "get", "evals", "--json"], json.io), 0, "get evals --json exits 0");
       assertEqual(
         JSON.parse(json.out.join("\n")),
-        [{ name: "evals", path: join(fixture, "evolve-evals"), content: EVALS_SKILL }],
+        [{ name: "evals", path: join(fixture, "docs-evals"), content: EVALS_SKILL }],
         "--json is [{ name, path, content }]"
       );
       const full = captureIO();
       assertEqual(await runCli(["skills", "get", "rewardkit", "--full", "--json"], full.io), 0, "get --full --json exits 0");
       assertEqual(
         JSON.parse(full.out.join("\n")),
-        [{ name: "rewardkit", path: join(fixture, "rewardkit"), content: REWARDKIT_SKILL, files: [{ path: "templates/criteria.toml", content: TEMPLATE }] }],
+        [{ name: "rewardkit", path: join(fixture, "skills", "rewardkit"), content: REWARDKIT_SKILL, files: [{ path: "references/guide.md", content: GUIDE }, { path: "templates/criteria.toml", content: TEMPLATE }] }],
         "--full --json adds files: [{ path, content }]"
       );
     }
@@ -315,20 +343,23 @@ async function main(): Promise<void> {
     }
 
     // -------------------------------------------------------------------------
-    console.log("\n--- path: the directory ---");
+    console.log("\n--- path: the root, or one skill's folder ---");
     {
       const root = captureIO();
       assertEqual(await runCli(["skills", "path"], root.io), 0, "path exits 0");
-      assertEqual(root.out, [fixture], "path prints the skills directory");
+      assertEqual(root.out, [fixture], "path prints the root the skills are served from");
       const one = captureIO();
       assertEqual(await runCli(["skills", "path", "evals"], one.io), 0, "path evals exits 0");
-      assertEqual(one.out, [join(fixture, "evolve-evals")], "path <name> prints that skill's directory");
+      assertEqual(one.out, [join(fixture, "docs-evals")], "path evals prints the docs folder");
+      const skill = captureIO();
+      await runCli(["skills", "path", "rewardkit"], skill.io);
+      assertEqual(skill.out, [join(fixture, "skills", "rewardkit")], "path <name> prints a hand-written skill's folder");
       const rootJson = captureIO();
       await runCli(["skills", "path", "--json"], rootJson.io);
       assertEqual(JSON.parse(rootJson.out.join("\n")), { path: fixture }, "path --json is { path }");
       const oneJson = captureIO();
       await runCli(["skills", "path", "evals", "--json"], oneJson.io);
-      assertEqual(JSON.parse(oneJson.out.join("\n")), { name: "evals", path: join(fixture, "evolve-evals") }, "path <name> --json is { name, path }");
+      assertEqual(JSON.parse(oneJson.out.join("\n")), { name: "evals", path: join(fixture, "docs-evals") }, "path <name> --json is { name, path }");
       const unknown = captureIO();
       assertEqual(await runCli(["skills", "path", "nosuch"], unknown.io), 1, "path nosuch exits 1");
       assert(unknown.err.join("\n").includes("create-task"), "and lists the names");
@@ -407,7 +438,7 @@ async function main(): Promise<void> {
     }
 
     // -------------------------------------------------------------------------
-    console.log("\n--- resolution: EVOLVE_SKILLS_DIR first, then the package's skill-data/ ---");
+    console.log("\n--- resolution: EVOLVE_SKILLS_DIR first, then the package, then the checkout ---");
     {
       process.env.EVOLVE_SKILLS_DIR = join(fixture, "does-not-exist");
       const missing = captureIO();
@@ -420,30 +451,37 @@ async function main(): Promise<void> {
         { error: { message: `EVOLVE_SKILLS_DIR points at nothing: ${join(fixture, "does-not-exist")}` } },
         "and stdout carries { error: { message } }"
       );
+      process.env.EVOLVE_SKILLS_DIR = join(fixture, "outside");
+      const notRoot = captureIO();
+      assertEqual(await runCli(["skills", "list"], notRoot.io), 1, "EVOLVE_SKILLS_DIR at a directory without the three folders is a refusal");
+      assert(notRoot.err.join("\n").includes("docs-evals/, docs-agents/ and skills/"), "that names the three folders a root must hold");
 
       delete process.env.EVOLVE_SKILLS_DIR;
       const checkout = captureIO();
       assertEqual(await runCli(["skills", "path"], checkout.io), 0, "without the override, path resolves");
-      // The package's own copy first (staged by every build and pack, so it
-      // is there after `npm run test:unit` and absent in a bare checkout),
-      // then the repo root's two levels above the package.
-      const staged = join(PACKAGE_ROOT, "skill-data");
-      const expected = existsSync(staged) ? staged : join(REPO_ROOT, "skill-data");
-      assertEqual(checkout.out, [expected], `to ${existsSync(staged) ? "the package's staged" : "the checkout's"} skill-data/`);
-      if (existsSync(staged)) {
+      // The package's own copies first (staged by every build and pack, so
+      // they are there after `npm run test:unit` and absent in a bare
+      // checkout), then the repo root two levels above the package.
+      const staged = existsSync(join(PACKAGE_ROOT, "docs-evals")) && existsSync(join(PACKAGE_ROOT, "docs-agents")) && existsSync(join(PACKAGE_ROOT, "skills"));
+      const expected = staged ? PACKAGE_ROOT : REPO_ROOT;
+      assertEqual(checkout.out, [expected], `to ${staged ? "the package's staged copies" : "the checkout"}`);
+      if (staged) {
         assertEqual(
-          readFileSync(join(staged, "evolve-evals", "SKILL.md"), "utf8"),
-          readFileSync(join(REPO_ROOT, "skill-data", "evolve-evals", "SKILL.md"), "utf8"),
+          readFileSync(join(PACKAGE_ROOT, "docs-evals", "SKILL.md"), "utf8"),
+          readFileSync(join(REPO_ROOT, "docs-evals", "SKILL.md"), "utf8"),
           "the staged copy is the repo root's, byte for byte"
         );
       }
       const list = captureIO();
       await runCli(["skills", "list", "--json"], list.io);
       const names = (JSON.parse(list.out.join("\n")) as { name: string }[]).map((r) => r.name);
-      assertEqual(names, ["agents", "create-adapter", "create-task", "evals", "publish", "rewardkit"], "the checkout serves the six content skills");
+      assertEqual(names, ["agents", "create-adapter", "create-task", "evals", "publish", "rewardkit"], "the checkout serves the six skills");
       const pointer = captureIO();
       await runCli(["skills", "get", "evolve"], pointer.io);
       assertEqual(stdout(pointer), readFileSync(join(REPO_ROOT, "skills", "evolve", "SKILL.md"), "utf8"), "the served pointer is byte-equal to skills/evolve/SKILL.md");
+      const tasks = captureIO();
+      assertEqual(await runCli(["skills", "get", "evals", "core-concepts/tasks"], tasks.io), 0, "the real site's tasks page is a page");
+      assertEqual(stdout(tasks), readFileSync(join(REPO_ROOT, "docs-evals", "core-concepts", "tasks.mdx"), "utf8"), "byte-equal to docs-evals/core-concepts/tasks.mdx");
       process.env.EVOLVE_SKILLS_DIR = fixture;
     }
 

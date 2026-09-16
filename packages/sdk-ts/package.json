@@ -33,7 +33,9 @@
     "dist",
     "LICENSE",
     "spec",
-    "skill-data",
+    "docs-evals",
+    "docs-agents",
+    "skills",
     "hosted-error-codes.json",
     "harness-capabilities.json"
   ],
@@ -46,7 +48,7 @@
     "./harness-capabilities.json": "./harness-capabilities.json"
   },
   "scripts": {
-    "build": "tsx scripts/generate-harness-capabilities.ts --check && tsup --minify && node scripts/copy-spec.mjs && node scripts/copy-skill-data.mjs",
+    "build": "tsx scripts/generate-harness-capabilities.ts --check && tsup --minify && node scripts/copy-spec.mjs && node scripts/copy-skills.mjs",
     "generate:capabilities": "tsx scripts/generate-harness-capabilities.ts",
     "dev": "tsup src/index.ts --watch",
     "type-check": "tsc --noEmit && tsc -p tsconfig.types-test.json",
@@ -125,7 +127,7 @@
     "test:unit:cli-ndjson-pipe": "tsx tests/unit/cli-ndjson-pipe.test.ts",
     "test:unit:sandbox-artifacts": "tsx tests/unit/sandbox-artifacts.test.ts",
     "test:unit:hosted-tar": "tsx --expose-gc tests/unit/hosted-tar.test.ts",
-    "prepack": "node scripts/copy-spec.mjs && node scripts/copy-skill-data.mjs"
+    "prepack": "node scripts/copy-spec.mjs && node scripts/copy-skills.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.5.1",

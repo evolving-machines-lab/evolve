@@ -32,8 +32,8 @@ evolve skills get create-adapter   # convert an existing benchmark into a folder
 evolve skills get publish          # publish a dataset of tasks, or upload a job you ran elsewhere
 ```
 
-`evolve skills list` names everything the installed version serves; `--full` on any skill adds its reference files.
+`evolve skills list` names everything the installed version serves; `--full` on any skill adds its pages.
 
 ## Inside the evolve repository
 
-An agent working in a checkout of https://github.com/evolving-machines-lab/evolve reads the same content from `skill-data/<name>/SKILL.md` directly; nothing needs to be installed.
+An agent working in a checkout of https://github.com/evolving-machines-lab/evolve reads the same content directly: `docs-evals/SKILL.md` (the evals index; the pages sit beside it), `docs-agents/SKILL.md`, and `skills/<name>/SKILL.md` for the others; nothing needs to be installed.

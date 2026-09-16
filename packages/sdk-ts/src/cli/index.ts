@@ -137,7 +137,7 @@ import {
   hasSkill,
   installPointer,
   skillFiles,
-  skillsDir,
+  skillsRoot,
   targetSkillsDir,
 } from "./skills";
 
@@ -483,9 +483,9 @@ const GROUPS: Record<string, GroupSpec> = {
     summary: "The skills the CLI serves to coding agents",
     notes:
       "The skills ship with the CLI and match its version. `skills get evals` is the index " +
-      "of the documentation and `skills get evals <page>` one page; the `evolve` pointer " +
+      "of the documentation and `skills get evals <page>` one page of it; the `evolve` pointer " +
       "skill that `skills install` writes is served but never listed. EVOLVE_SKILLS_DIR " +
-      "names another directory to serve.",
+      "names another checkout or package root to serve.",
     defaultVerb: "list",
     commands: {
       list: {
@@ -498,12 +498,13 @@ const GROUPS: Record<string, GroupSpec> = {
       get: {
         summary: "Print one or more skills, or one reference page",
         notes:
-          "A second word that is not a skill name is a page of the first skill: its path " +
-          "under references/ without the suffix, as the docs site spells it.",
+          "A second word that is not a skill name is a page of the first skill: the docs " +
+          "site's own path without the suffix (`core-concepts/tasks`), or a file under references/ " +
+          "for a task-authoring skill.",
         flags: {
           full: {
             kind: "boolean",
-            help: "Also print every file under references/ and templates/, each behind a `--- <path> ---` line",
+            help: "Also print every page of the skill (a docs folder's pages, or references/ and templates/), each behind a `--- <path> ---` line",
           },
           all: { kind: "boolean", help: "Every skill, instead of naming them" },
         },
@@ -517,7 +518,7 @@ const GROUPS: Record<string, GroupSpec> = {
         ],
       },
       path: {
-        summary: "Print the skills directory, or one skill's directory",
+        summary: "Print the skills root, or one skill's folder",
         flags: {},
         minPositionals: 0,
         maxPositionals: 1,
@@ -7769,7 +7770,7 @@ function cutDescription(description: string, width: number): string {
 }
 
 async function cmdSkillsList(inv: Invocation, io: CliIO): Promise<number> {
-  const skills = contentSkills(skillsDir(PACKAGE_ROOT));
+  const skills = contentSkills(skillsRoot(PACKAGE_ROOT));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, path: s.dir }))));
     return 0;
@@ -7780,7 +7781,7 @@ async function cmdSkillsList(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdSkillsGet(inv: Invocation, io: CliIO): Promise<number> {
-  const dir = skillsDir(PACKAGE_ROOT);
+  const dir = skillsRoot(PACKAGE_ROOT);
   const full = inv.flags.full === true;
   const all = inv.flags.all === true;
   const names = inv.positionals;
@@ -7815,18 +7816,18 @@ async function cmdSkillsGet(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 async function cmdSkillsPath(inv: Invocation, io: CliIO): Promise<number> {
-  const dir = skillsDir(PACKAGE_ROOT);
+  const root = skillsRoot(PACKAGE_ROOT);
   if (inv.positionals.length === 0) {
-    io.out(inv.flags.json === true ? JSON.stringify({ path: dir }) : dir);
+    io.out(inv.flags.json === true ? JSON.stringify({ path: root }) : root);
     return 0;
   }
-  const skill = findSkill(dir, inv.positionals[0]);
+  const skill = findSkill(root, inv.positionals[0]);
   io.out(inv.flags.json === true ? JSON.stringify({ name: skill.name, path: skill.dir }) : skill.dir);
   return 0;
 }
 
 async function cmdSkillsInstall(inv: Invocation, io: CliIO): Promise<number> {
-  const dir = skillsDir(PACKAGE_ROOT);
+  const dir = skillsRoot(PACKAGE_ROOT);
   const target = typeof inv.flags.target === "string" ? inv.flags.target : undefined;
   const path = typeof inv.flags.path === "string" ? inv.flags.path : undefined;
   if (target !== undefined && path !== undefined) {

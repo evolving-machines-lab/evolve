@@ -32,8 +32,8 @@ between.
 - Small and single-purpose. Tests ride in the same PR as the change.
 - CI must be green: tests, typecheck, and the spec gates.
 - The TypeScript and Python SDKs stay even: a change visible in one lands in
-  both, same PR, docs mirrors included (edit `docs/` only — skill mirrors
-  self-sync).
+  both, same PR, docs mirrors included (edit `docs-agents/` only — its
+  SKILL.md self-syncs).
 
 ## Interfaces
 

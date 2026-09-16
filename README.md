@@ -31,7 +31,7 @@
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...
 
-Give your coding agent the manual. Two commands install the [`evolve`](skills/evolve/SKILL.md) skill into Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode; the agent then reads the real content (hosted evals, the SDK, task authoring — everything under [`skill-data/`](skill-data)) from the `evolve` command, so it always matches the installed version:
+Give your coding agent the manual. Two commands install the [`evolve`](skills/evolve/SKILL.md) skill into Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode; the agent then reads the real content (the [hosted evals docs](docs-evals), the [SDK docs](docs-agents) and the [task-authoring skills](skills)) from the `evolve` command, so it always matches the installed version:
 
 ```bash
 npm install -g @evolvingmachines/sdk
@@ -102,15 +102,15 @@ Sign up at [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai
 
 ### 4. Learn more
 
-Check out the [documentation](./docs) and [cookbooks](./cookbooks).
+Check out the [documentation](./docs-agents) and [cookbooks](./cookbooks).
 
 ## Documentation
 
-- [TypeScript SDK](./docs/typescript/)
-- [Python SDK](./docs/python/)
+- [TypeScript SDK](./docs-agents/typescript/)
+- [Python SDK](./docs-agents/python/)
 - [Hosted evals](https://docs.evolvingmachines.ai)
 - [Cookbooks](./cookbooks)
-- [Skills](./skill-data)
+- [Skills](./skills)
 - [Changelog](./CHANGELOG.md)
 
 ## Support + Talk with Founders

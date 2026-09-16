@@ -1,46 +1,36 @@
 #!/usr/bin/env tsx
 /**
- * Generates the served skills from the docs — one source, generated copies.
+ * Generates the skill files the docs folders and the pointer need — one source,
+ * nothing copied.
  *
- * Two folders, two jobs:
- *   skills/evolve/SKILL.md   the pointer: hand-written, the one skill an agent
- *                            installs (`npx skills add evolving-machines-lab/evolve`,
- *                            or `evolve skills install`). It tells the agent to
- *                            load the content from the CLI.
- *   skill-data/<name>/       the content: what `evolve skills get <name>` prints
- *                            and what the npm package ships.
+ * The docs folders are the skills (owner's ruling 2026-09-16): the CLI serves
+ * docs-evals/ as `evals` and docs-agents/ as `agents`, reading every page in
+ * place, and skills/ holds the pointer (`evolve`, the one skill an agent
+ * installs) beside the four hand-written task-authoring skills.
  *
  * Inputs (the ONLY things this script reads):
- *   docs/evolve-agents.SKILL.md, docs/typescript/0[1-5]-*.md, docs/python/0[1-5]-*.md
- *     -> skill-data/evolve-agents/   the SDK skill; chapter 06 (hosted evals)
- *                                    is the evolve-evals skill's ground, not this one's
- *   docs/evolve-evals.SKILL.md (front matter only), docs-mintlify/docs.json,
- *   every docs-mintlify/** /*.mdx
- *     -> skill-data/evolve-evals/    the hosted-evals skill: every page copied
- *                                    byte for byte under references/, and a
- *                                    SKILL.md whose index follows docs.json's
- *                                    navigation (tab -> group -> page title ->
- *                                    one-line description from the page's front matter)
- *   skills/evolve/SKILL.md
- *     -> skill-data/evolve/SKILL.md  the served copy: `evolve skills install`
- *                                    writes these bytes, so the checkout and the
- *                                    package serve the same file; the CLI hides
- *                                    it from `skills list` by its name
- *     -> .claude/skills/evolve/      the mirror an agent inside this repo sees
- *     -> skills-lock.json            the `skills` CLI's project lock (npx skills add),
- *                                    same hash recipe as the CLI's local-lock.ts
- *   skill-data/<name>/ for every other folder (create-task, rewardkit,
- *   create-adapter, publish): hand-written, edited in place, only validated here.
+ *   docs-evals/docs.json (name, description, navigation), every docs-evals/** /*.mdx (title, description)
+ *     -> docs-evals/SKILL.md      front matter (name docs-evals, the site's description,
+ *                                 metadata.internal) + an index following docs.json's
+ *                                 navigation: tab -> group -> page title -> one line
+ *   docs-agents/SKILL.source.md  the hand-written skill, front matter and body
+ *     -> docs-agents/SKILL.md     the same bytes behind the generated marker
+ *   skills/evolve/SKILL.md       the pointer, hand-written
+ *     -> .claude/skills/evolve/   the mirror an agent inside this repo sees
+ *     -> skills-lock.json         the `skills` CLI's project lock (npx skills add),
+ *                                 same hash recipe as the CLI's local-lock.ts
+ *   skills/<name>/ for the other folders (create-task, rewardkit, create-adapter,
+ *   publish): hand-written, edited in place, only validated here.
  *
- * The two hand-written sources under docs/ are deliberately NOT named SKILL.md:
- * the `skills` CLI treats every top-level folder holding a SKILL.md as a skill
- * and reads it before skills/, so docs/SKILL.md would be installed in place of
- * the pointer (measured 2026-09-15, skills CLI 1.5.26). skill-data/ is safe
- * from the same scan: its skills sit two levels down, and that CLI descends
- * only into skills/ and the agent folders (discoverSkills, skills CLI 1.5.26).
+ * `metadata.internal: true` on every skill but the pointer: the `skills` CLI
+ * (vercel-labs/skills, src/skills.ts) skips an internal skill unless it is
+ * named with --skill, and its repo scan reads the repo root one level deep
+ * and skills/ three levels deep — so docs-evals/SKILL.md, docs-agents/SKILL.md
+ * and the four under skills/ would otherwise install beside the pointer.
+ * The agents source is not named SKILL.md for the same scan.
  *
  * Usage:
- *   npm run generate:skills            # write the generated copies
+ *   npm run generate:skills            # write the generated files
  *   npm run generate:skills -- --check # exit 1 naming every stale, missing or extra file
  *
  * Deterministic: the same inputs produce the same bytes — file lists are
@@ -59,34 +49,32 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DOCS = join(ROOT, "docs");
-const SITE = join(ROOT, "docs-mintlify");
-const SKILL_DATA = join(ROOT, "skill-data");
+const SITE = join(ROOT, "docs-evals");
+const AGENTS = join(ROOT, "docs-agents");
+const SKILLS = join(ROOT, "skills");
 const MIRROR = join(ROOT, ".claude", "skills");
 const LOCK = join(ROOT, "skills-lock.json");
 
+const EVALS_SKILL = "docs-evals";
+const AGENTS_SKILL = "docs-agents";
+/** The hand-written source behind docs-agents/SKILL.md. */
+const AGENTS_SOURCE = join(AGENTS, "SKILL.source.md");
+
 const POINTER = "evolve";
-const POINTER_SOURCE = join(ROOT, "skills", POINTER, "SKILL.md");
+const POINTER_SOURCE = join(SKILLS, POINTER, "SKILL.md");
 /** The pointer is installed as-is into an agent's skill list, so it stays a stub. */
 const POINTER_MAX_WORDS = 500;
 /** The agentskills.io front matter the pointer may carry; anything else is an editor's slip. */
 const POINTER_FIELDS = ["name", "description", "allowed-tools"] as const;
-
-const AGENTS_SKILL = "evolve-agents";
-const EVALS_SKILL = "evolve-evals";
-const GENERATED_SKILLS = [AGENTS_SKILL, EVALS_SKILL] as const;
-/** Chapters 01–05 are the SDK; 06 (hosted evals) belongs to evolve-evals. */
-const AGENT_CHAPTERS = /^0[1-5]-.*\.md$/;
-const LANGUAGES = ["typescript", "python"] as const;
 /** The lock's `source`: what `npx skills add` is told. */
 const LOCK_SOURCE = "evolving-machines-lab/evolve";
 
-/** The generated body of skill-data/evolve-evals/SKILL.md, above the index. */
+/** The generated body of docs-evals/SKILL.md, above the index. */
 const EVALS_PREAMBLE = `# Evolve hosted evals
 
 Hosted evaluation for agents: datasets of Harbor-format tasks, jobs that run any model on any agent harness against them in cloud sandboxes, and the trials, checks and analyses they produce — from the \`evolve\` CLI and the TypeScript and Python SDKs.
 
-The pages under \`references/\` are the documentation site's pages, byte for byte, at the site's paths: a site link to \`/core-concepts/tasks\` is \`references/core-concepts/tasks.mdx\`, and \`evolve skills get evals core-concepts/tasks\` prints it. An \`import\` of \`/snippets/<file>\` is \`references/snippets/<file>\`.
+This folder is the documentation site itself, page for page: every row below names a page by its site path, the file \`<path>.mdx\` beside this one, and \`evolve skills get evals <path>\` prints it. An \`import\` of \`/snippets/<file>\` is \`snippets/<file>\`.
 
 ## How to use this skill
 
@@ -158,47 +146,49 @@ function requireString(data: Record<string, unknown>, key: string, where: string
   return v;
 }
 
+/** Every skill but the pointer is internal: the `skills` CLI must skip it unless named. */
+function requireInternal(data: Record<string, unknown>, where: string): void {
+  const metadata = data.metadata;
+  if (metadata === null || typeof metadata !== "object" || (metadata as { internal?: unknown }).internal !== true) {
+    throw new Error(`${where}: front matter needs metadata.internal: true (the skills CLI installs it otherwise)`);
+  }
+}
+
 /** Invariant of every skill folder: the front matter name is the folder name —
- *  the name agents and the `skills` CLI address it by. */
-function requireSkillName(files: Map<string, Buffer>, folder: string, where: string): void {
-  const skill = files.get("SKILL.md");
-  if (!skill) throw new Error(`${where}: no SKILL.md`);
-  const { data } = frontMatter(skill.toString("utf8"), `${where}/SKILL.md`);
-  const declared = requireString(data, "name", `${where}/SKILL.md`);
-  requireString(data, "description", `${where}/SKILL.md`);
-  if (declared !== folder) throw new Error(`${where}/SKILL.md: front matter name "${declared}" must equal the folder name`);
+ *  the name the spec validator, agents and the `skills` CLI address it by. */
+function requireSkill(text: string, folder: string, where: string): Record<string, unknown> {
+  const { data } = frontMatter(text, where);
+  const declared = requireString(data, "name", where);
+  requireString(data, "description", where);
+  if (declared !== folder) throw new Error(`${where}: front matter name "${declared}" must equal the folder name`);
+  return data;
 }
 
 // ---------------------------------------------------------------------------
-/** A generated SKILL.md says so right after its front matter, for anyone who opens
- *  the file instead of reading CLAUDE.md. The reference pages carry no marker:
- *  they must stay byte-identical to their sources. */
+/** A generated SKILL.md says so on the first line of its front matter, as a YAML
+ *  comment: readable by anyone who opens the file, invisible to the front matter
+ *  parsers (the skills CLI, the spec validator, Mintlify, which renders the file
+ *  as a page of the site and refuses an HTML comment in MDX). */
 function withGeneratedMarker(skill: Buffer, source: string): Buffer {
   const text = skill.toString("utf8");
-  const end = text.indexOf("\n---", 3);
-  if (!text.startsWith("---") || end < 0) throw new Error("generated SKILL.md must start with a front matter block");
-  const cut = end + "\n---".length;
-  const marker = `\n<!-- Generated by scripts/generate-skills.ts from ${source}. Do not edit; edit the source and run npm run generate:skills. -->`;
-  return Buffer.from(text.slice(0, cut) + marker + text.slice(cut), "utf8");
-}
-
-// evolve-agents: docs/evolve-agents.SKILL.md + chapters 01–05 of both languages
-
-function agentsSkill(): Map<string, Buffer> {
-  const files = new Map<string, Buffer>();
-  files.set("SKILL.md", withGeneratedMarker(readBytes(join(DOCS, `${AGENTS_SKILL}.SKILL.md`)), `docs/${AGENTS_SKILL}.SKILL.md and docs/*/01-05`));
-  for (const lang of LANGUAGES) {
-    const chapters = readdirSync(join(DOCS, lang)).filter((n) => AGENT_CHAPTERS.test(n)).sort();
-    if (chapters.length === 0) throw new Error(`docs/${lang}: no chapters matching ${AGENT_CHAPTERS}`);
-    for (const name of chapters) {
-      files.set(`references/${lang}/${name}`, readBytes(join(DOCS, lang, name)));
-    }
-  }
-  return files;
+  if (!text.startsWith("---\n")) throw new Error("generated SKILL.md must start with a front matter block");
+  const marker = `# Generated by scripts/generate-skills.ts from ${source}. Do not edit; edit the source and run npm run generate:skills.\n`;
+  return Buffer.from("---\n" + marker + text.slice("---\n".length), "utf8");
 }
 
 // ---------------------------------------------------------------------------
-// evolve-evals: docs-mintlify pages + an index generated from docs.json
+// docs-agents/SKILL.md: the hand-written source, validated, behind the marker
+
+function agentsSkill(): Buffer {
+  const where = `docs-agents/${relPath(AGENTS, AGENTS_SOURCE)}`;
+  if (!existsSync(AGENTS_SOURCE)) throw new Error(`${where}: missing — it is the hand-written source of docs-agents/SKILL.md`);
+  const text = readText(AGENTS_SOURCE);
+  requireInternal(requireSkill(text, AGENTS_SKILL, where), where);
+  return withGeneratedMarker(readBytes(AGENTS_SOURCE), where);
+}
+
+// ---------------------------------------------------------------------------
+// docs-evals/SKILL.md: the site's description + an index generated from docs.json
 
 type NavGroup = { group: string; pages: NavPage[] };
 type NavPage = string | NavGroup;
@@ -240,50 +230,32 @@ function renderGroup(group: NavGroup, depth: number, out: string[]): void {
       continue;
     }
     const file = join(SITE, `${page}.mdx`);
-    if (!existsSync(file)) throw new Error(`docs.json names page "${page}" but docs-mintlify/${page}.mdx does not exist`);
-    const { data } = frontMatter(readText(file), `docs-mintlify/${page}.mdx`);
-    const title = requireString(data, "title", `docs-mintlify/${page}.mdx`);
-    const description = requireString(data, "description", `docs-mintlify/${page}.mdx`);
-    out.push(`| [${cell(title)}](references/${page}.mdx) | ${cell(description)} |`);
+    if (!existsSync(file)) throw new Error(`docs.json names page "${page}" but docs-evals/${page}.mdx does not exist`);
+    const { data } = frontMatter(readText(file), `docs-evals/${page}.mdx`);
+    const title = requireString(data, "title", `docs-evals/${page}.mdx`);
+    const description = requireString(data, "description", `docs-evals/${page}.mdx`);
+    out.push(`| [${cell(title)}](/${page}) | ${cell(description)} |`);
   }
   out.push("");
   for (const g of nested) renderGroup(g, depth + 1, out);
 }
 
-function renderEvalsIndex(): string {
-  const docsJson = JSON.parse(readText(join(SITE, "docs.json"))) as { navigation?: unknown };
+function evalsSkill(): Buffer {
+  const docsJson = JSON.parse(readText(join(SITE, "docs.json"))) as { description?: unknown; navigation?: unknown };
+  if (typeof docsJson.description !== "string" || docsJson.description.trim() === "") {
+    throw new Error('docs-evals/docs.json: needs a non-empty "description" — it is the evals skill\'s description');
+  }
   const out: string[] = [];
   for (const section of navigationSections(docsJson.navigation)) {
     if (section.heading !== null) out.push(`## ${section.heading}`, "");
     for (const group of section.groups) renderGroup(group, section.heading === null ? 2 : 3, out);
   }
-  return out.join("\n");
-}
-
-/** docs/evolve-evals.SKILL.md holds the front matter and nothing else; the
- *  body below it is generated, so any hand-written body there would be lost. */
-function evalsFrontMatter(): string {
-  const text = readText(join(DOCS, `${EVALS_SKILL}.SKILL.md`));
-  const m = /^(---\r?\n[\s\S]*?\r?\n---)\s*$/.exec(text);
-  if (!m) {
-    throw new Error(
-      `docs/${EVALS_SKILL}.SKILL.md must contain the front matter block only (---…---); its body is generated by scripts/generate-skills.ts`,
-    );
-  }
-  return m[1].replace(/\r\n/g, "\n") + "\n";
-}
-
-function evalsSkill(): Map<string, Buffer> {
-  const files = new Map<string, Buffer>();
-  const pages = walkFiles(SITE).filter((p) => p.endsWith(".mdx"));
-  if (pages.length === 0) throw new Error("docs-mintlify: no .mdx pages found");
-  for (const p of pages) files.set(`references/${relPath(SITE, p)}`, readBytes(p));
-  files.set("SKILL.md", withGeneratedMarker(Buffer.from(evalsFrontMatter() + "\n" + EVALS_PREAMBLE + "\n" + renderEvalsIndex(), "utf8"), "docs-mintlify/"));
-  return files;
+  const front = ["---", `name: ${EVALS_SKILL}`, `description: ${JSON.stringify(docsJson.description)}`, "metadata:", "  internal: true", "---"].join("\n");
+  return withGeneratedMarker(Buffer.from(`${front}\n\n${EVALS_PREAMBLE}\n${out.join("\n")}`, "utf8"), "docs-evals/docs.json");
 }
 
 // ---------------------------------------------------------------------------
-// The pointer: skills/evolve/SKILL.md, validated, then copied as it is
+// The pointer: skills/evolve/SKILL.md, validated, then mirrored and locked
 
 function pointerSkill(): Map<string, Buffer> {
   const where = `skills/${POINTER}/SKILL.md`;
@@ -300,13 +272,10 @@ function pointerSkill(): Map<string, Buffer> {
   if (data.name !== POINTER) throw new Error(`${where}: front matter name must be "${POINTER}"`);
   const words = text.split(/\s+/).filter((w) => w !== "").length;
   if (words >= POINTER_MAX_WORDS) {
-    throw new Error(`${where}: ${words} words — the pointer stays under ${POINTER_MAX_WORDS}; the content belongs in skill-data/`);
+    throw new Error(`${where}: ${words} words — the pointer stays under ${POINTER_MAX_WORDS}; the content belongs in the docs folders`);
   }
   return new Map([["SKILL.md", bytes]]);
 }
-
-// ---------------------------------------------------------------------------
-// Every skill: the served tree, the mirror and the lock
 
 /** The `skills` CLI's own recipe (vercel-labs/skills src/local-lock.ts
  *  computeSkillFolderHash): every file of the folder, sorted by relative path
@@ -320,39 +289,32 @@ function skillFolderHash(files: Map<string, Buffer>): string {
   return hash.digest("hex");
 }
 
-function handWrittenSkill(name: string): Map<string, Buffer> {
-  const dir = join(SKILL_DATA, name);
-  const files = new Map<string, Buffer>();
-  for (const p of walkFiles(dir)) files.set(relPath(dir, p), readBytes(p));
-  requireSkillName(files, name, `skill-data/${name}`);
-  return files;
+/** The hand-written skills beside the pointer: validated, never written. */
+function validateHandWrittenSkills(): string[] {
+  const names = readdirSync(SKILLS, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && d.name !== POINTER)
+    .map((d) => d.name)
+    .sort();
+  for (const name of names) {
+    const where = `skills/${name}/SKILL.md`;
+    const file = join(SKILLS, name, "SKILL.md");
+    if (!existsSync(file)) throw new Error(`${where}: missing`);
+    requireInternal(requireSkill(readText(file), name, where), where);
+  }
+  return names;
 }
+
+// ---------------------------------------------------------------------------
 
 type Expected = Map<string, Buffer>; // repo-relative path -> bytes
 
 /** Everything the generator owns, as it must be on disk. */
 function expectedOutput(): { expected: Expected; skillNames: string[] } {
-  const content = new Map<string, Map<string, Buffer>>();
-  content.set(AGENTS_SKILL, agentsSkill());
-  content.set(EVALS_SKILL, evalsSkill());
-  for (const [name, files] of content) requireSkillName(files, name, `skill-data/${name}`);
-  const owned = new Set<string>([...GENERATED_SKILLS, POINTER]);
-  const handWritten = existsSync(SKILL_DATA)
-    ? readdirSync(SKILL_DATA, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && !owned.has(d.name))
-        .map((d) => d.name)
-    : [];
-  for (const name of handWritten) content.set(name, handWrittenSkill(name));
-  const pointer = pointerSkill();
-
   const expected: Expected = new Map();
-  for (const name of GENERATED_SKILLS) {
-    for (const [p, bytes] of content.get(name)!) expected.set(`skill-data/${name}/${p}`, bytes);
-  }
-  for (const [p, bytes] of pointer) {
-    expected.set(`skill-data/${POINTER}/${p}`, bytes);
-    expected.set(`.claude/skills/${POINTER}/${p}`, bytes);
-  }
+  expected.set(`${EVALS_SKILL}/SKILL.md`, evalsSkill());
+  expected.set(`${AGENTS_SKILL}/SKILL.md`, agentsSkill());
+  const pointer = pointerSkill();
+  for (const [p, bytes] of pointer) expected.set(`.claude/skills/${POINTER}/${p}`, bytes);
   const lock = {
     version: 1,
     skills: {
@@ -365,12 +327,13 @@ function expectedOutput(): { expected: Expected; skillNames: string[] } {
     },
   };
   expected.set("skills-lock.json", Buffer.from(JSON.stringify(lock, null, 2) + "\n", "utf8"));
-  return { expected, skillNames: [...content.keys()].sort() };
+  const skillNames = [EVALS_SKILL, AGENTS_SKILL, POINTER, ...validateHandWrittenSkills()];
+  return { expected, skillNames };
 }
 
-/** The roots this script owns outright: everything under them is generated. */
+/** What this script owns outright: the two generated SKILL.md files, the mirror folder, the lock. */
 function generatedRoots(): string[] {
-  return [...GENERATED_SKILLS.map((n) => join(SKILL_DATA, n)), join(SKILL_DATA, POINTER), MIRROR, LOCK];
+  return [join(SITE, "SKILL.md"), join(AGENTS, "SKILL.md"), MIRROR, LOCK];
 }
 
 function check(expected: Expected): number {
@@ -378,7 +341,7 @@ function check(expected: Expected): number {
   const actual = new Set<string>();
   for (const root of generatedRoots()) {
     if (!existsSync(root)) continue;
-    const files = root === LOCK ? [root] : walkFiles(root);
+    const files = root === MIRROR ? walkFiles(root) : [root];
     for (const p of files) actual.add(relPath(ROOT, p));
   }
   for (const [p, bytes] of expected) {
@@ -388,13 +351,13 @@ function check(expected: Expected): number {
   for (const p of actual) if (!expected.has(p)) problems.push(`extra    ${p}`);
   if (problems.length > 0) {
     console.error(
-      "The generated skills are out of date with their sources (docs/, docs-mintlify/, skills/evolve/):\n  " +
+      "The generated skill files are out of date with their sources (docs-evals/docs.json, docs-agents/SKILL.source.md, skills/evolve/):\n  " +
         problems.sort().join("\n  ") +
         "\nRun: npm run generate:skills  and commit the result.",
     );
     return 1;
   }
-  console.log(`skill-data/, .claude/skills/ and skills-lock.json match their sources (${expected.size} files)`);
+  console.log(`docs-evals/SKILL.md, docs-agents/SKILL.md, .claude/skills/ and skills-lock.json match their sources (${expected.size} files)`);
   return 0;
 }
 
@@ -405,7 +368,7 @@ function write(expected: Expected, skillNames: string[]): void {
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, bytes);
   }
-  console.log(`wrote ${expected.size} files; skill-data/ serves ${skillNames.length} skills: ${skillNames.join(", ")}`);
+  console.log(`wrote ${expected.size} files; the skills: ${skillNames.join(", ")}`);
 }
 
 function main(): void {
