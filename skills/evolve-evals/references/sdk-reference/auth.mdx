@@ -1,0 +1,62 @@
+---
+title: "auth and orgs"
+description: "Who you are, and your organizations."
+---
+
+`auth()` returns the identity client, `orgs()` the organizations client.
+
+## auth.status
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    status(): Promise<AuthStatus>
+    ```
+
+    The caller and the API key in use. The key's secret is never returned.
+
+    ```ts
+    const me = await auth().status();
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def status() -> AuthStatus
+    ```
+
+    The caller and the API key in use. The key's secret is never returned.
+
+    ```python
+    me = await auth().status()
+    ```
+  </Tab>
+</Tabs>
+
+## orgs.list, orgs.get
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    list(): Promise<Organization[]>
+    get(org: string): Promise<OrganizationDetail>
+    ```
+
+    The organizations you belong to, or one organization with your role, its members, its quota and live usage.
+
+    ```ts
+    const org = await orgs().get("acme");
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def list() -> List[Organization]
+    async def get(org: str) -> OrganizationDetail
+    ```
+
+    The organizations you belong to, or one organization with your role, its members, its quota and live usage.
+
+    ```python
+    org = await orgs().get("acme")
+    ```
+  </Tab>
+</Tabs>

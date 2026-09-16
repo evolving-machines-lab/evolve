@@ -1,0 +1,40 @@
+---
+title: "meta"
+description: "The platform's capability document, no key needed."
+---
+
+`meta()` fetches the capability document: the built-in agents with their model rosters and effort support, the sandbox providers with their ceilings, the status vocabularies, the limits, and the error codes. It needs no API key.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    import { meta } from "@evolvingmachines/sdk";
+
+    function meta(config?: HostedClientConfig): Promise<CapabilityDocument>
+    ```
+
+    Also `hosted().meta()`.
+
+    ```ts
+    const doc = await meta();
+    for (const agent of doc.agents) console.log(agent.name, agent.models.map((m) => m.alias));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from evolve import meta
+
+    async def meta(config: Optional[HostedClientConfig] = None) -> CapabilityDocument
+    ```
+
+    Also `await hosted().meta()`.
+
+    ```python
+    doc = await meta()
+    for agent in doc.agents: print(
+        agent.name,
+        [m.alias for m in agent.models],
+    )
+    ```
+  </Tab>
+</Tabs>

@@ -1,0 +1,86 @@
+---
+title: "Tasks"
+description: "The task format: one directory with an instruction, an environment, a verifier, and an optional reference solution."
+---
+
+A task is a directory. The agent reads the instruction and works inside the environment. The verifier runs afterwards and scores the work.
+
+```text
+my-task/
+├── instruction.md    what the agent is asked to do
+├── task.toml         timeouts, network, resources, verifier mode
+├── environment/
+│   └── Dockerfile    the box the agent works in
+├── tests/
+│   └── test.sh       the verifier: writes the reward
+└── solution/
+    └── solve.sh      optional reference solution
+```
+
+## instruction.md
+
+Plain Markdown, handed to the agent unchanged at the start of the trial. Say what done looks like, use absolute paths (`/app/out.json`, not `out.json`), and describe the output's shape, so the instruction and the verifier agree.
+
+## environment/
+
+A `Dockerfile` that builds the box the agent works in, or a `docker-compose.yaml` when the task needs several containers. The image is built once, when the dataset is published. A task can instead name a prebuilt image with `docker_image` in `task.toml` and omit the folder.
+
+## tests/
+
+`tests/test.sh` is the verifier. It runs in the task's working directory after the agent finishes, checks the work, and writes the reward to one of two files.
+
+- `/logs/verifier/reward.txt`: one number, usually `1` or `0`.
+- `/logs/verifier/reward.json`: a JSON object of named numbers, for a score with several parts.
+
+When both exist, `reward.json` wins. Everything the script prints is kept as the verifier log.
+
+```bash
+#!/bin/bash
+set -uo pipefail
+
+if uvx pytest /tests/test_outputs.py; then
+  echo 1 > /logs/verifier/reward.txt
+else
+  echo 0 > /logs/verifier/reward.txt
+fi
+```
+
+## solution/
+
+Optional. `solution/solve.sh` is a reference solution. `evolve check` runs it to confirm the task is solvable. The agent is never given it.
+
+## task.toml
+
+The keys a task author sets. Everything else has a default.
+
+```toml
+[agent]
+timeout_sec = 3600
+
+[verifier]
+timeout_sec = 600
+environment_mode = "shared"
+
+[environment]
+network_mode = "allowlist"
+allowed_hosts = ["pypi.org"]
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240
+```
+
+- **Timeouts.** `agent.timeout_sec` and `verifier.timeout_sec`, in seconds. A task that declares none gets the platform's defaults; `evolve dataset show` prints the timeouts every task actually has. A job can stretch them with `--timeout-multiplier`.
+- **Network access.** `environment.network_mode` is `no-network` (the agent reaches nothing but its model), `allowlist` (only the hosts in `allowed_hosts`, which is accepted with this mode only), or `public` (the open internet, and the default when omitted). The older spelling `allow_internet = false` means `no-network`, `true` means `public`.
+- **Verifier mode.** `verifier.environment_mode` is `shared`, the verifier runs inside the agent's sandbox after the agent finishes, or `separate`, the verifier boots a fresh copy of the environment and judges only what the task lists under `artifacts`. A `[verifier.environment]` table implies `separate`.
+- **Resources.** `environment.cpus`, `memory_mb`, `storage_mb`, and `gpus` with `gpu_types`. Omitted, the sandbox provider's default sizing applies. A size above a provider's ceiling refuses on that provider, which `evolve dataset show` reports per task.
+- **Artifacts.** A top-level `artifacts = ["/app/out.json"]` list names the paths carried out of the agent's sandbox: into a separate verifier, and into the trial's stored artifacts.
+
+## Multi-step tasks
+
+A task can be split into steps. Each `steps/<name>/` folder holds its own `instruction.md`, `tests/` and optional `solution/`, the root `task.toml` lists them in order as `[[steps]]`, and the trial's reward is the mean of the steps' rewards unless `multi_step_reward_strategy = "final"`.
+
+## From tasks to a dataset
+
+A dataset is a folder of task directories, published to the catalog with `evolve dataset publish`. See [datasets](/core-concepts/datasets).
+
+This is the Harbor task format; the full specification is at [docs.harborframework.com](https://docs.harborframework.com/core-concepts/tasks/overview).

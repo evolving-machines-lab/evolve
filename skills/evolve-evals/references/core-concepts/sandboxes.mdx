@@ -1,0 +1,34 @@
+---
+title: "Sandboxes"
+description: "Where trials run: e2b, daytona, or modal."
+---
+
+Every trial runs in its own sandbox on one of three providers. Pick the provider per job with `-e`; the default is `daytona`.
+
+- `e2b`: [E2B](https://e2b.dev/docs)
+- `daytona`: [Daytona](https://www.daytona.io/docs), the default
+- `modal`: [Modal](https://modal.com/docs)
+
+```bash
+evolve run \
+  -d terminal-bench-4@4.0 \
+  -a codex \
+  -m gpt-5.5 \
+  -e modal \
+  -l 5 \
+  --watch
+```
+
+## Which tasks run where
+
+Not every task can run on every provider, and the catalog says so before any money is spent. `evolve dataset show` lists a verdict per provider for every task.
+
+```bash
+evolve dataset show terminal-bench-4@4.0
+```
+
+A verdict is `ok`, or refused with a reason. A GPU task carries a third form: `ok` with a note that the trial degrades to `modal`, the provider that reserves GPUs. Starting a job whose selected tasks include one that is refused on the chosen provider is rejected at creation with the same reason, so nothing is spent on a trial that cannot execute.
+
+## The analyzer's and the checker's sandbox
+
+Trace analysis and task checks run in sandboxes too. `-e` on `evolve analyze` and on `evolve check`, and `--analyze-provider` on `evolve run`, pick the provider. Omitted, the platform's analysis default applies.
