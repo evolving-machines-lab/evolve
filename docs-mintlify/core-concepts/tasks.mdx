@@ -96,7 +96,7 @@ storage_mb = 10240
 - **Verifier network.** A `shared` verifier sees the agent box's network; a `[verifier] network_mode` that differs from it is refused at import. A `separate` verifier box uses the mode of `[verifier.environment]`, else a copy of `[environment]`'s, with `[verifier] network_mode` overriding either. The platform never seals a verifier on its own.
 - **Verifier mode.** `verifier.environment_mode` is `shared`, the verifier runs inside the agent's sandbox after the agent finishes and its credentials are revoked, or `separate`, the verifier boots a fresh copy of the environment and judges only what the task lists under `artifacts`. Without that list a separate verifier sees none of the agent's work, and even the reference solution scores 0. A `[verifier.environment]` table implies `separate`. Only settled separate-mode trials can be [regraded](/core-concepts/jobs#derive-a-new-job).
 - **Resources.** `environment.cpus`, `memory_mb`, `storage_mb`, and `gpus` with `gpu_types`. Omitted, the provider's default sizing applies. A size above a provider's ceiling refuses on that provider; above every ceiling it is refused at import. The ceilings are on [sandboxes](/core-concepts/sandboxes).
-- **Artifacts.** A top-level `artifacts = ["/app/out.json"]` list names the paths carried out of the agent's sandbox: into a separate verifier, and into the trial's stored artifacts.
+- **Artifacts.** A top-level `artifacts = ["/app/out.json"]` list names the paths carried out of the agent's sandbox: into a separate verifier, and, on a separate-mode trial, into the trial's stored artifacts.
 
 ## Environment variables
 

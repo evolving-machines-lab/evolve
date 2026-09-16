@@ -60,7 +60,7 @@ A refused request raises one class. Branch on its `code`, never on the message.
   </Tab>
 </Tabs>
 
-Every response, success or failure, carries the same id in its `x-request-id` header. Of the 429 codes only `rate_limited` carries a retry delay; `quota_exceeded` and the five `too_many_concurrent_*` codes carry none.
+Every response, success or failure, carries the same id in its `x-request-id` header. Of the 429 codes only `rate_limited` carries a retry delay; `quota_exceeded` and every `too_many_concurrent_*` code carry none.
 
 ## Errors that are not API refusals
 
@@ -85,7 +85,7 @@ Grouped by the door that returns them. The HTTP status is stated where it is fix
 | `read_only_key` | 403. A read-only key on a mutating route. |
 | `credential_service_unavailable` | The key could not be checked; retry. |
 | `rate_limited` | 429. Wait `retryAfterSec`; every SDK watch loop does so on its own. |
-| `insufficient_credits` | 402. The account's credit balance is zero at job create or resume. |
+| `insufficient_credits` | 402. The account's credit balance is zero at job create, resume or retry. |
 | `quota_exceeded` | 429, no retry delay. The organization's `max_queued_trials` would be crossed. `details` carry `quota`, `limit`, `used`, `requested` and `org`. The CLI prints `Launch quota exceeded:` and exits 2. |
 
 ### Input
@@ -122,7 +122,7 @@ Grouped by the door that returns them. The HTTP status is stated where it is fix
 | `hub_package_not_found` | 400. The hub package does not exist or is private; `details.hub_package`. |
 | `hub_unreachable` | 502. The hub could not be asked; retry the publish. |
 | `invalid_archive` | The tarball is unreadable or unsafe. |
-| `import_too_large` | 413. A dataset archive over the object store's ceiling. |
+| `import_too_large` | 413. A dataset archive over the published ceiling. |
 | `import_not_found` | The import id does not exist or is not yours. |
 | `too_many_concurrent_imports` | 429, no retry delay. Too many uploads in flight; retry when one finishes. `details.max_concurrent`. |
 | `package_not_retained`, `package_corrupt`, `package_missing` | 409. The original package was never retained, is corrupt, or is gone. Re-publish. |

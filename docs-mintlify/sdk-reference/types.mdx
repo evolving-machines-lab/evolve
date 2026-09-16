@@ -5,7 +5,7 @@ description: "Every field of the objects the clients return: name, type, meaning
 
 Field names are the wire's, `snake_case`, identical in TypeScript and Python. Four keys are the exception: TypeScript exposes `nextCursor`, `hasMore`, `byStatus` and `taskMatrix` as the wire spells them; Python maps them to `next_cursor`, `has_more`, `by_status` and `task_matrix`. Python results are dataclasses and their closed vocabularies are `Literal` types.
 
-Nine closed vocabularies are exported as runtime lists in TypeScript: `TRIAL_STATUSES`, `ANALYSIS_STATUSES`, `CHECK_STATUSES`, `EVAL_SANDBOX_PROVIDERS`, `JOB_LIST_SCOPES`, `TRIAL_ARTIFACT_STREAMS`, `ANALYSIS_ARTIFACT_STREAMS`, `AGENT_EFFORT_SUPPORT_VALUES` and `HOSTED_ERROR_CODES`. Python exports `HOSTED_ERROR_CODES`.
+Eleven closed vocabularies are exported as runtime lists in TypeScript: `TRIAL_STATUSES`, `ANALYSIS_STATUSES`, `CHECK_STATUSES`, `EVAL_SANDBOX_PROVIDERS`, `JOB_LIST_SCOPES`, `TRIAL_ARTIFACT_STREAMS`, `ANALYSIS_ARTIFACT_STREAMS`, `AGENT_EFFORT_SUPPORT_VALUES`, `TASK_LINKED_BY`, `TASK_LINK_REASONS` and `HOSTED_ERROR_CODES`. Python exports `HOSTED_ERROR_CODES`.
 
 ## Page
 
@@ -23,7 +23,7 @@ One shape from `start`, `get`, `list`, `cancel`, `resume`, `retry` and `regrade`
 | `datasets` | `{ name, version }[]` | The resolved versions the job ran. |
 | `agents` | `AgentArm[]` | Below. |
 | `n_attempts`, `n_concurrent_trials` | number | As resolved. |
-| `max_trial_spend_usd` | number | The resolved per-trial cap every trial key was minted with. |
+| `max_trial_spend_usd` | number | The resolved per-trial cap. |
 | `worst_case_spend_usd` | number | Cap × trials × (`retry.max_retries` + 1). |
 | `retry` | `RetryConfig` | The resolved policy, every field present. |
 | `analyze` | `AnalyzeConfig \| null` | The resolved embedded-analysis policy; null when the create named none, and always null on a regrade job. A later manual `analyze()` does not rewrite it. |
@@ -108,7 +108,7 @@ One shape on list rows and on `trials().get()`; the detail route alone serves `e
 | `verifier_result` | `{ rewards } \| null` | The named rewards map. |
 | `exception_info` | `ExceptionInfo \| null` | `exception_type` (`ScoringError`, `InfrastructureError`, `ApiUsageLimitError`, `CancelledError`, `IncompleteTrialError`), `exception_message` (cut to 2000 characters on list rows), `exception_traceback` (empty when none was recorded), `occurred_at`. |
 | `agent_result` | `AgentResult \| null` | `n_input_tokens` (cache included), `n_cache_tokens`, `n_output_tokens`, `cost_usd` (null until the trial executed), `rollout_details` (reserved, null), `metadata` (the harness bundle, the network mode the trial ran under and where that decision came from). |
-| `judge_result` | `{ n_input_tokens, n_cache_tokens, n_output_tokens, cost_usd } \| null` | The judge key's own spend. Null when no judge ever ran. |
+| `judge_result` | `{ n_input_tokens, n_cache_tokens, n_output_tokens, cost_usd } \| null` | The judge's own spend. Null when no judge ever ran. |
 | `analysis` | `TrialAnalysis \| null` | The latest analysis; null when never analyzed. |
 | `environment_setup`, `agent_setup`, `agent_execution`, `verifier` | `{ started_at, finished_at } \| null` | Phase clocks; either bound null while unreached. `verifier` is the graded command alone. |
 | `queue_wait` | `TimingInfo \| null` | From claimable to begun. |
@@ -120,7 +120,7 @@ One shape on list rows and on `trials().get()`; the detail route alone serves `e
 | `judge_spend_source` | same \| null | Null exactly when `judge_result` is null. |
 | `live_spent_usd`, `live_spend_at` | number \| null, string \| null | A mid-run lower bound and its timestamp; cleared at settle. |
 | `usage` | `UsageReading \| null` | Below. Null when the meter never answered. |
-| `max_trial_spend_usd` | number \| null | The cap this trial's key carried. |
+| `max_trial_spend_usd` | number \| null | The cap this trial ran under. |
 | `sandbox_provider` | provider \| null | Where it ran. |
 | `sandbox_provider_degrade` | `{ from, to, reason } \| null` | Set when a GPU task moved to modal. |
 | `gpu_cost` | `TrialGpuCost \| null` | Settled GPU trials only. `estimate_usd` and `unpriced_reason` are exclusive; `provider`, `gpu_type`, `declared_gpu_types`, `resolved_gpu_types`, `attached_gpu_type`, `gpu_count`, `duration_sec`, `rate_usd_per_gpu_sec`, `rate_card` (`{ version, source, source_date }`), `measured_from`, `measured_to`. |
@@ -152,7 +152,7 @@ The same object, same keys, on trials, analyses and managed-agent sessions.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `id`, `trial_id`, `job_id`, `task_name` | string | |
-| `status` | `queued` `running` `completed` `failed` | A worker death mid-run is reaped to `failed`. |
+| `status` | `queued` `running` `completed` `failed` | `failed` also covers a run the platform lost. |
 | `model_name` | string | |
 | `reasoning_effort` | string \| null | Null only on analyses recorded before it was stamped. |
 | `rubric` | `Rubric` | Frozen at enqueue. |
@@ -221,7 +221,7 @@ Public fields only; instructions, environments and tests never leave the server.
 | `name`, `version` | string | |
 | `failure` | `{ code, message, failures: [{ task_name, error }] } \| null` | The key is `failure`, never `error`. |
 | `warnings` | `{ code, message }[]` | `solutions_archiving_disabled`, `no_solutions_archived`, `partial_solutions_archived`, `tasks_failed_to_build`, `tests_dockerfile_not_built`. |
-| `progress` | `DatasetImportProgress \| null` | `phase` (`extracting`, `parsing`, `building`, `copying`, `verifying`), `started_at`, `phases` (`{ name, started_at, completed_at, done, total, banked }[]`; `completed_at` stays absent on the phase a FAILED import died in), `images` (`{ built, mirrored, banked }`), `codebuild` (`{ copy_builds, billed_minutes }`). Null until the worker's first report. |
+| `progress` | `DatasetImportProgress \| null` | `phase` (`extracting`, `parsing`, `building`, `copying`, `verifying`), `started_at`, `phases` (`{ name, started_at, completed_at, done, total, banked }[]`; `completed_at` stays absent on the phase a FAILED import died in), `images` and `codebuild`, counters for the build step. Null until the import's first report. |
 | `task_count` | number | Once counted. |
 
 ## JobImport
@@ -266,7 +266,7 @@ Public fields only; instructions, environments and tests never leave the server.
 - `TraceEvent`: `seq`, `type`, `data`. A `usage` event whose `data.update.source` is `gateway` is the platform's meter and the only usage line that carries tokens and money; `gatewayUsageOf(event)` reads it. On a terminal trial these follow the last harness event with `seq` from 1000000000 (`GATEWAY_TRACE_SEQ_BASE`).
 - `SkillUpload`: `id`, `name`, `digest`, `size_bytes`, `description`, `ref` (the `upload:<id>` string), `created_at`.
 - `Agent`: `name`, `source` (`install_script` or `tarball`), `run_command`, `env`, `created_at`, `updated_at`.
-- `AuthStatus`: `user_id`, `email`, `key` (`{ id, label, created_at, last_used_at }`; `last_used_at` is always null, the gateway does not record last use).
+- `AuthStatus`: `user_id`, `email`, `key` (`{ id, label, created_at, last_used_at }`; `last_used_at` is always null today).
 - `Organization`: `org_id`, `slug`, `display_name`, `personal`, `role` (`owner` or `member`), `created_at`. `OrganizationDetail` adds `member_count`, `quota` and `usage`; see [auth and orgs](/sdk-reference/auth#quota-and-usage).
 - `JobDeleteResult`: `job_id`, `trials_deleted`, `analyses_deleted`.
 - `DatasetPreflight`, from `datasets().preflight()`: `importer_version`, `checks` (the guards that ran), `deferred` (`{ name, reads }[]`, the guards a `task.toml` alone cannot decide), `manifest` (`{ ok, name, short_name, version, task_count, reason } \| null`), `tasks` (per task `name`, `ok`, `task_key`, `schema_version`, `providers`, `notes`, `reason`), `tasks_total`, `tasks_ok`, `tasks_refused`.
