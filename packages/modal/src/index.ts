@@ -378,7 +378,7 @@ function mapVolumeMounts(volumes?: Record<string, ModalVolumeMount>): ResolvedVo
 
 /**
  * Wrap a command with cwd + env handling and (when not root) an
- * `su <user> -c` wrapper.
+ * `su <user> -c` wrapper (`--session-command` when the caller must be able to signal it).
  *
  * Modal sandboxes run as root by default (ignoring the Dockerfile USER
  * directive), but Claude CLI and other tools refuse certain operations when
@@ -395,7 +395,8 @@ function wrapCommand(
   command: string,
   user: string,
   cwd?: string,
-  envs?: Record<string, string>
+  envs?: Record<string, string>,
+  options?: { sameSession?: boolean }
 ): string[] {
   // Build env prefix for inline variable passing
   let envPrefix = "";
@@ -421,7 +422,9 @@ function wrapCommand(
 
   // Use su <user> -c to avoid sudo detection by Claude CLI
   // Decode and execute via bash to preserve all shell features
-  return ["su", user, "-c", `echo ${encoded} | base64 -d | bash`];
+  // `su -c` opens a new session that a process-group signal cannot reach (measured 2026-09-16); a stoppable
+  // spawn asks for `--session-command`, util-linux su's same switch minus the new session.
+  return ["su", user, options?.sameSession ? "--session-command" : "-c", `echo ${encoded} | base64 -d | bash`];
 }
 
 /**
@@ -1290,7 +1293,7 @@ export class ModalCommands implements SandboxCommands {
     // Wrap command for the configured sandbox user with shell features.
     // Envs are inlined by wrapCommand (su doesn't preserve env like sudo -E).
     const stoppable = options?.stdin === false;
-    const wrapped = wrapCommand(command, this.user, options?.cwd, options?.envs);
+    const wrapped = wrapCommand(command, this.user, options?.cwd, options?.envs, { sameSession: stoppable });
     const args = stoppable ? ["bash", "-c", MODAL_STDIN_EOF_WRAPPER, "bash", ...wrapped] : wrapped;
     const p = await this.sandbox.exec(args, {
       timeoutMs: options?.timeoutMs,
@@ -1812,10 +1815,19 @@ const MODAL_SIGPIPE_EXIT = 128 + 13;
 // 5 min for content reads over exec, the same leash the e2b adapter gives a whole-file read.
 const MODAL_FILE_READ_TIMEOUT_MS = 300_000;
 
-// `cat` waits for EOF on the exec's stdin, then signals $$, which after exec IS the command. The stdin is handed over
-// on fd 3 because a background job's own stdin is /dev/null (POSIX 2.9.3.1) — a plain `cat` killed the reader at start (measured).
-const MODAL_STDIN_EOF_WRAPPER =
-  'exec 3<&0; ( cat <&3 >/dev/null; kill -TERM $$ 2>/dev/null ) & exec "$@" </dev/null 3<&-';
+// One reader = one bash job-control group (`set -m`), so EOF on the exec's stdin (kill()) signals the whole tree,
+// su and all; a TERM to the exec'd pid alone reached su only and left `tail -F` running (measured 2026-09-16).
+const MODAL_STDIN_EOF_WRAPPER = [
+  "set -m",
+  "exec 3<&0", // a background job's own stdin is /dev/null (POSIX 2.9.3.1): the exec's stdin is handed over on fd 3
+  '"$@" </dev/null 3<&- & job=$!',
+  "( cat <&3 >/dev/null; kill -TERM -- -$job 2>/dev/null ) & eof=$!",
+  "exec 2>/dev/null", // bash's job notices ("[1]- Terminated") would otherwise land in the reader's stderr
+  "trap 'kill -TERM -- -$job' TERM",
+  "wait $job; rc=$?",
+  "kill -TERM -- -$eof", // the watcher goes with the reader, never left behind
+  "exit $rc",
+].join("; ");
 
 class ModalSandboxImpl implements SandboxInstance {
   readonly commands: SandboxCommands;

@@ -185,21 +185,35 @@ async function testMetricsRefusal(): Promise<void> {
 }
 
 async function testReaderStop(): Promise<void> {
-  console.log("\n[5] spawn with stdin:false: the process is wrapped so closing the exec's stdin ends it; kill() is that close");
+  console.log("\n[5] spawn with stdin:false: the reader runs in its own process group, closing the exec's stdin signals the whole group; kill() is that close");
   const execs: string[][] = [];
   let proc = fakeProcess(new Uint8Array(), 143);
   const commands = new ModalCommands({ exec: async (args: string[]) => { execs.push(args); return proc.process; } } as any, "root");
   const handle = await commands.spawn("tail -F /var/log/x", { stdin: false });
   assertEqual(execs[0].slice(0, 2), ["bash", "-c"], "the reader runs under a bash wrapper");
-  assert(execs[0][2].includes("exec 3<&0") && execs[0][2].includes("cat <&3 >/dev/null") && execs[0][2].includes('exec "$@" </dev/null'), `the watcher reads the exec's real stdin on fd 3 (a background job's own stdin is /dev/null) and the command is exec'd with /dev/null (${execs[0][2]})`);
+  const wrapper = execs[0][2];
+  assert(wrapper.includes("exec 3<&0") && wrapper.includes("cat <&3 >/dev/null"), `the watcher reads the exec's real stdin on fd 3 (a background job's own stdin is /dev/null) (${wrapper})`);
+  assert(wrapper.startsWith("set -m;") && wrapper.includes('"$@" </dev/null 3<&- & job=$!') && wrapper.includes("kill -TERM -- -$job"), `the command is a job in its own process group and EOF signals that GROUP, so su and everything under it go too (${wrapper})`);
+  assert(wrapper.includes("wait $job; rc=$?") && wrapper.includes("kill -TERM -- -$eof") && wrapper.endsWith("exit $rc"), `the wrapper waits for the command, ends its own watcher and exits with the command's code (${wrapper})`);
   assertEqual(execs[0].slice(3), ["bash", "bash", "-c", "tail -F /var/log/x"], "the command follows as the wrapper's arguments, root runs it through bash -c");
   const killed = await handle.kill();
   assertEqual([killed, proc.stdinClosed()], [true, true], "kill() closes stdin and reports true");
   assertEqual((await handle.wait()).exitCode, 143, "the exit code is the signal's (128+15)");
 
+  // The provider's default user goes through su; `su -c` opens a NEW session that a group signal cannot reach (measured 2026-09-16).
+  proc = fakeProcess(new Uint8Array(), 143);
+  const asUser = new ModalCommands({ exec: async (args: string[]) => { execs.push(args); return proc.process; } } as any, "user");
+  await asUser.spawn("tail -F /var/log/x", { stdin: false });
+  assertEqual(execs[1].slice(3, 6), ["bash", "su", "user"], "a non-root reader still runs through su");
+  assertEqual(execs[1][6], "--session-command", "…but with --session-command, so it stays in the wrapper's process group and the kill reaches it");
+  assert(execs[1][7].startsWith("echo ") && execs[1][7].endsWith("| base64 -d | bash"), "…with the same base64 payload as every other command");
+  const asUserRun = await asUser.run("id -un").catch(() => undefined);
+  void asUserRun;
+  assertEqual(execs[2].slice(0, 3), ["su", "user", "-c"], "a blocking run() as that user keeps su -c (a new session is fine when nothing has to signal it)");
+
   proc = fakeProcess(new Uint8Array(), 0);
   const plain = await commands.spawn("sleep 1000", {});
-  assertEqual(execs[1].slice(0, 2), ["bash", "-c"], "without stdin:false the spawn is unchanged (no wrapper)");
+  assertEqual(execs[3].slice(0, 2), ["bash", "-c"], "without stdin:false the spawn is unchanged (no wrapper)");
   const err = await rejects(() => plain.kill(), "SandboxFeatureUnsupportedError", "kill() on such a spawn is a typed refusal");
   assertEqual([(err as SandboxFeatureUnsupportedError).feature, (err as SandboxFeatureUnsupportedError).provider], ["commands.kill", "modal"], "…naming commands.kill and modal");
   assert(String((err as Error).message).includes("stdin: false"), "…and how to get a stoppable process");
