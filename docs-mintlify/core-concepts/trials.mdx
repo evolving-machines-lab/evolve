@@ -11,7 +11,7 @@ evolve trial show <trial-id>
 
 `trial show` prints the task, the agent and model, the status, the reward, the tokens, what the trial spent and, when it failed, the exception. Spend prints as a plain amount once the meter has settled it, as `at least $X` while it is still a lower bound, and as `-` when nobody has measured it yet.
 
-While a trial runs, `attempt_phase` says which step it is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), and its spend is readable before it settles: `live_spent_usd` with `live_spend_at` is a lagging lower bound, raised about every 30 seconds from the gateway's ledger, which also brings the token counts. It only climbs, is cleared at settle, is never part of a job total, and is null, never zero, before the first reading. The whole reading, spend and tokens with a `provisional` flag, is `usage`. Registered agents have no live reading. On a settled trial read `agent_result.cost_usd` with `spend_source`; only `measured` is final.
+While a trial runs, `attempt_phase` says which step it is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), and its spend is readable before it settles. `live_spent_usd` with `live_spend_at` is a lower bound refreshed about every 30 seconds, tokens included; it only climbs, is cleared at settle, and is null, never zero, before the first reading. The whole reading, spend and tokens with a `provisional` flag, is `usage`. On a settled trial read `agent_result.cost_usd` with `spend_source`; only `measured` is final.
 
 ## The trace
 
@@ -96,7 +96,7 @@ A valid reward, 0 included, is `SCORED`; a failure is never reported as a fabric
 - `INDETERMINATE`: the platform cannot tell whether the trial completed.
 - `CANCELLED`: stopped before settling; the exception type is `CancelledError`.
 
-`SCORING_ERROR` and `INDETERMINATE` carry the last few kilobytes of the verifier's own output in `exception_message`, the only record of it once the box is gone. Job statuses are on [jobs](/core-concepts/jobs#statuses).
+`SCORING_ERROR` and `INDETERMINATE` carry the last 4000 characters of the verifier's own output in `exception_message`. Job statuses are on [jobs](/core-concepts/jobs#statuses).
 
 <Card title="trial reference" icon="terminal" href="/cli-reference/trial">
   Every flag of `evolve trial`.

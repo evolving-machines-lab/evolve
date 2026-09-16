@@ -27,17 +27,19 @@ A finished trial leaves five kinds of output: its record, its parsed trace, its 
     └── reward.json         the rewards map
 ```
 
-The stdout file takes the harness's name: `claude-code.txt`, `codex.txt`, `gemini-cli.txt`, `qwen-code.txt`, `kimi-code.txt`, `opencode.txt` or `droid.txt`, and `stdout.log` for an agent you registered yourself. Beside the home at its real names, the tree also writes the copies the harness adapters keep: `agent/sessions/` for `claude` and `codex`, `agent/qwen-sessions/` for `qwen`, `agent/opencode/` for `opencode`.
+The stdout file takes the harness's name: `claude-code.txt`, `codex.txt`, `gemini-cli.txt`, `qwen-code.txt`, `kimi-code.txt`, `opencode.txt` or `droid.txt`, and `stdout.log` for an agent you registered yourself. Beside the home at its real names, the tree also holds the harness's session copies: `agent/sessions/` for `claude` and `codex`, `agent/qwen-sessions/` for `qwen`, `agent/opencode/` for `opencode`.
 
-`result.json` states `agent_result.cost_usd` only when the gateway measured it; a spend that is still a floor, or was never measured, is null there, and `evolve.json` carries the raw number beside the `spend_source` lane that qualifies it. Tokens are always stated.
+`result.json` states `agent_result.cost_usd` only once the spend is final; until then it is null there, and `evolve.json` carries the current figure with its `spend_source`. Tokens are always stated.
 
-The job download, `evolve job download`, adds to every trial its `lock.json` with the resolved inputs, its `trial.log`, the raw `verifier/reward.txt`, `steps/<name>/verifier/reward.json` on a multi-step trial, the home byte for byte, and `artifacts/` with a `manifest.json` that is always present and each collected artifact mirrored at its source path (separate-mode trials only; shared mode collects nothing out of the agent's box). Everything platform-specific in the archive's `config.json` and `result.json` files rides under an `x_evolve` key: a trial's authoritative spend is `x_evolve.spentUsd` with its `spendSource`, and the job config's agents carry `x_reasoning_effort` and `x_preset`.
+The job download, `evolve job download`, adds to every trial its `lock.json`, its `trial.log`, the raw `verifier/reward.txt`, `steps/<name>/verifier/reward.json` on a multi-step trial, the home byte for byte, and `artifacts/` with a `manifest.json` and each collected artifact at its source path (separate-mode trials only). Everything platform-specific in the archive's record files rides under an `x_evolve` key: a trial's spend is `x_evolve.spentUsd` with its `spendSource`, and the job config's agents carry `x_reasoning_effort` and `x_preset`.
 
 ## The agent's home folder
 
 The agent's home is the harness's own working state: its session files, its settings, and the transcripts of any subagents it ran. The platform captures it after the run and keeps it with the trial, so the run can be inspected the way the agent saw it. In the download it sits under `agent/` at its real names, with `agent-home.json` beside it: every captured file's path, size, sha256 and mode, and every file that was skipped, with the reason.
 
-The trial download carries the text view of the home. A file that is not UTF-8 text, such as a database, is named in the record with its size and sha256 and left out; the job download carries every byte. Two subtrees are left out on purpose and counted in the record's `excluded` list: codex's `.codex/.tmp/plugins` and opencode's `.config/opencode/node_modules`, both reproducible downloads the harness fetches again at start. Anything else the capture could not carry is named in the record's `skipped` list with the reason. From the SDK, `trials().artifact(id, "agent-home")` returns the same text view as a map from sandbox path to content; a home too large to serve as one text view is refused with a 413 `invalid_input` naming `size_bytes` and `max_unranged_bytes`, and the job download carries it whole.
+The trial download carries the text view of the home. A file that is not UTF-8 text, such as a database, is named in the record and left out; the job download carries every byte. Two caches are left out on purpose, codex's `.codex/.tmp/plugins` and opencode's `.config/opencode/node_modules`; the record lists them under `excluded`, and anything else it could not carry under `skipped`, with the reason.
+
+From the SDK, `trials().artifact(id, "agent-home")` returns the same text view as a map from sandbox path to content. A home too large to serve as one text view is refused with a 413 `invalid_input`; the job download carries it whole.
 
 ## The parsed trace
 
@@ -51,7 +53,9 @@ Every harness prints its run in its own format. The platform parses that stream 
 {"seq": 4, "type": "usage", "data": {"update": {"sessionUpdate": "usage", "scope": "call", "usage": {"promptTokens": 812, "completionTokens": 64}}}}
 ```
 
-The kinds are `prompt` for the instruction the agent received, `user_message_chunk`, `agent_message_chunk` and `agent_thought_chunk` for text, `tool_call` and `tool_call_update` for a tool call and its later status and output, `plan` for the agent's plan entries, `usage` for token counts, `error` for a failure the harness reported, and `trace_loss` when events were lost. A tool call's `kind` is one of the parser's kinds, such as `read`, `edit` or `execute`, and its `status` moves through `pending`, `in_progress`, `completed` or `failed`. Once the trial is finished, the gateway's own `usage` events follow the harness's, one per model call, with the tokens and the cost as the gateway priced them; their `data.update.source` is `gateway`, their `seq` starts at 1000000000, and they are the only usage lines that carry tokens and money.
+The kinds are `prompt` for the instruction the agent received, `user_message_chunk`, `agent_message_chunk` and `agent_thought_chunk` for text, `tool_call` and `tool_call_update` for a tool call and its later status and output, `plan` for the agent's plan entries, `usage` for token counts, `error` for a failure the harness reported, and `trace_loss` when events were lost. A tool call's `kind` is one of the parser's kinds, such as `read`, `edit` or `execute`, and its `status` moves through `pending`, `in_progress`, `completed` or `failed`.
+
+Once the trial is finished, the gateway's own `usage` events follow the harness's, one per model call, with the tokens and the cost as priced. Their `data.update.source` is `gateway`, their `seq` starts at 1000000000, and they are the only usage lines that carry tokens and money.
 
 ```bash
 evolve trial trace <trial-id>
