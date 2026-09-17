@@ -1,0 +1,15 @@
+---
+title: "Checks"
+description: "Read a job's task quality checks in the dashboard."
+---
+
+A job's CHECK tab lists the task quality checks run on the job's datasets.
+
+{/* retake after the UI pass, from a non-admin account */}
+<Frame caption="The CHECK tab of a job whose tasks have not been checked">
+  <img src="/images/job-check.png" alt="The CHECK tab: the sentence that no task of this job has been checked, and the evolve check command that would check its dataset." />
+</Frame>
+
+Until a check exists, the tab shows the command that would start one, `evolve check -d <dataset@version>`, with the job's dataset filled in. Checks start from the command line; see [check](/core-concepts/check).
+
+Once a dataset has been checked, the tab lists one row per task with its dataset and its result. Click a row to open the check in the [trial viewer](/dashboard/trial-viewer): the events are the checker's own trace, and its result document is on the DOWNLOAD menu.

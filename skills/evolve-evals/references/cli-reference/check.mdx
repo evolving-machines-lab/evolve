@@ -1,0 +1,146 @@
+---
+title: "evolve check"
+description: "Check task quality against a rubric, and read checks back."
+---
+
+import GlobalOptions from '/snippets/global-options.mdx';
+import ListFlags from '/snippets/list-flags.mdx';
+
+```bash
+evolve check [<path>] [options]
+```
+
+Check task quality against a rubric, server-side. `<path>` is one task directory or a directory of task directories, uploaded as one archive (`upload_too_large` past the published ceiling); `-d` names a published dataset instead, one or the other. Without `--watch` the command prints the accepted check with the hint `Follow it with: evolve check show <id>`; `--json` prints the accepted check body. Exit 0 on an accepted check; with `--watch`, and on `check show`, exit 1 when any task errored.
+
+```bash
+evolve check ./tasks \
+  -i 'abs-*' \
+  -l 5 \
+  --watch
+```
+
+## Options
+
+<ParamField path="-d, --dataset" type="name[@version]">
+  Check a published dataset's tasks instead of a local path. The checker reads the version's retained task package, and the job page's CHECK tab lists these checks by task.
+</ParamField>
+
+<ParamField path="-m, --model" type="name" default="openrouter/deepseek/deepseek-v4.1-flash">
+  Model the checker runs. `fireworks/deepseek-v4.1-flash` is the same model on its Fireworks route. Must be on the `claude` roster.
+</ParamField>
+
+<ParamField path="--effort" type="value">
+  Reasoning effort the checker runs at. Defaults to the per-model default.
+</ParamField>
+
+<ParamField path="-r, --rubric" type="path">
+  Rubric file: TOML, YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape. Defaults to the platform's check rubric, eleven criteria.
+</ParamField>
+
+<ParamField path="-p, --prompt" type="path">
+  Prompt file for the evaluator agent. Its text replaces the built-in check prompt, with `{task_path}`, `{file_tree}` and `{criteria_guidance}` rendered. Defaults to the built-in prompt.
+</ParamField>
+
+<ParamField path="-e, --env" type="provider">
+  Sandbox provider the checker runs on. Defaults to the platform's analysis default.
+</ParamField>
+
+<ParamField path="-n, --n-concurrent" type="n">
+  Max concurrent task checks, beneath the organization's ceiling. Defaults to the ceiling.
+</ParamField>
+
+<ParamField path="-i, --include-task-name" type="glob">
+  Only check tasks matching the glob. Repeatable.
+</ParamField>
+
+<ParamField path="-x, --exclude-task-name" type="glob">
+  Skip tasks matching the glob. Repeatable.
+</ParamField>
+
+<ParamField path="-l, --n-tasks" type="n">
+  Max tasks to check, after the globs, in sorted directory order.
+</ParamField>
+
+<ParamField path="--watch">
+  Poll until every task check settles, then print the report. One task prints its label line, a `CHECK | OUTCOME | EXPLANATION` table with the evidence beneath each verdict, and the cost; several tasks print a `TASK | LABEL | PASS | FAIL | N/A | UNKNOWN | COST ($) | TASK CHECK ID` table with each failed task's reason below it. With `--json`, NDJSON envelopes: `check.accepted`, `check.progress` per change, `check.final`.
+</ParamField>
+
+<ParamField path="-q, --quiet">
+  With `--watch`: suppress the progress lines and print the final report only.
+</ParamField>
+
+<GlobalOptions />
+
+## Reading checks back
+
+The same word, followed by `list`, `show`, `trace` or `download`, reads checks back. A task directory literally named like one of these verbs is written `./list`.
+
+### check list
+
+```bash
+evolve check list [options]
+```
+
+List your task quality checks, newest first.
+
+<ListFlags />
+
+<ParamField path="--scope" type="my | shared">
+  Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created.
+</ParamField>
+
+<ParamField path="--status" type="s1,s2,...">
+  Filter by check status: `queued`, `running`, `completed`.
+</ParamField>
+
+```bash
+evolve check list --status running
+```
+
+### check show
+
+```bash
+evolve check show <check-id>
+```
+
+Show one task quality check in full, with one result per task.
+
+### check trace
+
+```bash
+evolve check trace <task-check-id> [options]
+```
+
+Print the checker's own parsed transcript for one task check.
+
+<ParamField path="--since" type="n">
+  Skip the first N events. To resume, pass the count you already hold.
+</ParamField>
+
+### check download
+
+```bash
+evolve check download <check-id | task-check-id> [options]
+```
+
+Save a check as a check folder (`check_report.json` plus one folder per task) by its check id, one task check's folder by its task check id, or stream one task check's artifact.
+
+<ParamField path="-o, --output-dir" type="dir" default="checks/">
+  Directory to save under. A check id lands in `<dir>/check-<id>/`, a task check id in `<dir>/check-<task>__<7 chars>/`, the run's own folder name.
+</ParamField>
+
+<ParamField path="--overwrite">
+  Replace an existing folder of the same name.
+</ParamField>
+
+<ParamField path="--stream" type="artifact">
+  Print one artifact of a task check to stdout instead of saving: `task-check` (the result document), `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
+</ParamField>
+
+<ParamField path="--since" type="n">
+  With `--stream trace-parsed`: skip the first N events.
+</ParamField>
+
+```bash
+evolve check download 3f9a1c2e-… -o checks/
+```
