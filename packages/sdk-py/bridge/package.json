@@ -1,6 +1,6 @@
 {
   "name": "evolve-python-bridge",
-  "version": "0.0.57",
+  "version": "0.0.58",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
@@ -14,10 +14,10 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@evolvingmachines/e2b": "0.0.57",
-    "@evolvingmachines/daytona": "0.0.57",
-    "@evolvingmachines/modal": "0.0.57",
-    "@evolvingmachines/evolve": "0.0.57"
+    "@evolvingmachines/e2b": "0.0.58",
+    "@evolvingmachines/daytona": "0.0.58",
+    "@evolvingmachines/modal": "0.0.58",
+    "@evolvingmachines/evolve": "0.0.58"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",
