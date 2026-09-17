@@ -34,7 +34,7 @@ Three refusals appear in the verdicts: multi-container tasks run on `e2b` and `d
 | Provider | Max vCPUs | Max memory | Disk |
 | --- | --- | --- | --- |
 | `e2b` | 8 | 8192 MB | fixed, 20 GB |
-| `daytona` | 4 | 8192 MB | sized per task, up to 10 GB |
+| `daytona` | 4 | 8192 MB | sized per task, up to 25 GB |
 | `modal` | 16 | 32768 MB | fixed, 512 GB |
 
 Two limits show only when the sandbox is created, as an `INFRASTRUCTURE_ERROR` with the reason in the trial's failure detail. On `daytona` an `allowlist` holds one kind of entry: IP addresses and CIDRs for a single-container task (at most 10), hostnames for a multi-container task (at most 20, `*.` covering a domain). `e2b` and `modal` take both kinds.
