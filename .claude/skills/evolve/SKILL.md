@@ -14,7 +14,7 @@ Python SDK: `pip install evolvingmachines-evolve` (`import evolve`). The manual 
 
 ## Start here
 
-This file is a pointer, not the manual. The manual ships inside the CLI and always matches the installed version. Before running any `evolve` command, load it:
+This file is a pointer, not the manual. The manual ships inside the CLI and always matches the installed version. Keep it current: `npm i -g @evolvingmachines/evolve@latest`, then `evolve skills install --force` refreshes this file. Before running any `evolve` command, load it:
 
 ```bash
 evolve skills get evals                        # the index of the documentation: every page, one line each
