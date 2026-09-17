@@ -100,7 +100,7 @@ description: "Start and read task quality checks."
     defaults(): Promise<CheckDefaults>
     ```
 
-    The defaults a check runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in check prompt as a template with `{task_path}`, `{file_tree}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `create`; passed back unchanged, they run exactly as the defaults do.
+    The defaults a check runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in check prompt as a template with `{task_path}`, `{file_tree}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `create`; passed back unchanged, they run exactly as the defaults do, and the check records them as named, so a later change of the platform default does not move it.
 
     ```ts
     const { rubric } = await checks().defaults();
@@ -111,7 +111,7 @@ description: "Start and read task quality checks."
     async def defaults() -> CheckDefaults
     ```
 
-    The defaults a check runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in check prompt as a template with `{task_path}`, `{file_tree}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `create`; passed back unchanged, they run exactly as the defaults do.
+    The defaults a check runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in check prompt as a template with `{task_path}`, `{file_tree}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `create`; passed back unchanged, they run exactly as the defaults do, and the check records them as named, so a later change of the platform default does not move it.
 
     ```python
     rubric = (await checks().defaults())["rubric"]

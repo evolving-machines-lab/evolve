@@ -7573,6 +7573,7 @@ async function testChecksReadsAndWatch() {
     await c.list({ dataset: "tb@4.0" });
     const byDataset = new URL(fetchCalls[fetchCalls.length - 1].url);
     assertEqual(byDataset.searchParams.get("dataset"), "tb@4.0", "dataset forwarded verbatim (name@version)");
+    assert(byDataset.search.includes("dataset=tb%404.0"), "the wire carries the @ encoded");
     await c.list({ scope: "my" });
     assert(!new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("dataset"), "no dataset key when none was given");
 

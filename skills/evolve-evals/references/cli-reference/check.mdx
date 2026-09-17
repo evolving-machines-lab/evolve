@@ -17,6 +17,7 @@ evolve check ./tasks \
   -i 'abs-*' \
   -l 5 \
   --watch
+evolve check --show-defaults
 ```
 
 ## Options
@@ -46,7 +47,7 @@ evolve check ./tasks \
 </ParamField>
 
 <ParamField path="--show-defaults">
-  Print the defaults a check runs under when you name none: model, effort, provider, the rubric's criteria and the built-in prompt template, then exit. With `--json`, one object. Takes no path and no `-d`.
+  Print the defaults a check runs under when you name none: model, effort, provider, the rubric's criteria and the built-in prompt template, then exit. With `--json`, one object. Takes no path and no other check flag.
 </ParamField>
 
 <ParamField path="-n, --n-concurrent" type="n">
@@ -98,7 +99,7 @@ List your task quality checks, newest first.
 </ParamField>
 
 <ParamField path="-d, --dataset" type="name[@version]">
-  Only checks on this dataset. A bare name is every version, `name@version` one version.
+  Only checks on this dataset. A bare name is every version, `name@version` one version. A value with an empty half (`name@`, `@version`) is refused as `invalid_input` on `dataset`.
 </ParamField>
 
 ```bash

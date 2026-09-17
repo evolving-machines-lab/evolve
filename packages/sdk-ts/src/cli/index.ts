@@ -1792,8 +1792,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     positionalUsage: "[<path>]",
     examples: [
       "evolve check ./tasks --watch",
-      "evolve check ./tasks -i 'abs-*' -l 5 --watch",
-      "evolve check -d terminal-bench-4@4.0 -l 10 --watch",
+      "evolve check -d terminal-bench-4@4.0 -i 'abs-*' -l 10 --watch",
+      "evolve check --show-defaults",
     ],
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
@@ -5698,8 +5698,13 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   const quiet = inv.flags.quiet === true;
   const client = checks(clientConfig(inv));
   if (inv.flags["show-defaults"] === true) {
-    if (inv.positionals[0] !== undefined || inv.flags.dataset !== undefined) {
-      throw new CliUsageError("--show-defaults prints the platform's check defaults and takes no <path> or -d/--dataset");
+    // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
+    const stray = Object.keys(inv.flags).filter((k) => !["show-defaults", "json", "api-key", "base-url"].includes(k));
+    if (inv.positionals[0] !== undefined || stray.length > 0) {
+      throw new CliUsageError(
+        "--show-defaults prints the platform's check defaults and takes no <path> and no other check flag" +
+          (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
+      );
     }
     const defaults = await client.defaults();
     if (json) {

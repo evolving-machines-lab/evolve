@@ -9695,6 +9695,8 @@ async function testCheckShowDefaults() {
     assert(human.out.some((l) => l.includes("pinned_dependencies")), "every criterion is named under RUBRIC");
     const withPath = captureIO();
     assertEqual(await runCli(["check", "./tasks", "--show-defaults", ...AUTH], withPath.io), 2, "--show-defaults with a <path> is a usage error");
+    assertEqual(await runCli(["check", "--show-defaults", "-d", "tb4", ...AUTH], captureIO().io), 2, "--show-defaults with -d is a usage error");
+    assertEqual(await runCli(["check", "--show-defaults", "--model", "x", "--watch", ...AUTH], captureIO().io), 2, "--show-defaults with a checker or output flag is a usage error, never silently ignored");
   } finally {
     restoreFetch();
   }
