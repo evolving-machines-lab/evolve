@@ -55,6 +55,8 @@ export interface SessionLoggerConfig {
 // SESSION LOGGER
 // =============================================================================
 
+const WIRE_EFFORT = /^[A-Za-z0-9_-]{1,32}$/
+
 export class SessionLogger {
   // Identity
   private readonly tag: string;
@@ -328,13 +330,14 @@ export class SessionLogger {
 
   private async sendToDashboard(events: unknown[]): Promise<void> {
     const body = {
-      // Session identity (order matches _meta)
+      // Session identity (the local _meta line carries the same fields but the effort)
       tag: this.tag,
       provider: this.provider,
       agent: this.agent,
       model: this.model,
       // null, never absent: "no effort" is a fact the server records too.
-      reasoningEffort: this.reasoningEffort ?? null,
+      // The server refuses an off-shape effort with a 400 that drops the whole batch; null keeps the events.
+      reasoningEffort: this.reasoningEffort !== undefined && WIRE_EFFORT.test(this.reasoningEffort) ? this.reasoningEffort : null,
       sandboxId: this.sandboxId,
       timestamp: this.timestamp,
       // Observability context (hierarchy, grouping)

@@ -182,6 +182,18 @@ async function testLoggerKeepsItsIdentity(): Promise<void> {
     assertEqual(body.tag, "evolve-realtag", "the ingest payload keeps the session tag");
     assertEqual(body.model, "claude-opus-5", "the ingest payload keeps the session model");
     assertEqual(body.reasoningEffort, null, "a logger given no effort sends null, never an absent key (B181)");
+    const offShape = new SessionLogger({
+      provider: "e2b",
+      agent: "claude",
+      model: "claude-opus-5",
+      sandboxId: "sbx-2",
+      tag: "evolve-offshape",
+      apiKey: "key",
+      reasoningEffort: "very high",
+    });
+    offShape.writePrompt("hello");
+    await offShape.flush();
+    assertEqual(body.reasoningEffort, null, "an effort outside the wire's shape is sent as null, so the server never refuses the batch for it");
     assertEqual(body.swarmName, "batch", "an ordinary annotation still reaches the payload");
     assert(
       warnings.some((w) => w.includes("tag")),
