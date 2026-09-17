@@ -629,6 +629,7 @@ class TestPassAtK:
             id='j',
             job_name='n',
             status='COMPLETED',
+            system_log=False,
             datasets=[],
             agents=[],
             n_attempts=4,

@@ -230,3 +230,73 @@ description: "Read, download, and act on single trials."
     ```
   </Tab>
 </Tabs>
+
+## filesystem(trialId: string)
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    filesystem(trialId: string): RunFilesystem
+
+    interface RunFilesystem {
+      status(): Promise<FilesystemStatus>
+      list(options?: { path?: string; source?: "live" | "capture"; cursor?: string; limit?: number }): Promise<FilesystemListing>
+      read(path: string, options?: { source?: "live" | "capture"; range?: TrialFileRange }): Promise<Buffer>
+      search(options: { q: string; path?: string; regex?: boolean; limit?: number; source?: "live" | "capture" }): Promise<FilesystemSearchResult>
+      changes(options?: { source?: "live" | "capture"; phase?: "agent" | "verifier" | "all"; cursor?: string; limit?: number }): Promise<FilesystemChanges>
+      archive(options?: { path?: string; source?: "live" | "capture" }): Promise<Buffer>
+      archive(options: { path?: string; source?: "live" | "capture"; to: string }): Promise<string>
+      watch(paths: string[]): Promise<FilesystemWatchResult>
+      events(options?: { lastEventId?: string; signal?: AbortSignal }): AsyncIterableIterator<FilesystemStreamEvent>
+      logs(options: { stream: SandboxLogStream; cursor?: string; limit?: number }): Promise<SandboxLogLines>
+      logEvents(options?: { lastEventId?: string; signal?: AbortSignal }): AsyncIterableIterator<SandboxLogEvent>
+      procs(): Promise<SandboxProcs>
+    }
+    ```
+
+    The trial's file system, sandbox logs and process list. While the box runs, every read sees it as it changes; after the run, the same reads answer from the kept tree. `status()` says which (`state`: `live`, `captured`, `capturing`, `none`), and `source` on a read forces one — a source that is not there is refused with `filesystem_state`.
+
+    `list` pages one folder by name; each entry says whether the run created or modified it and in which phase, and on the kept tree `captured: false` marks a file the run never touched (it lists but does not open — `not_captured`). `read` answers raw bytes, a slice with `range`. `search` finds text under a folder, or over the whole box when `path` is `/` (seconds); `truncated` says there was more. `changes` is the flat list of what the run created, modified or removed. `archive` is a `.tar.gz` of one subtree, in memory or saved under `to`; while the box runs, a subtree too large to read out in time is refused (`feature_unsupported`).
+
+    `events` yields change frames while the box lives (`state`, then one `fs` per change with its `seq`, `path` and `type`); on a provider without a native watcher, `watch(paths)` declares the folders you have open so their changes are reported (at most 8). `logs` pages one stream — `agent`, `verifier`, `setup`, `metrics` (samples), or `system` when the job asked for it — and `logEvents` follows every stream while the box lives. `procs` is the live process list.
+
+    ```ts
+    const fs = trials().filesystem(trial.id);
+    const { state } = await fs.status();
+    for (const entry of (await fs.list({ path: "/app/work" })).entries) console.log(entry.name, entry.changed);
+    const main = (await fs.read("/app/work/main.py")).toString("utf8");
+    for await (const frame of fs.events()) if (frame.event === "fs") console.log(frame.data.path, frame.data.type);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def filesystem(self, trial_id: str) -> RunFilesystem
+
+    class RunFilesystem:
+        async def status(self) -> FilesystemStatus
+        async def list(self, *, path="/", source=None, cursor=None, limit=None) -> FilesystemListing
+        async def read(self, path, *, source=None, start=None, end=None, suffix=None) -> bytes
+        async def search(self, q, *, path="/", regex=False, limit=None, source=None) -> FilesystemSearchResult
+        async def changes(self, *, source=None, phase=None, cursor=None, limit=None) -> FilesystemChanges
+        async def archive(self, *, path="/", source=None, to=None)  # bytes, or the saved path with to=
+        async def watch(self, paths) -> FilesystemWatchResult
+        def events(self, *, last_event_id=None) -> AsyncIterator[FilesystemStreamEvent]
+        async def logs(self, stream, *, cursor=None, limit=None) -> SandboxLogLines
+        def log_events(self, *, last_event_id=None) -> AsyncIterator[SandboxLogEvent]
+        async def procs(self) -> SandboxProcs
+    ```
+
+    The same surface, the same words: `status().state` says whether the reads answer from the running box (`live`) or the kept tree (`captured`); `source=` forces one. `read` answers bytes, a slice with `start`/`end` or `suffix`. `events` and `log_events` are async iterators over the live streams.
+
+    ```python
+    fs = trials().filesystem(trial.id)
+    print((await fs.status()).state)
+    for entry in (await fs.list(path="/app/work")).entries:
+        print(entry.name, entry.changed)
+    main = (await fs.read("/app/work/main.py")).decode()
+    async for frame in fs.events():
+        if frame.event == "fs":
+            print(frame.data["path"], frame.data["type"])
+    ```
+  </Tab>
+</Tabs>

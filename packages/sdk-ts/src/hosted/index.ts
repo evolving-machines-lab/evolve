@@ -168,6 +168,35 @@ import type {
   WatchAnalysisOptions,
   WatchImportOptions,
   WatchJobOptions,
+  FilesystemArchiveOptions,
+  FilesystemBox,
+  FilesystemCapture,
+  FilesystemChange,
+  FilesystemChanges,
+  FilesystemChangesOptions,
+  FilesystemEntry,
+  FilesystemStreamEvent,
+  FilesystemListOptions,
+  FilesystemListing,
+  FilesystemReadOptions,
+  FilesystemSearchHit,
+  FilesystemSearchOptions,
+  FilesystemSearchResult,
+  FilesystemSource,
+  FilesystemState,
+  FilesystemStatus,
+  FilesystemStreamOptions,
+  FilesystemWatchResult,
+  RunFilesystem,
+  SandboxLogEvent,
+  SandboxLogLine,
+  SandboxLogLines,
+  SandboxLogOptions,
+  SandboxLogStream,
+  SandboxMetricsSample,
+  SandboxProcs,
+  TaskPackageFiles,
+  TaskPackageFilesystemStatus,
 } from "./types";
 
 // Re-exported from the hosted barrel so the package root can hand them on.
@@ -179,6 +208,7 @@ export {
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   JOB_LIST_SCOPES,
+  SANDBOX_LOG_STREAMS,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   TASK_LINKED_BY,
@@ -398,6 +428,35 @@ export type {
   WatchAnalysisOptions,
   WatchImportOptions,
   WatchJobOptions,
+  FilesystemArchiveOptions,
+  FilesystemBox,
+  FilesystemCapture,
+  FilesystemChange,
+  FilesystemChanges,
+  FilesystemChangesOptions,
+  FilesystemEntry,
+  FilesystemStreamEvent,
+  FilesystemListOptions,
+  FilesystemListing,
+  FilesystemReadOptions,
+  FilesystemSearchHit,
+  FilesystemSearchOptions,
+  FilesystemSearchResult,
+  FilesystemSource,
+  FilesystemState,
+  FilesystemStatus,
+  FilesystemStreamOptions,
+  FilesystemWatchResult,
+  RunFilesystem,
+  SandboxLogEvent,
+  SandboxLogLine,
+  SandboxLogLines,
+  SandboxLogOptions,
+  SandboxLogStream,
+  SandboxMetricsSample,
+  SandboxProcs,
+  TaskPackageFiles,
+  TaskPackageFilesystemStatus,
 } from "./types";
 import {
   GATEWAY_TRACE_SEQ_BASE,
@@ -1132,6 +1191,9 @@ function mapJob(raw: Record<string, unknown>): Job {
     // Null exactly on an uploaded job — the record executed on no platform
     // sandbox, so naming a provider would be an execution claim.
     sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
+    // The system log switch — an older server that sends nothing reads as
+    // off, exactly how such a server behaves.
+    system_log: raw.system_log === true,
     counts: raw.counts as Job["counts"],
     // THE RESULTS-HONESTY LABEL (partial-publish model): always an array —
     // absent (an older server) reads as "nothing was excluded".
@@ -1569,6 +1631,184 @@ function createSseParser(onFrame: (frame: SseFrame) => void): { push(chunk: stri
           onFrame({ id, event, data: dataLines.join("\n") });
         }
       }
+    },
+  };
+}
+
+// ===== THE RUN'S FILE SYSTEM + SANDBOX LOGS — one implementation under every owner =====
+
+// Connects once and ends when the server ends; reconnecting is the caller's (the last frame's id is the next
+// call's lastEventId), so this never invents a position the server did not hand out.
+async function* sseFrames(
+  cfg: ResolvedConfig,
+  path: string,
+  options?: FilesystemStreamOptions
+): AsyncIterableIterator<{ event: string; id?: string; data: unknown }> {
+  const res = await request(cfg, path, {
+    headers: {
+      Accept: "text/event-stream",
+      ...(options?.lastEventId !== undefined ? { "Last-Event-ID": options.lastEventId } : {}),
+    },
+    signal: options?.signal,
+  });
+  if (!res.body) throw new Error("Event stream response has no body");
+  const pending: { event: string; id?: string; data: unknown }[] = [];
+  const parser = createSseParser((frame) => {
+    pending.push({
+      event: frame.event || "message",
+      ...(frame.id !== undefined ? { id: frame.id } : {}),
+      data: frame.data ? safeJsonParse(frame.data) : {},
+    });
+  });
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.push(decoder.decode(value, { stream: true }));
+      while (pending.length > 0) yield pending.shift()!;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+function filesystemQuery(params: Record<string, string | number | boolean | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, String(value));
+  }
+  const qs = query.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/** Each segment encodes separately — the slashes ARE the route. */
+function encodeBoxPath(path: string): string {
+  return path.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+}
+
+// `ownerPath` is the owner's API prefix; every route hangs off it exactly as the contract names them.
+function runFilesystem(cfg: ResolvedConfig, ownerPath: string): RunFilesystem {
+  return {
+    async status(): Promise<FilesystemStatus> {
+      const res = await request(cfg, `${ownerPath}/filesystem`);
+      return (await res.json()) as FilesystemStatus;
+    },
+
+    async list(options?: FilesystemListOptions): Promise<FilesystemListing> {
+      const res = await request(
+        cfg,
+        `${ownerPath}/filesystem/files${filesystemQuery({
+          path: options?.path,
+          source: options?.source,
+          cursor: options?.cursor,
+          limit: options?.limit,
+        })}`
+      );
+      return (await res.json()) as FilesystemListing;
+    },
+
+    async read(path: string, options?: FilesystemReadOptions): Promise<Buffer> {
+      const rangeHeader = rangeHeaderFor(options?.range);
+      const res = await request(
+        cfg,
+        `${ownerPath}/filesystem/files/${encodeBoxPath(path)}${filesystemQuery({ source: options?.source })}`,
+        rangeHeader ? { headers: { Range: rangeHeader } } : undefined
+      );
+      return Buffer.from(await res.arrayBuffer());
+    },
+
+    async search(options: FilesystemSearchOptions): Promise<FilesystemSearchResult> {
+      const res = await request(
+        cfg,
+        `${ownerPath}/filesystem/search${filesystemQuery({
+          q: options.q,
+          path: options.path,
+          regex: options.regex,
+          limit: options.limit,
+          source: options.source,
+        })}`
+      );
+      return (await res.json()) as FilesystemSearchResult;
+    },
+
+    async changes(options?: FilesystemChangesOptions): Promise<FilesystemChanges> {
+      const res = await request(
+        cfg,
+        `${ownerPath}/filesystem/changes${filesystemQuery({
+          source: options?.source,
+          phase: options?.phase,
+          cursor: options?.cursor,
+          limit: options?.limit,
+        })}`
+      );
+      return (await res.json()) as FilesystemChanges;
+    },
+
+    archive: (async (
+      options?: FilesystemArchiveOptions & { to?: string; stream?: boolean }
+    ): Promise<Buffer | string | ReadableStream<Uint8Array>> =>
+      downloadArchive(
+        cfg,
+        `${ownerPath}/filesystem/archive${filesystemQuery({ path: options?.path, source: options?.source })}`,
+        options,
+        "filesystem.tar.gz"
+      )) as RunFilesystem["archive"],
+
+    async watch(paths: string[]): Promise<FilesystemWatchResult> {
+      const res = await request(cfg, `${ownerPath}/filesystem/watch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths }),
+      });
+      return (await res.json()) as FilesystemWatchResult;
+    },
+
+    events(options?: FilesystemStreamOptions): AsyncIterableIterator<FilesystemStreamEvent> {
+      return sseFrames(cfg, `${ownerPath}/filesystem/events`, options) as AsyncIterableIterator<FilesystemStreamEvent>;
+    },
+
+    async logs(options: SandboxLogOptions): Promise<SandboxLogLines> {
+      const res = await request(
+        cfg,
+        `${ownerPath}/logs${filesystemQuery({ stream: options.stream, cursor: options.cursor, limit: options.limit })}`
+      );
+      return (await res.json()) as SandboxLogLines;
+    },
+
+    logEvents(options?: FilesystemStreamOptions): AsyncIterableIterator<SandboxLogEvent> {
+      return sseFrames(cfg, `${ownerPath}/logs/events`, options) as AsyncIterableIterator<SandboxLogEvent>;
+    },
+
+    async procs(): Promise<SandboxProcs> {
+      const res = await request(cfg, `${ownerPath}/procs`);
+      return (await res.json()) as SandboxProcs;
+    },
+  };
+}
+
+function taskPackageFiles(cfg: ResolvedConfig, ownerPath: string): TaskPackageFiles {
+  return {
+    async status(): Promise<TaskPackageFilesystemStatus> {
+      const res = await request(cfg, `${ownerPath}/filesystem`);
+      return (await res.json()) as TaskPackageFilesystemStatus;
+    },
+    async list(options?: Omit<FilesystemListOptions, "source">): Promise<FilesystemListing> {
+      const res = await request(
+        cfg,
+        `${ownerPath}/filesystem/files${filesystemQuery({ path: options?.path, cursor: options?.cursor, limit: options?.limit })}`
+      );
+      return (await res.json()) as FilesystemListing;
+    },
+    async read(path: string, options?: { range?: TrialFileRange }): Promise<Buffer> {
+      const rangeHeader = rangeHeaderFor(options?.range);
+      const res = await request(
+        cfg,
+        `${ownerPath}/filesystem/files/${encodeBoxPath(path)}`,
+        rangeHeader ? { headers: { Range: rangeHeader } } : undefined
+      );
+      return Buffer.from(await res.arrayBuffer());
     },
   };
 }
@@ -2673,6 +2913,21 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       // the jobs blocking it.
       await request(cfg, `/api/datasets/${encodeURIComponent(name)}`, { method: "DELETE" });
     },
+
+    taskFiles(ref: string, taskName: string): TaskPackageFiles {
+      // The files are a fact about ONE immutable version, so the ref must
+      // pin it — the getTaskBuild rule.
+      const parsed = parseDatasetRef(ref);
+      if (parsed.version === undefined) {
+        throw new Error(
+          `datasets().taskFiles() needs "name@version" — a task's files belong to one immutable version (got "${ref}")`
+        );
+      }
+      return taskPackageFiles(
+        cfg,
+        `/api/datasets/${encodeURIComponent(parsed.name)}/versions/${encodeURIComponent(parsed.version)}/tasks/${encodeURIComponent(taskName)}`
+      );
+    },
   };
 }
 
@@ -3489,7 +3744,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
    */
   async function getArtifact(
     trialId: string,
-    stream: Exclude<TrialArtifactStream, "trace-parsed" | "agent-home">
+    stream: Exclude<TrialArtifactStream, "trace-parsed" | "agent-home" | "filesystem">
   ): Promise<string | null>;
   async function getArtifact(
     trialId: string,
@@ -3497,7 +3752,7 @@ export function trials(config?: HostedClientConfig): TrialsClient {
   ): Promise<Record<string, string> | null>;
   async function getArtifact(
     trialId: string,
-    stream: Exclude<TrialArtifactStream, "trace-parsed">
+    stream: Exclude<TrialArtifactStream, "trace-parsed" | "filesystem">
   ): Promise<string | Record<string, string> | null> {
     const res = await request(
       cfg,
@@ -3610,6 +3865,11 @@ export function trials(config?: HostedClientConfig): TrialsClient {
       );
       return Buffer.from(await res.arrayBuffer());
     },
+
+    // The run's file system, sandbox logs and process list — one
+    // implementation under every owner (runFilesystem).
+    filesystem: (trialId: string): RunFilesystem =>
+      runFilesystem(cfg, `/api/trials/${encodeURIComponent(trialId)}`),
   };
 }
 
@@ -3844,6 +4104,9 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
         options,
         `analysis-${analysisId}.tar.gz`
       )) as AnalysesClient["download"],
+
+    filesystem: (analysisId: string): RunFilesystem =>
+      runFilesystem(cfg, `/api/analyses/${encodeURIComponent(analysisId)}`),
   };
 }
 
@@ -4096,6 +4359,10 @@ export function checks(config?: HostedClientConfig): ChecksClient {
         await sleep(delayMs, options?.signal);
       }
     },
+
+    // The (check, task check) PAIR is the identity: the path carries both.
+    taskFilesystem: (checkId: string, taskCheckId: string): RunFilesystem =>
+      runFilesystem(cfg, `/api/checks/${encodeURIComponent(checkId)}/tasks/${encodeURIComponent(taskCheckId)}`),
   };
 }
 

@@ -97,6 +97,10 @@ function buildMockResponse(resp: MockResponse): Response {
     headers: new Headers(resp.headers || {}),
     json: async () => resp.body,
     text: async () => resp.streamBody ?? JSON.stringify(resp.body),
+    arrayBuffer: async () => {
+      const bytes = resp.bodyBytes ?? Buffer.from(JSON.stringify(resp.body));
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    },
     body,
   } as unknown as Response;
 }
@@ -9467,6 +9471,140 @@ async function testCheckVerb() {
   }
 }
 
+async function testFilesVerbs() {
+  console.log("\n--- runCli: <noun> files … / logs / procs, dataset files …, --system-log, --stream filesystem ---");
+  installMockFetch();
+  try {
+    const listing = {
+      path: "/app/work",
+      source: "live",
+      entries: [
+        { name: "main.py", type: "file", size: 9, mtime: "2026-09-16T20:05:00.000Z", mode: "0644", owner: "root", changed: "created", phase: "agent", captured: null },
+        { name: "logs", type: "dir", size: 0, mtime: "2026-09-16T20:05:00.000Z", mode: "0755", owner: "root", changed: null, phase: null, captured: null },
+      ],
+      next_cursor: null,
+      ms: 3,
+    };
+    setMockResponse("/api/trials/run-1/filesystem/files/app/work/main.py", { status: 200, body: null, bodyBytes: Buffer.from("print(1)\n") });
+    setMockResponse("/api/trials/run-1/filesystem/files?", { status: 200, body: listing });
+    setMockResponse("/api/trials/run-1/filesystem/search", { status: 200, body: { hits: [{ path: "/app/work/main.py", line: 1, snippet: "print(1)" }], truncated: true, scope: "path", source: "live", ms: 5 } });
+    setMockResponse("/api/trials/run-1/filesystem/changes", { status: 200, body: { source: "capture", total: 1, changed_bytes: 9, items: [{ path: "/app/work/main.py", type: "file", changed: "created", phase: "agent", size: 9, mtime: "t" }], next_cursor: null } });
+    setMockResponse("/api/trials/run-1/filesystem/archive", { status: 200, body: null, bodyBytes: Buffer.from("tarbytes") });
+    setMockResponse("/api/trials/run-1/filesystem", { status: 200, body: { state: "captured", box: null, watcher: null, root: "/", work_dir: "/app", capture: { id: "c1", at: "t", phase: "after_verifier", entries: 10, changed_files: 1, changed_bytes: 9, status: "ready", left_out: [] } } });
+    setMockResponse("/api/trials/run-1/logs/events", { status: 200, body: null, streamBody: 'id: agent:2\nevent: line\ndata: {"stream":"agent","seq":2,"t":"t","fd":"out","line":"live line"}\n\n' });
+    setMockResponse("/api/trials/run-1/logs?", { status: 200, body: { stream: "agent", lines: [{ seq: 1, t: "t", fd: "out", line: "hi" }], next_cursor: null } });
+    setMockResponse("/api/trials/run-1/procs", { status: 200, body: { text: "PID CMD\n1 bash", ms: 4 } });
+    setMockResponse("/api/trials/run-1/trace?stream=filesystem", { status: 200, body: null, bodyBytes: Buffer.from("tarbytes") });
+    const last = () => fetchCalls[fetchCalls.length - 1];
+
+    const status = captureIO();
+    assertEqual(await runCli(["trial", "files", "status", "run-1", ...AUTH], status.io), 0, "trial files status exits 0");
+    assert(status.out[0].startsWith("state") && status.out[0].includes("captured"), "prints the state row");
+    const statusJson = captureIO();
+    await runCli(["trial", "files", "status", "run-1", "--json", ...AUTH], statusJson.io);
+    assertEqual(JSON.parse(statusJson.out[0]).state, "captured", "--json prints the wire shape");
+
+    const ls = captureIO();
+    assertEqual(await runCli(["trial", "files", "ls", "run-1", "/app/work", "--source", "live", ...AUTH], ls.io), 0, "trial files ls (the list alias) exits 0");
+    const lsUrl = new URL(last().url);
+    assertEqual(lsUrl.pathname, "/api/trials/run-1/filesystem/files", "ls targets filesystem/files");
+    assertEqual([lsUrl.searchParams.get("path"), lsUrl.searchParams.get("source")], ["/app/work", "live"], "the path and --source ride the query");
+    assert(ls.out[0].includes("main.py") && ls.out[0].includes("created (agent)"), "renders the entry with its change mark");
+    assert(ls.out[1].includes("logs/"), "a folder renders with a slash");
+    const lsJson = captureIO();
+    await runCli(["trial", "files", "list", "run-1", "--json", ...AUTH], lsJson.io);
+    assertEqual(JSON.parse(lsJson.out[0]).entries.length, 2, "--json prints the listing verbatim");
+
+    const cat = captureIO();
+    const bytes: Buffer[] = [];
+    cat.io.bytes = (b) => bytes.push(b);
+    assertEqual(await runCli(["trial", "files", "cat", "run-1", "/app/work/main.py", "--range", "bytes=0-3", ...AUTH], cat.io), 0, "trial files cat exits 0");
+    assertEqual(Buffer.concat(bytes).toString("utf8"), "print(1)\n", "cat writes the raw bytes");
+    assertEqual((last().init?.headers as Record<string, string>).Range, "bytes=0-3", "--range rides the Range header");
+    const catJson = captureIO();
+    await runCli(["trial", "files", "cat", "run-1", "/app/work/main.py", "--json", ...AUTH], catJson.io);
+    assertEqual(JSON.parse(catJson.out[0]).encoding, "base64", "--json carries the bytes as base64");
+    assertThrowsUsage(() => parseArgs(["trial", "files", "cat", "run-1"]), "requires", "cat needs a path");
+
+    const search = captureIO();
+    assertEqual(await runCli(["trial", "files", "search", "run-1", "print", "--path", "/app/work", "--regex", ...AUTH], search.io), 0, "trial files search exits 0");
+    const searchUrl = new URL(last().url);
+    assertEqual([searchUrl.searchParams.get("q"), searchUrl.searchParams.get("path"), searchUrl.searchParams.get("regex")], ["print", "/app/work", "true"], "search options ride the query");
+    assertEqual(search.out[0], "/app/work/main.py:1: print(1)", "renders path:line: snippet");
+    assert(search.out[1].includes("truncated"), "says when there was more");
+
+    const changes = captureIO();
+    assertEqual(await runCli(["trial", "files", "changes", "run-1", "--phase", "agent", ...AUTH], changes.io), 0, "trial files changes exits 0");
+    assertEqual(new URL(last().url).searchParams.get("phase"), "agent", "--phase rides the query");
+    assert(changes.out[0].startsWith("1 changed"), "renders the totals line");
+    assertThrowsUsage(() => parseArgs(["trial", "files", "changes", "run-1", "--phase"]), "requires a value", "--phase wants a value");
+
+    const dir = await mkdtemp(join(tmpdir(), "evolve-files-archive-"));
+    try {
+      const archive = captureIO();
+      assertEqual(await runCli(["trial", "files", "archive", "run-1", "--path", "/app/work", "-o", dir, ...AUTH], archive.io), 0, "trial files archive -o exits 0");
+      assert(archive.out[0].startsWith(dir), "prints the saved path");
+      assertEqual(await readFile(archive.out[0], "utf8"), "tarbytes", "saved the bytes");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+
+    const logs = captureIO();
+    assertEqual(await runCli(["trial", "logs", "run-1", "--stream", "agent", ...AUTH], logs.io), 0, "trial logs exits 0");
+    assertEqual(new URL(last().url).searchParams.get("stream"), "agent", "--stream rides the query");
+    assert(logs.out[0].endsWith("hi"), "renders the line");
+    const follow = captureIO();
+    assertEqual(await runCli(["trial", "logs", "run-1", "--stream", "agent", "--follow", "--json", ...AUTH], follow.io), 0, "trial logs --follow exits 0 when the stream ends");
+    assertEqual(JSON.parse(follow.out[0]).line, "live line", "--follow prints the streamed lines");
+    assertThrowsUsage(() => parseArgs(["trial", "logs", "run-1", "--stream"]), "requires a value", "--stream wants a value");
+    const badStream = captureIO();
+    assertEqual(await runCli(["trial", "logs", "run-1", "--stream", "kernel", ...AUTH], badStream.io), 2, "an unknown stream is a usage error");
+
+    const procs = captureIO();
+    assertEqual(await runCli(["trial", "procs", "run-1", "--json", ...AUTH], procs.io), 0, "trial procs exits 0");
+    assertEqual(JSON.parse(procs.out[0]).text, "PID CMD\n1 bash", "--json prints the listing");
+
+    // The other owners: the analysis prefix; the task check resolves its check.
+    setMockResponse("/api/analyses/an-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: { id: "tc-1", check_id: "chk-1", task_name: "t", status: "completed", checks: {}, label: null, executed: null, cost_usd: null, attempts: 1, failure: null, created_at: "t", finished_at: "t" } } });
+    setMockResponse("/api/checks/chk-1/tasks/tc-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
+    const an = captureIO();
+    assertEqual(await runCli(["analysis", "files", "status", "an-1", "--json", ...AUTH], an.io), 0, "analysis files status exits 0");
+    assert(last().url.endsWith("/api/analyses/an-1/filesystem"), "targets the analysis prefix");
+    const tc = captureIO();
+    assertEqual(await runCli(["check", "files", "status", "tc-1", "--json", ...AUTH], tc.io), 0, "check files status exits 0");
+    assert(last().url.endsWith("/api/checks/chk-1/tasks/tc-1/filesystem"), "resolves the task check's check and targets the pair");
+
+    // The task package owner.
+    setMockResponse("/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem/files?", { status: 200, body: { path: "/", source: "package", entries: [{ name: "task.toml", type: "file", size: 20, mtime: "t", mode: "0644", owner: "root", changed: null, phase: null, captured: true }], next_cursor: null, ms: 1 } });
+    const pkg = captureIO();
+    assertEqual(await runCli(["dataset", "files", "ls", "bench@1.0", "abs-1", "--json", ...AUTH], pkg.io), 0, "dataset files ls exits 0");
+    assert(last().url.includes("/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem/files"), "targets the task package prefix");
+    assertEqual(JSON.parse(pkg.out[0]).source, "package", "prints the package listing");
+    const unpinned = captureIO();
+    const callsBefore = fetchCalls.length;
+    assertEqual(await runCli(["dataset", "files", "status", "bench", "abs-1", "--json", ...AUTH], unpinned.io), 2, "dataset files with an unpinned ref is a usage error (exit 2)");
+    assert(unpinned.err[0].includes("name@version"), "the message says the ref must pin a version");
+    assertEqual(fetchCalls.length, callsBefore, "no network call on an unpinned ref");
+
+    // The job switch and the download selector.
+    const cfg = captureIO();
+    assertEqual(await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--system-log", "--print-config"], cfg.io), 0, "--system-log parses");
+    assertEqual(JSON.parse(cfg.out.join("\n")).system_log, true, "--system-log rides the body as system_log: true");
+    const bare = captureIO();
+    await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--print-config"], bare.io);
+    assertEqual("system_log" in JSON.parse(bare.out.join("\n")), false, "omitted, no system_log key rides");
+    const fsDownload = captureIO();
+    const tar: Buffer[] = [];
+    fsDownload.io.bytes = (b) => tar.push(b);
+    assertEqual(await runCli(["trial", "download", "run-1", "--stream", "filesystem", ...AUTH], fsDownload.io), 0, "trial download --stream filesystem exits 0");
+    assert(last().url.includes("/api/trials/run-1/filesystem/archive"), "the selector answers through the archive route");
+    assertEqual(Buffer.concat(tar).toString("utf8"), "tarbytes", "writes the archive bytes");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testCheckReadVerbs() {
   console.log("\n--- runCli: check list / check show ride the contract's GETs; a single-task report prints Harbor's checks table ---");
   installMockFetch();
@@ -9631,6 +9769,7 @@ async function main() {
   await testAnalysisList();
   await testCheckVerb();
   await testCheckReadVerbs();
+  await testFilesVerbs();
   await testSessionListAndShow();
 
   console.log(`\n${passed} passed, ${failed} failed`);
