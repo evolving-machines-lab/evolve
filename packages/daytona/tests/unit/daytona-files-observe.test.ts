@@ -55,6 +55,8 @@ function records(rows: string[][]): string {
   return rows.map((r) => r.join("\0") + "\0").join("");
 }
 const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
+/** The script inside the child shell's single-quoted argument (`sh -c '…'`), quotes restored. */
+const inner = (command: string) => command.replace(/^sh -c '/, "").replace(/'$/, "").replace(/'\\''/g, "'");
 
 function fakeRunner(reply: (command: string) => { exitCode: number; stdout: string; stderr: string }) {
   const commands: string[] = [];
@@ -85,8 +87,9 @@ async function testList(): Promise<void> {
   const runner = fakeRunner(() => ({ exitCode: 0, stdout: b64(LIVE_LISTING + "STATUS:0"), stderr: "" }));
   const files = new DaytonaFiles({} as any, runner as any);
   const entries = await files.list("/tmp/p");
-  assert(runner.commands[0].includes("find -H '/tmp/p' -mindepth 1 -maxdepth 1 -printf"), `the command is a bounded, non-recursive find on the quoted path (${runner.commands[0].slice(0, 80)}…)`);
+  assert(inner(runner.commands[0]).includes("find -H '/tmp/p' -mindepth 1 -maxdepth 1 -printf"), `the command is a bounded, non-recursive find on the quoted path (${inner(runner.commands[0]).slice(0, 80)}…)`);
   assert(runner.commands[0].includes("base64") && runner.commands[0].includes("STATUS:"), "the listing rides base64 so no byte of a name is decoded by a text channel");
+  assert(runner.commands[0].startsWith("sh -c '"), "the script runs in a child shell: its `exit` on a missing path must never end the session shell (a session-level exit hung the stat 102–105 s until a 502, live 2026-09-16)");
   const byName = Object.fromEntries(entries.map((e) => [e.name, e]));
   assertEqual(byName["a.txt"], { name: "a.txt", path: "/tmp/p/a.txt", type: "file", size: 5, mtime: "2026-09-16T20:48:03.710Z", mode: "0644", owner: "daytona", group: "daytona" }, "a regular file: ISO mtime from %T@, 4-digit octal mode, owner/group by name");
   assertEqual([byName["dirlink"].type, byName["dirlink"].target, byName["dirlink"].mode], ["symlink", "sub", "0777"], "a symlink to a directory is a symlink with its target");
@@ -124,6 +127,7 @@ async function testStat(): Promise<void> {
   assertEqual(info, { name: "link", path: "/tmp/p/link", type: "symlink", size: 5, mtime: "2026-09-16T20:48:03.710Z", mode: "0777", owner: "daytona", group: "daytona", target: "a.txt" }, "a symlink stats as a symlink with its target");
   assert(runner.commands[0].includes("-maxdepth 0") && !runner.commands[0].includes("find -H"), "stat looks at the path itself and does not follow it");
   await rejects(() => files.stat("/tmp/p/missing"), "SandboxPathNotFoundError", "a missing path is SandboxPathNotFoundError");
+  assert(runner.commands.every((c) => c.startsWith("sh -c '")), "stat's script runs in a child shell too, so its ENOENT exit reaches the caller instead of killing the session");
 }
 
 function fetchStub(handler: (url: string, init: RequestInit) => Response) {

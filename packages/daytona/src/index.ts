@@ -2991,7 +2991,10 @@ function findListingScript(path: string, mode: "children" | "self"): string {
     mode === "children"
       ? `find -H ${p} -mindepth 1 -maxdepth 1 -printf '${DAYTONA_FIND_FORMAT}'`
       : `find ${p} -maxdepth 0 -printf '${DAYTONA_FIND_FORMAT}'`;
-  return `${existence} ( ${find}; printf 'STATUS:%d' "$?" ) | base64`;
+  // A CHILD SHELL, never the session's own: the existence checks `exit`, and an exit evaluated by the session shell
+  // ends the session, after which Daytona never records the command as finished (withInBoxTimeout above) — a stat of a
+  // missing path then hung 102–105 s until Daytona's gateway answered 502 (live, boxes 67f0f369 and 24299bd0, 2026-09-16).
+  return `sh -c ${shellQuote(`${existence} ( ${find}; printf 'STATUS:%d' "$?" ) | base64`)}`;
 }
 
 function parseFindListing(dir: string, stdout: string, mode: "children" | "self"): FileInfo[] {
