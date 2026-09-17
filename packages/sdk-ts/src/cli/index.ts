@@ -65,6 +65,7 @@ import type {
   FilesystemStatus,
   RunFilesystem,
   SandboxLogStream,
+  TaskPackageFiles,
   TrialFileRange,
   Agent,
   AgentArm,
@@ -6539,7 +6540,15 @@ async function checkFiles(inv: Invocation): Promise<FilesTarget> {
 
 async function datasetFiles(inv: Invocation): Promise<FilesTarget> {
   const [ref, taskName] = inv.positionals;
-  return { fs: datasets(clientConfig(inv)).taskFiles(ref, taskName), label: `${ref}/${taskName}`, pathAt: 2 };
+  const client = datasets(clientConfig(inv));
+  let fs: TaskPackageFiles;
+  try {
+    fs = client.taskFiles(ref, taskName);
+  } catch (error) {
+    // The SDK refuses a ref that pins no version before any request; at the keyboard that is a usage error.
+    throw new CliUsageError(error instanceof Error ? error.message : String(error));
+  }
+  return { fs, label: `${ref}/${taskName}`, pathAt: 2 };
 }
 
 function fsSource(inv: Invocation): FilesystemSource | undefined {

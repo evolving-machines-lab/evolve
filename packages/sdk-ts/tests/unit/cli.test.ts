@@ -9576,6 +9576,11 @@ async function testFilesVerbs() {
     assertEqual(await runCli(["dataset", "files", "ls", "bench@1.0", "abs-1", "--json", ...AUTH], pkg.io), 0, "dataset files ls exits 0");
     assert(last().url.includes("/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem/files"), "targets the task package prefix");
     assertEqual(JSON.parse(pkg.out[0]).source, "package", "prints the package listing");
+    const unpinned = captureIO();
+    const callsBefore = fetchCalls.length;
+    assertEqual(await runCli(["dataset", "files", "status", "bench", "abs-1", "--json", ...AUTH], unpinned.io), 2, "dataset files with an unpinned ref is a usage error (exit 2)");
+    assert(unpinned.err[0].includes("name@version"), "the message says the ref must pin a version");
+    assertEqual(fetchCalls.length, callsBefore, "no network call on an unpinned ref");
 
     // The job switch and the download selector.
     const cfg = captureIO();
