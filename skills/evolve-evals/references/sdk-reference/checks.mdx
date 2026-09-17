@@ -10,7 +10,7 @@ description: "Start and read task quality checks."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    create(input: { source: { directory: string } | { dataset: string }; model_name?: string; rubric?: Rubric; prompt?: string; reasoning_effort?: string; sandbox_provider?: EvalSandboxProvider; n_concurrent?: number; include_task_names?: string[]; exclude_task_names?: string[]; n_tasks?: number; onUploadProgress?: (sentBytes: number, totalBytes: number) => void }): Promise<Check>
+    create(input: { source: { directory: string } | { dataset: string }; name?: string; model_name?: string; rubric?: Rubric; prompt?: string; reasoning_effort?: string; sandbox_provider?: EvalSandboxProvider; n_concurrent?: number; include_task_names?: string[]; exclude_task_names?: string[]; n_tasks?: number; onUploadProgress?: (sentBytes: number, totalBytes: number) => void }): Promise<Check>
     ```
 
     Check a local task directory or a directory of them, uploaded as one archive (`upload_too_large` past the published ceiling), or a published dataset, nothing uploaded. Returns the accepted check with one `queued` result per task; an empty selection is refused with `no_checkable_tasks`, and a dataset version resolves as for a job (`dataset_not_found`, `no_active_version`, `version_not_ready`). A check on a dataset version also appears on every job spanning it, as `check` on `jobs().tasks()` rows.
@@ -25,6 +25,7 @@ description: "Start and read task quality checks."
         directory: Optional[str] = None,
         *,
         dataset: Optional[str] = None,
+        name=None,
         model_name=None,
         rubric: Optional[Rubric] = None,
         prompt=None,

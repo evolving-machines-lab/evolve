@@ -26,6 +26,10 @@ evolve check --show-defaults
   Check a published dataset's tasks instead of a local path. The checker reads the version's retained task package, and the job page's CHECK tab lists these checks by task.
 </ParamField>
 
+<ParamField path="--name" type="name">
+  A name for the check, Harbor's `--job-name`. Omitted, the accept timestamp in Harbor's shape, `YYYY-MM-DD__HH-MM-SS`.
+</ParamField>
+
 <ParamField path="-m, --model" type="name" default="openrouter/deepseek/deepseek-v4.1-flash">
   Model the checker runs. `fireworks/deepseek-v4.1-flash` is the same model on its Fireworks route. Must be on the `claude` roster.
 </ParamField>
