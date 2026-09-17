@@ -16,6 +16,24 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
     Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys), then export it. See [installation](/getting-started/installation) for the SDKs.
   </Step>
 
+  <Step title="Give your coding agent the manual">
+    ```bash
+    evolve skills install
+    ```
+
+    The `evolve` skill lands in the skill folder of every coding agent on your machine. From then on the agent reads the documentation page by page with `evolve skills get evals`, and four more skills by name:
+
+    | Skill | What it does |
+    | --- | --- |
+    | `evals` | This documentation, page by page: `evolve skills get evals core-concepts/jobs` |
+    | `create-task` | Write a new task in the Harbor format, verifier included |
+    | `rewardkit` | Write a task's verifier with Reward Kit |
+    | `create-adapter` | Convert an existing benchmark into a folder of Harbor-format tasks |
+    | `publish` | Publish a dataset of tasks, or upload a job you ran elsewhere |
+
+    `evolve skills list` names them; `evolve skills get <name>` prints one.
+  </Step>
+
   <Step title="Pick a dataset">
     The catalog lists every dataset you can run, with its versions.
 
@@ -28,7 +46,7 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
   </Step>
 
   <Step title="Start a job and watch it">
-    Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes; `-l 5` caps the run at five tasks so the first job is small.
+    Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes; `-l 5` caps the run at five tasks and `--max-trial-spend 1` caps what each trial may spend on the model, so the first job is small.
 
     ```bash
     evolve run \
@@ -36,6 +54,7 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
       -a codex \
       -m gpt-6-astra \
       -l 5 \
+      --max-trial-spend 1 \
       --watch
     ```
 
