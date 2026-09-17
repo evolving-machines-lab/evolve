@@ -57,6 +57,8 @@ export interface Skill {
   dir: string;
   /** The front matter description, one line. */
   description: string;
+  /** SKILL.md after its front matter: what `get` prints (the front matter is for the agent's loader, not the reader). */
+  body: string;
   /** SKILL.md as it is on disk. */
   content: string;
 }
@@ -136,6 +138,7 @@ function readSkill(dir: string): Skill {
   const file = join(dir, "SKILL.md");
   const content = readFileSync(file, "utf8");
   const block = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
+  const body = block ? content.slice(block[0].length).replace(/^\r?\n+/, "") : content;
   let data: unknown = null;
   if (block) {
     try {
@@ -150,7 +153,7 @@ function readSkill(dir: string): Skill {
       : "";
   const folder = dir.slice(dir.lastIndexOf(sep) + 1);
   const name = folder.startsWith(FOLDER_PREFIX) ? folder.slice(FOLDER_PREFIX.length) : folder;
-  return { name, dir, description, content };
+  return { name, dir, description, content, body };
 }
 
 /** Every served folder holding a SKILL.md, the pointer included, sorted by served name. */

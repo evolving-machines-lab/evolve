@@ -293,10 +293,16 @@ function testShortFlags() {
 
   const ae = parseArgs([
     "job", "start", "-d", "b", "-a", "codex", "-m", "m",
-    "--ae", "A=1", "--ae", "B=2", "--ve", "C=3",
+    "--ve", "C=3",
   ]);
-  assertEqual(ae.flags["agent-env"], ["A=1", "B=2"], "--ae is the alias of --agent-env, repeatable");
   assertEqual(ae.flags["verifier-env"], ["C=3"], "--ve is the alias of --verifier-env");
+  let aeRefused = "";
+  try {
+    parseArgs(["job", "start", "-d", "b", "-a", "codex", "-m", "m", "--ae", "A=1"]);
+  } catch (error) {
+    aeRefused = (error as Error).message;
+  }
+  assertEqual(aeRefused.includes("--ae"), true, "--ae is no longer a run flag: the server refuses agent_env on a job");
 
   assertEqual(
     parseArgs(["job", "start", "-d=deep-swe", "-a=codex", "-m=m"]).flags.dataset,
@@ -362,7 +368,6 @@ function testBuildJobInputFlags() {
     "-n", "8",
     "--max-trial-spend", "25",
     "-e", "daytona",
-    "--ae", "A=1",
     "--ve", "B=2",
     "--job-name", "sweep-7",
   ]);
@@ -385,7 +390,6 @@ function testBuildJobInputFlags() {
       n_concurrent_trials: 8,
       max_trial_spend_usd: 25,
       sandbox_provider: "daytona",
-      agent_env: { A: "1" },
       verifier_env: { B: "2" },
     },
     "full body: -d repeatable, filters stamped on EVERY selector, one arm per -m, effort on every arm"
@@ -400,7 +404,6 @@ function testBuildJobInputFlags() {
       "n_concurrent_trials",
       "max_trial_spend_usd",
       "sandbox_provider",
-      "agent_env",
       "verifier_env",
     ],
     "body keys follow the contract field order"
@@ -413,7 +416,7 @@ function testBuildJobInputFlags() {
     "minimal body: bare name selector, no optional keys"
   );
   assert(!("max_trial_spend_usd" in minimal), "no cap key when --max-trial-spend omitted (the server's default is the ask)");
-  assert(!("agent_env" in minimal), "no env key when --ae omitted");
+  assert(!("agent_env" in minimal), "no agent_env key: the server refuses it on a job");
 
   assertThrowsUsage(
     () => buildJobInput(parseArgs(["job", "start", "-a", "codex", "-m", "m"])),

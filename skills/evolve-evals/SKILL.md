@@ -18,7 +18,6 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 2. Every CLI verb is documented from its own `--help`; run `evolve <verb> --help` to confirm the flags of the installed version.
 3. Every command and every SDK client reads `EVOLVE_API_KEY`; the Installation page says where the key comes from.
 
-## Topic index
 
 ## Docs
 

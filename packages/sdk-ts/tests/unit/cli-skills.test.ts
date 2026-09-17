@@ -83,6 +83,7 @@ function skillMd(name: string, description: string, body: string): string {
   return `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\nmetadata:\n  internal: true\n---\n\n${body}\n`;
 }
 
+const body = (skill: string): string => skill.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n)+/, "");
 const POINTER = `---\nname: evolve\ndescription: The pointer skill an agent installs.\nallowed-tools: Bash(evolve:*), Bash(npx evolve:*)\n---\n\n# evolve\n\nRun \`evolve skills get evals\`.\n`;
 const EVALS_SKILL = skillMd("evolve-evals", "Hosted evals: datasets, jobs, trials. A description long enough to be cut at seventy characters in the list.", "# Evals\n\nThe index.");
 const AGENTS_SKILL = skillMd("evolve-agents", "The SDK: run agents in sandboxes.", "# Agents");
@@ -180,15 +181,15 @@ async function main(): Promise<void> {
     {
       const one = captureIO();
       assertEqual(await runCli(["skills", "get", "evals"], one.io), 0, "get evals exits 0");
-      assertEqual(stdout(one), EVALS_SKILL, "stdout is the file's bytes, front matter included, nothing added");
+      assertEqual(stdout(one), body(EVALS_SKILL), "stdout is the SKILL.md body: the front matter is for the loader, not the reader");
 
       const pointer = captureIO();
       assertEqual(await runCli(["skills", "get", "evolve"], pointer.io), 0, "get evolve prints the pointer (hidden from list, not from get)");
-      assertEqual(stdout(pointer), POINTER, "the pointer's bytes, unchanged");
+      assertEqual(stdout(pointer), body(POINTER), "the pointer's body");
 
       const two = captureIO();
       assertEqual(await runCli(["skills", "get", "create-task", "rewardkit"], two.io), 0, "get with two names exits 0");
-      assertEqual(stdout(two), `${CREATE_TASK_SKILL}\n---\n\n${REWARDKIT_SKILL}`, "two skills are joined by a blank line, a --- rule and a blank line (agent-browser's boundary)");
+      assertEqual(stdout(two), `${body(CREATE_TASK_SKILL)}\n---\n\n${body(REWARDKIT_SKILL)}`, "two skills are joined by a blank line, a --- rule and a blank line (agent-browser's boundary)");
 
       const folderName = captureIO();
       assertEqual(await runCli(["skills", "get", "evolve-evals"], folderName.io), 1, "the folder name evolve-evals is not a served name (one name per skill)");
@@ -207,7 +208,7 @@ async function main(): Promise<void> {
       const full = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "--full"], full.io), 0, "get evals --full exits 0");
       const expected =
-        EVALS_SKILL +
+        body(EVALS_SKILL) +
         "\n--- references/core-concepts/tasks.mdx ---\n\n" + TASKS_PAGE +
         "\n--- references/index.mdx ---\n\n" + INDEX_PAGE +
         "\n--- references/snippets/global-options.mdx ---\n\n" + SNIPPET;
@@ -219,13 +220,13 @@ async function main(): Promise<void> {
       assertEqual(await runCli(["skills", "get", "rewardkit", "--full"], templates.io), 0, "get rewardkit --full exits 0");
       assertEqual(
         stdout(templates),
-        REWARDKIT_SKILL + "\n--- references/guide.md ---\n\n" + GUIDE + "\n--- templates/criteria.toml ---\n\n" + TEMPLATE,
+        body(REWARDKIT_SKILL) + "\n--- references/guide.md ---\n\n" + GUIDE + "\n--- templates/criteria.toml ---\n\n" + TEMPLATE,
         "references/ then templates/ ride --full the same way"
       );
 
       const bare = captureIO();
       assertEqual(await runCli(["skills", "get", "create-task", "--full"], bare.io), 0, "--full on a skill with no extra files exits 0");
-      assertEqual(stdout(bare), CREATE_TASK_SKILL, "and prints the SKILL.md alone");
+      assertEqual(stdout(bare), body(CREATE_TASK_SKILL), "and prints the SKILL.md alone");
     }
 
     console.log("\n--- get --all: every served skill, never the pointer, never the SDK skill ---");
@@ -233,7 +234,7 @@ async function main(): Promise<void> {
       const all = captureIO();
       assertEqual(await runCli(["skills", "get", "--all"], all.io), 0, "get --all exits 0");
       const text = stdout(all);
-      assertEqual(text, [CREATE_TASK_SKILL, EVALS_SKILL, REWARDKIT_SKILL].join("\n---\n\n"), "--all prints the served skills in name order with the same boundary");
+      assertEqual(text, [body(CREATE_TASK_SKILL), body(EVALS_SKILL), body(REWARDKIT_SKILL)].join("\n---\n\n"), "--all prints the served skills in name order with the same boundary");
       assert(!text.includes("name: evolve\n") && !text.includes("name: evolve-agents\n"), "the pointer and the SDK skill are not part of --all");
 
       const allFull = captureIO();
@@ -387,6 +388,14 @@ async function main(): Promise<void> {
       // opencode), each getting evolve/SKILL.md.
       process.env.HOME = home;
       process.env.XDG_CONFIG_HOME = join(home, "xdg");
+      // No agent home yet: the default installs nothing and says so, creating no agent the user lacks.
+      const none = captureIO();
+      assertEqual(await runCli(["skills", "install"], none.io), 0, "install with no agent home exits 0");
+      assertEqual(none.out, [], "and writes no path");
+      assertEqual(none.err.filter((l) => l.startsWith("skipped ")).length, 7, "and names each skipped target on stderr");
+      assertEqual(existsSync(join(home, ".claude")), false, "no agent home was created");
+      // Every home present: the default installs into all seven.
+      for (const dir of [".claude", ".codex", ".cursor", ".copilot", ".gemini", join("xdg", "opencode"), ".agents"]) mkdirSync(join(home, dir), { recursive: true });
       const all = captureIO();
       assertEqual(await runCli(["skills", "install"], all.io), 0, "install with no flags (--target all) exits 0");
       const expectedHomes = [
@@ -454,7 +463,7 @@ async function main(): Promise<void> {
       assertEqual(names, ["create-adapter", "create-task", "evals", "publish", "rewardkit"], "the checkout serves the evals skill and the four task-authoring skills, never the SDK skill");
       const pointer = captureIO();
       await runCli(["skills", "get", "evolve"], pointer.io);
-      assertEqual(stdout(pointer), readFileSync(join(REPO_ROOT, "skills", "evolve", "SKILL.md"), "utf8"), "the served pointer is byte-equal to skills/evolve/SKILL.md");
+      assertEqual(stdout(pointer), body(readFileSync(join(REPO_ROOT, "skills", "evolve", "SKILL.md"), "utf8")), "the served pointer is the body of skills/evolve/SKILL.md");
       const tasks = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "core-concepts/tasks"], tasks.io), 0, "the real site's tasks page is a page");
       assertEqual(stdout(tasks), readFileSync(join(REPO_ROOT, "docs-evals", "core-concepts", "tasks.mdx"), "utf8"), "byte-equal to docs-evals/core-concepts/tasks.mdx, the page the generator copied");
