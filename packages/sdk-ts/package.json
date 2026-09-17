@@ -1,6 +1,6 @@
 {
   "name": "@evolvingmachines/evolve",
-  "version": "0.0.58",
+  "version": "0.0.59",
   "keywords": [
     "ai",
     "agents",
@@ -129,9 +129,9 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.5.1",
-    "@evolvingmachines/daytona": "0.0.58",
-    "@evolvingmachines/e2b": "0.0.58",
-    "@evolvingmachines/modal": "0.0.58",
+    "@evolvingmachines/daytona": "0.0.59",
+    "@evolvingmachines/e2b": "0.0.59",
+    "@evolvingmachines/modal": "0.0.59",
     "ajv": "^8.17.1",
     "p-map": "^7.0.2",
     "smol-toml": "^1.7.0",
