@@ -2,6 +2,7 @@
 title: "Agents"
 description: "The built-in harnesses, how to configure an arm, and how to register your own agent."
 ---
+Environment for the agent comes from two places, a task's own `[environment.env]` table and a secret attached with `--secret`; a job cannot add a third. See [secrets](/core-concepts/secrets) and [tasks](/core-concepts/tasks#environment-variables).
 
 An agent is a harness plus a model. `-a` names the harness, `-m` the model it drives. Seven harnesses are built in.
 
