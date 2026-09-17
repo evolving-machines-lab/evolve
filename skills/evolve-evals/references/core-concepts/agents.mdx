@@ -2,7 +2,6 @@
 title: "Agents"
 description: "The built-in harnesses, how to configure an arm, and how to register your own agent."
 ---
-Environment for the agent comes from two places, a task's own `[environment.env]` table and a secret attached with `--secret`; a job cannot add a third. See [secrets](/core-concepts/secrets) and [tasks](/core-concepts/tasks#environment-variables).
 
 An agent is a harness plus a model. `-a` names the harness, `-m` the model it drives. Seven harnesses are built in.
 
@@ -46,6 +45,7 @@ evolve run \
 
 Only `claude` and `codex` take a config or a preset; the [capability document](/sdk-reference/meta) publishes `supports_config` and `presets` per harness. An effort, preset or config a harness cannot honor is refused when the job is created, never silently skipped, and so is a config key that touches billing, base URLs, routing or environment.
 
+Environment for the agent comes from two places, a task's own `[environment.env]` table and a secret attached with `--secret`; a job cannot add a third. See [secrets](/core-concepts/secrets) and [tasks](/core-concepts/tasks#environment-variables).
 
 ## Register your own agent
 
