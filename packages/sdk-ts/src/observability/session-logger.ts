@@ -40,6 +40,8 @@ export interface SessionLoggerConfig {
   agent: AgentType;
   /** Model name (e.g., "claude-sonnet-4-20250514", "codex-mini-latest") */
   model?: string;
+  /** The reasoning effort the run resolved; absent for a harness without one. */
+  reasoningEffort?: string;
   sandboxId: string;
   /** Exact tag to use (skips generation). Takes precedence over tagPrefix. */
   tag?: string;
@@ -60,6 +62,7 @@ export class SessionLogger {
   private readonly provider: string;
   private readonly agent: AgentType;
   private readonly model?: string;
+  private readonly reasoningEffort?: string;
   private readonly sandboxId: string;
 
   // Configuration
@@ -95,6 +98,7 @@ export class SessionLogger {
     this.provider = config.provider;
     this.agent = config.agent;
     this.model = config.model;
+    this.reasoningEffort = config.reasoningEffort;
     this.sandboxId = config.sandboxId;
     this.apiKey = config.apiKey;
     this.dashboardUrl = getDashboardUrl();
@@ -329,6 +333,8 @@ export class SessionLogger {
       provider: this.provider,
       agent: this.agent,
       model: this.model,
+      // null, never absent: "no effort" is a fact the server records too.
+      reasoningEffort: this.reasoningEffort ?? null,
       sandboxId: this.sandboxId,
       timestamp: this.timestamp,
       // Observability context (hierarchy, grouping)

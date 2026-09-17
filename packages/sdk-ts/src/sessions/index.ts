@@ -92,6 +92,7 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       tag: raw.tag as string,
       agent: raw.agent as string,
       model: (raw.model as string) || null,
+      reasoningEffort: typeof raw.reasoningEffort === "string" ? raw.reasoningEffort : null,
       provider: raw.provider as string,
       sandboxId: (raw.sandboxId as string) || null,
       state: raw.isEnded ? "ended" : "live",

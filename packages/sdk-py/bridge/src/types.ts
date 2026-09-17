@@ -457,6 +457,7 @@ export interface SessionInfoResponse {
   tag: string;
   agent: string;
   model: string | null;
+  reasoning_effort: string | null;
   provider: string;
   sandbox_id: string | null;
   state: 'live' | 'ended';

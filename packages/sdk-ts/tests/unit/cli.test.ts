@@ -9235,6 +9235,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
     tag: "qa-round-7",
     agent: "claude",
     model: "claude-fable-5-1",
+    reasoningEffort: "high",
     provider: "daytona",
     sandboxId: "box-1",
     isEnded: true,
@@ -9328,7 +9329,15 @@ async function testSessionListAndShow() {
       "renders the four token counts of the one-home reading (B56)",
     );
     assert(text.includes("12"), "renders the step count");
+    assert(/^effort\s+high$/m.test(text), "renders the effort the session was started with, after the model (B181)");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
+
+    // A session without an effort (a harness that has none, or one ingested before the field) shows "-".
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession({ reasoningEffort: null }) });
+    const showNoEffort = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], showNoEffort.io);
+    assert(/^effort\s+-$/m.test(showNoEffort.out.join("\n")), "a null effort renders as -");
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession() });
 
     const showJson = captureIO();
     await runCli(["session", "show", "sess-1", "--json", ...AUTH], showJson.io);
