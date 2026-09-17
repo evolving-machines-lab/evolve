@@ -77,7 +77,6 @@ from evolve import (
     TaskProviderVerdict,
     UploadProvenance,
     agents as agents_factory,
-    SandboxMetricsSample,
     analyses as analyses_factory,
     checks as checks_factory,
     auth as auth_factory,
@@ -5329,7 +5328,7 @@ class TestRunFilesystem:
             ('/filesystem/changes', {'source': 'capture', 'total': 1, 'changed_bytes': 9, 'items': [{'path': '/app/work/main.py', 'type': 'file', 'changed': 'created', 'phase': 'agent', 'size': 9, 'mtime': 't'}], 'next_cursor': None}),
             ('/filesystem/watch', {'watcher': 'native', 'paths': ['/app/work']}),
             ('/filesystem', self.STATUS),
-            ('/logs?', {'stream': 'metrics', 'lines': [{'seq': 1, 't': 't', 'cpu_pct': 10, 'mem_used_mb': 400, 'mem_total_mb': 2048, 'source': 'meter'}], 'next_cursor': None}),
+            ('/logs?', {'stream': 'metrics', 'lines': [], 'next_cursor': None, 'reason': 'the platform stored no metrics output for this trial'}),
             ('/procs', {'text': 'PID CMD\n1 bash', 'ms': 4}),
         ])
         fs = trials_factory(CONFIG).filesystem('run-1')
@@ -5360,7 +5359,7 @@ class TestRunFilesystem:
         assert watched.watcher == 'native'
         query = urllib_parse.parse_qs(urllib_parse.urlparse(urls[6]).query)
         assert query == {'stream': ['metrics'], 'cursor': ['0'], 'limit': ['100']}
-        assert isinstance(metrics.lines[0], SandboxMetricsSample) and metrics.lines[0].cpu_pct == 10
+        assert metrics.lines == [] and metrics.reason == 'the platform stored no metrics output for this trial'
         assert procs.text.startswith('PID')
 
     @pytest.mark.asyncio

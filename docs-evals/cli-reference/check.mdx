@@ -187,10 +187,10 @@ evolve check files archive 3f9a1c2e-… --path /app/work -o archives/
 evolve check logs <task-check-id> --stream <name> [--follow] [options]
 ```
 
-The box's own streams: `agent` (the harness's stdout and stderr), `verifier`, `setup`, `metrics` (cpu and memory samples) and `system` (the box's system log, only when the job asked for it with `--system-log`). One page by default; `--follow` keeps printing lines as they arrive while the box lives, and returns once it is gone.
+The box's own streams: `agent` (the harness's stdout and stderr), `verifier` and `system` (the box's system log, only when the job asked for it with `--system-log`); `setup` and `metrics` are named but not recorded today, so their pages are empty and say why. One page by default; `--follow` keeps printing lines as they arrive while the box lives, and returns once it is gone.
 
 <ParamField path="--stream" type="name" required>
-  `agent`, `verifier`, `setup`, `system` or `metrics`.
+  `agent`, `verifier`, `system`, `setup` or `metrics`.
 </ParamField>
 
 <ParamField path="-f, --follow">

@@ -398,7 +398,7 @@ await evolve.run({ prompt: 'Compare results' });  // Back to sandbox A
 Look at a running sandbox without touching it: list its files, read a slice of a file, follow changes, and read its resource usage. `inspect()` attaches to an existing sandbox for reads only — it never starts a stopped sandbox, never resumes a paused one, and never extends its lifetime. One exception: on Modal, reads count as activity for a sandbox's idle timeout (see the caveats below). A sandbox that is not running is refused with `SandboxNotRunningError`, which names its state.
 
 ```ts
-import { createE2BProvider, resolveDefaultSandbox } from "@evolvingmachines/sdk";
+import { createE2BProvider, resolveDefaultSandbox } from "@evolvingmachines/evolve";
 
 const provider = createE2BProvider();  // or await resolveDefaultSandbox(): the provider your runs get when you pass none
 const sandbox = await provider.inspect("sandbox-id", { user: "root" });  // user: (optional) the OS user the reads run as

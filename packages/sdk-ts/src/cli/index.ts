@@ -383,7 +383,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     default: "Harbor's non-retryable set",
     group: "Spend and retries",
   },
-  "system-log": { kind: "boolean", help: "Record the box's own system log stream beside agent/verifier/setup/metrics (read it back with `trial logs --stream system`)", group: "Job" },
+  "system-log": { kind: "boolean", help: "Record the box's own system log stream beside agent and verifier (read it back with `trial logs --stream system`)", group: "Job" },
   analyze: { kind: "boolean", help: "Analyze each trial's trace against a rubric as it settles", group: "Analysis" },
   "analyze-model": {
     kind: "string",
@@ -869,7 +869,7 @@ const GROUPS: Record<string, GroupSpec> = {
         summary: "Files created, modified or removed, by phase",
         flags: {
           source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
-          phase: { kind: "string", value: "<agent|verifier|all>", help: "Only one phase's changes (default all)" },
+          phase: { kind: "string", value: "<setup|agent|verifier|all>", help: "Only one phase's changes (default all)" },
           limit: { kind: "number", short: "l", value: "<n>", help: "Rows per page (default 500, max 1000)" },
           cursor: { kind: "string", value: "<path>", help: "Resume after this path (the previous page's next_cursor)" },
         },
@@ -893,7 +893,7 @@ const GROUPS: Record<string, GroupSpec> = {
       logs: {
         summary: "Read one sandbox log stream of the run",
         flags: {
-          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | setup | system (when the job asked for it) | metrics (required)" },
+          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | system (when the job asked for it); setup and metrics are named but not recorded today (required)" },
           follow: { kind: "boolean", short: "f", help: "Keep printing lines as they arrive while the box lives" },
           limit: { kind: "number", short: "l", value: "<n>", help: "Lines per page (default 1000, max 1000)" },
           cursor: { kind: "string", value: "<seq>", help: "Resume after this line seq" },
@@ -1023,7 +1023,7 @@ const GROUPS: Record<string, GroupSpec> = {
         summary: "Files created, modified or removed, by phase",
         flags: {
           source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
-          phase: { kind: "string", value: "<agent|verifier|all>", help: "Only one phase's changes (default all)" },
+          phase: { kind: "string", value: "<setup|agent|verifier|all>", help: "Only one phase's changes (default all)" },
           limit: { kind: "number", short: "l", value: "<n>", help: "Rows per page (default 500, max 1000)" },
           cursor: { kind: "string", value: "<path>", help: "Resume after this path (the previous page's next_cursor)" },
         },
@@ -1047,7 +1047,7 @@ const GROUPS: Record<string, GroupSpec> = {
       logs: {
         summary: "Read one sandbox log stream of the run",
         flags: {
-          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | setup | system (when the job asked for it) | metrics (required)" },
+          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | system (when the job asked for it); setup and metrics are named but not recorded today (required)" },
           follow: { kind: "boolean", short: "f", help: "Keep printing lines as they arrive while the box lives" },
           limit: { kind: "number", short: "l", value: "<n>", help: "Lines per page (default 1000, max 1000)" },
           cursor: { kind: "string", value: "<seq>", help: "Resume after this line seq" },
@@ -1181,7 +1181,7 @@ const GROUPS: Record<string, GroupSpec> = {
         summary: "Files created, modified or removed, by phase",
         flags: {
           source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
-          phase: { kind: "string", value: "<agent|verifier|all>", help: "Only one phase's changes (default all)" },
+          phase: { kind: "string", value: "<setup|agent|verifier|all>", help: "Only one phase's changes (default all)" },
           limit: { kind: "number", short: "l", value: "<n>", help: "Rows per page (default 500, max 1000)" },
           cursor: { kind: "string", value: "<path>", help: "Resume after this path (the previous page's next_cursor)" },
         },
@@ -1205,7 +1205,7 @@ const GROUPS: Record<string, GroupSpec> = {
       logs: {
         summary: "Read one sandbox log stream of the run",
         flags: {
-          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | setup | system (when the job asked for it) | metrics (required)" },
+          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | system (when the job asked for it); setup and metrics are named but not recorded today (required)" },
           follow: { kind: "boolean", short: "f", help: "Keep printing lines as they arrive while the box lives" },
           limit: { kind: "number", short: "l", value: "<n>", help: "Lines per page (default 1000, max 1000)" },
           cursor: { kind: "string", value: "<seq>", help: "Resume after this line seq" },
@@ -6814,10 +6814,10 @@ function filesVerbs(open: (inv: Invocation) => Promise<FilesTarget>): Record<str
       const { fs } = await open(inv);
       if (!fs.changes) throw new CliUsageError("this owner has no change list");
       const phase = inv.flags.phase !== undefined ? String(inv.flags.phase) : undefined;
-      if (phase !== undefined && !["agent", "verifier", "all"].includes(phase)) {
-        throw new CliUsageError("--phase must be agent, verifier or all");
+      if (phase !== undefined && !["setup", "agent", "verifier", "all"].includes(phase)) {
+        throw new CliUsageError("--phase must be setup, agent, verifier or all");
       }
-      const page = await fs.changes({ source: fsSource(inv), phase: phase as "agent" | "verifier" | "all" | undefined, ...pageOptions(inv) });
+      const page = await fs.changes({ source: fsSource(inv), phase: phase as "setup" | "agent" | "verifier" | "all" | undefined, ...pageOptions(inv) });
       if (json(inv)) {
         io.out(JSON.stringify(page));
         return 0;
@@ -6851,13 +6851,12 @@ function filesVerbs(open: (inv: Invocation) => Promise<FilesTarget>): Record<str
       }
       const emit = (item: Record<string, unknown>) => {
         if (json(inv)) io.out(JSON.stringify(item));
-        else if (typeof item.line === "string") io.out(`${item.t} ${item.fd === "err" ? "!" : " "} ${item.line}`);
-        else io.out(`${item.t} cpu ${item.cpu_pct ?? "-"}% mem ${item.mem_used_mb ?? "-"}/${item.mem_total_mb ?? "-"} MB (${item.source})`);
+        else io.out(`${item.t ?? "-"} ${item.fd === "err" ? "!" : " "} ${item.line}`);
       };
       if (inv.flags.follow === true) {
         const cursor = inv.flags.cursor !== undefined ? `${stream}:${inv.flags.cursor}` : undefined;
         for await (const frame of fs.logEvents({ lastEventId: cursor })) {
-          if ((frame.event === "line" || frame.event === "metrics") && frame.data.stream === stream) emit(frame.data as unknown as Record<string, unknown>);
+          if (frame.event === "line" && frame.data.stream === stream) emit(frame.data as unknown as Record<string, unknown>);
         }
         return 0;
       }

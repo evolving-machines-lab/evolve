@@ -114,4 +114,4 @@ evolve trial files changes <trial-id>
 evolve trial files archive <trial-id> --path /app/work -o archives/
 ```
 
-The box's own streams are read the same way: `evolve trial logs <trial-id> --stream agent --follow` prints the harness's output as it arrives; `verifier`, `setup` and `metrics` are always there, `system` when the job was started with `--system-log`. `evolve trial procs <trial-id>` lists the box's processes while it runs. From the SDK it is `trials().filesystem(id)`; see the [SDK reference](/sdk-reference/trials#filesystem).
+The box's own streams are read the same way: `evolve trial logs <trial-id> --stream agent --follow` prints the harness's output as it arrives; `verifier` once the verifier ran, `system` when the job was started with `--system-log`; `setup` and `metrics` are named but not recorded today, so their pages are empty and say why. `evolve trial procs <trial-id>` lists the box's processes while it runs. From the SDK it is `trials().filesystem(id)`; see the [SDK reference](/sdk-reference/trials#filesystem).

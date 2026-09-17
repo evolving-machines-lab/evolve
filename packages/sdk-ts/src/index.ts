@@ -670,7 +670,6 @@ export {
   type SandboxLogLines,
   type SandboxLogOptions,
   type SandboxLogStream,
-  type SandboxMetricsSample,
   type SandboxProcs,
   type TaskPackageFiles,
   type TaskPackageFilesystemStatus,

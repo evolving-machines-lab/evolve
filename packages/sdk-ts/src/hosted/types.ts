@@ -4265,14 +4265,18 @@ export interface FilesystemBox {
 /** The kept tree's record. */
 export interface FilesystemCapture {
   id: string;
-  at: string;
-  phase: "after_verifier" | "after_seal";
+  /** When the capture settled; null on one abandoned mid-way. */
+  at: string | null;
+  /** After a shared verifier ran in the box, after the seal (a separate verifier runs elsewhere), or after a run that failed. */
+  phase: "after_verifier" | "after_seal" | "after_run";
   entries: number;
   changed_files: number;
   changed_bytes: number;
-  /** `incomplete` = `left_out` names what did not fit the capture budget. */
+  /** `incomplete` = `left_out` names every path the run touched whose bytes are not stored. */
   status: "ready" | "incomplete" | "failed";
   left_out: string[];
+  /** Why a `failed` capture stored nothing; null otherwise. */
+  failure_reason: string | null;
 }
 
 /** `GET {owner}/filesystem` — what the other file system reads will answer from. */
@@ -4298,9 +4302,12 @@ export interface FilesystemEntry {
   owner: string;
   /** What the run did to it since the box started; null when not known for the source. */
   changed: "created" | "modified" | null;
-  phase: "agent" | "verifier" | null;
+  /** Which part of the run changed it — the platform's own setup, the agent, or the verifier. */
+  phase: "setup" | "agent" | "verifier" | null;
   /** Captured source: false = only the image holds it, it lists but does not open. Live: null. Package: true. */
   captured: boolean | null;
+  /** Captured source, a file the run touched whose bytes are not stored — why, in the capture's own words. */
+  left_out?: string;
   /** A symlink's target. */
   target?: string;
 }
@@ -4338,9 +4345,11 @@ export interface FilesystemChange {
   path: string;
   type: "dir" | "file" | "symlink" | "other";
   changed: "created" | "modified" | "removed";
-  phase: "agent" | "verifier";
+  phase: "setup" | "agent" | "verifier";
   size: number;
   mtime: string;
+  /** Captured source, a file whose bytes are not stored — why, in the capture's own words. */
+  left_out?: string;
 }
 
 export interface FilesystemChanges {
@@ -4390,7 +4399,7 @@ export interface FilesystemSearchOptions {
 export interface FilesystemChangesOptions {
   source?: FilesystemSource;
   /** Only one phase's changes (default all). */
-  phase?: "agent" | "verifier" | "all";
+  phase?: "setup" | "agent" | "verifier" | "all";
   cursor?: string;
   /** Default 500, max 1000. */
   limit?: number;
@@ -4426,26 +4435,19 @@ export type SandboxLogStream = (typeof SANDBOX_LOG_STREAMS)[number];
 
 export interface SandboxLogLine {
   seq: number;
-  t: string;
+  /** When the line was recorded; null when the record holds no time for it. */
+  t: string | null;
   fd: "out" | "err";
   line: string;
 }
 
-export interface SandboxMetricsSample {
-  seq: number;
-  t: string;
-  cpu_pct: number | null;
-  mem_used_mb: number | null;
-  mem_total_mb: number | null;
-  /** Where the sample came from (the provider's meter, or the box's /proc). */
-  source: string;
-}
-
-/** One page of a stream — lines, or metrics samples for `stream: "metrics"`. */
+/** One page of a stream. */
 export interface SandboxLogLines {
   stream: SandboxLogStream;
-  lines: (SandboxLogLine | SandboxMetricsSample)[];
+  lines: SandboxLogLine[];
   next_cursor: string | null;
+  /** Why the page is empty when the platform holds nothing for this stream (never an error). */
+  reason?: string;
 }
 
 export interface SandboxLogOptions {
@@ -4459,7 +4461,6 @@ export interface SandboxLogOptions {
 /** One frame of `GET {owner}/logs/events`. */
 export type SandboxLogEvent =
   | { event: "line"; id: string; data: SandboxLogLine & { stream: SandboxLogStream } }
-  | { event: "metrics"; id: string; data: SandboxMetricsSample & { stream: "metrics" } }
   | { event: "state"; id?: string; data: { state: FilesystemState; box: FilesystemBox | null } }
   | { event: "ping"; id?: string; data: Record<string, never> };
 
@@ -4492,7 +4493,7 @@ export interface RunFilesystem {
   watch(paths: string[]): Promise<FilesystemWatchResult>;
   /** `state`, then one `fs` frame per change, `ping` every 15 s; a `state` reply to `lastEventId` means relist. */
   events(options?: FilesystemStreamOptions): AsyncIterableIterator<FilesystemStreamEvent>;
-  /** One page of a named sandbox stream. A stream never recorded is 404 `not_found`. */
+  /** One page of a named sandbox stream; a stream the platform holds nothing for is an empty page with its `reason`. */
   logs(options: SandboxLogOptions): Promise<SandboxLogLines>;
   /** Every stream at once; ends once the box is gone and every recorded line was sent. `lastEventId` = `<stream>:<seq>`. */
   logEvents(options?: FilesystemStreamOptions): AsyncIterableIterator<SandboxLogEvent>;

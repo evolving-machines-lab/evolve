@@ -2782,14 +2782,19 @@ class FilesystemBox:
 class FilesystemCapture:
     """The kept tree's record."""
     id: str
-    at: str
+    #: When the capture settled; None on one abandoned mid-way.
+    at: Optional[str]
+    #: ``'after_verifier'`` (a shared verifier ran in the box), ``'after_seal'``
+    #: (a separate verifier runs elsewhere) or ``'after_run'`` (a run that failed).
     phase: str
     entries: int
     changed_files: int
     changed_bytes: int
-    #: ``'incomplete'`` = ``left_out`` names what did not fit the capture budget.
+    #: ``'incomplete'`` = ``left_out`` names every path the run touched whose bytes are not stored.
     status: str
     left_out: List[str]
+    #: Why a ``'failed'`` capture stored nothing; None otherwise.
+    failure_reason: Optional[str] = None
 
 
 @dataclass
@@ -2828,10 +2833,13 @@ class FilesystemEntry:
     #: What the run did to it since the box started; None when not known
     #: for the source.
     changed: Optional[str]
+    #: ``'setup'`` (the platform's own writes), ``'agent'`` or ``'verifier'``.
     phase: Optional[str]
     #: Captured source: False = the run never touched it, only the image
     #: holds it — it lists but does not open. Live: None. Package: True.
     captured: Optional[bool]
+    #: Captured source, a file the run touched whose bytes are not stored — why, in the capture's own words.
+    left_out: Optional[str] = None
     #: A symlink's target.
     target: Optional[str] = None
 
@@ -2876,6 +2884,8 @@ class FilesystemChange:
     phase: str
     size: int
     mtime: str
+    #: Captured source, a file whose bytes are not stored — why, in the capture's own words.
+    left_out: Optional[str] = None
 
 
 @dataclass
@@ -2906,35 +2916,27 @@ class FilesystemStreamEvent:
 @dataclass
 class SandboxLogLine:
     seq: int
-    t: str
+    #: When the line was recorded; None when the record holds no time for it.
+    t: Optional[str]
     fd: str
     line: str
 
 
 @dataclass
-class SandboxMetricsSample:
-    seq: int
-    t: str
-    cpu_pct: Optional[float]
-    mem_used_mb: Optional[float]
-    mem_total_mb: Optional[float]
-    #: Where the sample came from (the provider's meter, or the box's /proc).
-    source: str
-
-
-@dataclass
 class SandboxLogLines:
-    """One page of a stream — lines, or metrics samples for ``stream='metrics'``."""
+    """One page of a stream."""
     stream: str
-    lines: List[Union[SandboxLogLine, SandboxMetricsSample]]
+    lines: List[SandboxLogLine]
     next_cursor: Optional[str]
+    #: Why the page is empty when the platform holds nothing for this stream (never an error).
+    reason: Optional[str] = None
 
 
 @dataclass
 class SandboxLogEvent:
     """One frame of the log stream: ``event`` is ``'line'`` (``data`` a log
-    line plus ``stream``), ``'metrics'`` (a sample plus ``stream``),
-    ``'state'`` or ``'ping'``; ``id`` is ``'<stream>:<seq>'`` on a line."""
+    line plus ``stream``), ``'state'`` or ``'ping'``; ``id`` is
+    ``'<stream>:<seq>'`` on a line."""
     event: str
     id: Optional[str]
     data: Dict[str, Any]
@@ -2968,13 +2970,14 @@ def _map_filesystem_status(data: Dict[str, Any]) -> FilesystemStatus:
         capture=(
             FilesystemCapture(
                 id=str(capture.get('id', '')),
-                at=str(capture.get('at', '')),
+                at=capture.get('at'),
                 phase=str(capture.get('phase', '')),
                 entries=int(capture.get('entries', 0)),
                 changed_files=int(capture.get('changed_files', 0)),
                 changed_bytes=int(capture.get('changed_bytes', 0)),
                 status=str(capture.get('status', '')),
                 left_out=[str(item) for item in (capture.get('left_out') or [])],
+                failure_reason=capture.get('failure_reason'),
             )
             if isinstance(capture, dict)
             else None
@@ -2993,6 +2996,7 @@ def _map_filesystem_entry(data: Dict[str, Any]) -> FilesystemEntry:
         changed=data.get('changed'),
         phase=data.get('phase'),
         captured=data.get('captured'),
+        left_out=data.get('left_out'),
         target=data.get('target'),
     )
 
@@ -3009,27 +3013,23 @@ def _map_filesystem_listing(data: Dict[str, Any]) -> FilesystemListing:
 
 
 def _map_log_page(data: Dict[str, Any]) -> SandboxLogLines:
-    stream = str(data.get('stream', ''))
     rows = data.get('lines')
-    lines: List[Union[SandboxLogLine, SandboxMetricsSample]] = []
-    for item in rows if isinstance(rows, list) else []:
-        if stream == 'metrics':
-            lines.append(SandboxMetricsSample(
-                seq=int(item.get('seq', 0)),
-                t=str(item.get('t', '')),
-                cpu_pct=item.get('cpu_pct'),
-                mem_used_mb=item.get('mem_used_mb'),
-                mem_total_mb=item.get('mem_total_mb'),
-                source=str(item.get('source', '')),
-            ))
-        else:
-            lines.append(SandboxLogLine(
-                seq=int(item.get('seq', 0)),
-                t=str(item.get('t', '')),
-                fd=str(item.get('fd', 'out')),
-                line=str(item.get('line', '')),
-            ))
-    return SandboxLogLines(stream=stream, lines=lines, next_cursor=data.get('next_cursor'))
+    lines = [
+        SandboxLogLine(
+            seq=int(item.get('seq', 0)),
+            t=item.get('t'),
+            fd=str(item.get('fd', 'out')),
+            line=str(item.get('line', '')),
+        )
+        for item in (rows if isinstance(rows, list) else [])
+    ]
+    reason = data.get('reason')
+    return SandboxLogLines(
+        stream=str(data.get('stream', '')),
+        lines=lines,
+        next_cursor=data.get('next_cursor'),
+        reason=reason if isinstance(reason, str) else None,
+    )
 
 
 
@@ -8844,7 +8844,7 @@ class RunFilesystem:
         self,
         *,
         source: Optional[FilesystemSource] = None,
-        phase: Optional[Literal['agent', 'verifier', 'all']] = None,
+        phase: Optional[Literal['setup', 'agent', 'verifier', 'all']] = None,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> FilesystemChanges:
@@ -8867,6 +8867,7 @@ class RunFilesystem:
                     phase=str(i.get('phase', '')),
                     size=int(i.get('size', 0)),
                     mtime=str(i.get('mtime', '')),
+                    left_out=i.get('left_out'),
                 )
                 for i in items
             ] if isinstance(items, list) else [],
@@ -8913,9 +8914,9 @@ class RunFilesystem:
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> SandboxLogLines:
-        """One page of a named sandbox stream (``cursor`` = the last ``seq``
-        you hold; ``limit`` default 1000). A stream never recorded is 404
-        ``not_found``."""
+        """One page of a named sandbox stream (``cursor`` = an opaque position;
+        ``limit`` default 1000). A stream the platform holds nothing for is an
+        empty page with its ``reason``."""
         raw = await self._http.request_json(
             f'{self._owner_path}/logs{_filesystem_query(stream=stream, cursor=cursor, limit=limit)}'
         )
