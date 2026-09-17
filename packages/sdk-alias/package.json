@@ -1,6 +1,6 @@
 {
   "name": "@evolvingmachines/sdk",
-  "version": "0.0.59",
+  "version": "0.0.60",
   "description": "Renamed: this package is now @evolvingmachines/evolve. This name re-exports it at the same version.",
   "homepage": "https://github.com/evolving-machines-lab/evolve",
   "repository": {
@@ -35,6 +35,6 @@
     "prepack": "node scripts/stage.mjs"
   },
   "dependencies": {
-    "@evolvingmachines/evolve": "0.0.59"
+    "@evolvingmachines/evolve": "0.0.60"
   }
 }
