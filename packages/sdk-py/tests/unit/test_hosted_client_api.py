@@ -78,6 +78,7 @@ from evolve import (
     UploadProvenance,
     agents as agents_factory,
     analyses as analyses_factory,
+    checks as checks_factory,
     auth as auth_factory,
     hosted as hosted_factory,
     orgs as orgs_factory,
@@ -2559,6 +2560,7 @@ class TestJobs:
             'started_at',
             'stats',
             'status',
+            'system_log',
             'timeout_multiplier',
             'trials',
             'updated_at',
@@ -4629,11 +4631,11 @@ class TestTrials:
 
         assert '/api/trials/run-1/trace?stream=trace-atif' in fake.requests[0].full_url
         assert log == '{"steps":[]}'
-        # The Literal carries all seven selectors in the contract's own order —
-        # trace-parsed first, agent-home last.
+        # The Literal carries every selector in the contract's own order —
+        # trace-parsed first, filesystem (the archive) last.
         hints = typing.get_type_hints(client.artifact)
         assert typing.get_args(hints['stream']) == (
-            'trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home',
+            'trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home', 'filesystem',
         )
 
     @pytest.mark.asyncio
@@ -5296,3 +5298,134 @@ class TestOrgs:
         assert err.details == {'quota': 'max_queued_trials', 'limit': 10000, 'used': 9980,
                                'requested': 40, 'org': 'acme'}
         assert err.retry_after_sec is None
+
+
+class TestRunFilesystem:
+    """The run's file system + sandbox logs — trials().filesystem(),
+    analyses().filesystem(), checks().task_filesystem(), datasets().task_files():
+    every read targets the owner's prefix and spells its options as the
+    contract does; the shapes map verbatim."""
+
+    STATUS = {
+        'state': 'live',
+        'box': {'provider': 'e2b', 'id': 'sbx-1', 'role': 'agent', 'since': '2026-09-16T20:00:00.000Z'},
+        'watcher': 'native',
+        'root': '/',
+        'work_dir': '/app',
+        'capture': None,
+    }
+
+    @pytest.mark.asyncio
+    async def test_status_list_read_search_changes_procs(self):
+        fake = FakeUrlopen([
+            ('/filesystem/files/app/work/main.py', b'print(1)\n'),
+            ('/filesystem/files?', {
+                'path': '/app/work', 'source': 'live',
+                'entries': [{'name': 'main.py', 'type': 'file', 'size': 9, 'mtime': 't', 'mode': '0644', 'owner': 'root', 'changed': 'created', 'phase': 'agent', 'captured': None}],
+                'next_cursor': None, 'ms': 3,
+            }),
+            ('/filesystem/search', {'hits': [{'path': '/app/work/main.py', 'line': 1, 'snippet': 'print(1)'}], 'truncated': False, 'scope': 'path', 'source': 'live', 'ms': 5}),
+            ('/filesystem/changes', {'source': 'capture', 'total': 1, 'changed_bytes': 9, 'items': [{'path': '/app/work/main.py', 'type': 'file', 'changed': 'created', 'phase': 'agent', 'size': 9, 'mtime': 't'}], 'next_cursor': None}),
+            ('/filesystem/watch', {'watcher': 'native', 'paths': ['/app/work']}),
+            ('/filesystem', self.STATUS),
+            ('/logs?', {'stream': 'metrics', 'lines': [], 'next_cursor': None, 'reason': 'the platform stored no metrics output for this trial'}),
+            ('/procs', {'text': 'PID CMD\n1 bash', 'ms': 4}),
+        ])
+        fs = trials_factory(CONFIG).filesystem('run-1')
+        with patch('evolve._http.urlopen', fake):
+            status = await fs.status()
+            listing = await fs.list(path='/app/work', source='live', limit=500, cursor='a')
+            payload = await fs.read('/app/work/main.py', source='capture', start=0, end=3)
+            hits = await fs.search('print', path='/app/work', regex=True, limit=10)
+            changes = await fs.changes(phase='agent', source='capture')
+            watched = await fs.watch(['/app/work'])
+            metrics = await fs.logs('metrics', cursor='0', limit=100)
+            procs = await fs.procs()
+        urls = [r.full_url for r in fake.requests]
+        assert urls[0].endswith('/api/trials/run-1/filesystem')
+        assert status.state == 'live' and status.box.id == 'sbx-1' and status.watcher == 'native'
+        query = urllib_parse.parse_qs(urllib_parse.urlparse(urls[1]).query)
+        assert query == {'path': ['/app/work'], 'source': ['live'], 'cursor': ['a'], 'limit': ['500']}
+        assert listing.entries[0].name == 'main.py' and listing.entries[0].changed == 'created'
+        assert urls[2].endswith('/api/trials/run-1/filesystem/files/app/work/main.py?source=capture')
+        assert fake.requests[2].get_header('Range') == 'bytes=0-3'
+        assert payload == b'print(1)\n'
+        query = urllib_parse.parse_qs(urllib_parse.urlparse(urls[3]).query)
+        assert query == {'q': ['print'], 'path': ['/app/work'], 'regex': ['true'], 'limit': ['10']}
+        assert hits.hits[0].line == 1 and hits.truncated is False
+        assert 'phase=agent' in urls[4] and changes.total == 1 and changes.items[0].changed == 'created'
+        assert fake.requests[5].get_method() == 'POST'
+        assert json.loads(fake.requests[5].data.decode('utf-8')) == {'paths': ['/app/work']}
+        assert watched.watcher == 'native'
+        query = urllib_parse.parse_qs(urllib_parse.urlparse(urls[6]).query)
+        assert query == {'stream': ['metrics'], 'cursor': ['0'], 'limit': ['100']}
+        assert metrics.lines == [] and metrics.reason == 'the platform stored no metrics output for this trial'
+        assert procs.text.startswith('PID')
+
+    @pytest.mark.asyncio
+    async def test_other_owners_and_the_task_package(self):
+        fake = FakeUrlopen([
+            ('/api/analyses/an-1/filesystem', self.STATUS),
+            ('/api/checks/chk-1/tasks/tc-1/filesystem', self.STATUS),
+            ('/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem/files', {'path': '/', 'source': 'package', 'entries': [], 'next_cursor': None, 'ms': 1}),
+            ('/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem', {**self.STATUS, 'state': 'none', 'box': None, 'watcher': None, 'source': 'package', 'package_retained': True}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await analyses_factory(CONFIG).filesystem('an-1').status()
+            await checks_factory(CONFIG).task_filesystem('chk-1', 'tc-1').status()
+            pkg = datasets_factory(CONFIG).task_files('bench@1.0', 'abs-1')
+            pkg_status = await pkg.status()
+            await pkg.list(path='/tests')
+        urls = [r.full_url for r in fake.requests]
+        assert urls[0].endswith('/api/analyses/an-1/filesystem')
+        assert urls[1].endswith('/api/checks/chk-1/tasks/tc-1/filesystem')
+        assert pkg_status.state == 'none' and pkg_status.source == 'package' and pkg_status.package_retained is True
+        assert 'path=%2Ftests' in urls[3]
+        with pytest.raises(ValueError):
+            datasets_factory(CONFIG).task_files('bench', 'abs-1')
+
+    @pytest.mark.asyncio
+    async def test_events_and_log_events_yield_frames(self):
+        streams = {
+            '/filesystem/events': 'event: state\ndata: {"state":"live","box":null}\n\nid: 7\nevent: fs\ndata: {"seq":7,"t":"t","path":"/app/x","type":"create","source":"watch"}\n\n',
+            '/logs/events': 'id: agent:1\nevent: line\ndata: {"stream":"agent","seq":1,"t":"t","fd":"out","line":"hi"}\n\n',
+        }
+        requests = []
+
+        def fake(request, timeout=None):
+            requests.append(request)
+            for suffix, stream in streams.items():
+                if suffix in request.full_url:
+                    return FakeSseResponse(stream.encode('utf-8'))
+            raise AssertionError(f'unexpected {request.full_url}')
+
+        fs = trials_factory(CONFIG).filesystem('run-1')
+        with patch('evolve._http.urlopen', fake):
+            frames = [frame async for frame in fs.events(last_event_id='6')]
+            lines = [frame async for frame in fs.log_events()]
+        assert requests[0].get_header('Last-event-id') == '6'
+        assert [f.event for f in frames] == ['state', 'fs']
+        assert frames[1].id == '7' and frames[1].data['path'] == '/app/x'
+        assert lines[0].id == 'agent:1' and lines[0].data['line'] == 'hi'
+
+    @pytest.mark.asyncio
+    async def test_system_log_switch_and_the_filesystem_artifact_name(self):
+        fake = FakeUrlopen([('/api/jobs', {**JOB_SUMMARY, 'system_log': True})])
+        with patch('evolve._http.urlopen', fake):
+            job = await jobs_factory(CONFIG).start(
+                datasets=[DatasetSelector(name='deep-swe')],
+                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                system_log=True,
+            )
+        assert json.loads(fake.requests[0].data.decode('utf-8'))['system_log'] is True
+        assert job.system_log is True
+        fake2 = FakeUrlopen([('/api/jobs', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake2):
+            bare = await jobs_factory(CONFIG).start(
+                datasets=[DatasetSelector(name='deep-swe')],
+                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+            )
+        assert 'system_log' not in json.loads(fake2.requests[0].data.decode('utf-8'))
+        assert bare.system_log is False
+        with pytest.raises(ValueError):
+            await trials_factory(CONFIG).artifact('run-1', 'filesystem')

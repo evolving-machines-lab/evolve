@@ -128,6 +128,28 @@ for await (const dataset of catalog.list()) {
 const version = await catalog.get("terminal-bench-4@4.0");
 ```
 
+## Browse the run's files
+
+Every trial has a file system you can read while the box runs and after it is gone, plus its sandbox logs and process list. `filesystem(id)` returns one object for all of it.
+
+```ts
+const fs = t.filesystem(trialId);
+console.log((await fs.status()).state);   // "live" | "captured" | "capturing" | "none"
+
+const folder = await fs.list({ path: "/app/work" });
+const main = (await fs.read("/app/work/main.py")).toString("utf8");
+const hits = await fs.search({ q: "permission denied", path: "/app/work" });
+const changed = await fs.changes();
+await fs.archive({ path: "/app/work", to: "./archives" });
+
+for await (const frame of fs.events()) {
+  if (frame.event === "fs") console.log(frame.data.type, frame.data.path);
+}
+const agentLog = await fs.logs({ stream: "agent" });
+```
+
+Analysis runs (`analyses().filesystem(id)`) and task checks (`checks().taskFilesystem(checkId, taskCheckId)`) have the same surface; a published task's own files are `datasets().taskFiles("name@version", task)`.
+
 ## Everything else
 
 `analyses()`, `checks()`, `skills()`, `agents()`, `auth()` and `orgs()` are built the same way. `meta()` fetches the platform's capability document, the live list of harnesses, models and limits, and needs no key. `hosted()` builds every client from one configuration.

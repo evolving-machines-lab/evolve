@@ -212,6 +212,19 @@ OPERATION_TO_METHOD = {
     'retryTrial': (TrialsClient, 'retry'),
     'regradeTrial': (TrialsClient, 'regrade'),
     'stopTrials': (TrialsClient, 'stop'),
+    # The run's file system + sandbox logs (lane L3): one accessor per owner
+    # returns the RunFilesystem whose methods speak these operations.
+    'getTrialFilesystem': (TrialsClient, 'filesystem'),
+    'listTrialFilesystemFolder': (TrialsClient, 'filesystem'),
+    'readTrialFilesystemFile': (TrialsClient, 'filesystem'),
+    'searchTrialFilesystem': (TrialsClient, 'filesystem'),
+    'streamTrialFilesystemEvents': (TrialsClient, 'filesystem'),
+    'watchTrialFilesystem': (TrialsClient, 'filesystem'),
+    'listTrialFilesystemChanges': (TrialsClient, 'filesystem'),
+    'downloadTrialFilesystemArchive': (TrialsClient, 'filesystem'),
+    'getTrialSandboxLog': (TrialsClient, 'filesystem'),
+    'streamTrialSandboxLogs': (TrialsClient, 'filesystem'),
+    'getTrialProcs': (TrialsClient, 'filesystem'),
     # Analyses — the catalog of trace-analysis runs. The per-run reads
     # (verdict, transcript, artifacts) ride the traces feed, which the
     # contract does not declare; this SDK speaks the contract's one door.
@@ -219,6 +232,17 @@ OPERATION_TO_METHOD = {
     # The one per-analysis door ON the contract: the run as Harbor's
     # wrapper-trial folder (B121).
     'downloadAnalysis': (AnalysesClient, 'download'),
+    'getAnalysisFilesystem': (AnalysesClient, 'filesystem'),
+    'listAnalysisFilesystemFolder': (AnalysesClient, 'filesystem'),
+    'readAnalysisFilesystemFile': (AnalysesClient, 'filesystem'),
+    'searchAnalysisFilesystem': (AnalysesClient, 'filesystem'),
+    'streamAnalysisFilesystemEvents': (AnalysesClient, 'filesystem'),
+    'watchAnalysisFilesystem': (AnalysesClient, 'filesystem'),
+    'listAnalysisFilesystemChanges': (AnalysesClient, 'filesystem'),
+    'downloadAnalysisFilesystemArchive': (AnalysesClient, 'filesystem'),
+    'getAnalysisSandboxLog': (AnalysesClient, 'filesystem'),
+    'streamAnalysisSandboxLogs': (AnalysesClient, 'filesystem'),
+    'getAnalysisProcs': (AnalysesClient, 'filesystem'),
     # Checks — Harbor's `harbor check`, hosted: the upload-and-start verb,
     # the catalog, the report by id (watch() is the poll over get()), and
     # the download — a check as Harbor's check job folder, or one task
@@ -227,12 +251,27 @@ OPERATION_TO_METHOD = {
     'listChecks': (ChecksClient, 'list'),
     'getCheck': (ChecksClient, 'get'),
     'downloadCheck': (ChecksClient, 'download'),
+    'getTaskCheckFilesystem': (ChecksClient, 'task_filesystem'),
+    'listTaskCheckFilesystemFolder': (ChecksClient, 'task_filesystem'),
+    'readTaskCheckFilesystemFile': (ChecksClient, 'task_filesystem'),
+    'searchTaskCheckFilesystem': (ChecksClient, 'task_filesystem'),
+    'streamTaskCheckFilesystemEvents': (ChecksClient, 'task_filesystem'),
+    'watchTaskCheckFilesystem': (ChecksClient, 'task_filesystem'),
+    'listTaskCheckFilesystemChanges': (ChecksClient, 'task_filesystem'),
+    'downloadTaskCheckFilesystemArchive': (ChecksClient, 'task_filesystem'),
+    'getTaskCheckSandboxLog': (ChecksClient, 'task_filesystem'),
+    'streamTaskCheckSandboxLogs': (ChecksClient, 'task_filesystem'),
+    'getTaskCheckProcs': (ChecksClient, 'task_filesystem'),
     # Datasets
     'listDatasets': (DatasetsClient, 'list'),
     'getDataset': (DatasetsClient, 'get'),
     # Partial publish: the failure-detail read of one task's build outcome
     # (typed reason + failing-step excerpt + build-log pointer).
     'getTaskBuild': (DatasetsClient, 'get_task_build'),
+    # The task package as a read-only file system owner.
+    'getTaskPackageFilesystem': (DatasetsClient, 'task_files'),
+    'listTaskPackageFolder': (DatasetsClient, 'task_files'),
+    'readTaskPackageFile': (DatasetsClient, 'task_files'),
     'updateDataset': (DatasetsClient, 'update'),
     'deleteDataset': (DatasetsClient, 'delete'),
     'downloadDataset': (DatasetsClient, 'download'),

@@ -101,3 +101,17 @@ evolve trial download <trial-id> --stream verifier
 ```
 
 From the SDK, `trials().artifact(id, "verifier")` returns the same text, and `null` when the trial never stored it.
+
+## The run's file system
+
+Beyond the artifacts above, every trial's whole file system can be browsed: while the box runs you read it live, and after the run you read the kept tree — the files the run created or modified, with the files it never touched listed but held only by the image. The same reads work on analysis runs and task checks, and a published task's own files can be read from its package.
+
+```bash
+evolve trial files status <trial-id>
+evolve trial files ls <trial-id> /app/work
+evolve trial files cat <trial-id> /app/work/main.py
+evolve trial files changes <trial-id>
+evolve trial files archive <trial-id> --path /app/work -o archives/
+```
+
+The box's own streams are read the same way: `evolve trial logs <trial-id> --stream agent --follow` prints the harness's output as it arrives; `verifier` once the verifier ran, `system` when the job was started with `--system-log`; `setup` and `metrics` are named but not recorded today, so their pages are empty and say why. `evolve trial procs <trial-id>` lists the box's processes while it runs. From the SDK it is `trials().filesystem(id)`; see the [SDK reference](/sdk-reference/trials#filesystem).

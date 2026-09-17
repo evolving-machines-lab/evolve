@@ -41,6 +41,53 @@ class SandboxNotFoundError(Exception):
     pass
 
 
+class SandboxFeatureUnsupportedError(Exception):
+    """A capability this provider lacks: `feature` in dotted form ('files.watchDir'), `provider` type, optional `reason`."""
+
+    def __init__(self, message: str, *, feature: str = '', provider: str = '', reason: Optional[str] = None):
+        super().__init__(message)
+        self.feature = feature
+        self.provider = provider
+        self.reason = reason
+
+
+class SandboxPathNotFoundError(Exception):
+    """A path the sandbox does not have (files.list / stat / read_range)."""
+
+    def __init__(self, message: str, *, path: str = '', provider: str = ''):
+        super().__init__(message)
+        self.path = path
+        self.provider = provider
+
+
+class SandboxNotRunningError(Exception):
+    """An inspect refused because the sandbox is not running; `state` is the provider's own word."""
+
+    def __init__(self, message: str, *, sandbox_id: str = '', provider: str = '', state: str = ''):
+        super().__init__(message)
+        self.sandbox_id = sandbox_id
+        self.provider = provider
+        self.state = state
+
+
+def _typed_bridge_error(message: str, data: Any) -> Optional[Exception]:
+    """The Python exception for a bridge error that names a typed sandbox error, else None."""
+    if not isinstance(data, dict):
+        return None
+    error_type = data.get('errorType')
+    if error_type == 'SandboxFeatureUnsupportedError':
+        return SandboxFeatureUnsupportedError(
+            message, feature=data.get('feature', ''), provider=data.get('provider', ''), reason=data.get('reason'),
+        )
+    if error_type == 'SandboxPathNotFoundError':
+        return SandboxPathNotFoundError(message, path=data.get('path', ''), provider=data.get('provider', ''))
+    if error_type == 'SandboxNotRunningError':
+        return SandboxNotRunningError(
+            message, sandbox_id=data.get('sandboxId', ''), provider=data.get('provider', ''), state=data.get('state', ''),
+        )
+    return None
+
+
 class BridgeConnectionError(Exception):
     """Raised when bridge process fails to start or dies unexpectedly."""
     pass
@@ -75,6 +122,7 @@ class BridgeManager:
             'stderr': [],     # str data
             'content': [],    # dict params
             'lifecycle': [],  # dict params
+            'fs': [],         # dict params: a change under a watched directory (sandbox_view.watch_dir)
         }
         self.reader_task: Optional[asyncio.Task] = None
         self._pid: Optional[int] = None
@@ -414,7 +462,7 @@ class BridgeManager:
                     callback(data)
                 except Exception:
                     logger.exception("Error in %s callback", event_type)
-        elif event_type in ('content', 'lifecycle'):
+        elif event_type in ('content', 'lifecycle', 'fs'):
             for callback in callbacks:
                 try:
                     callback(params)
@@ -436,8 +484,15 @@ class BridgeManager:
             error_code = error.get('code', -32603)
             error_message = error.get('message', 'Unknown error')
 
+            # a typed sandbox error is rebuilt with its fields before any message matching
+            typed = _typed_bridge_error(error_message, error.get('data'))
+            if typed is not None:
+                try:
+                    future.set_exception(typed)
+                except asyncio.InvalidStateError:
+                    pass
             # Check for NotFoundError (code -32001 or message pattern)
-            if error_code == -32001 or 'not found' in error_message.lower():
+            elif error_code == -32001 or 'not found' in error_message.lower():
                 try:
                     future.set_exception(SandboxNotFoundError(error_message))
                 except asyncio.InvalidStateError:

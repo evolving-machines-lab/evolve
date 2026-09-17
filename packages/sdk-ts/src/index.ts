@@ -175,11 +175,32 @@ export type {
   SandboxCreateOptions,
   SandboxNetworkPolicy,
   ExternalGatewayConfig,
+  // Live observation of a running sandbox
+  FileInfo,
+  FileRange,
+  FilesystemEvent,
+  WatchOptions,
+  WatchHandle,
+  SandboxMetrics,
+  SandboxInspectOptions,
 } from "./types";
+
+// The typed refusals of the observation surface (one home; the provider
+// packages carry generated copies — recognise an instance by the guards).
+export {
+  SandboxFeatureUnsupportedError,
+  SandboxPathNotFoundError,
+  SandboxNotRunningError,
+  isSandboxFeatureUnsupportedError,
+  isSandboxPathNotFoundError,
+  isSandboxNotRunningError,
+} from "./sandbox-errors";
 
 // Managed sandboxes — the platform runs the box, the caller holds only an
 // Evolve API key. Which provider backs it is an argument, never an env var.
 export { managedSandbox } from "./utils/sandbox";
+// The provider the SDK picks when a run is given none (from the provider key present), so inspect() can use the same one.
+export { resolveDefaultSandbox } from "./utils/sandbox";
 export type { ManagedSandboxOptions, ManagedSandboxCreateDefaults } from "./utils/sandbox";
 export {
   MANAGED_SANDBOX_PROVIDERS,
@@ -393,6 +414,7 @@ export {
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
   JOB_LIST_SCOPES,
+  SANDBOX_LOG_STREAMS,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   isHostedErrorCode,
@@ -623,4 +645,32 @@ export {
   type TrialFilePage,
   type TrialFileRange,
   type ListTrialFilesOptions,
+  type FilesystemArchiveOptions,
+  type FilesystemBox,
+  type FilesystemCapture,
+  type FilesystemChange,
+  type FilesystemChanges,
+  type FilesystemChangesOptions,
+  type FilesystemEntry,
+  type FilesystemStreamEvent,
+  type FilesystemListOptions,
+  type FilesystemListing,
+  type FilesystemReadOptions,
+  type FilesystemSearchHit,
+  type FilesystemSearchOptions,
+  type FilesystemSearchResult,
+  type FilesystemSource,
+  type FilesystemState,
+  type FilesystemStatus,
+  type FilesystemStreamOptions,
+  type FilesystemWatchResult,
+  type RunFilesystem,
+  type SandboxLogEvent,
+  type SandboxLogLine,
+  type SandboxLogLines,
+  type SandboxLogOptions,
+  type SandboxLogStream,
+  type SandboxProcs,
+  type TaskPackageFiles,
+  type TaskPackageFilesystemStatus,
 } from "./hosted";

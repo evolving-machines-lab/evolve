@@ -90,6 +90,46 @@ description: "The catalog: list, read, publish, download, activate, delete."
   </Tab>
 </Tabs>
 
+## taskFiles
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    taskFiles(ref: string, taskName: string): TaskPackageFiles
+
+    interface TaskPackageFiles {
+      status(): Promise<TaskPackageFilesystemStatus>
+      list(options?: { path?: string; cursor?: string; limit?: number }): Promise<FilesystemListing>
+      read(path: string, options?: { range?: TrialFileRange }): Promise<Buffer>
+    }
+    ```
+
+    A published task's files, exactly as the platform stored them and as every trial ran against them: `list` pages one folder of the task directory (`/` holds `instruction.md`, `task.toml`, `environment/`, `tests/`), `read` answers one file's bytes. `ref` must name the version (`name@version`); a version imported before packages were kept is refused with `task_package_not_retained` (`status().package_retained` says so first).
+
+    ```ts
+    const files = datasets().taskFiles("my-swe@1.0", "abs-1");
+    const tests = await files.list({ path: "/tests" });
+    const script = (await files.read("/tests/test.sh")).toString("utf8");
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def task_files(self, ref: str, task_name: str) -> TaskPackageFiles
+
+    class TaskPackageFiles:
+        async def status(self) -> TaskPackageFilesystemStatus
+        async def list(self, *, path="/", cursor=None, limit=None) -> FilesystemListing
+        async def read(self, path, *, start=None, end=None, suffix=None) -> bytes
+    ```
+
+    ```python
+    files = datasets().task_files("my-swe@1.0", "abs-1")
+    tests = await files.list(path="/tests")
+    script = (await files.read("/tests/test.sh")).decode()
+    ```
+  </Tab>
+</Tabs>
+
 ## preflight
 
 <Tabs>

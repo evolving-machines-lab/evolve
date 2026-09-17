@@ -19,7 +19,7 @@ evolve trial show <trial-id>
 
 Show one trial in full detail: its status, reward, `tokens`, `spent` and `spent (judge)` rows, `gpu compute (est.)` on a GPU trial, the exception when it failed, and its latest analysis with the verdicts, the summary and the typed failure. An uploaded trial prints its provider as `ported` and its reported figures apart from the metered ones.
 
-There is no `trial files` or `trial read` verb; listing and reading a trial's stored files is SDK-only, `trials().files()` and `file()`.
+The run's own files are under [`trial files`](#trial-files); the platform's stored artifacts (session files, the verifier log) are SDK-only, `trials().files()` and `file()`.
 
 ## trial trace
 
@@ -70,7 +70,7 @@ Save a trial as its trial tree plus `evolve.json`, or stream one artifact to std
 </ParamField>
 
 <ParamField path="--stream" type="artifact">
-  Print one artifact to stdout instead of saving: `trace-parsed`, `verifier`, `trace-stdout`, `trace-stderr`, `trace-atif` (the ATIF trajectory), `trajectory` (reserved: the harness-native session file) or `agent-home`.
+  Print one artifact to stdout instead of saving: `trace-parsed`, `verifier`, `trace-stdout`, `trace-stderr`, `trace-atif` (the ATIF trajectory), `trajectory` (reserved: the harness-native session file), `agent-home`, or `filesystem` (the run's file system as one `.tar.gz`, raw bytes — pipe it to a file; the same archive as `trial files archive`).
 </ParamField>
 
 <ParamField path="--cursor" type="seq">
@@ -84,6 +84,75 @@ Save a trial as its trial tree plus `evolve.json`, or stream one artifact to std
 ```bash
 evolve trial download d1a10c4e-… --stream trace-stdout
 ```
+
+## trial files
+
+```bash
+evolve trial files <status|ls|cat|search|changes|archive> <trial-id> [path] [options]
+```
+
+The run's file system: while the box runs, `files` reads it as it changes; after the run, the same commands read the kept tree. `files status` says which you get.
+
+- `files status <trial-id>` — `live`, `captured`, `capturing` (the kept tree is still being written) or `none`; the box, how change events arrive (`watcher`), and the capture record (`ready`, `incomplete` with what was left out, or `failed`).
+- `files ls <trial-id> [path]` — one folder, sorted by name (default `/`). Each row shows the type, mode, size, mtime and name; `created (agent)` or `modified (verifier)` marks what the run changed and when, `image only` marks a file the run never touched (it lists but does not open on the kept tree).
+- `files cat <trial-id> <path>` — the raw bytes of one file, to stdout. `--range bytes=a-b` (or `bytes=a-`, `bytes=-n`) reads a slice.
+- `files search <trial-id> <text>` — every line matching the text, as `path:line: snippet`. `--path` narrows the search to one folder (the whole box takes seconds); `--regex` treats the text as a pattern; a `(truncated)` note means there was more.
+- `files changes <trial-id>` — the files the run created, modified or removed, with the phase (`--phase agent|verifier`).
+- `files archive <trial-id>` — a `.tar.gz` of one subtree (`--path`, default the whole tree) to stdout, or saved under `-o <dir>`. The kept tree's archive lists the files it does not carry in `MANIFEST.tsv`; while the box runs, a subtree too large to read out in time is refused (`feature_unsupported`).
+
+<ParamField path="--source" type="live|capture">
+  Force the source. Without it, whichever the run has. A source that is not there is refused with `filesystem_state`.
+</ParamField>
+
+<ParamField path="-l, --limit" type="n">
+  Page size on `ls`, `search` and `changes` (`ls`, `changes` default 500; `search` default 200; max 1000).
+</ParamField>
+
+<ParamField path="--cursor" type="c">
+  Resume a paged `ls` or `changes` after the previous page's `next_cursor`.
+</ParamField>
+
+```bash
+evolve trial files ls d1a10c4e-… /app/work
+evolve trial files search d1a10c4e-… 'permission denied' --path /app/work
+evolve trial files archive d1a10c4e-… --path /app/work -o archives/
+```
+
+## trial logs
+
+```bash
+evolve trial logs <trial-id> --stream <name> [--follow] [options]
+```
+
+The box's own streams: `agent` (the harness's stdout and stderr), `verifier` and `system` (the box's system log, only when the job asked for it with `--system-log`); `setup` and `metrics` are named but not recorded today, so their pages are empty and say why. One page by default; `--follow` keeps printing lines as they arrive while the box lives, and returns once it is gone.
+
+<ParamField path="--stream" type="name" required>
+  `agent`, `verifier`, `system`, `setup` or `metrics`.
+</ParamField>
+
+<ParamField path="-f, --follow">
+  Keep printing new lines while the box lives.
+</ParamField>
+
+<ParamField path="-l, --limit" type="n" default="1000">
+  Lines per page, max 1000.
+</ParamField>
+
+<ParamField path="--cursor" type="seq">
+  Resume after this line.
+</ParamField>
+
+```bash
+evolve trial logs d1a10c4e-… --stream agent --follow
+```
+
+## trial procs
+
+```bash
+evolve trial procs <trial-id>
+```
+
+The processes running in the box right now. Live only: once the box is gone the command is refused with `filesystem_state`.
 
 ## trial retry
 

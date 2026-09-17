@@ -414,6 +414,55 @@ await evolve.run(prompt='Compare results')  # Back to sandbox A
 
 ---
 
+## Sandbox Observation
+
+Look at a running sandbox without touching it: list its files, read a slice of a file, follow changes, and read its resource usage. `inspect_sandbox()` attaches to an existing sandbox for reads only — it never starts a stopped sandbox, never resumes a paused one, and never extends its lifetime. One exception: on Modal, reads count as activity for a sandbox's idle timeout (see the caveats below). A sandbox that is not running is refused with `SandboxNotRunningError`, which names its state.
+
+```python
+from evolve import Evolve, E2BProvider
+
+evolve = Evolve(sandbox=E2BProvider())  # or Evolve(): the provider your runs get when you pass none
+view = await evolve.inspect_sandbox('sandbox-id', user='root')  # user: (optional) the OS user the reads run as
+
+# The entries of a directory (not recursive) — the same shape on every provider
+entries = await view.files.list('/app')
+# [FileInfo(name, path, type, size, mtime, mode, owner, group, target)]
+#   type:   'file' | 'dir' | 'symlink' | 'other'
+#   mtime:  ISO 8601            mode: four octal digits, e.g. '0644'
+#   target: the link's target, only on a symlink (a symlink is never followed)
+
+# One entry
+log = await view.files.stat('/app/run.log')
+
+# Exactly the bytes you ask for — the last 64 KiB of a large log, without moving the whole file
+tail = await view.files.read_range('/app/run.log', offset=log.size - 65536, length=65536)
+
+# Follow changes under a directory until you stop
+watch = await view.files.watch_dir('/app', lambda event: print(event.type, event.path), recursive=True)
+#   event.type: 'create' | 'write' | 'remove' | 'rename'; event.path is absolute
+await watch.stop()
+
+# Resource usage: CPU %, memory and disk in MiB, the sample's own timestamp and its source
+usage = await view.metrics()  # None while the provider has no sample yet
+
+await view.close()  # or: async with await evolve.inspect_sandbox('sandbox-id') as view: ...
+```
+
+- A range that reaches the end of the file returns fewer bytes (or none); a range with `length=0` returns none.
+- A missing path raises `SandboxPathNotFoundError` (`path`, `provider`).
+- A `rename` event names the old path or the new one, whichever the sandbox reported — relist the parent directory when you see one.
+
+A long-running reader — `tail -F` on a log — is a background process the TypeScript SDK starts with `spawn(..., { stdin: false })` and stops with `kill()`; the Python SDK has no process-handle surface, so readers are a TypeScript feature today.
+
+**Provider caveats:**
+- **E2B** — `list()` leaves out a fifo, a socket and a symlink whose target is missing (`stat()` still reads each), and a symlink's `size` is its target's. `list()` and `stat()` need a template built with envd 0.2.5 or later (July 2025); an older template gets `SandboxFeatureUnsupportedError` naming its envd version.
+- **Daytona** — `watch_dir()` is refused with `SandboxFeatureUnsupportedError`; poll `files.list()` on the directories you have open. `list()` and `stat()` need GNU `find` in the image (every Debian and Ubuntu image has it); an image without it gets the same typed refusal.
+- **Modal** — `metrics()` is refused with `SandboxFeatureUnsupportedError` (Modal reports no usage figures for a sandbox). Reads count as activity: a sandbox created with an idle timeout stays alive while you `list()`, `stat()`, `read_range()` or hold a `watch_dir()` open, and a stopped watch keeps it alive until the next change under the watched path; a sandbox with only a lifetime is unaffected. A stopped watch stops delivering at once; the sandbox lets go of it at the next change under the watched path.
+
+Every refusal is typed and carries its facts: `SandboxFeatureUnsupportedError` (`feature`, `provider`, `reason`), `SandboxPathNotFoundError` (`path`, `provider`), `SandboxNotRunningError` (`sandbox_id`, `provider`, `state`).
+
+---
+
 ## Storage & Checkpointing
 
 > **Gateway feature** — requires `EVOLVE_API_KEY`. Storage is fully managed by Evolve; no S3 buckets or AWS credentials needed.

@@ -144,3 +144,75 @@ Save a check as a check folder (`check_report.json` plus one folder per task) by
 ```bash
 evolve check download 3f9a1c2e-… -o checks/
 ```
+
+## check files
+
+A task check's run, by its task check id (`results[].id` on `evolve check show`).
+
+
+```bash
+evolve check files <status|ls|cat|search|changes|archive> <task-check-id> [path] [options]
+```
+
+The run's file system: while the box runs, `files` reads it as it changes; after the run, the same commands read the kept tree. `files status` says which you get.
+
+- `files status <task-check-id>` — `live`, `captured`, `capturing` (the kept tree is still being written) or `none`; the box, how change events arrive (`watcher`), and the capture record (`ready`, `incomplete` with what was left out, or `failed`).
+- `files ls <task-check-id> [path]` — one folder, sorted by name (default `/`). Each row shows the type, mode, size, mtime and name; `created (agent)` or `modified (verifier)` marks what the run changed and when, `image only` marks a file the run never touched (it lists but does not open on the kept tree).
+- `files cat <task-check-id> <path>` — the raw bytes of one file, to stdout. `--range bytes=a-b` (or `bytes=a-`, `bytes=-n`) reads a slice.
+- `files search <task-check-id> <text>` — every line matching the text, as `path:line: snippet`. `--path` narrows the search to one folder (the whole box takes seconds); `--regex` treats the text as a pattern; a `(truncated)` note means there was more.
+- `files changes <task-check-id>` — the files the run created, modified or removed, with the phase (`--phase agent|verifier`).
+- `files archive <task-check-id>` — a `.tar.gz` of one subtree (`--path`, default the whole tree) to stdout, or saved under `-o <dir>`. The kept tree's archive lists the files it does not carry in `MANIFEST.tsv`; while the box runs, a subtree too large to read out in time is refused (`feature_unsupported`).
+
+<ParamField path="--source" type="live|capture">
+  Force the source. Without it, whichever the run has. A source that is not there is refused with `filesystem_state`.
+</ParamField>
+
+<ParamField path="-l, --limit" type="n">
+  Page size on `ls`, `search` and `changes` (`ls`, `changes` default 500; `search` default 200; max 1000).
+</ParamField>
+
+<ParamField path="--cursor" type="c">
+  Resume a paged `ls` or `changes` after the previous page's `next_cursor`.
+</ParamField>
+
+```bash
+evolve check files ls 3f9a1c2e-… /app/work
+evolve check files search 3f9a1c2e-… 'permission denied' --path /app/work
+evolve check files archive 3f9a1c2e-… --path /app/work -o archives/
+```
+
+## check logs
+
+```bash
+evolve check logs <task-check-id> --stream <name> [--follow] [options]
+```
+
+The box's own streams: `agent` (the harness's stdout and stderr), `verifier` and `system` (the box's system log, only when the job asked for it with `--system-log`); `setup` and `metrics` are named but not recorded today, so their pages are empty and say why. One page by default; `--follow` keeps printing lines as they arrive while the box lives, and returns once it is gone.
+
+<ParamField path="--stream" type="name" required>
+  `agent`, `verifier`, `system`, `setup` or `metrics`.
+</ParamField>
+
+<ParamField path="-f, --follow">
+  Keep printing new lines while the box lives.
+</ParamField>
+
+<ParamField path="-l, --limit" type="n" default="1000">
+  Lines per page, max 1000.
+</ParamField>
+
+<ParamField path="--cursor" type="seq">
+  Resume after this line.
+</ParamField>
+
+```bash
+evolve check logs 3f9a1c2e-… --stream agent --follow
+```
+
+## check procs
+
+```bash
+evolve check procs <task-check-id>
+```
+
+The processes running in the box right now. Live only: once the box is gone the command is refused with `filesystem_state`.

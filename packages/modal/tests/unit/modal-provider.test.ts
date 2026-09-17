@@ -918,7 +918,9 @@ async function testCommandsSpawnWrapsUser(): Promise<void> {
 
   const result = await handle.wait();
   assertEqual(result, { exitCode: 0, stdout: "bg-out", stderr: "" }, "wait() returns accumulated result");
-  assertEqual(await handle.kill(), false, "kill() reports unsupported (false) for Modal");
+  let killRefusal = "";
+  try { await handle.kill(); } catch (err) { killRefusal = (err as Error).name; }
+  assertEqual(killRefusal, "SandboxFeatureUnsupportedError", "kill() on a spawn without stdin:false is a typed refusal (the Modal SDK cannot signal a process)");
 }
 
 // =============================================================================

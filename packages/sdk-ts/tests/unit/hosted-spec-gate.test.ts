@@ -256,6 +256,19 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   retryTrial: "trials.retry",
   regradeTrial: "trials.regrade",
   stopTrials: "trials.stop",
+  // Lane L3: one accessor per owner returns the RunFilesystem whose methods speak these operations; the
+  // trace route's `filesystem` selector rides trials.artifact's vocabulary and answers through the same archive.
+  getTrialFilesystem: "trials.filesystem",
+  listTrialFilesystemFolder: "trials.filesystem",
+  readTrialFilesystemFile: "trials.filesystem",
+  searchTrialFilesystem: "trials.filesystem",
+  streamTrialFilesystemEvents: "trials.filesystem",
+  watchTrialFilesystem: "trials.filesystem",
+  listTrialFilesystemChanges: "trials.filesystem",
+  downloadTrialFilesystemArchive: "trials.filesystem",
+  getTrialSandboxLog: "trials.filesystem",
+  streamTrialSandboxLogs: "trials.filesystem",
+  getTrialProcs: "trials.filesystem",
   // Analyses — the catalog of trace-analysis runs. The per-run reads
   // (verdict, transcript, artifacts) ride the traces feed, which the
   // contract does not declare (docs: "not part of the OpenAPI contract").
@@ -263,6 +276,17 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   // The one per-analysis door ON the contract: the run as Harbor's
   // wrapper-trial folder (B121).
   downloadAnalysis: "analyses.download",
+  getAnalysisFilesystem: "analyses.filesystem",
+  listAnalysisFilesystemFolder: "analyses.filesystem",
+  readAnalysisFilesystemFile: "analyses.filesystem",
+  searchAnalysisFilesystem: "analyses.filesystem",
+  streamAnalysisFilesystemEvents: "analyses.filesystem",
+  watchAnalysisFilesystem: "analyses.filesystem",
+  listAnalysisFilesystemChanges: "analyses.filesystem",
+  downloadAnalysisFilesystemArchive: "analyses.filesystem",
+  getAnalysisSandboxLog: "analyses.filesystem",
+  streamAnalysisSandboxLogs: "analyses.filesystem",
+  getAnalysisProcs: "analyses.filesystem",
   // Checks — Harbor's `harbor check`, hosted: the upload-and-start verb,
   // the catalog, the report by id (checks.watch is the poll over getCheck),
   // and the download — a check as Harbor's check job folder, or one task
@@ -271,12 +295,27 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   listChecks: "checks.list",
   getCheck: "checks.get",
   downloadCheck: "checks.download",
+  getTaskCheckFilesystem: "checks.taskFilesystem",
+  listTaskCheckFilesystemFolder: "checks.taskFilesystem",
+  readTaskCheckFilesystemFile: "checks.taskFilesystem",
+  searchTaskCheckFilesystem: "checks.taskFilesystem",
+  streamTaskCheckFilesystemEvents: "checks.taskFilesystem",
+  watchTaskCheckFilesystem: "checks.taskFilesystem",
+  listTaskCheckFilesystemChanges: "checks.taskFilesystem",
+  downloadTaskCheckFilesystemArchive: "checks.taskFilesystem",
+  getTaskCheckSandboxLog: "checks.taskFilesystem",
+  streamTaskCheckSandboxLogs: "checks.taskFilesystem",
+  getTaskCheckProcs: "checks.taskFilesystem",
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
   // Partial publish: the failure-detail read of one task's build outcome
   // (typed reason + failing-step excerpt + build-log pointer).
   getTaskBuild: "datasets.getTaskBuild",
+  // The task package as a read-only file system owner (datasets.taskFiles).
+  getTaskPackageFilesystem: "datasets.taskFiles",
+  listTaskPackageFolder: "datasets.taskFiles",
+  readTaskPackageFile: "datasets.taskFiles",
   updateDataset: "datasets.update",
   deleteDataset: "datasets.delete",
   downloadDataset: "datasets.download",

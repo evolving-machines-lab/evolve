@@ -38,6 +38,19 @@ import type {
   InitializeParams,
 } from './types';
 
+// The fields of the typed sandbox errors, copied into the JSON-RPC error data so Python raises the same exception.
+const TYPED_ERROR_FIELDS = ['feature', 'provider', 'reason', 'path', 'sandboxId', 'state'] as const;
+
+function pickTypedErrorFields(error: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!error || typeof error !== 'object') return out;
+  for (const field of TYPED_ERROR_FIELDS) {
+    const value = (error as Record<string, unknown>)[field];
+    if (typeof value === 'string') out[field] = value;
+  }
+  return out;
+}
+
 // =============================================================================
 // BRIDGE CLASS (Transport Layer)
 // =============================================================================
@@ -272,6 +285,20 @@ class Bridge {
     }).catch(() => {});
   }
 
+  /** One change from a sandbox watch, keyed by watch id. */
+  private emitFsEvent(event: { watch_id: string; path: string; event: string }) {
+    void this.sendNotification({
+      jsonrpc: '2.0',
+      method: 'event',
+      params: {
+        type: 'fs',
+        watch_id: event.watch_id,
+        path: event.path,
+        event: event.event,
+      },
+    }).catch(() => {});
+  }
+
   // ===========================================================================
   // FRAMED I/O
   // ===========================================================================
@@ -356,6 +383,8 @@ class Bridge {
           onLifecycle: params.forward_lifecycle
             ? (event: any) => this.emitLifecycleEvent(event)
             : undefined,
+          // a watch is explicit (sandbox_watch_dir), so its events always flow
+          onFsEvent: (event) => this.emitFsEvent(event),
         });
         return {
           jsonrpc: '2.0',
@@ -382,7 +411,9 @@ class Bridge {
           code: errorCode,
           message: error instanceof Error ? error.message : String(error),
           data: {
-            errorType: errorName,
+            // `error.name`, so a provider package's copy of a typed error is named like the SDK's own
+            errorType: error instanceof Error && error.name ? error.name : errorName,
+            ...pickTypedErrorFields(error),
             stack: error instanceof Error ? error.stack : undefined,
           },
         },
