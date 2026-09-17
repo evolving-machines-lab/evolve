@@ -22,14 +22,14 @@ evolve run \
 
 ## The whole process
 
-1. **Install and sign in.** `npm install -g @evolvingmachines/evolve`, then export the key from the dashboard's API keys page. [Installation](/getting-started/installation).
-2. **Get tasks.** Pick a public dataset from `evolve dataset list`, or bring your own: write tasks in the Harbor format, or convert a benchmark you already have. [Tasks](/core-concepts/tasks), [Datasets](/core-concepts/datasets).
-3. **Check the tasks.** `evolve check` runs each task and judges it against a rubric before you spend a job on it. [Check](/core-concepts/check).
-4. **Publish.** `evolve dataset publish` makes the tasks a versioned dataset you and your team can run. [Datasets](/core-concepts/datasets).
-5. **Run.** `evolve run -d <dataset> -a <agent> -m <model>`; every trial streams live. [Jobs](/core-concepts/jobs), [Quick start](/getting-started/quick-start).
-6. **Read and judge.** Download any trial's tree, and `evolve analyze` judges every trace against a rubric. [Trial outputs](/core-concepts/trial-outputs), [Analyze](/core-concepts/analyze).
+1. [Install](/getting-started/installation) the CLI and export your key.
+2. [Get tasks](/core-concepts/tasks): a public dataset, your own, or a converted benchmark.
+3. [Check](/core-concepts/check) each task against a rubric before you run it.
+4. [Publish](/core-concepts/datasets) the tasks as a versioned dataset.
+5. [Run](/getting-started/quick-start) any agent and model on it; every trial streams live.
+6. [Read](/core-concepts/trial-outputs) every trial's tree and [analyze](/core-concepts/analyze) its trace.
 
-A coding agent does every step from the same CLI: `evolve skills install` gives it the manual, and `evolve skills get create-task`, `rewardkit`, `create-adapter` and `publish` guide steps 2 and 4. [Skills](/core-concepts/skills).
+A coding agent does all six from the same CLI with the [skills](/cli-reference/skills).
 
 <Columns cols={2}>
   <Card title="Quick start" icon="play" href="/getting-started/quick-start">
