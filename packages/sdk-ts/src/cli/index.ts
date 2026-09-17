@@ -26,6 +26,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync } from "fs";
+import { dirname } from "node:path";
 import { join, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { LineCounter, type Tags, parse as parseYaml, parseDocument } from "yaml";
@@ -320,13 +321,6 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
       "a git URL, upload:<id>, name:<skill-name>, or a local folder",
     group: "Agent",
   },
-  "agent-env": {
-    kind: "repeat",
-    aliases: ["ae"],
-    value: "KEY=VALUE",
-    help: "Env for every agent run; repeatable",
-    group: "Agent",
-  },
   "verifier-env": {
     kind: "repeat",
     aliases: ["ve"],
@@ -358,7 +352,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     short: "r",
     value: "<n>",
     help: "Automatic retries per trial on infrastructure errors; 0 turns them off",
-    default: "the platform default",
+    default: "2, the platform default",
     group: "Spend and retries",
   },
   "retry-include": {
@@ -592,7 +586,7 @@ const GROUPS: Record<string, GroupSpec> = {
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<id>",
-        examples: ["evolve job trials 3e1f9a2c", "evolve job trials 3e1f9a2c --status FAILED,SCORING_ERROR"],
+        examples: ["evolve job trials 3e1f9a2c", "evolve job trials 3e1f9a2c --status INFRASTRUCTURE_ERROR,SCORING_ERROR"],
       },
       tasks: {
         summary: "Show a job's per-task rollup",
@@ -2912,10 +2906,6 @@ export function buildJobInput(
     arms = arms.map((arm) => ({ ...arm, skills: [...(f.skill as string[])] }));
   }
 
-  const agentEnv =
-    f["agent-env"] !== undefined
-      ? parseEnvPairs(f["agent-env"] as string[], "--agent-env")
-      : base.agent_env;
   const verifierEnv =
     f["verifier-env"] !== undefined
       ? parseEnvPairs(f["verifier-env"] as string[], "--verifier-env")
@@ -3019,7 +3009,6 @@ export function buildJobInput(
     ...(Object.keys(retry).length > 0 ? { retry } : {}),
     ...(analyzeArmed ? { analyze } : {}),
     ...timeoutMultipliers,
-    ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
     ...(secrets !== undefined ? { secrets } : {}),
   };
@@ -7414,7 +7403,7 @@ function authStatusLines(status: AuthStatus): string[] {
   const rows: string[][] = [
     ["user", status.user_id],
     ["email", status.email ?? "-"],
-    ["key", status.key.id],
+    ["key id", status.key.id],
   ];
   if (status.key.label) rows.push(["key label", status.key.label]);
   rows.push(["key created", status.key.created_at]);
@@ -7755,7 +7744,7 @@ function printDocument(io: CliIO, text: string): void {
 
 /** One skill as `get` prints it: SKILL.md, then under --full each extra file behind its separator. */
 function renderSkill(skill: Skill, full: boolean): string {
-  const parts = [skill.content];
+  const parts = [skill.body];
   if (full) for (const file of skillFiles(skill)) parts.push(`\n--- ${file.path} ---\n\n${file.content}`);
   return parts.join("");
 }
@@ -7841,8 +7830,17 @@ async function cmdSkillsInstall(inv: Invocation, io: CliIO): Promise<number> {
     if (chosen !== "all" && !known.includes(chosen)) {
       throw new CliUsageError(`--target must be one of ${[...INSTALL_TARGETS, "all"].join(", ")}, got "${chosen}"`);
     }
+    // `all` means every agent home that EXISTS: installing creates no agent
+    // the user does not have. A named --target is created if missing.
     const targets: InstallTarget[] = chosen === "all" ? [...INSTALL_TARGETS] : [chosen as InstallTarget];
-    destinations = targets.map((name) => ({ target: name, skillsDir: targetSkillsDir(name) }));
+    const present = chosen === "all" ? targets.filter((name) => existsSync(dirname(targetSkillsDir(name)))) : targets;
+    if (chosen === "all") {
+      for (const name of targets.filter((name) => !present.includes(name))) {
+        io.err(`skipped ${name}: no ${dirname(targetSkillsDir(name))}`);
+      }
+      if (present.length === 0) io.err("no agent home found; name one with --target <agent> or a folder with --path <dir>");
+    }
+    destinations = present.map((name) => ({ target: name, skillsDir: targetSkillsDir(name) }));
   }
   const results = installPointer(dir, destinations, inv.flags.force === true);
   if (inv.flags.json === true) {
@@ -8096,8 +8094,16 @@ if (invokedAsBin) {
       process.exitCode = code;
     },
     (error) => {
-      process.stderr.write(`Error: ${(error as Error)?.message ?? error}\n`);
+      process.stderr.write(`Error: ${cliMessage((error as Error)?.message ?? String(error))}\n`);
       process.exitCode = 1;
     }
+  );
+}
+
+/** The SDK's sentences name its own surface; the command line has --api-key. */
+export function cliMessage(message: string): string {
+  return message.replace(
+    /^\w+\(\) requires an API key\. Set EVOLVE_API_KEY or pass \{ apiKey \} in config\./,
+    "An API key is required. Set EVOLVE_API_KEY or pass --api-key <key>."
   );
 }

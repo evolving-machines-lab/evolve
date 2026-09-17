@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 # No Python runtime dependencies - uses bundled Node.js bridge
-dependencies = []
+dependencies = ["certifi>=2024.2.2"]
 
 [project.optional-dependencies]
 dev = [
