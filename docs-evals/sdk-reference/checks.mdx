@@ -52,14 +52,15 @@ description: "Start and read task quality checks."
   <Tab title="TypeScript">
     ```ts
     get(checkId: string): Promise<Check>
-    list(options?: { scope?: "my" | "shared"; status?: CheckStatus[]; limit?: number; cursor?: string }): CheckList
+    list(options?: { scope?: "my" | "shared"; status?: CheckStatus[]; dataset?: string; limit?: number; cursor?: string }): CheckList
     watch(checkId: string, options?: { onProgress?: (check: Check) => void; signal?: AbortSignal; pollIntervalMs?: number }): Promise<Check>
     ```
 
-    One check with its per-task results, your checks, or a poll until every task settled.
+    One check with its per-task results, your checks, or a poll until every task settled. `dataset` keeps only the checks on one dataset: a bare name is every version, `name@version` one version.
 
     ```ts
     const done = await checks().watch(check.id);
+    const onTb4 = await checks().list({ dataset: "terminal-bench-4@4.0" });
     ```
   </Tab>
   <Tab title="Python">
@@ -69,6 +70,7 @@ description: "Start and read task quality checks."
         *,
         scope: Optional[JobListScope] = None,
         status: Optional[List[CheckStatus]] = None,
+        dataset: Optional[str] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     )
@@ -81,10 +83,38 @@ description: "Start and read task quality checks."
     ) -> Check
     ```
 
-    One check with its per-task results, your checks, or a poll until every task settled.
+    One check with its per-task results, your checks, or a poll until every task settled. `dataset` keeps only the checks on one dataset: a bare name is every version, `name@version` one version.
 
     ```python
     done = await checks().watch(check.id)
+    on_tb4 = await checks().list(dataset="terminal-bench-4@4.0")
+    ```
+  </Tab>
+</Tabs>
+
+## defaults
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    defaults(): Promise<CheckDefaults>
+    ```
+
+    The defaults a check runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in check prompt as a template with `{task_path}`, `{file_tree}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `create`; passed back unchanged, they run exactly as the defaults do.
+
+    ```ts
+    const { rubric } = await checks().defaults();
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def defaults() -> CheckDefaults
+    ```
+
+    The defaults a check runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in check prompt as a template with `{task_path}`, `{file_tree}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `create`; passed back unchanged, they run exactly as the defaults do.
+
+    ```python
+    rubric = (await checks().defaults())["rubric"]
     ```
   </Tab>
 </Tabs>

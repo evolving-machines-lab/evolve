@@ -225,6 +225,32 @@ class TestChecksRead:
         assert page.next_cursor is None and page.has_more is False
 
     @pytest.mark.asyncio
+    async def test_list_rides_dataset_on_the_query(self):
+        fake = FakeUrlopen([('/api/checks', {'items': [], 'nextCursor': None, 'hasMore': False})])
+        with patch('evolve._http.urlopen', fake):
+            await checks_factory(CONFIG).list(dataset='tb@4.0')
+            await checks_factory(CONFIG).list(scope='my')
+        assert 'dataset=tb%404.0' in fake.requests[0].full_url
+        assert 'dataset' not in fake.requests[1].full_url
+
+    @pytest.mark.asyncio
+    async def test_defaults_reads_the_resolved_policy(self):
+        defaults = {
+            'model_name': 'openrouter/deepseek/deepseek-v4.1-flash',
+            'rubric': {'criteria': [{'name': 'typos', 'description': 'd', 'guidance': 'g'}]},
+            'prompt': 'Check {task_path}\n{file_tree}\n{criteria_guidance}',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'daytona',
+        }
+        # Listed BEFORE the list door: the fake matches by substring, in order.
+        fake = FakeUrlopen([('/api/checks/defaults', defaults), ('/api/checks', {})])
+        with patch('evolve._http.urlopen', fake):
+            got = await checks_factory(CONFIG).defaults()
+        assert fake.requests[0].full_url.endswith('/api/checks/defaults')
+        assert fake.requests[0].get_method() == 'GET'
+        assert got == defaults
+
+    @pytest.mark.asyncio
     async def test_watch_polls_to_completed_and_reports_progress(self):
         fake = FakeUrlopen([('/api/checks/chk-1', CHECK_ACCEPTED)])
         seen = []

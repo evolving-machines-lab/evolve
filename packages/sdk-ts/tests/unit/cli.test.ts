@@ -9653,6 +9653,48 @@ async function testCheckReadVerbs() {
     const quiet = captureIO();
     await runCli(["check", "list", "-q", ...AUTH], quiet.io);
     assertEqual(quiet.out, ["chk-1"], "-q prints only ids");
+    const byDataset = captureIO(false);
+    assertEqual(await runCli(["check", "list", "--dataset", "terminal-bench-4@4.0", ...AUTH], byDataset.io), 0, "list --dataset exits 0");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("dataset"), "terminal-bench-4@4.0", "--dataset rides the query verbatim");
+    await runCli(["check", "list", "-d", "terminal-bench-4", ...AUTH], captureIO(false).io);
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("dataset"), "terminal-bench-4", "-d is its short flag; a bare name is every version");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCheckShowDefaults() {
+  console.log("\n--- runCli: check --show-defaults prints the platform's check policy and exits without a source ---");
+  assertEqual(parseArgs(["check", "--show-defaults"]).flags["show-defaults"], true, "--show-defaults is a flag of the top-level verb");
+  installMockFetch();
+  try {
+    const defaults = {
+      model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+      rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
+      prompt: "Check the task at {task_path}\n{file_tree}\n{criteria_guidance}",
+      reasoning_effort: "high",
+      sandbox_provider: "daytona",
+    };
+    // Registered BEFORE the list/create door: the mock matches by substring, in order.
+    setMockResponse("/api/checks/defaults", { status: 200, body: defaults });
+    setMockResponse("/api/checks", { status: 202, body: wireCheck() });
+    const json = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", "--json", ...AUTH], json.io), 0, "--show-defaults --json exits 0 with no path and no -d");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).pathname, "/api/checks/defaults", "one GET on the defaults door, nothing created");
+    const parsed = JSON.parse(json.out[0]) as Record<string, unknown>;
+    assertEqual(parsed.prompt, defaults.prompt, "--json prints the wire object, the prompt template inside");
+    assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
+    const human = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
+    assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
+    assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
+    assert(human.out.some((l) => l.startsWith("rubric") && l.includes("2 criteria")), "the rubric row counts the criteria");
+    assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
+    assert(human.out.some((l) => l === "Check the task at {task_path}"), "the prompt template prints unrendered, line by line");
+    assert(human.out.some((l) => l.includes("pinned_dependencies")), "every criterion is named under RUBRIC");
+    const withPath = captureIO();
+    assertEqual(await runCli(["check", "./tasks", "--show-defaults", ...AUTH], withPath.io), 2, "--show-defaults with a <path> is a usage error");
   } finally {
     restoreFetch();
   }
@@ -9772,6 +9814,7 @@ async function main() {
   await testAnalysisList();
   await testCheckVerb();
   await testCheckReadVerbs();
+  await testCheckShowDefaults();
   await testFilesVerbs();
   await testSessionListAndShow();
 

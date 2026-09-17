@@ -13,6 +13,7 @@ import type {
   AnalysisList,
   AnalysisPage,
   Check,
+  CheckDefaults,
   CheckList,
   CheckPage,
   ChecksClient,
@@ -249,6 +250,7 @@ export type {
   AnalysisTranscriptOptions,
   Check,
   CheckConfigInput,
+  CheckDefaults,
   CheckLabel,
   CheckList,
   CheckPage,
@@ -4134,7 +4136,8 @@ function mapCheck(raw: unknown): Check {
  * `create` (POST /api/checks — the directory tarred from disk and streamed,
  * never held in memory, the config part FIRST so a refused policy never
  * receives its upload; or the dataset form, no upload at all), `get` and
- * `list` (the record and its catalog), `watch` (the poll the contract asks
+ * `list` (the record and its catalog), `defaults` (the policy an empty
+ * config resolves to), `watch` (the poll the contract asks
  * for — checks have no event stream), and the per-task reads `task`,
  * `transcript`, `artifact` (a task check read like an analysis run, off the
  * traces feed — ChecksClient states the law). Requires EVOLVE_API_KEY (or
@@ -4154,6 +4157,7 @@ export function checks(config?: HostedClientConfig): ChecksClient {
       `/api/checks${pageQuery(options, {
         scope: options?.scope,
         status: options?.status && options.status.length > 0 ? options.status.join(",") : undefined,
+        dataset: options?.dataset,
       })}`
     );
     return mapPage((await res.json()) as Record<string, unknown>, mapCheck);
@@ -4259,9 +4263,14 @@ export function checks(config?: HostedClientConfig): ChecksClient {
 
     get: getCheck,
 
+    async defaults(): Promise<CheckDefaults> {
+      const res = await request(cfg, "/api/checks/defaults");
+      return (await res.json()) as CheckDefaults;
+    },
+
     list(options?: ListChecksOptions): CheckList {
       return makePaginated(
-        (opts) => listPage({ ...opts, scope: options?.scope, status: options?.status }),
+        (opts) => listPage({ ...opts, scope: options?.scope, status: options?.status, dataset: options?.dataset }),
         options
       );
     },

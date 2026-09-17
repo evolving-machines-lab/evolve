@@ -249,6 +249,7 @@ OPERATION_TO_METHOD = {
     # check's folder, by either id (B121).
     'createCheck': (ChecksClient, 'create'),
     'listChecks': (ChecksClient, 'list'),
+    'getCheckDefaults': (ChecksClient, 'defaults'),
     'getCheck': (ChecksClient, 'get'),
     'downloadCheck': (ChecksClient, 'download'),
     'getTaskCheckFilesystem': (ChecksClient, 'task_filesystem'),

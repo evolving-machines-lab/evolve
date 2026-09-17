@@ -497,6 +497,7 @@ export {
   type AnalysisFailure,
   type AnalysisLabel,
   type CheckLabel,
+  type CheckDefaults,
   type JudgeResult,
   type AgentDatasetStats,
   type PassAtKGroup,

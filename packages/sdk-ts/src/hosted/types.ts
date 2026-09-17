@@ -3326,6 +3326,8 @@ export interface ListChecksOptions extends PageOptions {
   scope?: JobListScope;
   /** Only checks in these statuses (the check's own ladder, CHECK_STATUSES). */
   status?: CheckStatus[];
+  /** Only checks on this dataset: "name" (every version) or "name@version". */
+  dataset?: string;
 }
 
 /** Options for jobs().tasks() (default page 50, max 200) */
@@ -4863,6 +4865,22 @@ export interface Check {
   finished_at: string | null;
 }
 
+/**
+ * The policy an empty check config resolves to (GET /api/checks/defaults):
+ * each key the value `Check` echoes for a check created with no config,
+ * except `prompt`, which `Check` serves as null and this serves as the
+ * template text.
+ */
+export interface CheckDefaults {
+  model_name: string;
+  rubric: Rubric;
+  /** The built-in check prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
+  prompt: string;
+  /** The effort the default model runs at when the config names none. */
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
+}
+
 /** Options for checks().watch() */
 export interface WatchCheckOptions {
   /** Called on every observed change of the check's per-task statuses, with the check body the observation came from. */
@@ -4931,8 +4949,10 @@ export interface ChecksClient {
   create(input: CreateCheckInput): Promise<Check>;
   /** The check with its per-task results — for every status. 404 `check_not_found` for an id you cannot read. */
   get(checkId: string): Promise<Check>;
-  /** Every check you may read, newest first (cursor-paged); `{ scope, status }` narrow it. */
+  /** Every check you may read, newest first (cursor-paged); `{ scope, status, dataset }` narrow it. */
   list(options?: ListChecksOptions): CheckList;
+  /** The defaults a check runs under when its config names nothing (GET /api/checks/defaults): model, effort, provider, rubric and the unrendered prompt template. */
+  defaults(): Promise<CheckDefaults>;
   /** Poll a check until every task settled; resolves with the final Check. */
   watch(checkId: string, options?: WatchCheckOptions): Promise<Check>;
   /**

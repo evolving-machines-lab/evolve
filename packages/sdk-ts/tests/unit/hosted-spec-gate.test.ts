@@ -293,6 +293,7 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   // check's folder, by either id (B121).
   createCheck: "checks.create",
   listChecks: "checks.list",
+  getCheckDefaults: "checks.defaults",
   getCheck: "checks.get",
   downloadCheck: "checks.download",
   getTaskCheckFilesystem: "checks.taskFilesystem",

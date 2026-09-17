@@ -81,6 +81,7 @@ import type {
   AnalysisStatus,
   Check,
   CheckConfigInput,
+  CheckDefaults,
   CheckStatus,
   TaskCheck,
   AnalyzeConfigInput,
@@ -1082,10 +1083,17 @@ const GROUPS: Record<string, GroupSpec> = {
             help: `Only these statuses: ${CHECK_STATUSES.join(", ")}`,
             group: "Filter",
           },
+          dataset: {
+            kind: "string",
+            short: "d",
+            value: "<name[@version]>",
+            help: "Only checks on this dataset; a bare name is every version",
+            group: "Filter",
+          },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: ["evolve check list", "evolve check list --status running"],
+        examples: ["evolve check list", "evolve check list --status running", "evolve check list --dataset terminal-bench-4@4.0"],
       },
       show: {
         summary: "Show one check: Harbor's check report, one row per task",
@@ -1733,6 +1741,11 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<provider>",
         help: "Sandbox provider the checker runs on",
         default: "the analysis default",
+        group: "Checker",
+      },
+      "show-defaults": {
+        kind: "boolean",
+        help: "Print the built-in prompt, rubric, model, effort and provider, then exit",
         group: "Checker",
       },
       "n-concurrent": {
@@ -5652,6 +5665,23 @@ export function checkDetailLines(check: Check): string[] {
   return [...table(rows), "", ...checkResultLines(check)];
 }
 
+/** `check --show-defaults`: the policy head as `check show` prints it, then the prompt template and every criterion in full. */
+function checkDefaultsLines(defaults: CheckDefaults): string[] {
+  const criteria = defaults.rubric.criteria.length;
+  const lines = table([
+    ["model", defaults.model_name],
+    ["effort", defaults.reasoning_effort],
+    ["provider", defaults.sandbox_provider],
+    ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
+  ]);
+  lines.push("", "PROMPT", ...defaults.prompt.split("\n"), "", "RUBRIC");
+  for (const criterion of defaults.rubric.criteria) {
+    lines.push(`${criterion.name}: ${criterion.description}`);
+    if (criterion.guidance) lines.push(`  ${criterion.guidance}`);
+  }
+  return lines;
+}
+
 /**
  * `evolve check <path>` — Harbor's `harbor check <PATH>` (their cli/main.py:163;
  * check_command cli/analyze.py:84-207) as the hosted verb: the directory
@@ -5667,6 +5697,18 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   const client = checks(clientConfig(inv));
+  if (inv.flags["show-defaults"] === true) {
+    if (inv.positionals[0] !== undefined || inv.flags.dataset !== undefined) {
+      throw new CliUsageError("--show-defaults prints the platform's check defaults and takes no <path> or -d/--dataset");
+    }
+    const defaults = await client.defaults();
+    if (json) {
+      io.out(JSON.stringify(defaults));
+    } else {
+      for (const line of checkDefaultsLines(defaults)) io.out(line);
+    }
+    return 0;
+  }
   const knobs: CheckConfigInput = {};
   if (inv.flags.model !== undefined) knobs.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) knobs.rubric = loadRubricFile(String(inv.flags.rubric));
@@ -5753,10 +5795,12 @@ async function cmdCheckList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, CHECK_COLUMNS)) return 0;
   const scope = parseScopeFlag(inv);
   const status = parseCheckStatusFilter(inv);
+  const dataset = inv.flags.dataset as string | undefined;
   const page = await checks(clientConfig(inv)).list({
     ...pageOptions(inv),
     ...(scope !== undefined ? { scope } : {}),
     ...(status !== undefined ? { status } : {}),
+    ...(dataset !== undefined ? { dataset } : {}),
   });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
