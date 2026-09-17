@@ -1,0 +1,67 @@
+---
+title: "evolve agent"
+description: "Register and manage your own agents."
+---
+
+import GlobalOptions from '/snippets/global-options.mdx';
+import ListFlags from '/snippets/list-flags.mdx';
+
+```bash
+evolve agent <command> [options]
+```
+
+## agent list
+
+```bash
+evolve agent list [options]
+```
+
+List your registered agents.
+
+<ListFlags />
+
+## agent show
+
+```bash
+evolve agent show <name>
+```
+
+Show one registered agent.
+
+## agent add
+
+```bash
+evolve agent add <name> [options]
+```
+
+Register an agent from an install script or a local directory.
+
+<ParamField path="--install-script" type="path">
+  Install script file. Its contents are uploaded.
+</ParamField>
+
+<ParamField path="--dir" type="path">
+  Local agent directory, tarred and uploaded.
+</ParamField>
+
+<ParamField path="--run" type="command" required>
+  Run command, executed with `sh -c`.
+</ParamField>
+
+<ParamField path="--ae, --agent-env" type="KEY=VALUE">
+  Environment injected at run time. Repeatable. It may not override the six run-contract keys, and a credential-shaped key is refused, both with `agent_invalid_env`; see [the run contract](/core-concepts/agents#the-run-contract).
+</ParamField>
+
+```bash
+evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"
+```
+
+## agent remove
+
+```bash
+evolve agent remove <name>
+```
+
+Delete a registered agent. Past jobs keep their record.
+
+<GlobalOptions />

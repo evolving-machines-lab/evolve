@@ -33,7 +33,7 @@ between.
 - CI must be green: tests, typecheck, and the spec gates.
 - The TypeScript and Python SDKs stay even: a change visible in one lands in
   both, same PR, docs mirrors included (edit `docs-agents/` only — its
-  SKILL.md self-syncs).
+  skill self-syncs).
 
 ## Interfaces
 

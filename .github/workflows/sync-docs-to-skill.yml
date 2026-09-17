@@ -1,7 +1,8 @@
-# The docs folders are the skills — one source, nothing copied. scripts/generate-skills.ts
-# (npm run generate:skills) writes docs-evals/SKILL.md from docs.json, docs-agents/SKILL.md
-# from its SKILL.source.md, and the .claude/skills/ mirror of the pointer
-# skills/evolve/SKILL.md. Two jobs, one generator:
+# The skills are generated from the docs — one source, generated copies.
+# scripts/generate-skills.ts (npm run generate:skills) writes skills/evolve-evals from
+# docs-evals/ (index + every page under references/), skills/evolve-agents from
+# docs-agents/SKILL.source.md and the chapters, and the .claude/skills/ mirror of the
+# pointer skills/evolve/SKILL.md. Two jobs, one generator:
 #   - pull requests: `--check` fails when a generated copy is stale, missing, or
 #     hand-edited (the same law as the SDK's harness-capabilities --check);
 #   - pushes to a trunk: regenerate and commit, so a docs edit lands in the
@@ -43,13 +44,13 @@ jobs:
         run: npm run generate:skills -- --check
 
       # Every skill we ship is a SKILL.md that passes the Agent Skills
-      # specification (owner's rule 2026-09-16): the pointer and the four
-      # hand-written skills under skills/, and the two docs folders. skills-ref
+      # specification (owner's rule 2026-09-16): every folder under skills/,
+      # the pointer, the generated two and the hand-written four. skills-ref
       # is the specification's own validator, pinned; pipx ships on
       # ubuntu-latest, so nothing is checked in for it. One failure fails the step.
       - name: Validate every skill against the Agent Skills specification
         run: |
-          for dir in skills/*/ docs-evals docs-agents; do
+          for dir in skills/*/; do
             pipx run --spec skills-ref==0.1.1 agentskills validate "${dir%/}"
           done
 
@@ -78,20 +79,20 @@ jobs:
         run: npm run generate:skills
 
       # Every skill we ship is a SKILL.md that passes the Agent Skills
-      # specification (owner's rule 2026-09-16): the pointer and the four
-      # hand-written skills under skills/, and the two docs folders. skills-ref
+      # specification (owner's rule 2026-09-16): every folder under skills/,
+      # the pointer, the generated two and the hand-written four. skills-ref
       # is the specification's own validator, pinned; pipx ships on
       # ubuntu-latest, so nothing is checked in for it. One failure fails the step.
       - name: Validate every skill against the Agent Skills specification
         run: |
-          for dir in skills/*/ docs-evals docs-agents; do
+          for dir in skills/*/; do
             pipx run --spec skills-ref==0.1.1 agentskills validate "${dir%/}"
           done
 
       - name: Check for changes
         id: diff
         run: |
-          git add -A docs-evals/SKILL.md docs-agents/SKILL.md .claude/skills
+          git add -A skills/evolve-evals skills/evolve-agents .claude/skills
           git diff --cached --quiet && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push
@@ -101,7 +102,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "docs: sync the skill files from docs-evals/ and docs-agents/"
+          git commit -m "docs: sync the skills from docs-evals/ and docs-agents/"
           remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git pull --rebase "$remote" "${GITHUB_REF_NAME}"
           git push "$remote" HEAD:"${GITHUB_REF_NAME}"

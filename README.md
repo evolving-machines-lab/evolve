@@ -31,7 +31,7 @@
 - Built-in [agent observability and analytics dashboard](https://dashboard.evolvingmachines.ai/)
 - Much more coming...
 
-Give your coding agent the manual. Two commands install the [`evolve`](skills/evolve/SKILL.md) skill into Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode; the agent then reads the real content (the [hosted evals docs](docs-evals), the [SDK docs](docs-agents) and the [task-authoring skills](skills)) from the `evolve` command, so it always matches the installed version:
+Give your coding agent the manual. Two commands install the [`evolve`](skills/evolve/SKILL.md) skill into Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode; the agent then reads the real content (the [hosted evals docs](docs-evals) and the [task-authoring skills](skills)) from the `evolve` command, so it always matches the installed version. The [SDK skill](skills/evolve-agents/SKILL.md) installs from this repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`.
 
 ```bash
 npm install -g @evolvingmachines/evolve
