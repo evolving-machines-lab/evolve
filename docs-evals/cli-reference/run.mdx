@@ -83,7 +83,6 @@ Each of these applies to every arm of the job.
   Skill for every agent arm. Repeatable. Accepts `skills.sh/<owner>/<repo>[/<skill>]`, `org/repo[@ref]`, an https git URL, `upload:<id>`, `name:<skill-name>` (your moving name pointer, resolved server-side), or a local folder, which is uploaded first and then referenced; `--print-config` still shows the path you typed.
 </ParamField>
 
-<ParamField path="--ae, --agent-env" type="KEY=VALUE">
   Sent as the job's `agent_env`, which the server refuses on this deployment: the create fails naming the two `--ve` keys it honors instead. Agent environment comes from the task's `[environment.env]` table or an attached `--secret`.
 </ParamField>
 

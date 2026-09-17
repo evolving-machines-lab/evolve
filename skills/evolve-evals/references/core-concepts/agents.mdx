@@ -45,7 +45,6 @@ evolve run \
 
 Only `claude` and `codex` take a config or a preset; the [capability document](/sdk-reference/meta) publishes `supports_config` and `presets` per harness. An effort, preset or config a harness cannot honor is refused when the job is created, never silently skipped, and so is a config key that touches billing, base URLs, routing or environment.
 
-Environment for the agent comes from two places, a task's own `[environment.env]` table and a secret attached with `--secret`; a job cannot add a third, and the server refuses `agent_env` (the `--ae` flag). See [secrets](/core-concepts/secrets) and [tasks](/core-concepts/tasks#environment-variables).
 
 ## Register your own agent
 

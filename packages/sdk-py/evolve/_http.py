@@ -7,10 +7,12 @@ original headers, Authorization included, across hosts — so a redirecting (or
 compromised) endpoint could bounce the caller's bearer key to a host of its
 choosing. Here a 3xx is surfaced as the HTTPError it is, never followed.
 
-Zero-dependency on purpose: stdlib only, like everything it replaces.
+stdlib plus certifi: a python.org interpreter ships no root certificates, so
+the first HTTPS call would fail with CERTIFICATE_VERIFY_FAILED without it.
 """
 
 import json
+import ssl
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional
@@ -25,7 +27,17 @@ class _RedirectRefusedHandler(urllib.request.HTTPRedirectHandler):
 
 # build_opener drops the default HTTPRedirectHandler because a subclass of it
 # is supplied — every other default handler (HTTPS, proxies) stays.
-_OPENER = urllib.request.build_opener(_RedirectRefusedHandler())
+def _ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi
+    except ImportError:  # certifi is a declared dependency; the interpreter's store is the fallback
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPSHandler(context=_ssl_context()), _RedirectRefusedHandler()
+)
 
 
 def urlopen(request: urllib.request.Request, timeout: Optional[float] = None):
