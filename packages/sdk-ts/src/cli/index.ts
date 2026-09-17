@@ -8042,7 +8042,7 @@ function reportFailure(error: unknown, io: CliIO): number {
     io.err(`Error: rate limited by the server — ${wait}.`);
     return 1;
   }
-  io.err(`Error: ${(error as Error).message}`);
+  io.err(`Error: ${cliMessage((error as Error).message)}`);
   // A job create that NAMED a task whose build FAILED refuses typed
   // (partial-publish model), and the refusal's details.failed_tasks quotes
   // every named task's own build failure — render each one, so the caller
