@@ -20,6 +20,17 @@ evolve run \
   --watch
 ```
 
+## The whole process
+
+1. **Install and sign in.** `npm install -g @evolvingmachines/evolve`, then export the key from the dashboard's API keys page. [Installation](/getting-started/installation).
+2. **Get tasks.** Pick a public dataset from `evolve dataset list`, or bring your own: write tasks in the Harbor format, or convert a benchmark you already have. [Tasks](/core-concepts/tasks), [Datasets](/core-concepts/datasets).
+3. **Check the tasks.** `evolve check` runs each task and judges it against a rubric before you spend a job on it. [Check](/core-concepts/check).
+4. **Publish.** `evolve dataset publish` makes the tasks a versioned dataset you and your team can run. [Datasets](/core-concepts/datasets).
+5. **Run.** `evolve run -d <dataset> -a <agent> -m <model>`; every trial streams live. [Jobs](/core-concepts/jobs), [Quick start](/getting-started/quick-start).
+6. **Read and judge.** Download any trial's tree, and `evolve analyze` judges every trace against a rubric. [Trial outputs](/core-concepts/trial-outputs), [Analyze](/core-concepts/analyze).
+
+A coding agent does every step from the same CLI: `evolve skills install` gives it the manual, and `evolve skills get create-task`, `rewardkit`, `create-adapter` and `publish` guide steps 2 and 4. [Skills](/core-concepts/skills).
+
 <Columns cols={2}>
   <Card title="Quick start" icon="play" href="/getting-started/quick-start">
     Install the CLI, start a job, read its result.
