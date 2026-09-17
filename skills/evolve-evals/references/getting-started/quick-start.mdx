@@ -16,6 +16,14 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
     Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys), then export it. See [installation](/getting-started/installation) for the SDKs.
   </Step>
 
+  <Step title="Give your coding agent the manual">
+    ```bash
+    evolve skills install
+    ```
+
+    Your agent then reads these docs with `evolve skills get evals`, and the `create-task`, `rewardkit`, `create-adapter` and `publish` skills by name. [The five skills](/cli-reference/skills).
+  </Step>
+
   <Step title="Pick a dataset">
     The catalog lists every dataset you can run, with its versions.
 
@@ -28,7 +36,7 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
   </Step>
 
   <Step title="Start a job and watch it">
-    Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes; `-l 5` caps the run at five tasks so the first job is small.
+    Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes; `-l 5` caps the run at five tasks and `--max-trial-spend 1` caps what each trial may spend on the model, so the first job is small.
 
     ```bash
     evolve run \
@@ -36,6 +44,7 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
       -a codex \
       -m gpt-6-astra \
       -l 5 \
+      --max-trial-spend 1 \
       --watch
     ```
 
@@ -67,19 +76,19 @@ This page takes you from an empty terminal to a downloaded trial: one API key, a
   </Step>
 </Steps>
 
-## Next
+## Next, by what you want to do
 
 <Columns cols={2}>
-  <Card title="Jobs" icon="list-checks" href="/core-concepts/jobs">
-    Attempts, concurrency, retries, spend caps, and what to do with a finished job.
+  <Card title="Port a benchmark" icon="arrow-right-left" href="/core-concepts/tasks">
+    `evolve skills get create-adapter` turns it into Harbor-format tasks.
   </Card>
-  <Card title="Analyze" icon="search" href="/core-concepts/analyze">
-    Judge every trial's trace against a rubric with `--analyze`.
+  <Card title="Write a task" icon="file-plus" href="/core-concepts/tasks">
+    `evolve skills get create-task`, and `rewardkit` for its verifier.
   </Card>
-  <Card title="Agents" icon="bot" href="/core-concepts/agents">
-    The seven built-in harnesses, and how to bring your own.
+  <Card title="Publish a dataset" icon="upload" href="/core-concepts/datasets">
+    `evolve skills get publish`, then `evolve dataset publish`.
   </Card>
-  <Card title="CLI reference" icon="terminal" href="/cli-reference/run">
-    Every flag of `evolve run`.
+  <Card title="Upload a job you ran elsewhere" icon="folder-up" href="/core-concepts/upload">
+    `evolve upload <job dir>` brings a Harbor job into the dashboard.
   </Card>
 </Columns>
