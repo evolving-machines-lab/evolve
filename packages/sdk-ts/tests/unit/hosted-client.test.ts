@@ -7465,14 +7465,14 @@ async function testChecksCreateDataset() {
       body: checkFixture({ source: { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" } }),
     });
     const c = checks({ apiKey: "test-key", baseUrl: BASE });
-    const accepted = await c.create({ source: { dataset: "harbor-examples" }, include_task_names: ["hello-*"] });
+    const accepted = await c.create({ source: { dataset: "harbor-examples" }, name: "nightly", include_task_names: ["hello-*"] });
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/checks"), "POSTs /api/checks");
     assertEqual(call.init?.method, "POST", "uses POST");
     const form = call.init?.body as FormData;
     assert(form instanceof FormData, "the body is a multipart form with no archive part");
     assertEqual(form.get("dataset"), "harbor-examples", "the dataset part names the published dataset");
-    assertEqual(JSON.parse(String(form.get("config"))), { include_task_names: ["hello-*"] }, "the knobs ride as the config part");
+    assertEqual(JSON.parse(String(form.get("config"))), { name: "nightly", include_task_names: ["hello-*"] }, "the knobs ride as the config part, the name among them");
     assertEqual(form.has("archive"), false, "nothing is uploaded on the dataset form");
     assertEqual(accepted.source, { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" }, "the 202's source is the dataset form");
     let threw = false;

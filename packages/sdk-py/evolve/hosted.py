@@ -1923,6 +1923,8 @@ class CheckConfigInput(TypedDict, total=False):
     then the cap) over the sorted task directory names; Python fnmatch
     globs against the directory NAME.
     """
+    #: A name for the check (Harbor's ``--job-name``); omitted, the accept timestamp ``YYYY-MM-DD__HH-MM-SS``. 1-120 characters.
+    name: str
     model_name: str
     rubric: Rubric
     prompt: str
@@ -2008,6 +2010,8 @@ class Check(TypedDict):
     ran under, frozen at accept. A plain wire dict at runtime.
     """
     id: str
+    #: The caller's name, or the accept timestamp in Harbor's ``YYYY-MM-DD__HH-MM-SS`` shape.
+    name: str
     #: ``'queued'`` | ``'running'`` | ``'completed'`` (:data:`CheckStatus`).
     status: str
     source: CheckSource
@@ -9164,6 +9168,7 @@ class ChecksClient:
         directory: Optional[str] = None,
         *,
         dataset: Optional[str] = None,
+        name: Optional[str] = None,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
         prompt: Optional[str] = None,
@@ -9248,6 +9253,8 @@ class ChecksClient:
             knobs['include_task_names'] = include_task_names
         if exclude_task_names is not None:
             knobs['exclude_task_names'] = exclude_task_names
+        if name is not None:
+            knobs['name'] = name
         if n_tasks is not None:
             knobs['n_tasks'] = n_tasks
         # The policy rides as ONE JSON part (the spec's CheckConfigInput),

@@ -1705,6 +1705,12 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       "Checks a local task directory, a directory of them, or with -d a published dataset. " +
       "Results are read back with the verbs below.",
     flags: {
+      name: {
+        kind: "string",
+        value: "<name>",
+        help: "A name for the check; default: the accept timestamp",
+        group: "Checker",
+      },
       model: {
         kind: "string",
         short: "m",
@@ -5715,6 +5721,7 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
     return 0;
   }
   const knobs: CheckConfigInput = {};
+  if (inv.flags.name !== undefined) knobs.name = String(inv.flags.name);
   if (inv.flags.model !== undefined) knobs.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) knobs.rubric = loadRubricFile(String(inv.flags.rubric));
   if (inv.flags.prompt !== undefined) knobs.prompt = loadPromptFile(String(inv.flags.prompt));

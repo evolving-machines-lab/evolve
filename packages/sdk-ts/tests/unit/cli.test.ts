@@ -9416,7 +9416,7 @@ async function testCheckVerb() {
     server.setReply(202, wireCheck());
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["check", taskDir, "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
+      ["check", taskDir, "--name", "nightly tb4", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
       io
     );
     assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
@@ -9429,8 +9429,8 @@ async function testCheckVerb() {
     const configJson = /name="config"\r\n\r\n([^\r]+)\r\n/.exec(body)?.[1] ?? "";
     assertEqual(
       JSON.parse(configJson),
-      { model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
-      "-m/-n/-i/-l ride the config part as model_name/n_concurrent/include_task_names/n_tasks"
+      { name: "nightly tb4", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
+      "--name/-m/-n/-i/-l ride the config part as name/model_name/n_concurrent/include_task_names/n_tasks"
     );
     assert(body.includes('filename="hello-world.tar.gz"'), "the archive is named by the directory");
     assert(out.some((l) => l.startsWith("check id") && l.includes("chk-1")), "prints the accepted check");
