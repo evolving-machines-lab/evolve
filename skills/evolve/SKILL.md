@@ -33,7 +33,7 @@ evolve skills get create-adapter   # convert an existing benchmark into a folder
 evolve skills get publish          # publish a dataset of tasks, or upload a job you ran elsewhere
 ```
 
-`evolve skills path evals` prints the folder on disk, so you can read the pages with your own tools. `evolve skills list` names everything the installed version serves; `--full` on any skill adds its pages. The SDK skill (run agents in sandboxes from TypeScript or Python) is not served by the command; install it from the repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`.
+`evolve skills list` names everything the installed version serves; `--full` on any skill adds its pages. The SDK skill (run agents in sandboxes from TypeScript or Python) is not served by the command; install it from the repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`.
 
 ## Inside the evolve repository
 
