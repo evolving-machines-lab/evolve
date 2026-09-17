@@ -88,6 +88,7 @@ class MockBridgeManager:
                 'tag': 'demo-a',
                 'agent': 'codex',
                 'model': 'gpt-5.3-codex',
+                'reasoning_effort': 'high',
                 'provider': 'gateway',
                 'sandbox_id': 'sbx-1',
                 'state': 'ended',
@@ -232,6 +233,8 @@ class TestSessionsClientList:
         assert page.items[0].id == 'sess-2'
         assert page.items[0].runtime_status == 'dead'
         assert page.items[0].tool_stats == {'bash': 3, 'edit': 7}
+        # A server predating the field, or a harness without an effort: None, never a KeyError.
+        assert page.items[0].reasoning_effort is None
         assert page.next_cursor == 'cursor-2'
         assert page.has_more is True
 
@@ -280,6 +283,7 @@ class TestSessionsClientGet:
         assert isinstance(info, SessionInfo)
         assert info.id == 'sess-1'
         assert info.model == 'gpt-5.3-codex'
+        assert info.reasoning_effort == 'high'
         assert info.sandbox_id == 'sbx-1'
         assert info.state == 'ended'
         assert info.runtime_status == 'dead'

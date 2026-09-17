@@ -826,7 +826,9 @@ replay = await session.browser_replay(
 
 - `list()` returns `SessionPage(items, next_cursor, has_more)`
 - `get()` returns `SessionInfo` with snake_case fields such as `sandbox_id`,
-  `runtime_status`, `created_at`, and `tool_stats` — plus `usage`, the
+  `reasoning_effort` (the effort the session was started with; `None` when the
+  harness has none or the session predates the field), `runtime_status`,
+  `created_at`, and `tool_stats` — plus `usage`, the
   one-home reading (spend so far + token breakdown from the same gateway
   records, `provisional` marking numbers that can still grow); it carries the
   same keys a trial's `usage` does, and `None` means the meter never answered

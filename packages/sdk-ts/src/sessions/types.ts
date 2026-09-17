@@ -29,6 +29,11 @@ export interface SessionInfo {
   tag: string;
   agent: string;
   model: string | null;
+  /**
+   * The reasoning effort the session was started with, as the SDK resolved
+   * it; null for a harness without one and for sessions recorded before the field.
+   */
+  reasoningEffort: string | null;
   provider: string;
   sandboxId: string | null;
   /** Ergonomic state: "live" (still running) or "ended" */

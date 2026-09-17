@@ -8045,6 +8045,7 @@ function sessionDetailLines(s: SessionInfo): string[] {
     ["tag", s.tag],
     ["agent", s.agent],
     ["model", s.model ?? "-"],
+    ["effort", s.reasoningEffort ?? "-"],
     ["provider", s.provider],
     ["sandbox", s.sandboxId ?? "-"],
     ["state", s.state],

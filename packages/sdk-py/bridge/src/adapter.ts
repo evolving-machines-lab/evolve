@@ -890,6 +890,7 @@ export class EvolveAdapter {
       tag: info.tag,
       agent: info.agent,
       model: info.model ?? null,
+      reasoning_effort: info.reasoningEffort ?? null,
       provider: info.provider,
       sandbox_id: info.sandboxId ?? null,
       state: info.state,

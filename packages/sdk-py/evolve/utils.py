@@ -88,6 +88,7 @@ def _parse_session_info(data: Optional[Dict[str, Any]]) -> Optional['SessionInfo
         # The one-home usage reading, by the one shared parsing rule — a
         # malformed or absent object reads None ("the meter never answered").
         usage=_usage_reading_from_data(data.get('usage')),
+        reasoning_effort=data['reasoning_effort'] if isinstance(data.get('reasoning_effort'), str) else None,
     )
 
 

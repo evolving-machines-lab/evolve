@@ -40,6 +40,8 @@ export interface SessionLoggerConfig {
   agent: AgentType;
   /** Model name (e.g., "claude-sonnet-4-20250514", "codex-mini-latest") */
   model?: string;
+  /** The reasoning effort the run resolved; absent for a harness without one. */
+  reasoningEffort?: string;
   sandboxId: string;
   /** Exact tag to use (skips generation). Takes precedence over tagPrefix. */
   tag?: string;
@@ -53,6 +55,8 @@ export interface SessionLoggerConfig {
 // SESSION LOGGER
 // =============================================================================
 
+const WIRE_EFFORT = /^[A-Za-z0-9_-]{1,32}$/
+
 export class SessionLogger {
   // Identity
   private readonly tag: string;
@@ -60,6 +64,7 @@ export class SessionLogger {
   private readonly provider: string;
   private readonly agent: AgentType;
   private readonly model?: string;
+  private readonly reasoningEffort?: string;
   private readonly sandboxId: string;
 
   // Configuration
@@ -95,6 +100,7 @@ export class SessionLogger {
     this.provider = config.provider;
     this.agent = config.agent;
     this.model = config.model;
+    this.reasoningEffort = config.reasoningEffort;
     this.sandboxId = config.sandboxId;
     this.apiKey = config.apiKey;
     this.dashboardUrl = getDashboardUrl();
@@ -324,11 +330,14 @@ export class SessionLogger {
 
   private async sendToDashboard(events: unknown[]): Promise<void> {
     const body = {
-      // Session identity (order matches _meta)
+      // Session identity (the local _meta line carries the same fields but the effort)
       tag: this.tag,
       provider: this.provider,
       agent: this.agent,
       model: this.model,
+      // null, never absent: "no effort" is a fact the server records too.
+      // The server refuses an off-shape effort with a 400 that drops the whole batch; null keeps the events.
+      reasoningEffort: this.reasoningEffort !== undefined && WIRE_EFFORT.test(this.reasoningEffort) ? this.reasoningEffort : null,
       sandboxId: this.sandboxId,
       timestamp: this.timestamp,
       // Observability context (hierarchy, grouping)
