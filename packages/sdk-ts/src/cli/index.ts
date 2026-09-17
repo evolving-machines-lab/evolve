@@ -2906,6 +2906,9 @@ export function buildJobInput(
     arms = arms.map((arm) => ({ ...arm, skills: [...(f.skill as string[])] }));
   }
 
+  // No --agent-env flag (the server refuses agent_env on a job), but a config
+  // file's field still rides the body unedited: the refusal is the server's.
+  const agentEnv = base.agent_env;
   const verifierEnv =
     f["verifier-env"] !== undefined
       ? parseEnvPairs(f["verifier-env"] as string[], "--verifier-env")
@@ -3009,6 +3012,7 @@ export function buildJobInput(
     ...(Object.keys(retry).length > 0 ? { retry } : {}),
     ...(analyzeArmed ? { analyze } : {}),
     ...timeoutMultipliers,
+    ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
     ...(secrets !== undefined ? { secrets } : {}),
   };
