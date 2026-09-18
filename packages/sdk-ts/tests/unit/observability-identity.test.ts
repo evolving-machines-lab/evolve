@@ -212,6 +212,70 @@ async function testLoggerKeepsItsIdentity(): Promise<void> {
   }
 }
 
+async function testOrgRidesTheIngest(): Promise<void> {
+  console.log("\n[5] The session's organization reaches the ingest payload");
+
+  const originalHome = process.env.HOME;
+  const originalDashboard = process.env.EVOLVE_DASHBOARD_URL;
+  const tempHome = mkdtempSync(join(tmpdir(), "evolve-session-logs-"));
+  process.env.HOME = tempHome;
+  process.env.EVOLVE_DASHBOARD_URL = "http://localhost:3000";
+
+  const originalFetch = globalThis.fetch;
+  let body: Record<string, unknown> = {};
+
+  try {
+    const { SessionLogger } = await import("../../src/observability/session-logger.js");
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    const named = new SessionLogger({
+      provider: "e2b",
+      agent: "claude",
+      model: "claude-opus-5",
+      sandboxId: "sbx-org",
+      tag: "evolve-org",
+      apiKey: "key",
+      org: "acme",
+    });
+    named.writePrompt("hello");
+    await named.flush();
+    assertEqual(body.org, "acme", "the ingest payload names the organization the session starts under");
+
+    const unnamed = new SessionLogger({
+      provider: "e2b",
+      agent: "claude",
+      model: "claude-opus-5",
+      sandboxId: "sbx-personal",
+      tag: "evolve-personal",
+      apiKey: "key",
+    });
+    unnamed.writePrompt("hello");
+    await unnamed.flush();
+    assert(!("org" in body), "no org named = the key is absent, so the server takes the personal org");
+
+    // The builder is the public surface: .withOrg() has to reach the Agent options
+    // the logger is built from, or the option exists only on the logger.
+    const { Evolve } = await import("../../dist/index.js");
+    const kit = new Evolve().withOrg("acme");
+    assertEqual(
+      (kit as unknown as { config: { org?: string } }).config.org,
+      "acme",
+      "Evolve.withOrg() records the organization on the run config",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalDashboard === undefined) delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = originalDashboard;
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+}
+
 // =============================================================================
 // RUNNER
 // =============================================================================
@@ -223,6 +287,7 @@ async function main(): Promise<void> {
   testEveryReservedKeyIsRejected();
   testSwarmMetadataStillPasses();
   await testLoggerKeepsItsIdentity();
+  await testOrgRidesTheIngest();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

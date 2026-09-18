@@ -111,6 +111,7 @@ export interface InitializeParams {
   forward_content?: boolean;
   forward_lifecycle?: boolean;
   session_tag_prefix?: string;
+  org?: string;
   schema?: Record<string, any>;
   schema_options?: { mode?: 'strict' | 'loose' };
   // Observability metadata (passed to JSONL logs via withObservability)

@@ -1359,6 +1359,7 @@ export class Agent {
       reasoningEffort: this.reasoningEffort(),
       sandboxId: sandbox.sandboxId,
       tag: this.sessionTag,
+      org: this.options.org,
       apiKey: this.agentConfig.isDirectMode
         ? undefined
         : this.agentConfig.apiKey,

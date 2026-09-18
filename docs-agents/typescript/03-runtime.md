@@ -758,6 +758,17 @@ console.log(evolve.getSessionTimestamp()); // Timestamp for second log file
   current file, so you always have the full timeline.
 - Logging is buffered inside the SDK, so it never blocks streaming output.
 
+The managed session a run registers belongs to an organization, the way a job
+does. Name one with `.withOrg()` (a slug or id; you must be a member) and every
+member of that organization can read the session; omit it and the session lands
+in your personal organization:
+
+```ts
+const evolve = new Evolve()
+  .withAgent({...})
+  .withOrg("acme");
+```
+
 Use the tag together with the sandbox id to correlate logs with files saved in
 `/output/`.
 
@@ -788,7 +799,7 @@ const replay = await session.browserReplay(info.id);
 ```
 
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
-- `list()` takes `scope`: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (every session in your organizations, yours included). A session belongs to an organization the way a job does — the one it was started under, else your personal one — and its members read it; stopping and deleting stay with whoever ran it.
+- `list()` takes `scope`: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (every session in your organizations, yours included). A session belongs to an organization the way a job does — the one `.withOrg()` named when it was started, else your personal one — and its members read it; stopping and deleting stay with whoever ran it.
 - `get()` returns `SessionInfo` with `org` (the owning organization's slug), `sandboxId`, `reasoningEffort` (the effort the session was started with; `null` when the harness has none or the session predates the field), `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `transcript()` is the same read whole: `SessionTranscript { session, events, total, gatewayCalls, storedAt? }` — `total` counts every stored event (the next delta's `since`), and `gatewayCalls` are the gateway meter's per-call lines (`GatewayUsageEvent`: `update.usage.promptTokens`, `completionTokens`, `cachedTokens`, `costUsd`), in time order, the same line a trial's trace carries; they ride beside `events`, never inside them, and are the only per-call tokens and money a client should show. `storedAt` is the server's write instant of each event's row, one per entry of `events` and index-aligned: present on every row-served page (an empty page carries an empty list), absent when the transcript was served from its file. It places the gateway meter's calls under the harness's steps for harnesses whose lines carry no clock of their own (codex, kimi, qwen); a reader that does not place calls needs nothing from it. The session's total stays on `session.usage` / `session.cost`.

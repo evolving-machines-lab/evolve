@@ -46,6 +46,8 @@ export interface SessionLoggerConfig {
   /** Exact tag to use (skips generation). Takes precedence over tagPrefix. */
   tag?: string;
   tagPrefix?: string;
+  /** Owning organization (slug or id) named on the ingest that creates the session row. */
+  org?: string;
   apiKey?: string;
   /** Observability metadata for trace grouping (generic key-value, domain-agnostic) */
   observability?: Record<string, unknown>;
@@ -68,6 +70,7 @@ export class SessionLogger {
   private readonly sandboxId: string;
 
   // Configuration
+  private readonly org?: string;
   private readonly apiKey?: string;
   private readonly dashboardUrl: string;
   private readonly localFilePath: string;
@@ -102,6 +105,7 @@ export class SessionLogger {
     this.model = config.model;
     this.reasoningEffort = config.reasoningEffort;
     this.sandboxId = config.sandboxId;
+    this.org = config.org;
     this.apiKey = config.apiKey;
     this.dashboardUrl = getDashboardUrl();
     this.observability = config.observability;
@@ -339,6 +343,8 @@ export class SessionLogger {
       // The server refuses an off-shape effort with a 400 that drops the whole batch; null keeps the events.
       reasoningEffort: this.reasoningEffort !== undefined && WIRE_EFFORT.test(this.reasoningEffort) ? this.reasoningEffort : null,
       sandboxId: this.sandboxId,
+      // Absent, never null: the server reads an omitted org as "the caller's personal one".
+      ...(this.org ? { org: this.org } : {}),
       timestamp: this.timestamp,
       // Observability context (hierarchy, grouping)
       ...this.annotations(),

@@ -768,6 +768,18 @@ print(await evolve.get_session_timestamp())  # Timestamp for second log file
 
 - `kill()` or `set_session()` flushes the current log; the next `run()` starts a
   fresh file with the new sandbox id.
+
+The managed session a run registers belongs to an organization, the way a job
+does. Name one with `org=` (a slug or id; you must be a member) and every member
+of that organization can read the session; omit it and the session lands in
+your personal organization:
+
+```python
+evolve = Evolve(
+    config=AgentConfig(...),
+    org='acme',
+)
+```
 - Long-running sessions (pause/resume or ACP auto-resume) keep appending to the
   current file, so you always have the full timeline.
 - Logging is buffered inside the SDK, so it never blocks streaming output.
@@ -828,7 +840,7 @@ replay = await session.browser_replay(
 - `list()` returns `SessionPage(items, next_cursor, has_more)`
 - `list()` takes `scope`: `'my'` (yours, the default), `'shared'` (your organizations' other
   members') or `'org'` (every session in your organizations, yours included). A session belongs to
-  an organization the way a job does — the one it was started under, else your personal one — and
+  an organization the way a job does — the one `org=` named when it was started, else your personal one — and
   its members read it; stopping and deleting stay with whoever ran it.
 - `get()` returns `SessionInfo` with snake_case fields such as `org` (the owning
   organization's slug), `sandbox_id`,

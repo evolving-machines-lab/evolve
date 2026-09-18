@@ -349,6 +349,15 @@ export class Evolve extends EventEmitter {
   }
 
   /**
+   * Set the organization (slug or id) the managed session lands in; omitted,
+   * the caller's personal organization. Membership is checked server-side.
+   */
+  withOrg(org: string): this {
+    this.config.org = org;
+    return this;
+  }
+
+  /**
    * @internal Set observability metadata for trace grouping.
    * Used internally by Swarm - not part of public API.
    */
@@ -546,6 +555,7 @@ export class Evolve extends EventEmitter {
       schemaOptions: this.config.schemaOptions,
       // Observability
       sessionTagPrefix: this.config.sessionTagPrefix,
+      org: this.config.org,
       observability: this.config.observability,
       // Managed integrations
       integrations: this.config.integrations
