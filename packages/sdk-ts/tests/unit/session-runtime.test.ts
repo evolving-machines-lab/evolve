@@ -489,6 +489,10 @@ async function testKillFlushesSessionEnd(): Promise<void> {
       ),
       "kill() flushes _sessionEnd to dashboard ingest",
     );
+    assert(
+      ingestBodies.length > 0 && ingestBodies.every((body) => body.reasoningEffort === "high"),
+      "every ingest body carries the effort the run resolved — claude's registry pin (B181)",
+    );
   } finally {
     globalThis.fetch = previousFetch;
     if (previousDashboardUrl === undefined)

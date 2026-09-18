@@ -92,12 +92,12 @@ class TestChecksCreate:
         accepted_body = {**CHECK_ACCEPTED, 'source': {'type': 'dataset', 'sha256': 'cd' * 32, 'bytes': None, 'dataset': 'harbor-examples@1.0'}}
         fake = FakeUrlopen([('/api/checks', accepted_body, {}, 202)])
         with patch('evolve._http.urlopen', fake):
-            accepted = await checks_factory(CONFIG).create(dataset='harbor-examples', n_tasks=2)
+            accepted = await checks_factory(CONFIG).create(dataset='harbor-examples', name='nightly', n_tasks=2)
         request = fake.requests[0]
         assert request.full_url.endswith('/api/checks')
         parts = _multipart_parts(request)
         assert list(parts) == ['config', 'dataset']
-        assert json.loads(parts['config']) == {'n_tasks': 2}
+        assert json.loads(parts['config']) == {'name': 'nightly', 'n_tasks': 2}
         assert parts['dataset'] == b'harbor-examples'
         assert accepted['source'] == {'type': 'dataset', 'sha256': 'cd' * 32, 'bytes': None, 'dataset': 'harbor-examples@1.0'}
         with pytest.raises(ValueError, match='exactly one source'):

@@ -4727,6 +4727,8 @@ export interface AnalysesClient {
  * each with its reason.
  */
 export interface CheckConfigInput {
+  /** A name for the check (Harbor's `--job-name`); omitted, the accept timestamp `YYYY-MM-DD__HH-MM-SS`. 1-120 characters. */
+  name?: string;
   /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
   model_name?: string;
   /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (eleven criteria). */
@@ -4840,6 +4842,8 @@ export interface TaskCheck {
  */
 export interface Check {
   id: string;
+  /** The caller's name, or the accept timestamp in Harbor's `YYYY-MM-DD__HH-MM-SS` shape. */
+  name: string;
   status: CheckStatus;
   source: CheckSource;
   model_name: string;

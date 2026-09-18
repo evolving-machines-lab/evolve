@@ -154,6 +154,7 @@ async function testMapSessionInfo() {
       tag: "my-session",
       agent: "claude",
       model: "haiku",
+      reasoningEffort: "high",
       provider: "e2b",
       sandboxId: "sb-456",
       isEnded: true,
@@ -179,6 +180,7 @@ async function testMapSessionInfo() {
     assertEqual(result.tag, "my-session", "maps tag");
     assertEqual(result.agent, "claude", "maps agent");
     assertEqual(result.model, "haiku", "maps model");
+    assertEqual(result.reasoningEffort, "high", "maps reasoningEffort");
     assertEqual(result.provider, "e2b", "maps provider");
     assertEqual(result.sandboxId, "sb-456", "maps sandboxId");
     assertEqual(result.state, "ended", "computes state from isEnded=true");
@@ -226,6 +228,24 @@ async function testMapSessionInfoLiveState() {
     assertEqual(result.endedAt, null, "endedAt defaults to null");
     assertEqual(result.stepCount, 0, "stepCount defaults to 0");
     assertEqual(result.toolStats, null, "toolStats defaults to null");
+    assertEqual(result.reasoningEffort, null, "reasoningEffort defaults to null when the server predates it");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testMapSessionInfoEffortIsAStringOrNull() {
+  console.log("\n--- mapSessionInfo reads reasoningEffort defensively ---");
+  installMockFetch();
+  try {
+    // A malformed value on the wire reads null: the field is a string or nothing.
+    setMockResponse("/api/sessions/sess-odd", {
+      status: 200,
+      body: { id: "sess-odd", tag: "t", agent: "codex", provider: "e2b", isEnded: false, reasoningEffort: 7, createdAt: "2026-03-01T00:00:00.000Z" },
+    });
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    const result = await s.get("sess-odd");
+    assertEqual(result.reasoningEffort, null, "a non-string reasoningEffort reads null");
   } finally {
     restoreFetch();
   }
@@ -807,6 +827,7 @@ async function main() {
   await testAcceptsConfigApiKey();
   await testMapSessionInfo();
   await testMapSessionInfoLiveState();
+  await testMapSessionInfoEffortIsAStringOrNull();
   await testListQueryParams();
   await testListPagination();
   await testAuthHeader();

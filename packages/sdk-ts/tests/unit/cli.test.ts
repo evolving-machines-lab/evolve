@@ -9235,6 +9235,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
     tag: "qa-round-7",
     agent: "claude",
     model: "claude-fable-5-1",
+    reasoningEffort: "high",
     provider: "daytona",
     sandboxId: "box-1",
     isEnded: true,
@@ -9328,7 +9329,15 @@ async function testSessionListAndShow() {
       "renders the four token counts of the one-home reading (B56)",
     );
     assert(text.includes("12"), "renders the step count");
+    assert(/^effort\s+high$/m.test(text), "renders the effort the session was started with, after the model (B181)");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
+
+    // A session without an effort (a harness that has none, or one ingested before the field) shows "-".
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession({ reasoningEffort: null }) });
+    const showNoEffort = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], showNoEffort.io);
+    assert(/^effort\s+-$/m.test(showNoEffort.out.join("\n")), "a null effort renders as -");
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession() });
 
     const showJson = captureIO();
     await runCli(["session", "show", "sess-1", "--json", ...AUTH], showJson.io);
@@ -9416,7 +9425,7 @@ async function testCheckVerb() {
     server.setReply(202, wireCheck());
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["check", taskDir, "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
+      ["check", taskDir, "--name", "nightly tb4", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
       io
     );
     assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
@@ -9429,8 +9438,8 @@ async function testCheckVerb() {
     const configJson = /name="config"\r\n\r\n([^\r]+)\r\n/.exec(body)?.[1] ?? "";
     assertEqual(
       JSON.parse(configJson),
-      { model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
-      "-m/-n/-i/-l ride the config part as model_name/n_concurrent/include_task_names/n_tasks"
+      { name: "nightly tb4", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
+      "--name/-m/-n/-i/-l ride the config part as name/model_name/n_concurrent/include_task_names/n_tasks"
     );
     assert(body.includes('filename="hello-world.tar.gz"'), "the archive is named by the directory");
     assert(out.some((l) => l.startsWith("check id") && l.includes("chk-1")), "prints the accepted check");
