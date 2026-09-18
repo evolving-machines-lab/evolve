@@ -4209,7 +4209,9 @@ export interface JobsClient {
    * never makes a job public: `link: true` mints an UNLISTED link instead,
    * the same link on every later call). Each new address is emailed a link
    * to the run; an address with no account gets a sign-up link for exactly
-   * that address (no gateway credits). An email share reads the job and
+   * that address (no gateway credits), while an address already on the
+   * waitlist or holding an invite gets the email without a sign-up link and
+   * uses that invite instead. An email share reads the job and
    * lists it under `scope: "shared"`; it never operates it. Creator-only:
    * an org member is refused `org_forbidden` (403), a stranger sees 404; a
    * regrade job id is 404. The response is the job's whole share state.

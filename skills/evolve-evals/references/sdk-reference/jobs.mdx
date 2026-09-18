@@ -664,7 +664,7 @@ description: "Start, follow, and derive jobs."
 
 ## share
 
-Share a job you created by link, by email, or both. `link: true` turns on the job's unlisted link and returns it (the same link on every later call). Each address in `emails` gets an email with a link to the run and reads it after signing in with that address; an address without an account gets a sign-up link in the same email. Someone the run is shared with reads the job, its trials, traces and files and lists it under `scope: "shared"`; they cannot operate it. Only the creator may share; another member of the organization is refused with `org_forbidden`. The answer is the job's whole share state, the same shape [shares](#shares) returns.
+Share a job you created by link, by email, or both. `link: true` turns on the job's unlisted link and returns it (the same link on every later call). Each address in `emails` gets an email with a link to the run and reads it after signing in with that address; an address without an account gets a sign-up link in the same email; an address already on the waitlist or holding an invite gets the share email without a sign-up link and uses that invite instead. Someone the run is shared with reads the job, its trials, traces and files and lists it under `scope: "shared"`; they cannot operate it. Only the creator may share; another member of the organization is refused with `org_forbidden`. The answer is the job's whole share state, the same shape [shares](#shares) returns.
 
 <Tabs>
   <Tab title="TypeScript">

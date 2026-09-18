@@ -117,7 +117,7 @@ evolve job share <id> --link
 evolve job share <id> --email <address> [--email <address>...]
 ```
 
-Share a job you created. `--link` turns on the job's unlisted link and prints it; running it again prints the same link. `--email` shares the run with an address: that person gets an email with a link to the run and reads it after signing in with the same address (a person without an account gets a sign-up link in the same email). Both flags may ride one command. Someone the run is shared with can read it — the job, its trials, traces and files — and finds it under `evolve job list --scope shared`; they cannot cancel, retry, regrade, analyze or delete it. Only the job's creator may share it; another member of the organization is refused with `org_forbidden`.
+Share a job you created. `--link` turns on the job's unlisted link and prints it; running it again prints the same link. `--email` shares the run with an address: that person gets an email with a link to the run and reads it after signing in with the same address (a person without an account gets a sign-up link in the same email; an address already on the waitlist or holding an invite gets the share email without a sign-up link and uses that invite instead). Both flags may ride one command. Someone the run is shared with can read it — the job, its trials, traces and files — and finds it under `evolve job list --scope shared`; they cannot cancel, retry, regrade, analyze or delete it. Only the job's creator may share it; another member of the organization is refused with `org_forbidden`.
 
 <ParamField path="--link">
   Enable the job's unlisted link and print it. Anyone holding the link reads the run without signing in.
