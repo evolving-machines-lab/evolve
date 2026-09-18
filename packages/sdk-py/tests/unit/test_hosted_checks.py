@@ -92,12 +92,12 @@ class TestChecksCreate:
         accepted_body = {**CHECK_ACCEPTED, 'source': {'type': 'dataset', 'sha256': 'cd' * 32, 'bytes': None, 'dataset': 'harbor-examples@1.0'}}
         fake = FakeUrlopen([('/api/checks', accepted_body, {}, 202)])
         with patch('evolve._http.urlopen', fake):
-            accepted = await checks_factory(CONFIG).create(dataset='harbor-examples', n_tasks=2)
+            accepted = await checks_factory(CONFIG).create(dataset='harbor-examples', name='nightly', n_tasks=2)
         request = fake.requests[0]
         assert request.full_url.endswith('/api/checks')
         parts = _multipart_parts(request)
         assert list(parts) == ['config', 'dataset']
-        assert json.loads(parts['config']) == {'n_tasks': 2}
+        assert json.loads(parts['config']) == {'name': 'nightly', 'n_tasks': 2}
         assert parts['dataset'] == b'harbor-examples'
         assert accepted['source'] == {'type': 'dataset', 'sha256': 'cd' * 32, 'bytes': None, 'dataset': 'harbor-examples@1.0'}
         with pytest.raises(ValueError, match='exactly one source'):
@@ -223,6 +223,32 @@ class TestChecksRead:
         assert 'scope=shared' in url and 'status=running%2Ccompleted' in url and 'limit=5' in url
         assert page.items[0]['id'] == 'chk-1'
         assert page.next_cursor is None and page.has_more is False
+
+    @pytest.mark.asyncio
+    async def test_list_rides_dataset_on_the_query(self):
+        fake = FakeUrlopen([('/api/checks', {'items': [], 'nextCursor': None, 'hasMore': False})])
+        with patch('evolve._http.urlopen', fake):
+            await checks_factory(CONFIG).list(dataset='tb@4.0')
+            await checks_factory(CONFIG).list(scope='my')
+        assert 'dataset=tb%404.0' in fake.requests[0].full_url
+        assert 'dataset' not in fake.requests[1].full_url
+
+    @pytest.mark.asyncio
+    async def test_defaults_reads_the_resolved_policy(self):
+        defaults = {
+            'model_name': 'openrouter/deepseek/deepseek-v4.1-flash',
+            'rubric': {'criteria': [{'name': 'typos', 'description': 'd', 'guidance': 'g'}]},
+            'prompt': 'Check {task_path}\n{file_tree}\n{criteria_guidance}',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'daytona',
+        }
+        # Listed BEFORE the list door: the fake matches by substring, in order.
+        fake = FakeUrlopen([('/api/checks/defaults', defaults), ('/api/checks', {})])
+        with patch('evolve._http.urlopen', fake):
+            got = await checks_factory(CONFIG).defaults()
+        assert fake.requests[0].full_url.endswith('/api/checks/defaults')
+        assert fake.requests[0].get_method() == 'GET'
+        assert got == defaults
 
     @pytest.mark.asyncio
     async def test_watch_polls_to_completed_and_reports_progress(self):

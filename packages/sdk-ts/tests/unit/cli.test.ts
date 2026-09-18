@@ -97,6 +97,10 @@ function buildMockResponse(resp: MockResponse): Response {
     headers: new Headers(resp.headers || {}),
     json: async () => resp.body,
     text: async () => resp.streamBody ?? JSON.stringify(resp.body),
+    arrayBuffer: async () => {
+      const bytes = resp.bodyBytes ?? Buffer.from(JSON.stringify(resp.body));
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    },
     body,
   } as unknown as Response;
 }
@@ -9231,6 +9235,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
     tag: "qa-round-7",
     agent: "claude",
     model: "claude-fable-5-1",
+    reasoningEffort: "high",
     provider: "daytona",
     sandboxId: "box-1",
     isEnded: true,
@@ -9324,7 +9329,15 @@ async function testSessionListAndShow() {
       "renders the four token counts of the one-home reading (B56)",
     );
     assert(text.includes("12"), "renders the step count");
+    assert(/^effort\s+high$/m.test(text), "renders the effort the session was started with, after the model (B181)");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
+
+    // A session without an effort (a harness that has none, or one ingested before the field) shows "-".
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession({ reasoningEffort: null }) });
+    const showNoEffort = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], showNoEffort.io);
+    assert(/^effort\s+-$/m.test(showNoEffort.out.join("\n")), "a null effort renders as -");
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession() });
 
     const showJson = captureIO();
     await runCli(["session", "show", "sess-1", "--json", ...AUTH], showJson.io);
@@ -9412,7 +9425,7 @@ async function testCheckVerb() {
     server.setReply(202, wireCheck());
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["check", taskDir, "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
+      ["check", taskDir, "--name", "nightly tb4", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
       io
     );
     assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
@@ -9425,8 +9438,8 @@ async function testCheckVerb() {
     const configJson = /name="config"\r\n\r\n([^\r]+)\r\n/.exec(body)?.[1] ?? "";
     assertEqual(
       JSON.parse(configJson),
-      { model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
-      "-m/-n/-i/-l ride the config part as model_name/n_concurrent/include_task_names/n_tasks"
+      { name: "nightly tb4", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
+      "--name/-m/-n/-i/-l ride the config part as name/model_name/n_concurrent/include_task_names/n_tasks"
     );
     assert(body.includes('filename="hello-world.tar.gz"'), "the archive is named by the directory");
     assert(out.some((l) => l.startsWith("check id") && l.includes("chk-1")), "prints the accepted check");
@@ -9466,6 +9479,140 @@ async function testCheckVerb() {
   } finally {
     await server.close();
     await rm(dir, { recursive: true, force: true });
+    restoreFetch();
+  }
+}
+
+async function testFilesVerbs() {
+  console.log("\n--- runCli: <noun> files … / logs / procs, dataset files …, --system-log, --stream filesystem ---");
+  installMockFetch();
+  try {
+    const listing = {
+      path: "/app/work",
+      source: "live",
+      entries: [
+        { name: "main.py", type: "file", size: 9, mtime: "2026-09-16T20:05:00.000Z", mode: "0644", owner: "root", changed: "created", phase: "agent", captured: null },
+        { name: "logs", type: "dir", size: 0, mtime: "2026-09-16T20:05:00.000Z", mode: "0755", owner: "root", changed: null, phase: null, captured: null },
+      ],
+      next_cursor: null,
+      ms: 3,
+    };
+    setMockResponse("/api/trials/run-1/filesystem/files/app/work/main.py", { status: 200, body: null, bodyBytes: Buffer.from("print(1)\n") });
+    setMockResponse("/api/trials/run-1/filesystem/files?", { status: 200, body: listing });
+    setMockResponse("/api/trials/run-1/filesystem/search", { status: 200, body: { hits: [{ path: "/app/work/main.py", line: 1, snippet: "print(1)" }], truncated: true, scope: "path", source: "live", ms: 5 } });
+    setMockResponse("/api/trials/run-1/filesystem/changes", { status: 200, body: { source: "capture", total: 1, changed_bytes: 9, items: [{ path: "/app/work/main.py", type: "file", changed: "created", phase: "agent", size: 9, mtime: "t" }], next_cursor: null } });
+    setMockResponse("/api/trials/run-1/filesystem/archive", { status: 200, body: null, bodyBytes: Buffer.from("tarbytes") });
+    setMockResponse("/api/trials/run-1/filesystem", { status: 200, body: { state: "captured", box: null, watcher: null, root: "/", work_dir: "/app", capture: { id: "c1", at: "t", phase: "after_verifier", entries: 10, changed_files: 1, changed_bytes: 9, status: "ready", left_out: [] } } });
+    setMockResponse("/api/trials/run-1/logs/events", { status: 200, body: null, streamBody: 'id: agent:2\nevent: line\ndata: {"stream":"agent","seq":2,"t":"t","fd":"out","line":"live line"}\n\n' });
+    setMockResponse("/api/trials/run-1/logs?", { status: 200, body: { stream: "agent", lines: [{ seq: 1, t: "t", fd: "out", line: "hi" }], next_cursor: null } });
+    setMockResponse("/api/trials/run-1/procs", { status: 200, body: { text: "PID CMD\n1 bash", ms: 4 } });
+    setMockResponse("/api/trials/run-1/trace?stream=filesystem", { status: 200, body: null, bodyBytes: Buffer.from("tarbytes") });
+    const last = () => fetchCalls[fetchCalls.length - 1];
+
+    const status = captureIO();
+    assertEqual(await runCli(["trial", "files", "status", "run-1", ...AUTH], status.io), 0, "trial files status exits 0");
+    assert(status.out[0].startsWith("state") && status.out[0].includes("captured"), "prints the state row");
+    const statusJson = captureIO();
+    await runCli(["trial", "files", "status", "run-1", "--json", ...AUTH], statusJson.io);
+    assertEqual(JSON.parse(statusJson.out[0]).state, "captured", "--json prints the wire shape");
+
+    const ls = captureIO();
+    assertEqual(await runCli(["trial", "files", "ls", "run-1", "/app/work", "--source", "live", ...AUTH], ls.io), 0, "trial files ls (the list alias) exits 0");
+    const lsUrl = new URL(last().url);
+    assertEqual(lsUrl.pathname, "/api/trials/run-1/filesystem/files", "ls targets filesystem/files");
+    assertEqual([lsUrl.searchParams.get("path"), lsUrl.searchParams.get("source")], ["/app/work", "live"], "the path and --source ride the query");
+    assert(ls.out[0].includes("main.py") && ls.out[0].includes("created (agent)"), "renders the entry with its change mark");
+    assert(ls.out[1].includes("logs/"), "a folder renders with a slash");
+    const lsJson = captureIO();
+    await runCli(["trial", "files", "list", "run-1", "--json", ...AUTH], lsJson.io);
+    assertEqual(JSON.parse(lsJson.out[0]).entries.length, 2, "--json prints the listing verbatim");
+
+    const cat = captureIO();
+    const bytes: Buffer[] = [];
+    cat.io.bytes = (b) => bytes.push(b);
+    assertEqual(await runCli(["trial", "files", "cat", "run-1", "/app/work/main.py", "--range", "bytes=0-3", ...AUTH], cat.io), 0, "trial files cat exits 0");
+    assertEqual(Buffer.concat(bytes).toString("utf8"), "print(1)\n", "cat writes the raw bytes");
+    assertEqual((last().init?.headers as Record<string, string>).Range, "bytes=0-3", "--range rides the Range header");
+    const catJson = captureIO();
+    await runCli(["trial", "files", "cat", "run-1", "/app/work/main.py", "--json", ...AUTH], catJson.io);
+    assertEqual(JSON.parse(catJson.out[0]).encoding, "base64", "--json carries the bytes as base64");
+    assertThrowsUsage(() => parseArgs(["trial", "files", "cat", "run-1"]), "requires", "cat needs a path");
+
+    const search = captureIO();
+    assertEqual(await runCli(["trial", "files", "search", "run-1", "print", "--path", "/app/work", "--regex", ...AUTH], search.io), 0, "trial files search exits 0");
+    const searchUrl = new URL(last().url);
+    assertEqual([searchUrl.searchParams.get("q"), searchUrl.searchParams.get("path"), searchUrl.searchParams.get("regex")], ["print", "/app/work", "true"], "search options ride the query");
+    assertEqual(search.out[0], "/app/work/main.py:1: print(1)", "renders path:line: snippet");
+    assert(search.out[1].includes("truncated"), "says when there was more");
+
+    const changes = captureIO();
+    assertEqual(await runCli(["trial", "files", "changes", "run-1", "--phase", "agent", ...AUTH], changes.io), 0, "trial files changes exits 0");
+    assertEqual(new URL(last().url).searchParams.get("phase"), "agent", "--phase rides the query");
+    assert(changes.out[0].startsWith("1 changed"), "renders the totals line");
+    assertThrowsUsage(() => parseArgs(["trial", "files", "changes", "run-1", "--phase"]), "requires a value", "--phase wants a value");
+
+    const dir = await mkdtemp(join(tmpdir(), "evolve-files-archive-"));
+    try {
+      const archive = captureIO();
+      assertEqual(await runCli(["trial", "files", "archive", "run-1", "--path", "/app/work", "-o", dir, ...AUTH], archive.io), 0, "trial files archive -o exits 0");
+      assert(archive.out[0].startsWith(dir), "prints the saved path");
+      assertEqual(await readFile(archive.out[0], "utf8"), "tarbytes", "saved the bytes");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+
+    const logs = captureIO();
+    assertEqual(await runCli(["trial", "logs", "run-1", "--stream", "agent", ...AUTH], logs.io), 0, "trial logs exits 0");
+    assertEqual(new URL(last().url).searchParams.get("stream"), "agent", "--stream rides the query");
+    assert(logs.out[0].endsWith("hi"), "renders the line");
+    const follow = captureIO();
+    assertEqual(await runCli(["trial", "logs", "run-1", "--stream", "agent", "--follow", "--json", ...AUTH], follow.io), 0, "trial logs --follow exits 0 when the stream ends");
+    assertEqual(JSON.parse(follow.out[0]).line, "live line", "--follow prints the streamed lines");
+    assertThrowsUsage(() => parseArgs(["trial", "logs", "run-1", "--stream"]), "requires a value", "--stream wants a value");
+    const badStream = captureIO();
+    assertEqual(await runCli(["trial", "logs", "run-1", "--stream", "kernel", ...AUTH], badStream.io), 2, "an unknown stream is a usage error");
+
+    const procs = captureIO();
+    assertEqual(await runCli(["trial", "procs", "run-1", "--json", ...AUTH], procs.io), 0, "trial procs exits 0");
+    assertEqual(JSON.parse(procs.out[0]).text, "PID CMD\n1 bash", "--json prints the listing");
+
+    // The other owners: the analysis prefix; the task check resolves its check.
+    setMockResponse("/api/analyses/an-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: { id: "tc-1", check_id: "chk-1", task_name: "t", status: "completed", checks: {}, label: null, executed: null, cost_usd: null, attempts: 1, failure: null, created_at: "t", finished_at: "t" } } });
+    setMockResponse("/api/checks/chk-1/tasks/tc-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
+    const an = captureIO();
+    assertEqual(await runCli(["analysis", "files", "status", "an-1", "--json", ...AUTH], an.io), 0, "analysis files status exits 0");
+    assert(last().url.endsWith("/api/analyses/an-1/filesystem"), "targets the analysis prefix");
+    const tc = captureIO();
+    assertEqual(await runCli(["check", "files", "status", "tc-1", "--json", ...AUTH], tc.io), 0, "check files status exits 0");
+    assert(last().url.endsWith("/api/checks/chk-1/tasks/tc-1/filesystem"), "resolves the task check's check and targets the pair");
+
+    // The task package owner.
+    setMockResponse("/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem/files?", { status: 200, body: { path: "/", source: "package", entries: [{ name: "task.toml", type: "file", size: 20, mtime: "t", mode: "0644", owner: "root", changed: null, phase: null, captured: true }], next_cursor: null, ms: 1 } });
+    const pkg = captureIO();
+    assertEqual(await runCli(["dataset", "files", "ls", "bench@1.0", "abs-1", "--json", ...AUTH], pkg.io), 0, "dataset files ls exits 0");
+    assert(last().url.includes("/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem/files"), "targets the task package prefix");
+    assertEqual(JSON.parse(pkg.out[0]).source, "package", "prints the package listing");
+    const unpinned = captureIO();
+    const callsBefore = fetchCalls.length;
+    assertEqual(await runCli(["dataset", "files", "status", "bench", "abs-1", "--json", ...AUTH], unpinned.io), 2, "dataset files with an unpinned ref is a usage error (exit 2)");
+    assert(unpinned.err[0].includes("name@version"), "the message says the ref must pin a version");
+    assertEqual(fetchCalls.length, callsBefore, "no network call on an unpinned ref");
+
+    // The job switch and the download selector.
+    const cfg = captureIO();
+    assertEqual(await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--system-log", "--print-config"], cfg.io), 0, "--system-log parses");
+    assertEqual(JSON.parse(cfg.out.join("\n")).system_log, true, "--system-log rides the body as system_log: true");
+    const bare = captureIO();
+    await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--print-config"], bare.io);
+    assertEqual("system_log" in JSON.parse(bare.out.join("\n")), false, "omitted, no system_log key rides");
+    const fsDownload = captureIO();
+    const tar: Buffer[] = [];
+    fsDownload.io.bytes = (b) => tar.push(b);
+    assertEqual(await runCli(["trial", "download", "run-1", "--stream", "filesystem", ...AUTH], fsDownload.io), 0, "trial download --stream filesystem exits 0");
+    assert(last().url.includes("/api/trials/run-1/filesystem/archive"), "the selector answers through the archive route");
+    assertEqual(Buffer.concat(tar).toString("utf8"), "tarbytes", "writes the archive bytes");
+  } finally {
     restoreFetch();
   }
 }
@@ -9515,6 +9662,50 @@ async function testCheckReadVerbs() {
     const quiet = captureIO();
     await runCli(["check", "list", "-q", ...AUTH], quiet.io);
     assertEqual(quiet.out, ["chk-1"], "-q prints only ids");
+    const byDataset = captureIO(false);
+    assertEqual(await runCli(["check", "list", "--dataset", "terminal-bench-4@4.0", ...AUTH], byDataset.io), 0, "list --dataset exits 0");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("dataset"), "terminal-bench-4@4.0", "--dataset rides the query verbatim");
+    await runCli(["check", "list", "-d", "terminal-bench-4", ...AUTH], captureIO(false).io);
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("dataset"), "terminal-bench-4", "-d is its short flag; a bare name is every version");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCheckShowDefaults() {
+  console.log("\n--- runCli: check --show-defaults prints the platform's check policy and exits without a source ---");
+  assertEqual(parseArgs(["check", "--show-defaults"]).flags["show-defaults"], true, "--show-defaults is a flag of the top-level verb");
+  installMockFetch();
+  try {
+    const defaults = {
+      model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+      rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
+      prompt: "Check the task at {task_path}\n{file_tree}\n{criteria_guidance}",
+      reasoning_effort: "high",
+      sandbox_provider: "daytona",
+    };
+    // Registered BEFORE the list/create door: the mock matches by substring, in order.
+    setMockResponse("/api/checks/defaults", { status: 200, body: defaults });
+    setMockResponse("/api/checks", { status: 202, body: wireCheck() });
+    const json = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", "--json", ...AUTH], json.io), 0, "--show-defaults --json exits 0 with no path and no -d");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).pathname, "/api/checks/defaults", "one GET on the defaults door, nothing created");
+    const parsed = JSON.parse(json.out[0]) as Record<string, unknown>;
+    assertEqual(parsed.prompt, defaults.prompt, "--json prints the wire object, the prompt template inside");
+    assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
+    const human = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
+    assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
+    assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
+    assert(human.out.some((l) => l.startsWith("rubric") && l.includes("2 criteria")), "the rubric row counts the criteria");
+    assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
+    assert(human.out.some((l) => l === "Check the task at {task_path}"), "the prompt template prints unrendered, line by line");
+    assert(human.out.some((l) => l.includes("pinned_dependencies")), "every criterion is named under RUBRIC");
+    const withPath = captureIO();
+    assertEqual(await runCli(["check", "./tasks", "--show-defaults", ...AUTH], withPath.io), 2, "--show-defaults with a <path> is a usage error");
+    assertEqual(await runCli(["check", "--show-defaults", "-d", "tb4", ...AUTH], captureIO().io), 2, "--show-defaults with -d is a usage error");
+    assertEqual(await runCli(["check", "--show-defaults", "--model", "x", "--watch", ...AUTH], captureIO().io), 2, "--show-defaults with a checker or output flag is a usage error, never silently ignored");
   } finally {
     restoreFetch();
   }
@@ -9634,6 +9825,8 @@ async function main() {
   await testAnalysisList();
   await testCheckVerb();
   await testCheckReadVerbs();
+  await testCheckShowDefaults();
+  await testFilesVerbs();
   await testSessionListAndShow();
 
   console.log(`\n${passed} passed, ${failed} failed`);

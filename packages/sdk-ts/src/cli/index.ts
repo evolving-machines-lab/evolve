@@ -39,6 +39,7 @@ import {
   EvolveApiError,
   ImportSettleError,
   JOB_LIST_SCOPES,
+  SANDBOX_LOG_STREAMS,
   TRIAL_ARTIFACT_STREAMS,
   TRIAL_STATUSES,
   agents,
@@ -64,6 +65,13 @@ import {
   trials,
 } from "../hosted/index";
 import type {
+  FilesystemEntry,
+  FilesystemSource,
+  FilesystemStatus,
+  RunFilesystem,
+  SandboxLogStream,
+  TaskPackageFiles,
+  TrialFileRange,
   Agent,
   AgentArm,
   AgentArmInput,
@@ -73,6 +81,7 @@ import type {
   AnalysisStatus,
   Check,
   CheckConfigInput,
+  CheckDefaults,
   CheckStatus,
   TaskCheck,
   AnalyzeConfigInput,
@@ -369,6 +378,7 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     default: "Harbor's non-retryable set",
     group: "Spend and retries",
   },
+  "system-log": { kind: "boolean", help: "Record the box's own system log stream beside agent and verifier (read it back with `trial logs --stream system`)", group: "Job" },
   analyze: { kind: "boolean", help: "Analyze each trial's trace against a rubric as it settles", group: "Analysis" },
   "analyze-model": {
     kind: "string",
@@ -770,7 +780,8 @@ const GROUPS: Record<string, GroupSpec> = {
             help:
               "Print one artifact to stdout instead: trace-parsed, verifier, trace-stdout, " +
               "trace-stderr, trace-atif (the ATIF trajectory), trajectory (reserved: the " +
-              "harness-native session file) or agent-home",
+              "harness-native session file), agent-home or filesystem (the run's file " +
+              "system as one .tar.gz, raw bytes)",
             group: "Stream",
           },
           cursor: { kind: "string", value: "<seq>", help: "With --stream trace-parsed: resume after this seq", group: "Stream" },
@@ -804,6 +815,96 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: Infinity,
         positionalUsage: "<trial-id> [trial-id...]",
         examples: ["evolve trial stop d1a10c4e d1a10f72"],
+      },
+      "files status": {
+        summary: "File system source: live, captured or none",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        examples: ["evolve trial files status d1a10c4e-…"],
+      },
+      "files list": {
+        summary: "List one folder of the file system (default /)",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Entries per page (default 500, max 1000)" },
+          cursor: { kind: "string", value: "<name>", help: "Resume after this entry name (the previous page's next_cursor)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 2,
+        positionalUsage: "<trial-id> [path]",
+        examples: ["evolve trial files ls d1a10c4e-… /app/work"],
+      },
+      "files cat": {
+        summary: "Print one file, raw bytes",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          range: { kind: "string", value: "<bytes=a-b>", help: "One byte range: bytes=a-b, bytes=a- or bytes=-n" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<trial-id> <path>",
+        examples: ["evolve trial files cat d1a10c4e-… /app/work/main.py"],
+      },
+      "files search": {
+        summary: "Search the trial's file system for text",
+        flags: {
+          path: { kind: "string", value: "<path>", help: "Folder to search under (default: /, the whole box — seconds)" },
+          regex: { kind: "boolean", help: "Treat the text as a regular expression" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Hit cap (default 200, max 1000)" },
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<trial-id> <text>",
+        examples: ["evolve trial files search d1a10c4e-… 'permission denied' --path /app/work"],
+      },
+      "files changes": {
+        summary: "Files created, modified or removed, by phase",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          phase: { kind: "string", value: "<setup|agent|verifier|all>", help: "Only one phase's changes (default all)" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Rows per page (default 500, max 1000)" },
+          cursor: { kind: "string", value: "<path>", help: "Resume after this path (the previous page's next_cursor)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        examples: ["evolve trial files changes d1a10c4e-… --phase agent"],
+      },
+      "files archive": {
+        summary: "Download one subtree as a .tar.gz",
+        flags: {
+          path: { kind: "string", value: "<path>", help: "Subtree to archive (default: /, the whole tree)" },
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Save the archive into this directory and print its path (default: raw bytes to stdout)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        examples: ["evolve trial files archive d1a10c4e-… --path /app/work -o archives/"],
+      },
+      logs: {
+        summary: "Read one sandbox log stream of the run",
+        flags: {
+          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | system (when the job asked for it); setup and metrics are named but not recorded today (required)" },
+          follow: { kind: "boolean", short: "f", help: "Keep printing lines as they arrive while the box lives" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Lines per page (default 1000, max 1000)" },
+          cursor: { kind: "string", value: "<seq>", help: "Resume after this line seq" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        examples: ["evolve trial logs d1a10c4e-… --stream agent --follow"],
+      },
+      procs: {
+        summary: "The trial's box process list (live only)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<trial-id>",
+        examples: ["evolve trial procs d1a10c4e-…"],
       },
     },
   },
@@ -869,6 +970,96 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<analysis-id | trial-id>",
         examples: ["evolve analysis download a0a1b2c3 -o analyses/", "evolve analysis download a0a1b2c3 --stream trace-stdout"],
       },
+      "files status": {
+        summary: "File system source: live, captured or none",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        examples: ["evolve analysis files status a0a1b2c3-…"],
+      },
+      "files list": {
+        summary: "List one folder of the file system (default /)",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Entries per page (default 500, max 1000)" },
+          cursor: { kind: "string", value: "<name>", help: "Resume after this entry name (the previous page's next_cursor)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 2,
+        positionalUsage: "<analysis-id> [path]",
+        examples: ["evolve analysis files ls a0a1b2c3-… /app/work"],
+      },
+      "files cat": {
+        summary: "Print one file, raw bytes",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          range: { kind: "string", value: "<bytes=a-b>", help: "One byte range: bytes=a-b, bytes=a- or bytes=-n" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<analysis-id> <path>",
+        examples: ["evolve analysis files cat a0a1b2c3-… /app/work/main.py"],
+      },
+      "files search": {
+        summary: "Search the analysis run's file system for text",
+        flags: {
+          path: { kind: "string", value: "<path>", help: "Folder to search under (default: /, the whole box — seconds)" },
+          regex: { kind: "boolean", help: "Treat the text as a regular expression" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Hit cap (default 200, max 1000)" },
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<analysis-id> <text>",
+        examples: ["evolve analysis files search a0a1b2c3-… 'permission denied' --path /app/work"],
+      },
+      "files changes": {
+        summary: "Files created, modified or removed, by phase",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          phase: { kind: "string", value: "<setup|agent|verifier|all>", help: "Only one phase's changes (default all)" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Rows per page (default 500, max 1000)" },
+          cursor: { kind: "string", value: "<path>", help: "Resume after this path (the previous page's next_cursor)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        examples: ["evolve analysis files changes a0a1b2c3-… --phase agent"],
+      },
+      "files archive": {
+        summary: "Download one subtree as a .tar.gz",
+        flags: {
+          path: { kind: "string", value: "<path>", help: "Subtree to archive (default: /, the whole tree)" },
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Save the archive into this directory and print its path (default: raw bytes to stdout)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        examples: ["evolve analysis files archive a0a1b2c3-… --path /app/work -o archives/"],
+      },
+      logs: {
+        summary: "Read one sandbox log stream of the run",
+        flags: {
+          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | system (when the job asked for it); setup and metrics are named but not recorded today (required)" },
+          follow: { kind: "boolean", short: "f", help: "Keep printing lines as they arrive while the box lives" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Lines per page (default 1000, max 1000)" },
+          cursor: { kind: "string", value: "<seq>", help: "Resume after this line seq" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        examples: ["evolve analysis logs a0a1b2c3-… --stream agent --follow"],
+      },
+      procs: {
+        summary: "The analysis run's box process list (live only)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<analysis-id>",
+        examples: ["evolve analysis procs a0a1b2c3-…"],
+      },
     },
   },
   // Task quality checks — the READ side of Harbor's `check`. The verb itself
@@ -892,10 +1083,17 @@ const GROUPS: Record<string, GroupSpec> = {
             help: `Only these statuses: ${CHECK_STATUSES.join(", ")}`,
             group: "Filter",
           },
+          dataset: {
+            kind: "string",
+            short: "d",
+            value: "<name[@version]>",
+            help: "Only checks on this dataset; a bare name is every version",
+            group: "Filter",
+          },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: ["evolve check list", "evolve check list --status running"],
+        examples: ["evolve check list", "evolve check list --status running", "evolve check list --dataset terminal-bench-4@4.0"],
       },
       show: {
         summary: "Show one check: Harbor's check report, one row per task",
@@ -936,6 +1134,96 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<check-id | task-check-id>",
         examples: ["evolve check download 3f9a1c2e -o checks/", "evolve check download 7c1d2e3f --stream trace-stdout"],
+      },
+      "files status": {
+        summary: "File system source: live, captured or none",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<task-check-id>",
+        examples: ["evolve check files status 3f9a1c2e-…"],
+      },
+      "files list": {
+        summary: "List one folder of the file system (default /)",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Entries per page (default 500, max 1000)" },
+          cursor: { kind: "string", value: "<name>", help: "Resume after this entry name (the previous page's next_cursor)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 2,
+        positionalUsage: "<task-check-id> [path]",
+        examples: ["evolve check files ls 3f9a1c2e-… /app/work"],
+      },
+      "files cat": {
+        summary: "Print one file, raw bytes",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          range: { kind: "string", value: "<bytes=a-b>", help: "One byte range: bytes=a-b, bytes=a- or bytes=-n" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<task-check-id> <path>",
+        examples: ["evolve check files cat 3f9a1c2e-… /app/work/main.py"],
+      },
+      "files search": {
+        summary: "Search the task check's file system for text",
+        flags: {
+          path: { kind: "string", value: "<path>", help: "Folder to search under (default: /, the whole box — seconds)" },
+          regex: { kind: "boolean", help: "Treat the text as a regular expression" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Hit cap (default 200, max 1000)" },
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+        },
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<task-check-id> <text>",
+        examples: ["evolve check files search 3f9a1c2e-… 'permission denied' --path /app/work"],
+      },
+      "files changes": {
+        summary: "Files created, modified or removed, by phase",
+        flags: {
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          phase: { kind: "string", value: "<setup|agent|verifier|all>", help: "Only one phase's changes (default all)" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Rows per page (default 500, max 1000)" },
+          cursor: { kind: "string", value: "<path>", help: "Resume after this path (the previous page's next_cursor)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<task-check-id>",
+        examples: ["evolve check files changes 3f9a1c2e-… --phase agent"],
+      },
+      "files archive": {
+        summary: "Download one subtree as a .tar.gz",
+        flags: {
+          path: { kind: "string", value: "<path>", help: "Subtree to archive (default: /, the whole tree)" },
+          source: { kind: "string", value: "<live|capture>", help: "Read the running box (live) or the kept tree (capture); default: whichever the run has" },
+          "output-dir": { kind: "string", short: "o", value: "<dir>", help: "Save the archive into this directory and print its path (default: raw bytes to stdout)" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<task-check-id>",
+        examples: ["evolve check files archive 3f9a1c2e-… --path /app/work -o archives/"],
+      },
+      logs: {
+        summary: "Read one sandbox log stream of the run",
+        flags: {
+          stream: { kind: "string", value: "<name>", help: "Which stream: agent | verifier | system (when the job asked for it); setup and metrics are named but not recorded today (required)" },
+          follow: { kind: "boolean", short: "f", help: "Keep printing lines as they arrive while the box lives" },
+          limit: { kind: "number", short: "l", value: "<n>", help: "Lines per page (default 1000, max 1000)" },
+          cursor: { kind: "string", value: "<seq>", help: "Resume after this line seq" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<task-check-id>",
+        examples: ["evolve check logs 3f9a1c2e-… --stream agent --follow"],
+      },
+      procs: {
+        summary: "The task check's box process list (live only)",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<task-check-id>",
+        examples: ["evolve check procs 3f9a1c2e-…"],
       },
     },
   },
@@ -1056,6 +1344,35 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 2,
         positionalUsage: "<name> <version>",
         examples: ["evolve dataset activate my-swe 1.0"],
+      },
+      "files status": {
+        summary: "The task package's file record",
+        flags: {},
+        minPositionals: 2,
+        maxPositionals: 2,
+        positionalUsage: "<name@version> <task>",
+        examples: ["evolve dataset files status my-swe@1.0 abs-1"],
+      },
+      "files list": {
+        summary: "List one folder of the task package (default /)",
+        flags: {
+          limit: { kind: "number", short: "l", value: "<n>", help: "Entries per page (default 500, max 1000)" },
+          cursor: { kind: "string", value: "<name>", help: "Resume after this entry name (the previous page's next_cursor)" },
+        },
+        minPositionals: 2,
+        maxPositionals: 3,
+        positionalUsage: "<name@version> <task> [path]",
+        examples: ["evolve dataset files ls my-swe@1.0 abs-1 /tests"],
+      },
+      "files cat": {
+        summary: "Print one file of the task's package, raw bytes",
+        flags: {
+          range: { kind: "string", value: "<bytes=a-b>", help: "One byte range: bytes=a-b, bytes=a- or bytes=-n" },
+        },
+        minPositionals: 3,
+        maxPositionals: 3,
+        positionalUsage: "<name@version> <task> <path>",
+        examples: ["evolve dataset files cat my-swe@1.0 abs-1 /instruction.md"],
       },
     },
   },
@@ -1388,6 +1705,12 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       "Checks a local task directory, a directory of them, or with -d a published dataset. " +
       "Results are read back with the verbs below.",
     flags: {
+      name: {
+        kind: "string",
+        value: "<name>",
+        help: "A name for the check; default: the accept timestamp",
+        group: "Checker",
+      },
       model: {
         kind: "string",
         short: "m",
@@ -1424,6 +1747,11 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         value: "<provider>",
         help: "Sandbox provider the checker runs on",
         default: "the analysis default",
+        group: "Checker",
+      },
+      "show-defaults": {
+        kind: "boolean",
+        help: "Print the built-in prompt, rubric, model, effort and provider, then exit",
         group: "Checker",
       },
       "n-concurrent": {
@@ -1470,8 +1798,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     positionalUsage: "[<path>]",
     examples: [
       "evolve check ./tasks --watch",
-      "evolve check ./tasks -i 'abs-*' -l 5 --watch",
-      "evolve check -d terminal-bench-4@4.0 -l 10 --watch",
+      "evolve check -d terminal-bench-4@4.0 -i 'abs-*' -l 10 --watch",
+      "evolve check --show-defaults",
     ],
   },
   // Harbor's `upload` is a top-level command too (their cli/upload.py bound in
@@ -3011,6 +3339,7 @@ export function buildJobInput(
     ...(provider !== undefined ? { sandbox_provider: provider } : {}),
     ...(Object.keys(retry).length > 0 ? { retry } : {}),
     ...(analyzeArmed ? { analyze } : {}),
+    ...(f["system-log"] === true || base.system_log === true ? { system_log: true } : {}),
     ...timeoutMultipliers,
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
@@ -3149,6 +3478,8 @@ export function buildAgentInput(
 export interface CliIO {
   out(line: string): void;
   err(line: string): void;
+  /** Raw bytes to stdout (an archive piped to a file); absent = process.stdout. */
+  bytes?(buffer: Buffer): void;
   /**
    * True when stdout is an interactive terminal. Drives the table-vs-TSV
    * split on list commands; TERM=dumb counts as non-interactive. Defaults to
@@ -5340,6 +5671,23 @@ export function checkDetailLines(check: Check): string[] {
   return [...table(rows), "", ...checkResultLines(check)];
 }
 
+/** `check --show-defaults`: the policy head as `check show` prints it, then the prompt template and every criterion in full. */
+function checkDefaultsLines(defaults: CheckDefaults): string[] {
+  const criteria = defaults.rubric.criteria.length;
+  const lines = table([
+    ["model", defaults.model_name],
+    ["effort", defaults.reasoning_effort],
+    ["provider", defaults.sandbox_provider],
+    ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
+  ]);
+  lines.push("", "PROMPT", ...defaults.prompt.split("\n"), "", "RUBRIC");
+  for (const criterion of defaults.rubric.criteria) {
+    lines.push(`${criterion.name}: ${criterion.description}`);
+    if (criterion.guidance) lines.push(`  ${criterion.guidance}`);
+  }
+  return lines;
+}
+
 /**
  * `evolve check <path>` — Harbor's `harbor check <PATH>` (their cli/main.py:163;
  * check_command cli/analyze.py:84-207) as the hosted verb: the directory
@@ -5355,7 +5703,25 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   const client = checks(clientConfig(inv));
+  if (inv.flags["show-defaults"] === true) {
+    // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
+    const stray = Object.keys(inv.flags).filter((k) => !["show-defaults", "json", "api-key", "base-url"].includes(k));
+    if (inv.positionals[0] !== undefined || stray.length > 0) {
+      throw new CliUsageError(
+        "--show-defaults prints the platform's check defaults and takes no <path> and no other check flag" +
+          (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
+      );
+    }
+    const defaults = await client.defaults();
+    if (json) {
+      io.out(JSON.stringify(defaults));
+    } else {
+      for (const line of checkDefaultsLines(defaults)) io.out(line);
+    }
+    return 0;
+  }
   const knobs: CheckConfigInput = {};
+  if (inv.flags.name !== undefined) knobs.name = String(inv.flags.name);
   if (inv.flags.model !== undefined) knobs.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) knobs.rubric = loadRubricFile(String(inv.flags.rubric));
   if (inv.flags.prompt !== undefined) knobs.prompt = loadPromptFile(String(inv.flags.prompt));
@@ -5441,10 +5807,12 @@ async function cmdCheckList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, CHECK_COLUMNS)) return 0;
   const scope = parseScopeFlag(inv);
   const status = parseCheckStatusFilter(inv);
+  const dataset = inv.flags.dataset as string | undefined;
   const page = await checks(clientConfig(inv)).list({
     ...pageOptions(inv),
     ...(scope !== undefined ? { scope } : {}),
     ...(status !== undefined ? { status } : {}),
+    ...(dataset !== undefined ? { dataset } : {}),
   });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
@@ -6203,12 +6571,23 @@ async function cmdTrialDownload(inv: Invocation, io: CliIO): Promise<number> {
       }
       return 0;
     }
+    if (stream === "filesystem") {
+      // The run's file system as one .tar.gz — binary, so it goes to stdout
+      // as bytes (`> run.tar.gz`), never through the line printer.
+      const bytes = await client.filesystem(trialId).archive();
+      if (json) {
+        io.out(JSON.stringify({ stream: "filesystem", bytes: bytes.length, encoding: "base64", data: bytes.toString("base64") }));
+      } else {
+        (io.bytes ?? ((buffer: Buffer) => process.stdout.write(buffer)))(bytes);
+      }
+      return 0;
+    }
     // Log-shaped selectors, "trace-atif" included — the normalized ATIF
     // document rides the same {log} envelope as the raw logs. "trajectory"
     // (the reserved harness-native session file) is in the vocabulary ahead
     // of its server wave: the server refuses it not-found, and the refusal
     // surfaces as the API error it is.
-    const log = await client.artifact(trialId, stream as Exclude<StreamArtifact, "trace-parsed" | "agent-home">);
+    const log = await client.artifact(trialId, stream as Exclude<StreamArtifact, "trace-parsed" | "agent-home" | "filesystem">);
     if (log === null) {
       io.out(json ? JSON.stringify({ log: null }) : `No ${stream} log was stored for this trial.`);
       return 0;
@@ -6349,6 +6728,219 @@ async function cmdTrialRegrade(inv: Invocation, io: CliIO): Promise<number> {
   }
   return 0;
 }
+
+// ===== THE RUN'S FILE SYSTEM + SANDBOX LOGS — `<noun> files …`, `<noun> logs`, `<noun> procs`, `dataset files …` =====
+
+/** The reads every owner answers; the task package answers the first three only. */
+type FilesReader = Pick<RunFilesystem, "status" | "list" | "read"> & Partial<Pick<RunFilesystem, "search" | "changes" | "archive" | "logs" | "logEvents" | "procs">>;
+
+type FilesTarget = { fs: FilesReader; label: string; pathAt: number };
+
+async function trialFiles(inv: Invocation): Promise<FilesTarget> {
+  const id = await resolveId(inv, "trial", inv.positionals[0]);
+  return { fs: trials(clientConfig(inv)).filesystem(id), label: id, pathAt: 1 };
+}
+
+async function analysisFiles(inv: Invocation): Promise<FilesTarget> {
+  const id = await resolveId(inv, "analysis", inv.positionals[0]);
+  return { fs: analyses(clientConfig(inv)).filesystem(id), label: id, pathAt: 1 };
+}
+
+async function checkFiles(inv: Invocation): Promise<FilesTarget> {
+  // The wire wants the (check, task check) pair; the task check knows its check.
+  const id = await resolveId(inv, "task check", inv.positionals[0]);
+  const client = checks(clientConfig(inv));
+  const task = await client.task(id);
+  return { fs: client.taskFilesystem(task.check_id, id), label: id, pathAt: 1 };
+}
+
+async function datasetFiles(inv: Invocation): Promise<FilesTarget> {
+  const [ref, taskName] = inv.positionals;
+  const client = datasets(clientConfig(inv));
+  let fs: TaskPackageFiles;
+  try {
+    fs = client.taskFiles(ref, taskName);
+  } catch (error) {
+    // The SDK refuses a ref that pins no version before any request; at the keyboard that is a usage error.
+    throw new CliUsageError(error instanceof Error ? error.message : String(error));
+  }
+  return { fs, label: `${ref}/${taskName}`, pathAt: 2 };
+}
+
+function fsSource(inv: Invocation): FilesystemSource | undefined {
+  const raw = inv.flags.source;
+  if (raw === undefined) return undefined;
+  if (raw !== "live" && raw !== "capture") throw new CliUsageError("--source must be live or capture");
+  return raw;
+}
+
+function writeBytes(io: CliIO, bytes: Buffer): void {
+  (io.bytes ?? ((buffer: Buffer) => process.stdout.write(buffer)))(bytes);
+}
+
+function fsStatusLines(status: FilesystemStatus): string[] {
+  const rows: string[][] = [
+    ["state", status.state],
+    ["box", status.box ? `${status.box.provider} ${status.box.id} (${status.box.role}, since ${status.box.since})` : "-"],
+    ["watcher", status.watcher ?? "-"],
+    ["work dir", status.work_dir],
+  ];
+  if (status.capture) {
+    const c = status.capture;
+    rows.push(["capture", `${c.status} · ${c.phase} · ${c.entries} entries · ${c.changed_files} changed (${fmtBytes(c.changed_bytes)}) · ${c.at}`]);
+    if (c.left_out.length > 0) rows.push(["left out", c.left_out.join(", ")]);
+  }
+  return rows.map(([k, v]) => `${k.padEnd(10)} ${v}`);
+}
+
+function fsEntryLine(entry: FilesystemEntry): string {
+  const marks = [entry.changed ? `${entry.changed}${entry.phase ? ` (${entry.phase})` : ""}` : "", entry.captured === false ? "image only" : ""]
+    .filter(Boolean)
+    .join(", ");
+  const name = entry.type === "dir" ? `${entry.name}/` : entry.target ? `${entry.name} -> ${entry.target}` : entry.name;
+  return `${entry.type.padEnd(7)} ${entry.mode.padEnd(5)} ${fmtBytes(entry.size).padStart(8)}  ${entry.mtime}  ${name}${marks ? `  [${marks}]` : ""}`;
+}
+
+function filesVerbs(open: (inv: Invocation) => Promise<FilesTarget>): Record<string, (inv: Invocation, io: CliIO) => Promise<number>> {
+  const json = (inv: Invocation) => inv.flags.json === true;
+  return {
+    async status(inv, io) {
+      const { fs } = await open(inv);
+      const status = await fs.status();
+      if (json(inv)) io.out(JSON.stringify(status));
+      else for (const line of fsStatusLines(status)) io.out(line);
+      return 0;
+    },
+    async list(inv, io) {
+      const { fs, pathAt } = await open(inv);
+      const listing = await fs.list({
+        path: inv.positionals[pathAt] ?? "/",
+        source: fsSource(inv),
+        ...pageOptions(inv),
+      });
+      if (json(inv)) {
+        io.out(JSON.stringify(listing));
+        return 0;
+      }
+      for (const entry of listing.entries) io.out(fsEntryLine(entry));
+      if (listing.entries.length === 0) io.out(`(empty) ${listing.path}`);
+      if (listing.next_cursor !== null) io.out(`… more: --cursor ${listing.next_cursor}`);
+      return 0;
+    },
+    async cat(inv, io) {
+      const { fs, pathAt } = await open(inv);
+      const path = inv.positionals[pathAt];
+      if (path === undefined) throw new CliUsageError("cat needs a <path>");
+      const range = inv.flags.range !== undefined ? parseRangeFlag(String(inv.flags.range)) : undefined;
+      const bytes = await fs.read(path, { source: fsSource(inv), range });
+      if (json(inv)) io.out(JSON.stringify({ path, bytes: bytes.length, encoding: "base64", data: bytes.toString("base64") }));
+      else writeBytes(io, bytes);
+      return 0;
+    },
+    async search(inv, io) {
+      const { fs, pathAt } = await open(inv);
+      if (!fs.search) throw new CliUsageError("this owner has no search");
+      const q = inv.positionals[pathAt];
+      if (q === undefined) throw new CliUsageError("search needs the text to find");
+      const result = await fs.search({
+        q,
+        path: inv.flags.path !== undefined ? String(inv.flags.path) : undefined,
+        regex: inv.flags.regex === true,
+        limit: inv.flags.limit !== undefined ? (inv.flags.limit as number) : undefined,
+        source: fsSource(inv),
+      });
+      if (json(inv)) {
+        io.out(JSON.stringify(result));
+        return 0;
+      }
+      for (const hit of result.hits) io.out(`${hit.path}:${hit.line}: ${hit.snippet}`);
+      if (result.hits.length === 0) io.out("No hits.");
+      if (result.truncated) io.out("(truncated — narrow the path or the text)");
+      if (result.image_files_excluded) io.out("(files the run never touched were not searched)");
+      return 0;
+    },
+    async changes(inv, io) {
+      const { fs } = await open(inv);
+      if (!fs.changes) throw new CliUsageError("this owner has no change list");
+      const phase = inv.flags.phase !== undefined ? String(inv.flags.phase) : undefined;
+      if (phase !== undefined && !["setup", "agent", "verifier", "all"].includes(phase)) {
+        throw new CliUsageError("--phase must be setup, agent, verifier or all");
+      }
+      const page = await fs.changes({ source: fsSource(inv), phase: phase as "setup" | "agent" | "verifier" | "all" | undefined, ...pageOptions(inv) });
+      if (json(inv)) {
+        io.out(JSON.stringify(page));
+        return 0;
+      }
+      io.out(`${page.total} changed (${fmtBytes(page.changed_bytes)}), ${page.source}`);
+      for (const item of page.items) io.out(`${item.changed.padEnd(8)} ${item.phase.padEnd(8)} ${fmtBytes(item.size).padStart(8)}  ${item.path}`);
+      if (page.next_cursor !== null) io.out(`… more: --cursor ${page.next_cursor}`);
+      return 0;
+    },
+    async archive(inv, io) {
+      const { fs, label } = await open(inv);
+      if (!fs.archive) throw new CliUsageError("this owner has no archive");
+      const options = { path: inv.flags.path !== undefined ? String(inv.flags.path) : undefined, source: fsSource(inv) };
+      const dir = inv.flags["output-dir"];
+      if (dir !== undefined) {
+        const saved = await fs.archive({ ...options, to: String(dir) });
+        io.out(json(inv) ? JSON.stringify({ saved }) : saved);
+        return 0;
+      }
+      const bytes = await fs.archive(options);
+      if (json(inv)) io.out(JSON.stringify({ label, bytes: bytes.length, encoding: "base64", data: bytes.toString("base64") }));
+      else writeBytes(io, bytes);
+      return 0;
+    },
+    async logs(inv, io) {
+      const { fs } = await open(inv);
+      if (!fs.logs || !fs.logEvents) throw new CliUsageError("this owner has no sandbox logs");
+      const stream = String(inv.flags.stream ?? "");
+      if (!(SANDBOX_LOG_STREAMS as readonly string[]).includes(stream)) {
+        throw new CliUsageError(`--stream must be one of: ${SANDBOX_LOG_STREAMS.join(", ")}`);
+      }
+      const emit = (item: Record<string, unknown>) => {
+        if (json(inv)) io.out(JSON.stringify(item));
+        else io.out(`${item.t ?? "-"} ${item.fd === "err" ? "!" : " "} ${item.line}`);
+      };
+      if (inv.flags.follow === true) {
+        const cursor = inv.flags.cursor !== undefined ? `${stream}:${inv.flags.cursor}` : undefined;
+        for await (const frame of fs.logEvents({ lastEventId: cursor })) {
+          if (frame.event === "line" && frame.data.stream === stream) emit(frame.data as unknown as Record<string, unknown>);
+        }
+        return 0;
+      }
+      const page = await fs.logs({ stream: stream as SandboxLogStream, ...pageOptions(inv) });
+      if (json(inv)) {
+        io.out(JSON.stringify(page));
+        return 0;
+      }
+      for (const item of page.lines) emit(item as unknown as Record<string, unknown>);
+      if (page.lines.length === 0) io.out("No lines.");
+      if (page.next_cursor !== null) io.out(`… more: --cursor ${page.next_cursor}`);
+      return 0;
+    },
+    async procs(inv, io) {
+      const { fs } = await open(inv);
+      if (!fs.procs) throw new CliUsageError("this owner has no process list");
+      const procs = await fs.procs();
+      io.out(json(inv) ? JSON.stringify(procs) : procs.text);
+      return 0;
+    },
+  };
+}
+
+/** `--range bytes=a-b` / `bytes=a-` / `bytes=-n` → the SDK's range object. */
+function parseRangeFlag(raw: string): TrialFileRange {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(raw.trim());
+  if (!match || (match[1] === "" && match[2] === "")) throw new CliUsageError("--range must be bytes=start-end, bytes=start- or bytes=-suffix");
+  if (match[1] === "") return { suffix: Number(match[2]) };
+  return match[2] === "" ? { start: Number(match[1]) } : { start: Number(match[1]), end: Number(match[2]) };
+}
+
+const TRIAL_FILES = filesVerbs(trialFiles);
+const ANALYSIS_FILES = filesVerbs(analysisFiles);
+const CHECK_FILES = filesVerbs(checkFiles);
+const DATASET_FILES = filesVerbs(datasetFiles);
 
 async function cmdTrialStop(inv: Invocation, io: CliIO): Promise<number> {
   const client = trials(clientConfig(inv));
@@ -7460,6 +8052,7 @@ function sessionDetailLines(s: SessionInfo): string[] {
     ["tag", s.tag],
     ["agent", s.agent],
     ["model", s.model ?? "-"],
+    ["effort", s.reasoningEffort ?? "-"],
     ["provider", s.provider],
     ["sandbox", s.sandboxId ?? "-"],
     ["state", s.state],
@@ -7912,14 +8505,38 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "trial retry": cmdTrialRetry,
   "trial regrade": cmdTrialRegrade,
   "trial stop": cmdTrialStop,
+  "trial files status": TRIAL_FILES.status,
+  "trial files list": TRIAL_FILES.list,
+  "trial files cat": TRIAL_FILES.cat,
+  "trial files search": TRIAL_FILES.search,
+  "trial files changes": TRIAL_FILES.changes,
+  "trial files archive": TRIAL_FILES.archive,
+  "trial logs": TRIAL_FILES.logs,
+  "trial procs": TRIAL_FILES.procs,
   "analysis list": cmdAnalysisList,
   "analysis show": cmdAnalysisShow,
   "analysis trace": cmdAnalysisTrace,
   "analysis download": cmdAnalysisDownload,
+  "analysis files status": ANALYSIS_FILES.status,
+  "analysis files list": ANALYSIS_FILES.list,
+  "analysis files cat": ANALYSIS_FILES.cat,
+  "analysis files search": ANALYSIS_FILES.search,
+  "analysis files changes": ANALYSIS_FILES.changes,
+  "analysis files archive": ANALYSIS_FILES.archive,
+  "analysis logs": ANALYSIS_FILES.logs,
+  "analysis procs": ANALYSIS_FILES.procs,
   "check list": cmdCheckList,
   "check show": cmdCheckShow,
   "check trace": cmdCheckTrace,
   "check download": cmdCheckDownload,
+  "check files status": CHECK_FILES.status,
+  "check files list": CHECK_FILES.list,
+  "check files cat": CHECK_FILES.cat,
+  "check files search": CHECK_FILES.search,
+  "check files changes": CHECK_FILES.changes,
+  "check files archive": CHECK_FILES.archive,
+  "check logs": CHECK_FILES.logs,
+  "check procs": CHECK_FILES.procs,
   "session list": cmdSessionList,
   "session show": cmdSessionShow,
   "dataset list": cmdDatasetList,
@@ -7929,6 +8546,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "dataset watch": cmdDatasetWatch,
   "dataset download": cmdDatasetDownload,
   "dataset activate": cmdDatasetActivate,
+  "dataset files status": DATASET_FILES.status,
+  "dataset files list": DATASET_FILES.list,
+  "dataset files cat": DATASET_FILES.cat,
   "skill list": cmdSkillList,
   "skill upload": cmdSkillUpload,
   "skill show": cmdSkillShow,

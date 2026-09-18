@@ -143,6 +143,12 @@ Each of these applies to every arm of the job.
   Reasoning effort the analyzer runs at. Defaults to the per-model default: `high` on `openrouter/deepseek/deepseek-v4.1-flash`, `max` on `glm-5.3-flash`. Implies `--analyze`.
 </ParamField>
 
+## Sandbox logs
+
+<ParamField path="--system-log">
+  Record the box's own system log beside the streams every run keeps (`agent`, `verifier`). Read it back with `evolve trial logs --stream system`. Off by default.
+</ParamField>
+
 ## Timeouts
 
 <ParamField path="--timeout-multiplier" type="x" default="1.0">

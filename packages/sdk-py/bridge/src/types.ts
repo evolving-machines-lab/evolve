@@ -457,6 +457,7 @@ export interface SessionInfoResponse {
   tag: string;
   agent: string;
   model: string | null;
+  reasoning_effort: string | null;
   provider: string;
   sandbox_id: string | null;
   state: 'live' | 'ended';
@@ -547,4 +548,86 @@ export interface EventCallbacks {
   onStderr?: (data: string) => void;
   onContent?: (event: any) => void;
   onLifecycle?: (event: any) => void;
+  /** One filesystem change from a sandbox watch (sandbox_watch_dir). */
+  onFsEvent?: (event: { watch_id: string; path: string; event: string }) => void;
+}
+
+// =============================================================================
+// SANDBOX OBSERVATION (inspect-only attach; files.list / stat / readRange /
+// watchDir; metrics) — the Python mirror of the provider surface
+// =============================================================================
+
+export interface SandboxInspectParams {
+  sandbox_id: string;
+  /** The OS user the reads run as; omitted → the provider's default. */
+  user?: string;
+}
+
+export interface SandboxHandleParams {
+  /** The view handle returned by sandbox_inspect. */
+  handle: string;
+}
+
+export interface SandboxPathParams extends SandboxHandleParams {
+  path: string;
+}
+
+export interface SandboxReadRangeParams extends SandboxPathParams {
+  offset: number;
+  length: number;
+}
+
+export interface SandboxWatchDirParams extends SandboxPathParams {
+  recursive?: boolean;
+}
+
+export interface SandboxWatchStopParams {
+  watch_id: string;
+}
+
+/** The SDK's FileInfo, field for field (every name is one word, so no case change). */
+export interface FileInfoResponse {
+  name: string;
+  path: string;
+  type: 'file' | 'dir' | 'symlink' | 'other';
+  size: number;
+  mtime: string;
+  mode: string;
+  owner: string;
+  group: string;
+  target?: string;
+}
+
+export interface SandboxInspectResponse {
+  handle: string;
+  sandbox_id: string;
+}
+
+export interface SandboxFilesListResponse {
+  entries: FileInfoResponse[];
+}
+
+export interface SandboxFilesStatResponse {
+  entry: FileInfoResponse;
+}
+
+export interface SandboxReadRangeResponse {
+  /** The exact bytes, base64 for the JSON frame. */
+  data_base64: string;
+}
+
+export interface SandboxWatchDirResponse {
+  watch_id: string;
+}
+
+/** The SDK's SandboxMetrics in snake_case; null while the provider has no sample yet. */
+export interface SandboxMetricsResponse {
+  metrics: {
+    cpu_pct: number;
+    mem_used_mb: number;
+    mem_total_mb: number;
+    disk_used_mb?: number;
+    sampled_at: string;
+    source: string;
+  } | null;
 }

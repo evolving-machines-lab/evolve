@@ -393,6 +393,63 @@ await evolve.run({ prompt: 'Compare results' });  // Back to sandbox A
 
 ---
 
+## Sandbox Observation
+
+Look at a running sandbox without touching it: list its files, read a slice of a file, follow changes, and read its resource usage. `inspect()` attaches to an existing sandbox for reads only — it never starts a stopped sandbox, never resumes a paused one, and never extends its lifetime. One exception: on Modal, reads count as activity for a sandbox's idle timeout (see the caveats below). A sandbox that is not running is refused with `SandboxNotRunningError`, which names its state.
+
+```ts
+import { createE2BProvider, resolveDefaultSandbox } from "@evolvingmachines/evolve";
+
+const provider = createE2BProvider();  // or await resolveDefaultSandbox(): the provider your runs get when you pass none
+const sandbox = await provider.inspect("sandbox-id", { user: "root" });  // user: (optional) the OS user the reads run as
+
+// The entries of a directory (not recursive) — the same shape on every provider
+const entries = await sandbox.files.list("/app");
+// [{ name, path, type, size, mtime, mode, owner, group, target? }]
+//   type:   "file" | "dir" | "symlink" | "other"
+//   mtime:  ISO 8601            mode: four octal digits, e.g. "0644"
+//   target: the link's target, only on a symlink (a symlink is never followed)
+
+// One entry
+const log = await sandbox.files.stat("/app/run.log");
+
+// Exactly the bytes you ask for — the last 64 KiB of a large log, without moving the whole file
+const tail = await sandbox.files.readRange("/app/run.log", { offset: log.size - 65536, length: 65536 });
+
+// Follow changes under a directory until you stop
+const watch = await sandbox.files.watchDir("/app", (event) => {
+  console.log(event.type, event.path);  // "create" | "write" | "remove" | "rename", absolute path
+}, { recursive: true });
+await watch.stop();
+
+// Resource usage: CPU %, memory and disk in MiB, the sample's own timestamp and its source
+const usage = await sandbox.metrics();  // null while the provider has no sample yet
+```
+
+- A range that reaches the end of the file returns fewer bytes (or none); a range with `length: 0` returns none.
+- A missing path throws `SandboxPathNotFoundError` (`path`, `provider`).
+- A `rename` event names the old path or the new one, whichever the sandbox reported — relist the parent directory when you see one.
+
+A long-running reader — `tail -F` on a log — is a background process started with `stdin: false` and stopped with `kill()`:
+
+```ts
+const reader = await sandbox.commands.spawn("tail -F /app/run.log", {
+  stdin: false,                                        // the reader takes no input; this is what makes kill() work everywhere
+  onStdout: (chunk) => process.stdout.write(chunk),
+});
+// ...
+await reader.kill();
+```
+
+**Provider caveats:**
+- **E2B** — `list()` leaves out a fifo, a socket and a symlink whose target is missing (`stat()` still reads each), and a symlink's `size` is its target's. `list()` and `stat()` need a template built with envd 0.2.5 or later (July 2025); an older template gets `SandboxFeatureUnsupportedError` naming its envd version.
+- **Daytona** — `watchDir()` is refused with `SandboxFeatureUnsupportedError`; poll `files.list()` on the directories you have open. `list()` and `stat()` need GNU `find` in the image (every Debian and Ubuntu image has it); an image without it gets the same typed refusal.
+- **Modal** — `metrics()` is refused with `SandboxFeatureUnsupportedError` (Modal reports no usage figures for a sandbox). Reads count as activity: a sandbox created with an idle timeout (`idleTimeoutMs`) stays alive while you `list()`, `stat()`, `readRange()` or hold a `watchDir()` open, and a stopped watch keeps it alive until the next change under the watched path; a sandbox with only a lifetime (`timeoutMs`) is unaffected. A stopped watch stops delivering at once; the sandbox lets go of it at the next change under the watched path. `kill()` works for processes spawned with `stdin: false`; any other spawn's `kill()` is a typed refusal.
+
+Every refusal is typed and carries its facts: `SandboxFeatureUnsupportedError` (`feature`, `provider`, `reason`), `SandboxPathNotFoundError` (`path`, `provider`), `SandboxNotRunningError` (`sandboxId`, `provider`, `state`). Recognise one with `isSandboxFeatureUnsupportedError(err)`, `isSandboxPathNotFoundError(err)` or `isSandboxNotRunningError(err)` — they work whichever package threw it.
+
+---
+
 ## Storage & Checkpointing
 
 > **Gateway feature** — requires `EVOLVE_API_KEY`. Storage is fully managed by Evolve; no S3 buckets or AWS credentials needed.
@@ -730,7 +787,7 @@ const replay = await session.browserReplay(info.id);
 ```
 
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
-- `get()` returns `SessionInfo` with `sandboxId`, `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
+- `get()` returns `SessionInfo` with `sandboxId`, `reasoningEffort` (the effort the session was started with; `null` when the harness has none or the session predates the field), `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `transcript()` is the same read whole: `SessionTranscript { session, events, total, gatewayCalls, storedAt? }` — `total` counts every stored event (the next delta's `since`), and `gatewayCalls` are the gateway meter's per-call lines (`GatewayUsageEvent`: `update.usage.promptTokens`, `completionTokens`, `cachedTokens`, `costUsd`), in time order, the same line a trial's trace carries; they ride beside `events`, never inside them, and are the only per-call tokens and money a client should show. `storedAt` is the server's write instant of each event's row, one per entry of `events` and index-aligned: present on every row-served page (an empty page carries an empty list), absent when the transcript was served from its file. It places the gateway meter's calls under the harness's steps for harnesses whose lines carry no clock of their own (codex, kimi, qwen); a reader that does not place calls needs nothing from it. The session's total stays on `session.usage` / `session.cost`.
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path

@@ -1356,6 +1356,7 @@ export class Agent {
       provider: provider?.name || provider?.providerType || "unknown",
       agent: this.agentConfig.type,
       model: this.agentConfig.model || this.registry.defaultModel,
+      reasoningEffort: this.reasoningEffort(),
       sandboxId: sandbox.sandboxId,
       tag: this.sessionTag,
       apiKey: this.agentConfig.isDirectMode

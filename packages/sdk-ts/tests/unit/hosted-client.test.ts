@@ -5603,6 +5603,142 @@ async function testTraceEventsIterator() {
   }
 }
 
+async function testRunFilesystemSurface() {
+  console.log("\n--- the run's file system + sandbox logs: trials/analyses/checks .filesystem(), datasets().taskFiles() ---");
+  installMockFetch();
+  try {
+    const STATUS = {
+      state: "live",
+      box: { provider: "e2b", id: "sbx-1", role: "agent", since: "2026-09-16T20:00:00.000Z" },
+      watcher: "native",
+      root: "/",
+      work_dir: "/app",
+      capture: null,
+    };
+    // Longest patterns first: the mock matches by substring in insertion order.
+    setMockResponse("/api/trials/run-1/filesystem/files/app/work/main.py", { status: 200, body: null, bodyBytes: Buffer.from("print(1)\n") });
+    setMockResponse("/api/trials/run-1/filesystem/files?", {
+      status: 200,
+      body: { path: "/app/work", source: "live", entries: [{ name: "main.py", type: "file", size: 9, mtime: "t", mode: "0644", owner: "root", changed: null, phase: null, captured: null }], next_cursor: null, ms: 3 },
+    });
+    setMockResponse("/api/trials/run-1/filesystem/search", { status: 200, body: { hits: [{ path: "/app/work/main.py", line: 1, snippet: "print(1)" }], truncated: false, scope: "path", source: "live", ms: 5 } });
+    setMockResponse("/api/trials/run-1/filesystem/changes", { status: 200, body: { source: "capture", total: 1, changed_bytes: 9, items: [], next_cursor: null } });
+    setMockResponse("/api/trials/run-1/filesystem/archive", { status: 200, body: null, bodyBytes: Buffer.from("tarbytes") });
+    setMockResponse("/api/trials/run-1/filesystem/watch", { status: 200, body: { watcher: "native", paths: ["/app/work"] } });
+    setMockResponse("/api/trials/run-1/filesystem/events", {
+      status: 200,
+      body: null,
+      streamChunks: ['event: state\ndata: {"state":"live","box":null}\n\n', 'id: 7\nevent: fs\ndata: {"seq":7,"t":"t","path":"/app/x","type":"create","source":"watch"}\n\n'],
+    });
+    setMockResponse("/api/trials/run-1/filesystem", { status: 200, body: STATUS });
+    setMockResponse("/api/trials/run-1/logs/events", {
+      status: 200,
+      body: null,
+      streamChunks: ['id: agent:1\nevent: line\ndata: {"stream":"agent","seq":1,"t":"t","fd":"out","line":"hi"}\n\n'],
+    });
+    setMockResponse("/api/trials/run-1/logs?", { status: 200, body: { stream: "agent", lines: [{ seq: 1, t: "t", fd: "out", line: "hi" }], next_cursor: null } });
+    setMockResponse("/api/trials/run-1/procs", { status: 200, body: { text: "PID CMD\n1 bash", ms: 4 } });
+
+    const fs = trials({ apiKey: "test-key", baseUrl: BASE }).filesystem("run-1");
+    const last = () => fetchCalls[fetchCalls.length - 1];
+
+    assertEqual(await fs.status(), STATUS, "status() answers the wire shape verbatim");
+    assert(last().url.endsWith("/api/trials/run-1/filesystem"), "status targets {owner}/filesystem");
+
+    const listing = await fs.list({ path: "/app/work", source: "live", limit: 500, cursor: "a" });
+    const listUrl = new URL(last().url);
+    assertEqual(listUrl.pathname, "/api/trials/run-1/filesystem/files", "list targets filesystem/files");
+    assertEqual([listUrl.searchParams.get("path"), listUrl.searchParams.get("source"), listUrl.searchParams.get("limit"), listUrl.searchParams.get("cursor")], ["/app/work", "live", "500", "a"], "every list option rides the query as the contract spells it");
+    assertEqual(listing.entries[0].name, "main.py", "entries map verbatim");
+
+    const bytes = await fs.read("/app/work/main.py", { source: "capture", range: { start: 0, end: 3 } });
+    assertEqual(bytes.toString("utf8"), "print(1)\n", "read answers raw bytes");
+    assert(last().url.endsWith("/api/trials/run-1/filesystem/files/app/work/main.py?source=capture"), "read: the path's segments ARE the route, source rides the query");
+    assertEqual((last().init?.headers as Record<string, string>).Range, "bytes=0-3", "read: the range rides the Range header");
+
+    const hits = await fs.search({ q: "print", path: "/app/work", regex: true, limit: 10 });
+    const searchUrl = new URL(last().url);
+    assertEqual([searchUrl.searchParams.get("q"), searchUrl.searchParams.get("path"), searchUrl.searchParams.get("regex"), searchUrl.searchParams.get("limit")], ["print", "/app/work", "true", "10"], "search options ride the query");
+    assertEqual(hits.hits[0].line, 1, "hits map verbatim");
+
+    const changes = await fs.changes({ phase: "agent", source: "capture" });
+    assertEqual(new URL(last().url).searchParams.get("phase"), "agent", "changes: phase rides the query");
+    assertEqual(changes.total, 1, "changes map verbatim");
+
+    const archive = await fs.archive({ path: "/app/work" });
+    assertEqual(archive.toString("utf8"), "tarbytes", "archive answers the bytes");
+    assertEqual(new URL(last().url).searchParams.get("path"), "/app/work", "archive: path rides the query");
+
+    const watched = await fs.watch(["/app/work"]);
+    assertEqual(last().init?.method, "POST", "watch POSTs");
+    assertEqual(JSON.parse(last().init?.body as string), { paths: ["/app/work"] }, "watch sends {paths}");
+    assertEqual(watched.watcher, "native", "watch answers the mode");
+
+    const frames = [];
+    for await (const frame of fs.events({ lastEventId: "6" })) frames.push(frame);
+    assertEqual((last().init?.headers as Record<string, string>)["Last-Event-ID"], "6", "events resume with Last-Event-ID");
+    assertEqual(frames.map((f) => f.event), ["state", "fs"], "events yields every frame in order");
+    assertEqual(frames[1], { event: "fs", id: "7", data: { seq: 7, t: "t", path: "/app/x", type: "create", source: "watch" } }, "an fs frame carries its id and data");
+
+    const page = await fs.logs({ stream: "agent", cursor: "0", limit: 100 });
+    const logsUrl = new URL(last().url);
+    assertEqual([logsUrl.searchParams.get("stream"), logsUrl.searchParams.get("cursor"), logsUrl.searchParams.get("limit")], ["agent", "0", "100"], "logs options ride the query");
+    assertEqual(page.lines[0], { seq: 1, t: "t", fd: "out", line: "hi" }, "log lines map verbatim");
+
+    const lines = [];
+    for await (const frame of fs.logEvents()) lines.push(frame);
+    assertEqual(lines[0].id, "agent:1", "log events carry <stream>:<seq> ids");
+
+    const procs = await fs.procs();
+    assertEqual(procs.text, "PID CMD\n1 bash", "procs answers the text");
+
+    // The other owners: the same surface, their own prefixes.
+    setMockResponse("/api/analyses/an-1/filesystem", { status: 200, body: STATUS });
+    setMockResponse("/api/checks/chk-1/tasks/tc-1/filesystem", { status: 200, body: STATUS });
+    setMockResponse("/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem/files?", { status: 200, body: { path: "/", source: "package", entries: [], next_cursor: null, ms: 1 } });
+    setMockResponse("/api/datasets/bench/versions/1.0/tasks/abs-1/filesystem", { status: 200, body: { ...STATUS, state: "none", box: null, watcher: null, source: "package", package_retained: true } });
+    await analyses({ apiKey: "test-key", baseUrl: BASE }).filesystem("an-1").status();
+    assert(last().url.endsWith("/api/analyses/an-1/filesystem"), "analyses().filesystem targets the analysis prefix");
+    await checks({ apiKey: "test-key", baseUrl: BASE }).taskFilesystem("chk-1", "tc-1").status();
+    assert(last().url.endsWith("/api/checks/chk-1/tasks/tc-1/filesystem"), "checks().taskFilesystem targets the (check, task check) pair");
+    const pkg = datasets({ apiKey: "test-key", baseUrl: BASE }).taskFiles("bench@1.0", "abs-1");
+    const pkgStatus = await pkg.status();
+    assertEqual([pkgStatus.state, pkgStatus.source, pkgStatus.package_retained], ["none", "package", true], "the task package answers state none, source package");
+    await pkg.list({ path: "/tests" });
+    assertEqual(new URL(last().url).searchParams.get("path"), "/tests", "taskFiles().list targets the package listing");
+    let refused = false;
+    try {
+      datasets({ apiKey: "test-key", baseUrl: BASE }).taskFiles("bench", "abs-1");
+    } catch (e) {
+      refused = (e as Error).message.includes("name@version");
+    }
+    assert(refused, "taskFiles refuses an unpinned dataset ref");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testSystemLogSwitch() {
+  console.log("\n--- jobs().start({ system_log }) and Job.system_log ---");
+  installMockFetch();
+  try {
+    // The get mock first: the mock matches by substring in insertion order.
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: JOB_SUMMARY });
+    setMockResponse("/api/jobs", { status: 202, body: { ...JOB_SUMMARY, system_log: true } });
+    const job = await jobs({ apiKey: "test-key", baseUrl: BASE }).start({
+      datasets: [{ name: "deep-swe" }],
+      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      system_log: true,
+    });
+    assertEqual(JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).system_log, true, "system_log rides the create body");
+    assertEqual(job.system_log, true, "Job.system_log maps the echo");
+    const older = await jobs({ apiKey: "test-key", baseUrl: BASE }).get("eval-1");
+    assertEqual(older.system_log, false, "an older server that sends nothing reads as off");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testInspectionSurface() {
   console.log("\n--- remote inspection: trace filters, jobs().grep(), trials().files()/file() ---");
   installMockFetch();
@@ -7329,14 +7465,14 @@ async function testChecksCreateDataset() {
       body: checkFixture({ source: { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" } }),
     });
     const c = checks({ apiKey: "test-key", baseUrl: BASE });
-    const accepted = await c.create({ source: { dataset: "harbor-examples" }, include_task_names: ["hello-*"] });
+    const accepted = await c.create({ source: { dataset: "harbor-examples" }, name: "nightly", include_task_names: ["hello-*"] });
     const call = fetchCalls[fetchCalls.length - 1];
     assert(call.url.endsWith("/api/checks"), "POSTs /api/checks");
     assertEqual(call.init?.method, "POST", "uses POST");
     const form = call.init?.body as FormData;
     assert(form instanceof FormData, "the body is a multipart form with no archive part");
     assertEqual(form.get("dataset"), "harbor-examples", "the dataset part names the published dataset");
-    assertEqual(JSON.parse(String(form.get("config"))), { include_task_names: ["hello-*"] }, "the knobs ride as the config part");
+    assertEqual(JSON.parse(String(form.get("config"))), { name: "nightly", include_task_names: ["hello-*"] }, "the knobs ride as the config part, the name among them");
     assertEqual(form.has("archive"), false, "nothing is uploaded on the dataset form");
     assertEqual(accepted.source, { type: "dataset", sha256: "cd".repeat(32), bytes: null, dataset: "harbor-examples@1.0" }, "the 202's source is the dataset form");
     let threw = false;
@@ -7434,6 +7570,12 @@ async function testChecksReadsAndWatch() {
     assertEqual(url.searchParams.get("status"), "running,completed", "status forwarded comma-joined");
     assertEqual(url.searchParams.get("limit"), "5", "limit forwarded");
     assertEqual(page.items.length, 1, "maps the items");
+    await c.list({ dataset: "tb@4.0" });
+    const byDataset = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(byDataset.searchParams.get("dataset"), "tb@4.0", "dataset forwarded verbatim (name@version)");
+    assert(byDataset.search.includes("dataset=tb%404.0"), "the wire carries the @ encoded");
+    await c.list({ scope: "my" });
+    assert(!new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("dataset"), "no dataset key when none was given");
 
     // watch: the first read answers queued, the next completed — one change observed.
     let reads = 0;
@@ -7453,6 +7595,30 @@ async function testChecksReadsAndWatch() {
       globalThis.fetch = original;
     }
     assert(hosted({ apiKey: "test-key", baseUrl: BASE }).checks !== undefined, "the facade exposes checks");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testChecksDefaults() {
+  console.log("\n--- checks().defaults() reads GET /api/checks/defaults and pins the wire ---");
+  installMockFetch();
+  try {
+    const defaults = {
+      model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+      rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }] },
+      prompt: "Check {task_path}\n{file_tree}\n{criteria_guidance}",
+      reasoning_effort: "high",
+      sandbox_provider: "daytona",
+    };
+    // Registered BEFORE the list door: the mock matches by substring, in order.
+    setMockResponse("/api/checks/defaults", { status: 200, body: defaults });
+    setMockResponse("/api/checks", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const got = await checks({ apiKey: "test-key", baseUrl: BASE }).defaults();
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/checks/defaults", "one GET on the defaults door");
+    assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
+    assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
   } finally {
     restoreFetch();
   }
@@ -7577,6 +7743,8 @@ async function main() {
   await testTrialTracePage();
   await testTraceEventsIterator();
   await testInspectionSurface();
+  await testRunFilesystemSurface();
+  await testSystemLogSwitch();
   await testTrialArtifact();
   await testAnalysisGet();
   await testAnalysisGetMalformedFailsClosed();
@@ -7594,6 +7762,7 @@ async function main() {
   await testChecksCreateDirectory();
   await testChecksCreateDataset();
   await testChecksReadsAndWatch();
+  await testChecksDefaults();
   await testChecksTaskReads();
   await testOrgs();
 

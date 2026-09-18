@@ -1,0 +1,180 @@
+#!/usr/bin/env tsx
+/**
+ * Unit Test: the sandbox observation errors and rules — one home, generated mirrors pinned
+ * byte-equal, instances matched by name across packages.
+ * Usage: npx tsx tests/unit/sandbox-errors.test.ts
+ */
+
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  SandboxFeatureUnsupportedError,
+  SandboxNotRunningError,
+  SandboxPathNotFoundError,
+  isSandboxFeatureUnsupportedError,
+  isSandboxNotRunningError,
+  isSandboxPathNotFoundError,
+} from "../../src/sandbox-errors";
+import { SANDBOX_ERRORS_SOURCE, SANDBOX_ERRORS_MIRRORS, SANDBOX_MIRROR_SETS } from "../../../../scripts/generate-sandbox-errors";
+import { assertByteRange, entryTypeOfMode, isoTime, joinPath, octalMode, parseGoFileMode, readByteRangeOverUrl } from "../../src/sandbox-observation";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(__dirname, "../../../..");
+
+let passed = 0;
+let failed = 0;
+
+function assert(condition: boolean, message: string): void {
+  if (condition) {
+    passed++;
+    console.log(`  ✓ ${message}`);
+  } else {
+    failed++;
+    console.log(`  ✗ ${message}`);
+  }
+}
+
+console.log("\n[1] typed refusals carry the feature, the provider and the reason");
+{
+  const err = new SandboxFeatureUnsupportedError("files.watchDir", "daytona", "the SDK has no watcher");
+  assert(err.name === "SandboxFeatureUnsupportedError", "name is the class name");
+  assert(err.feature === "files.watchDir" && err.provider === "daytona", "feature and provider are fields");
+  assert(err.message.includes("daytona") && err.message.includes("files.watchDir") && err.message.includes("no watcher"), "message names all three");
+  assert(err instanceof Error, "is an Error");
+  const bare = new SandboxFeatureUnsupportedError("metrics", "modal");
+  assert(bare.message === "modal does not support metrics", "message without a reason is the plain sentence");
+}
+
+console.log("\n[2] not-found and not-running are typed too");
+{
+  const nf = new SandboxPathNotFoundError("/app/missing", "e2b");
+  assert(nf.name === "SandboxPathNotFoundError" && nf.path === "/app/missing" && nf.provider === "e2b", "not-found carries path and provider");
+  const nr = new SandboxNotRunningError("sb-1", "daytona", "stopped");
+  assert(nr.name === "SandboxNotRunningError" && nr.sandboxId === "sb-1" && nr.state === "stopped", "not-running carries id and state");
+  assert(nr.message.includes("stopped") && nr.message.includes("sb-1"), "not-running message names the state");
+}
+
+console.log("\n[3] guards match by NAME, so a mirror's instance is recognised without a shared prototype");
+{
+  const foreign = Object.assign(new Error("modal does not support metrics"), {
+    name: "SandboxFeatureUnsupportedError",
+    feature: "metrics",
+    provider: "modal",
+  });
+  assert(isSandboxFeatureUnsupportedError(foreign), "a same-named foreign error is recognised");
+  assert(!isSandboxFeatureUnsupportedError(new Error("x")), "a plain Error is not");
+  assert(!isSandboxFeatureUnsupportedError(null), "null is not");
+  assert(isSandboxPathNotFoundError(Object.assign(new Error("nf"), { name: "SandboxPathNotFoundError", path: "/x", provider: "e2b" })), "not-found guard matches by name");
+  assert(isSandboxNotRunningError(Object.assign(new Error("nr"), { name: "SandboxNotRunningError", sandboxId: "s", provider: "e2b", state: "paused" })), "not-running guard matches by name");
+}
+
+console.log("\n[4] every provider mirror is byte-equal to its source (npm run generate:sandbox-errors)");
+{
+  assert(SANDBOX_ERRORS_SOURCE.endsWith("sandbox-errors.ts") && SANDBOX_ERRORS_MIRRORS.length === 3, "the errors file has three mirrors declared (e2b, daytona, modal)");
+  assert(SANDBOX_MIRROR_SETS.length === 2, "two mirrored files: the errors and the observation rules");
+  for (const { source, mirrors } of SANDBOX_MIRROR_SETS) {
+    const text = readFileSync(resolve(REPO_ROOT, source), "utf-8");
+    for (const mirror of mirrors) {
+      let copy = "";
+      try {
+        copy = readFileSync(resolve(REPO_ROOT, mirror), "utf-8");
+      } catch {
+        copy = "";
+      }
+      assert(copy === text, `${mirror} equals ${source}`);
+    }
+  }
+}
+
+console.log("\n[5] the shared observation rules: mode strings, timestamps, ranges");
+{
+  assert(octalMode(420) === "0644" && octalMode(33188) === "0644" && octalMode(41471) === "0777", "numeric st_mode → permission bits only, four digits");
+  assert(octalMode("644") === "0644" && octalMode("0755") === "0755" && octalMode("1777") === "1777", "bare or padded octal strings are padded");
+  // GNU find prints %m unpadded: "0" for chmod 000, "10" for chmod 010 (measured on Daytona, 2026-09-16, REVIEW-2).
+  assert(octalMode("0") === "0000" && octalMode("10") === "0010" && octalMode("7") === "0007", "one- and two-digit octal strings (find's %m below 0100) are padded, not refused");
+  for (const bad of ["-rw-r--r--", "nonsense", "12345"]) {
+    let threw = false;
+    try { octalMode(bad); } catch (e) { threw = e instanceof RangeError; }
+    assert(threw, `octalMode refuses "${bad}" (neither a number nor octal digits)`);
+  }
+  // Go's os.FileMode.String(), as envd answered on live E2B boxes on 2026-09-16 (fold-2 e2e-e2b.json "e2b-raw").
+  const goModes: Array<[string, string, string]> = [
+    ["-rw-r--r--", "file", "0644"],
+    ["drwxr-xr-x", "dir", "0755"],
+    ["dtrwxrwxrwx", "dir", "1777"],
+    ["dgrwxr-xr-x", "dir", "2755"],
+    ["urwxr-xr-x", "file", "4755"],
+    ["ugrwxr-xr-x", "file", "6755"],
+    ["Lrwxrwxrwx", "symlink", "0777"],
+    ["Dcrw-rw-rw-", "other", "0666"],
+    ["prw-r--r--", "other", "0644"],
+    ["Srwxr-xr-x", "other", "0755"],
+    ["ugtrwxrwxrwx", "file", "7777"],
+  ];
+  for (const [text, type, mode] of goModes) {
+    const got = parseGoFileMode(text);
+    assert(got.type === type && got.mode === mode, `"${text}" is ${type} ${mode} (got ${got.type} ${got.mode})`);
+  }
+  // st_mode values Modal's filesystem API reported on a live box on 2026-09-16 (fold-2 e2e-modal.json "modal-raw").
+  for (const [mode, type] of [[33188, "file"], [16877, "dir"], [41471, "symlink"], [4516, "other"], [8630, "other"], [49645, "other"], [35309, "file"], [17407, "dir"]] as Array<[number, string]>) {
+    assert(entryTypeOfMode(mode) === type, `st_mode ${mode.toString(8)} is ${type} (got ${entryTypeOfMode(mode)})`);
+  }
+  for (const bad of ["-rwsr-xr-x", "rwxr-xr-x", "nonsense", "drwxr-xr-", "xrwxr-xr-x", ""]) {
+    let threw = false;
+    try { parseGoFileMode(bad); } catch (e) { threw = e instanceof RangeError; }
+    assert(threw, `"${bad}" is not a Go mode string (ls-style s/S/t/T and bare triplets are refused)`);
+  }
+  assert(isoTime(new Date("2026-09-16T20:47:59.627Z")) === "2026-09-16T20:47:59.627Z", "a Date passes through");
+  assert(isoTime(1789591686) === "2026-09-16T20:48:06.000Z", "epoch seconds become ISO");
+  assert(isoTime(1789591683.710548063) === "2026-09-16T20:48:03.710Z", "fractional epoch seconds keep milliseconds");
+  assert(isoTime("2026-09-16T20:48:03.710548063Z") === "2026-09-16T20:48:03.710Z", "an RFC 3339 string with nanoseconds is normalised to milliseconds");
+  assert(joinPath("/tmp/p", "a") === "/tmp/p/a" && joinPath("/tmp/p/", "a") === "/tmp/p/a", "joinPath never doubles a slash");
+  for (const bad of [{ offset: -1, length: 1 }, { offset: 0.5, length: 1 }, { offset: 0, length: -1 }, { offset: 0, length: Number.NaN }]) {
+    let refused = false;
+    try { assertByteRange(bad); } catch (e) { refused = e instanceof RangeError; }
+    assert(refused, `range ${JSON.stringify(bad)} is refused`);
+  }
+}
+
+console.log("\n[6] readByteRangeOverUrl: every status has one meaning");
+{
+  const body = Uint8Array.from({ length: 50 }, (_, i) => i);
+  const original = globalThis.fetch;
+  const withFetch = async (handler: (init: RequestInit) => Response, run: () => Promise<void>) => {
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => handler(init ?? {})) as typeof fetch;
+    try { await run(); } finally { globalThis.fetch = original; }
+  };
+  const ctx = { provider: "test", path: "/f", timeoutMs: 1000 };
+  await withFetch((init) => {
+    const [, a, b] = /bytes=(\d+)-(\d+)/.exec(new Headers(init.headers).get("range")!)!;
+    return new Response(body.subarray(Number(a), Number(b) + 1), { status: 206 });
+  }, async () => {
+    const got = await readByteRangeOverUrl("u", { offset: 40, length: 20 }, ctx);
+    assert(Array.from(got).join(",") === "40,41,42,43,44,45,46,47,48,49", "206: the bytes, shortened at EOF");
+  });
+  await withFetch(() => new Response(body, { status: 200 }), async () => {
+    const got = await readByteRangeOverUrl("u", { offset: 45, length: 3 }, ctx);
+    assert(Array.from(got).join(",") === "45,46,47", "200: the slice is cut out of the whole-file stream");
+  });
+  await withFetch(() => new Response("", { status: 416 }), async () => {
+    assert((await readByteRangeOverUrl("u", { offset: 99, length: 3 }, ctx)).length === 0, "416: empty");
+  });
+  await withFetch(() => new Response("", { status: 404 }), async () => {
+    let name = "";
+    try { await readByteRangeOverUrl("u", { offset: 0, length: 3 }, ctx); } catch (e) { name = (e as Error).name; }
+    assert(name === "SandboxPathNotFoundError", "404: SandboxPathNotFoundError");
+  });
+  await withFetch(() => new Response("", { status: 503 }), async () => {
+    let msg = "";
+    try { await readByteRangeOverUrl("u", { offset: 0, length: 3 }, ctx); } catch (e) { msg = (e as Error).message; }
+    assert(msg.includes("503") && msg.includes("/f"), "other statuses: an Error naming the status and the path");
+  });
+  let requests = 0;
+  await withFetch(() => { requests++; return new Response("", { status: 206 }); }, async () => {
+    assert((await readByteRangeOverUrl("u", { offset: 0, length: 0 }, ctx)).length === 0 && requests === 0, "a zero-length range makes no request");
+  });
+}
+
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed > 0) process.exit(1);
