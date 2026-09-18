@@ -20,6 +20,9 @@ from evolve import (
     EvolveAPIError,
     EvolveDigestMismatchError,
     HostedClientConfig,
+    JobShareEmail,
+    JobShareLink,
+    JobShares,
     checks as checks_factory,
     hosted,
 )
@@ -212,6 +215,51 @@ class TestChecksRead:
         assert check['status'] == 'completed'
         assert check['results'][0]['checks'] == {'typos': {'outcome': 'pass', 'explanation': 'none found'}}
         assert check['cost_usd'] == 0.0123
+
+    @pytest.mark.asyncio
+    async def test_get_reads_visibility_or_defaults_it_to_private(self):
+        fake = FakeUrlopen([
+            ('/api/checks/chk-old', CHECK_DONE),
+            ('/api/checks/chk-link', {**CHECK_DONE, 'id': 'chk-link', 'visibility': 'LINK'}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            older = await checks_factory(CONFIG).get('chk-old')
+            linked = await checks_factory(CONFIG).get('chk-link')
+        assert older['visibility'] == 'PRIVATE'
+        assert linked['visibility'] == 'LINK'
+
+    @pytest.mark.asyncio
+    async def test_share_unshare_and_shares_are_the_job_verbs_on_a_check(self):
+        state = {
+            'visibility': 'LINK',
+            'link': {'enabled': True, 'url': 'https://dash.test/shared/def456'},
+            'emails': [{'email': 'alice@example.org', 'shared_by': 'owner@example.org',
+                        'created_at': '2026-09-18T00:00:00.000Z'}],
+        }
+        fake = FakeUrlopen([
+            ('/api/checks/chk-1/share', state),
+            ('/api/checks/chk-1/unshare', {'visibility': 'PRIVATE', 'link': {'enabled': False}, 'emails': []}),
+            ('/api/checks/chk-1/shares', state),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = checks_factory(CONFIG)
+            shared = await client.share('chk-1', link=True, emails=['Alice@Example.org'])
+            revoked = await client.unshare('chk-1', link=True)
+            listed = await client.shares('chk-1')
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith('/api/checks/chk-1/share')
+        assert json.loads(fake.requests[0].data.decode('utf-8')) == {'link': True, 'emails': ['Alice@Example.org']}
+        assert shared == JobShares(
+            visibility='LINK',
+            link=JobShareLink(enabled=True, url='https://dash.test/shared/def456'),
+            emails=[JobShareEmail(email='alice@example.org', shared_by='owner@example.org',
+                                         created_at='2026-09-18T00:00:00.000Z')],
+        )
+        assert json.loads(fake.requests[1].data.decode('utf-8')) == {'link': True}
+        assert revoked == JobShares(visibility='PRIVATE', link=JobShareLink(enabled=False, url=None), emails=[])
+        assert fake.requests[2].get_method() == 'GET'
+        assert fake.requests[2].full_url.endswith('/api/checks/chk-1/shares')
+        assert listed == shared
 
     @pytest.mark.asyncio
     async def test_list_rides_scope_and_status_on_the_query(self):

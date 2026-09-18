@@ -4963,6 +4963,13 @@ export interface Check {
   exclude_task_names: string[];
   /** Harbor's -l/--n-tasks as stored; null = no cap. */
   n_tasks: number | null;
+  /**
+   * `PRIVATE`, or `LINK` when an unlisted share link reaches the check
+   * (`checks().share(id, { link: true })`). Email shares are not a
+   * visibility: `checks().shares(id)` lists them. A server older than the
+   * field reads as `PRIVATE`.
+   */
+  visibility: JobVisibility;
   /** One entry per task directory checked, sorted by task name. */
   results: TaskCheck[];
   cost_usd: number | null;
@@ -5112,6 +5119,20 @@ export interface ChecksClient {
     id: string,
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+  /**
+   * Share a check you created — `jobs().share` on a check: `link: true`
+   * mints the check's unlisted link (the same link on every later call);
+   * each new address is emailed a link and reads the check, its task
+   * checks and the download, and lists it under `scope: "shared"`; it
+   * never operates it. Creator-only: an org member is refused
+   * `org_forbidden` (403), a stranger sees 404. The response is the
+   * check's whole share state, the job's `JobShares` shape.
+   */
+  share(id: string, request: JobShareRequest): Promise<JobShares>;
+  /** Revoke a check's link and/or email shares — `jobs().unshare` on a check. Idempotent; creator-only. */
+  unshare(id: string, request: JobShareRequest): Promise<JobShares>;
+  /** The check's share state: visibility, the link with its URL while enabled, and every email share. Creator-only. */
+  shares(id: string): Promise<JobShares>;
 }
 
 /** A key descriptor. The secret is never returned. */

@@ -2061,6 +2061,10 @@ class Check(TypedDict):
     exclude_task_names: List[str]
     #: Harbor's -l/--n-tasks as stored; None = no cap.
     n_tasks: Optional[int]
+    #: ``'PRIVATE'``, or ``'LINK'`` when an unlisted share link reaches the check
+    #: (``checks().share(id, link=True)``). Email shares are not a visibility:
+    #: ``checks().shares(id)`` lists them. A server older than the field reads as ``'PRIVATE'``.
+    visibility: str
     #: One entry per task directory checked, sorted by task name.
     results: List[TaskCheck]
     cost_usd: Optional[float]
@@ -4588,7 +4592,12 @@ def _map_check(data: Any) -> Check:
     results = data.get('results')
     return cast(
         Check,
-        {**data, 'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else []},
+        {
+            **data,
+            # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
+            'visibility': 'LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+            'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else [],
+        },
     )
 
 
@@ -9622,6 +9631,48 @@ class ChecksClient:
             self._http,
             f'/api/checks/{urllib.parse.quote(check_id)}/tasks/{urllib.parse.quote(task_check_id)}',
         )
+
+    async def share(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Share a check you created — :meth:`JobsClient.share` on a check:
+        ``link=True`` mints the check's unlisted link (the same link on every
+        later call); each new address is emailed a link and reads the check,
+        its task checks and the download, and lists it under
+        ``scope='shared'``; it never operates it. Creator-only: an org member
+        is refused ``org_forbidden`` (403), a stranger sees 404. The answer is
+        the check's whole share state, the job's :class:`JobShares` shape.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/checks/{urllib.parse.quote(id)}/share', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def unshare(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Revoke a check's link (``link=True``) and/or email shares (``emails``)
+        — :meth:`JobsClient.unshare` on a check. Idempotent; creator-only."""
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/checks/{urllib.parse.quote(id)}/unshare', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def shares(self, id: str) -> JobShares:
+        """The check's share state: its visibility, the link with its URL
+        while enabled, and every email share. Creator-only."""
+        raw = await self._http.request_json(f'/api/checks/{urllib.parse.quote(id)}/shares')
+        return _map_job_shares(raw)
 
 
 class AuthClient:

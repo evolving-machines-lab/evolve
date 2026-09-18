@@ -32,7 +32,7 @@ Each task gets one entry per criterion, with an `outcome` (`pass`, `fail`, `not_
 - `unclear`: otherwise, an unknown on any of the six file-based criteria
 - `no_problem_found`: everything else
 
-`executed` says whether the checker actually ran the task's environment, so a reading-only `no_problem_found` is never mistaken for a run. A check never fails as a whole: refusals happen at accept, and a task's failure is on that task. A check is readable by its creator and by every member of the organization; anyone else reads `check_not_found`.
+`executed` says whether the checker actually ran the task's environment, so a reading-only `no_problem_found` is never mistaken for a run. A check never fails as a whole: refusals happen at accept, and a task's failure is on that task. A check is readable by its creator, by every member of the organization and by whoever it was shared with; anyone else reads `check_not_found`.
 
 ## Read it back
 
@@ -45,6 +45,19 @@ evolve check download <task-check-id> --stream task-check
 ```
 
 `check show` prints the check with one result per task. `check trace` prints the checker's transcript for one task check. `check download` saves the whole check as a check folder by its check id, one task's folder by its task check id, or streams one artifact of a task check: `task-check`, `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
+
+## Share
+
+```bash
+evolve check share <check-id> --link
+evolve check share <check-id> --email alice@example.org
+evolve check shares <check-id>
+evolve check unshare <check-id> --link
+```
+
+A check you created shares the two ways a [job](/core-concepts/jobs#share) does, and both may be on at once. `--link` turns on an unlisted link: anyone holding it reads the check's report and downloads its check folder, without signing in. `check shares` prints the link again whenever you need it, and `check unshare --link` kills it at once. `--email` shares the check with a person by address: they get an email with a link and read the check after signing in with that address (a person without an account gets a sign-up link in the same email). A check shared with you appears under `evolve check list --scope shared`.
+
+Sharing is read-only: whoever holds the link or the email share cannot delete the check. Only the creator may share or unshare; another member of the organization is refused with `org_forbidden`. A check's `visibility` field says `PRIVATE` or `LINK`.
 
 <Card title="check reference" icon="terminal" href="/cli-reference/check">
   Every flag of `evolve check`.

@@ -82,7 +82,7 @@ evolve check --show-defaults
 
 ## Reading checks back
 
-The same word, followed by `list`, `show`, `trace` or `download`, reads checks back. A task directory literally named like one of these verbs is written `./list`.
+The same word, followed by `list`, `show`, `trace`, `download`, `share`, `unshare` or `shares`, reads checks back or shares them. A task directory literally named like one of these verbs is written `./list`.
 
 ### check list
 
@@ -95,7 +95,7 @@ List your task quality checks, newest first.
 <ListFlags />
 
 <ParamField path="--scope" type="my | shared">
-  Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created.
+  Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created plus the checks shared with your address.
 </ParamField>
 
 <ParamField path="--status" type="s1,s2,...">
@@ -117,7 +117,7 @@ evolve check list --dataset terminal-bench-4@4.0
 evolve check show <check-id>
 ```
 
-Show one task quality check in full, with one result per task.
+Show one task quality check in full, with one result per task. The `visibility` row is `PRIVATE` or `LINK` — whether the check's share link is on ([check shares](#check-shares) prints the link and the addresses).
 
 ### check trace
 
@@ -158,6 +158,37 @@ Save a check as a check folder (`check_report.json` plus one folder per task) by
 ```bash
 evolve check download 3f9a1c2e-… -o checks/
 ```
+
+### check share
+
+```bash
+evolve check share <check-id> --link
+evolve check share <check-id> --email <address> [--email <address>...]
+```
+
+Share a check you created, the way [job share](/cli-reference/job#job-share) shares a job. `--link` turns on the check's unlisted link and prints it; running it again prints the same link. Whoever opens the link reads the check's report and downloads its check folder, without signing in. `--email` shares the check with an address: that person gets an email with a link and reads the check after signing in with the same address (a person without an account gets a sign-up link in the same email; an address already on the waitlist or holding an invite gets the share email without a sign-up link and uses that invite instead). Both flags may ride one command. Someone the check is shared with reads it — the report, each task check's files and logs, the download — and finds it under `evolve check list --scope shared`; they cannot delete it. Only the check's creator may share it; another member of the organization is refused with `org_forbidden`.
+
+```bash
+evolve check share 3f9a1c2e-… --link
+evolve check share 3f9a1c2e-… --email alice@example.org
+```
+
+### check unshare
+
+```bash
+evolve check unshare <check-id> --link
+evolve check unshare <check-id> --email <address>
+```
+
+Take a share back. `--link` turns the link off at once — the old link stops working, and a later `check share --link` prints a new one. `--email` removes that address's share. Both are safe to repeat.
+
+### check shares
+
+```bash
+evolve check shares <check-id>
+```
+
+Print who the check is shared with: its visibility, the link while it is on, and every address with who shared it and when. `--json` prints the same as `{"visibility", "link": {"enabled", "url"}, "emails": [{"email", "shared_by", "created_at"}]}`.
 
 ## check files
 
