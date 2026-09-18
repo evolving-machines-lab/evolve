@@ -197,6 +197,28 @@ OPERATION_TO_METHOD = {
     'listJobImports': (JobsClient, 'list_imports'),
     'getJobImport': (JobsClient, 'get_import'),
     'deleteJob': (JobsClient, 'delete'),
+    # Sharing (B190): the creator's three verbs are SDK methods; the share
+    # LINK's own doors (x-wave: 5) are the no-login viewer page's and never
+    # SDK methods — an SDK caller holds a key and reads a run it was shared
+    # through the job and trial doors, which an email share opens.
+    'shareJob': (JobsClient, 'share'),
+    'unshareJob': (JobsClient, 'unshare'),
+    'getJobShares': (JobsClient, 'shares'),
+    'getSharedJob': None,
+    'listSharedJobTrials': None,
+    'getSharedTrial': None,
+    'getSharedTrialTrace': None,
+    'listSharedTrialFiles': None,
+    'getSharedTrialFile': None,
+    'getSharedTrialFilesystem': None,
+    'listSharedTrialFilesystemFolder': None,
+    'readSharedTrialFilesystemFile': None,
+    'searchSharedTrialFilesystem': None,
+    'listSharedTrialFilesystemChanges': None,
+    'downloadSharedTrialFilesystemArchive': None,
+    'streamSharedTrialFilesystemEvents': None,
+    'getSharedTrialSandboxLog': None,
+    'streamSharedTrialSandboxLogs': None,
     'resumeJob': (JobsClient, 'resume'),
     'retryJob': (JobsClient, 'retry'),
     'regradeJob': (JobsClient, 'regrade'),

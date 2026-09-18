@@ -93,6 +93,8 @@ import type {
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobShareRequest,
+  JobShares,
   JobList,
   JobPage,
   JobStats,
@@ -332,6 +334,11 @@ export type {
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobShareEmail,
+  JobShareLink,
+  JobShareRequest,
+  JobShares,
+  JobVisibility,
   JobAnalysisStats,
   JobList,
   JobPage,
@@ -1167,6 +1174,26 @@ function mapTrialTaskLink(raw: unknown): TrialTaskLink | null {
   };
 }
 
+/** The wire's JobShares, read in the same tolerant shape every required field here uses. */
+function mapJobShares(raw: Record<string, unknown>): JobShares {
+  const link = (raw.link ?? {}) as Record<string, unknown>;
+  return {
+    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+    link: {
+      enabled: link.enabled === true,
+      ...(typeof link.url === "string" ? { url: link.url } : {}),
+    },
+    emails: (Array.isArray(raw.emails) ? raw.emails : []).map((entry) => {
+      const share = entry as Record<string, unknown>;
+      return {
+        email: String(share.email ?? ""),
+        shared_by: String(share.shared_by ?? ""),
+        created_at: String(share.created_at ?? ""),
+      };
+    }),
+  };
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
@@ -1203,6 +1230,9 @@ function mapJob(raw: Record<string, unknown>): Job {
     sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
     // The owning org's slug; an older server that sends none reads as null.
     org: typeof raw.org === "string" ? raw.org : null,
+    // The share link's switch; an older server that sends none reads as
+    // PRIVATE, exactly how such a server behaves.
+    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
     // The system log switch — an older server that sends nothing reads as
     // off, exactly how such a server behaves.
     system_log: raw.system_log === true,
@@ -3705,6 +3735,31 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         trials_deleted: (data.trials_deleted as number) ?? 0,
         analyses_deleted: (data.analyses_deleted as number) ?? 0,
       };
+    },
+
+    async share(id: string, req: JobShareRequest): Promise<JobShares> {
+      // The body is the wire's verbatim; the server owns every rule (creator
+      // only, the address cap, the idempotent link) and every refusal arrives typed.
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async unshare(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/unshare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async shares(id: string): Promise<JobShares> {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/shares`);
+      return mapJobShares((await res.json()) as Record<string, unknown>);
     },
 
     async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {

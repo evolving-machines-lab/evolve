@@ -106,6 +106,7 @@ import type {
   GrepJobOptions,
   HostedClientConfig,
   Job,
+  JobShares,
   JobAnalysisStats,
   JobCreate,
   JobEvent,
@@ -638,6 +639,38 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<id>",
         examples: ["evolve job delete 3e1f9a2c", "evolve job delete 3e1f9a2c --yes"],
+      },
+      share: {
+        summary: "Share a job you created by link or by email",
+        notes: "--link prints the run's unlisted link (the same one every time). Each --email gets a link to the run by mail; an address without an account gets a sign-up link. Both flags may ride one command.",
+        flags: {
+          link: { kind: "boolean", help: "Enable the job's unlisted link and print it" },
+          email: { kind: "repeat", value: "<address>", help: "Share with this address; repeatable" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job share 3e1f9a2c --link", "evolve job share 3e1f9a2c --email alice@example.org --email bob@example.org"],
+      },
+      unshare: {
+        summary: "Revoke a job's link or email shares",
+        notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
+        flags: {
+          link: { kind: "boolean", help: "Disable the job's link" },
+          email: { kind: "repeat", value: "<address>", help: "Remove this address's share; repeatable" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job unshare 3e1f9a2c --link", "evolve job unshare 3e1f9a2c --email alice@example.org"],
+      },
+      shares: {
+        summary: "Show who a job is shared with",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job shares 3e1f9a2c", "evolve job shares 3e1f9a2c --json"],
       },
       stop: {
         summary: "Stop one dataset's live trials, keeping the job",
@@ -3855,6 +3888,8 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   // value: the wire's sandbox_provider is null there because nothing
   // executed, and the closed provider vocabulary gains no fake member.
   rows.push(["provider", e.upload ? "ported" : (e.sandbox_provider ?? "-")]);
+  // PRIVATE or LINK (an unlisted link reaches the run); `job shares` prints the link and the addresses.
+  rows.push(["visibility", e.visibility]);
   // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
   // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
   // _usd comes out LOWER than what was really spent"). A freshly finished job
@@ -5282,6 +5317,65 @@ async function cmdJobDelete(inv: Invocation, io: CliIO): Promise<number> {
     );
   }
   return 0;
+}
+
+/** The share and unshare verbs' one grammar: --link and/or --email, at least one. */
+function shareGrant(inv: Invocation): { link?: true; emails?: string[] } {
+  const emails = (inv.flags.email as string[] | undefined) ?? [];
+  const link = inv.flags.link === true;
+  if (!link && emails.length === 0) {
+    throw new CliUsageError("name a grant: --link and/or --email <address>");
+  }
+  return { ...(link ? { link: true as const } : {}), ...(emails.length > 0 ? { emails } : {}) };
+}
+
+/** The human rendering of a job's share state — the link, then one line per address. */
+function shareLines(shares: JobShares): string[] {
+  const lines = [
+    `visibility ${shares.visibility}`,
+    shares.link.enabled ? `link       ${shares.link.url ?? "(enabled)"}` : "link       off",
+  ];
+  if (shares.emails.length === 0) {
+    lines.push("emails     none");
+  } else {
+    for (const share of shares.emails) {
+      lines.push(`email      ${share.email}  (shared by ${share.shared_by}, ${share.created_at})`);
+    }
+  }
+  return lines;
+}
+
+function printShares(inv: Invocation, io: CliIO, shares: JobShares): number {
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(shares));
+  } else {
+    for (const line of shareLines(shares)) io.out(line);
+  }
+  return 0;
+}
+
+// Harbor's `harbor job share <id> --org … --user …` (their docs/sharing/jobs.mdx),
+// recorded deviations: a person is shared by --email (our login is an address)
+// and --link makes the job reachable by an unlisted link where Harbor has --public.
+async function cmdJobShare(inv: Invocation, io: CliIO): Promise<number> {
+  const grant = shareGrant(inv);
+  const client = jobs(clientConfig(inv));
+  const shares = await client.share(await resolveId(inv, "job", inv.positionals[0]), grant);
+  return printShares(inv, io, shares);
+}
+
+async function cmdJobUnshare(inv: Invocation, io: CliIO): Promise<number> {
+  const grant = shareGrant(inv);
+  const client = jobs(clientConfig(inv));
+  const shares = await client.unshare(await resolveId(inv, "job", inv.positionals[0]), grant);
+  return printShares(inv, io, shares);
+}
+
+// Harbor's `harbor hub job shares <id>`.
+async function cmdJobShares(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const shares = await client.shares(await resolveId(inv, "job", inv.positionals[0]));
+  return printShares(inv, io, shares);
 }
 
 /**
@@ -8670,6 +8764,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job compare": cmdJobCompare,
   "job cancel": cmdJobCancel,
   "job delete": cmdJobDelete,
+  "job share": cmdJobShare,
+  "job unshare": cmdJobUnshare,
+  "job shares": cmdJobShares,
   "job stop": cmdJobStop,
   "job resume": cmdJobResume,
   "job retry": cmdJobRetry,

@@ -662,6 +662,83 @@ description: "Start, follow, and derive jobs."
   </Tab>
 </Tabs>
 
+## share
+
+Share a job you created by link, by email, or both. `link: true` turns on the job's unlisted link and returns it (the same link on every later call). Each address in `emails` gets an email with a link to the run and reads it after signing in with that address; an address without an account gets a sign-up link in the same email. Someone the run is shared with reads the job, its trials, traces and files and lists it under `scope: "shared"`; they cannot operate it. Only the creator may share; another member of the organization is refused with `org_forbidden`. The answer is the job's whole share state, the same shape [shares](#shares) returns.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    share(id: string, request: { link?: boolean; emails?: string[] }): Promise<JobShares>
+    ```
+
+    ```ts
+    const state = await jobs().share(job.id, { link: true, emails: ["alice@example.org"] });
+    console.log(state.link.url);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def share(id: str, *, link: bool = False, emails: list[str] | None = None) -> JobShares
+    ```
+
+    ```python
+    state = await jobs().share(job.id, link=True, emails=["alice@example.org"])
+    print(state.link.url)
+    ```
+  </Tab>
+</Tabs>
+
+## unshare
+
+Take a share back, with the same arguments as `share`. `link: true` turns the link off at once (a later `share` returns a new one); `emails` removes those addresses. Safe to repeat.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    unshare(id: string, request: { link?: boolean; emails?: string[] }): Promise<JobShares>
+    ```
+
+    ```ts
+    await jobs().unshare(job.id, { link: true });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def unshare(id: str, *, link: bool = False, emails: list[str] | None = None) -> JobShares
+    ```
+
+    ```python
+    await jobs().unshare(job.id, link=True)
+    ```
+  </Tab>
+</Tabs>
+
+## shares
+
+Who the job is shared with: `visibility` (`PRIVATE` or `LINK`), `link` (`enabled`, and `url` while it is on), and `emails` (each with `email`, `shared_by` and `created_at`). Creator only.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    shares(id: string): Promise<JobShares>
+    ```
+
+    ```ts
+    const { link, emails } = await jobs().shares(job.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def shares(id: str) -> JobShares
+    ```
+
+    ```python
+    state = await jobs().shares(job.id)
+    ```
+  </Tab>
+</Tabs>
+
 ## grep
 
 Search every trial's parsed trace in one pass. `q` is a case-insensitive regex over each event's type and content; a plain string is a plain substring. Items are per-trial groups with the exact `match_count` and the first five matching events, ordered by trial id; `limit` defaults to 50, at most 200. Keep paging while `hasMore` (`has_more` in Python) is true; a pattern too expensive to evaluate is refused with `invalid_input`.

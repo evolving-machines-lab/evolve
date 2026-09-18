@@ -4463,6 +4463,61 @@ async function testCompareCancelDownload() {
   }
 }
 
+async function testJobShare() {
+  console.log("\n--- runCli: job share / unshare / shares — Harbor's share verbs, by email and by link ---");
+
+  // Grammar: exactly one id; a grant must be named.
+  assertThrowsUsage(() => parseArgs(["job", "share"]), "requires", "share needs an id");
+  assertThrowsUsage(() => parseArgs(["job", "shares", "a", "b"]), "unexpected argument", "shares takes one id");
+
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/abc123" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/jobs/eval-1/share", { status: 200, body: state });
+    setMockResponse("/api/jobs/eval-1/unshare", { status: 200, body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] } });
+    setMockResponse("/api/jobs/eval-1/shares", { status: 200, body: state });
+
+    // A share naming no grant is a usage error (exit 2, the flags named on stderr), refused before any request.
+    const bare = captureIO();
+    assertEqual(await runCli(["job", "share", "eval-1", ...AUTH], bare.io), 2, "share without --link or --email exits 2");
+    assert(bare.err.some((l) => l.includes("--link") && l.includes("--email")), "the refusal names both flags");
+    assertEqual(fetchCalls.length, 0, "nothing was requested");
+
+    const link = captureIO();
+    assertEqual(await runCli(["job", "share", "eval-1", "--link", "--email", "alice@example.org", ...AUTH], link.io), 0, "share exits 0");
+    const shareCall = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/share"));
+    assert(shareCall !== undefined && shareCall.init?.method === "POST", "share POSTs the share route");
+    assertEqual(JSON.parse(String(shareCall?.init?.body)), { link: true, emails: ["alice@example.org"] }, "--link and --email ride one body");
+    assert(link.out.some((l) => l.includes("https://dash.test/shared/abc123")), "the link is printed");
+    assert(link.out.some((l) => l.includes("alice@example.org")), "the addresses are printed");
+
+    const json = captureIO();
+    await runCli(["job", "shares", "eval-1", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out.join("\n")), state, "--json prints the JobShares wire shape verbatim");
+    const human = captureIO();
+    await runCli(["job", "shares", "eval-1", ...AUTH], human.io);
+    assert(human.out.some((l) => l.startsWith("visibility LINK")), "shares prints the visibility");
+
+    const off = captureIO();
+    assertEqual(await runCli(["job", "unshare", "eval-1", "--link", ...AUTH], off.io), 0, "unshare exits 0");
+    const unshareCall = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/unshare"));
+    assertEqual(JSON.parse(String(unshareCall?.init?.body)), { link: true }, "unshare sends the same grammar");
+    assert(off.out.some((l) => l.includes("link       off")), "a revoked link prints off");
+
+    // job show prints the visibility row.
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ visibility: "LINK" }) });
+    const show = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], show.io);
+    assert(show.out.some((l) => l.includes("visibility") && l.includes("LINK")), "job show prints visibility");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobDelete() {
   console.log("\n--- runCli: job delete — Harbor's confirm posture, the receipt counts ---");
 
@@ -9924,6 +9979,7 @@ async function main() {
   testTrialDetailAnalysisRows();
   await testCompareCancelDownload();
   await testJobDelete();
+  await testJobShare();
   await testJobDownloadUnpackGuards();
   await testTrialShow();
   await testTrialShowUploaded();

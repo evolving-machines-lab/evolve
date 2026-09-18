@@ -241,6 +241,28 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   listJobImports: "jobs.listImports",
   getJobImport: "jobs.getImport",
   deleteJob: "jobs.delete",
+  // Sharing (B190): the creator's three verbs are SDK methods; the share
+  // LINK's own doors (x-wave: 5) are the no-login viewer page's and never
+  // SDK methods — an SDK caller holds a key and reads a run it was shared
+  // through the job and trial doors, which an email share opens.
+  shareJob: "jobs.share",
+  unshareJob: "jobs.unshare",
+  getJobShares: "jobs.shares",
+  getSharedJob: null,
+  listSharedJobTrials: null,
+  getSharedTrial: null,
+  getSharedTrialTrace: null,
+  listSharedTrialFiles: null,
+  getSharedTrialFile: null,
+  getSharedTrialFilesystem: null,
+  listSharedTrialFilesystemFolder: null,
+  readSharedTrialFilesystemFile: null,
+  searchSharedTrialFilesystem: null,
+  listSharedTrialFilesystemChanges: null,
+  downloadSharedTrialFilesystemArchive: null,
+  streamSharedTrialFilesystemEvents: null,
+  getSharedTrialSandboxLog: null,
+  streamSharedTrialSandboxLogs: null,
   resumeJob: "jobs.resume",
   retryJob: "jobs.retry",
   regradeJob: "jobs.regrade",

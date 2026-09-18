@@ -4852,6 +4852,58 @@ async function testDeleteJob() {
   }
 }
 
+// =============================================================================
+// SHARE — link and email grants (POST /api/jobs/{jobId}/share, /unshare, GET /shares)
+// =============================================================================
+
+async function testShareJob() {
+  console.log("\n--- jobs().share() / unshare() / shares(): the wire body verbatim, the share state back ---");
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/abc123" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/jobs/eval-1/shares", { status: 200, body: state });
+    setMockResponse("/api/jobs/eval-1/share", { status: 200, body: state });
+    setMockResponse("/api/jobs/eval-1/unshare", {
+      status: 200,
+      body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    const shared = await e.share("eval-1", { link: true, emails: ["Alice@Example.org"] });
+    const shareCall = fetchCalls[0];
+    assert(shareCall.url.endsWith("/api/jobs/eval-1/share"), "share POSTs the share route");
+    assertEqual(shareCall.init?.method, "POST", "share uses POST");
+    assertEqual(
+      JSON.parse(String(shareCall.init?.body)),
+      { link: true, emails: ["Alice@Example.org"] },
+      "the body is the grant verbatim — the server lowercases and validates"
+    );
+    assertEqual(shared, state, "the share state comes back: visibility, the link with its url, the addresses");
+
+    const listed = await e.shares("eval-1");
+    assertEqual(fetchCalls[1].init?.method ?? "GET", "GET", "shares reads with GET");
+    assert(fetchCalls[1].url.endsWith("/api/jobs/eval-1/shares"), "shares hits the shares route");
+    assertEqual(listed.link.url, "https://dash.test/shared/abc123", "the owner can copy the link again");
+
+    const revoked = await e.unshare("eval-1", { link: true });
+    assert(fetchCalls[2].url.endsWith("/api/jobs/eval-1/unshare"), "unshare POSTs the unshare route");
+    assertEqual(JSON.parse(String(fetchCalls[2].init?.body)), { link: true }, "unshare sends the same grammar");
+    assertEqual(revoked, { visibility: "PRIVATE", link: { enabled: false }, emails: [] }, "a revoked link has no url");
+
+    // An older server that names no visibility reads as PRIVATE on the job body.
+    setMockResponse("/api/jobs/eval-2", { status: 200, body: { ...JOB_SUMMARY, id: "eval-2" } });
+    assertEqual((await e.get("eval-2")).visibility, "PRIVATE", "Job.visibility defaults to PRIVATE when the server sends none");
+    setMockResponse("/api/jobs/eval-3", { status: 200, body: { ...JOB_SUMMARY, id: "eval-3", visibility: "LINK" } });
+    assertEqual((await e.get("eval-3")).visibility, "LINK", "Job.visibility carries LINK");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testDeleteJobTypedRefusals() {
   console.log("\n--- delete() surfaces the contract's refusals verbatim ---");
   installMockFetch();
@@ -7797,6 +7849,7 @@ async function main() {
   await testUploadJobTypedErrors();
   await testDeleteJob();
   await testDeleteJobTypedRefusals();
+  await testShareJob();
   await testDownloadPackageBuffer();
   await testDownloadPackageToFile();
   await testDownloadPackageStream();

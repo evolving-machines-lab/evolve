@@ -1280,6 +1280,53 @@ export interface JobDeleteResult {
 }
 
 /**
+ * Who can reach a job without being its creator, an org member or an email
+ * share: `PRIVATE` (nobody) or `LINK` (anyone holding its unlisted link).
+ * There is no PUBLIC — nothing on this platform is listed for everyone.
+ */
+export type JobVisibility = "PRIVATE" | "LINK";
+
+/**
+ * The share and unshare verbs' one body (`POST /api/jobs/{jobId}/share`,
+ * `/unshare`): a link grant, an email grant, or both. `link: true` grants
+ * (or, on unshare, revokes) the job's unlisted link; `emails` are the
+ * addresses to share with (or remove) — one address each, at most 50 per
+ * job. A body naming neither is refused (`invalid_input`).
+ */
+export interface JobShareRequest {
+  link?: boolean;
+  emails?: string[];
+}
+
+/** One email share of a job. */
+export interface JobShareEmail {
+  /** The shared address, lowercased. */
+  email: string;
+  /** The email of the account that granted the share. */
+  shared_by: string;
+  created_at: string;
+}
+
+/**
+ * The job's link state. `url` is present exactly while the link is enabled —
+ * the owner can always copy it again.
+ */
+export interface JobShareLink {
+  enabled: boolean;
+  url?: string;
+}
+
+/**
+ * A job's whole share state — the answer of `GET /api/jobs/{jobId}/shares`
+ * and of both verbs that change it.
+ */
+export interface JobShares {
+  visibility: JobVisibility;
+  link: JobShareLink;
+  emails: JobShareEmail[];
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -1373,6 +1420,13 @@ export interface Job {
    * been deleted, or from a server older than the field.
    */
   org: string | null;
+  /**
+   * `PRIVATE`, or `LINK` when an unlisted share link reaches the job
+   * (`jobs().share(id, { link: true })`). Email shares are not a
+   * visibility: `jobs().shares(id)` lists them. Always `PRIVATE` on a
+   * regrade job; a server older than the field reads as `PRIVATE`.
+   */
+  visibility: JobVisibility;
   /** The create's `system_log`; derived jobs inherit it, a regrade and every pre-switch job answer false. */
   system_log: boolean;
   /** Entity cardinality only — things with no status of their own. */
@@ -4149,6 +4203,29 @@ export interface JobsClient {
    * The response is the receipt: what was destroyed, counted.
    */
   delete(id: string): Promise<JobDeleteResult>;
+  /**
+   * Share a job you created — by link, by email, or both (Harbor's
+   * `harbor job share`; the platform shares a person by email address and
+   * never makes a job public: `link: true` mints an UNLISTED link instead,
+   * the same link on every later call). Each new address is emailed a link
+   * to the run; an address with no account gets a sign-up link for exactly
+   * that address (no gateway credits). An email share reads the job and
+   * lists it under `scope: "shared"`; it never operates it. Creator-only:
+   * an org member is refused `org_forbidden` (403), a stranger sees 404; a
+   * regrade job id is 404. The response is the job's whole share state.
+   */
+  share(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * Revoke a job's link (`link: true` — the old link is dead at once; a
+   * later share mints a new one) and/or email shares (`emails`). Idempotent;
+   * creator-only like `share`.
+   */
+  unshare(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * The job's share state (Harbor's `harbor hub job shares`): visibility, the
+   * link with its URL while enabled, and every email share. Creator-only.
+   */
+  shares(id: string): Promise<JobShares>;
   /**
    * Grep the parsed trace of EVERY trial of the job in one server-side pass.
    * `q` is the trace filter's grammar: a case-insensitive POSIX regex over

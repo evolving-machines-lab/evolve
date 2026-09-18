@@ -71,6 +71,9 @@ from evolve import (
     orgs as orgs_factory,
     JobCounts,
     JobDeleteResult,
+    JobShareEmail,
+    JobShareLink,
+    JobShares,
     JobImport,
     JobImportFailure,
     JobImportSource,
@@ -2570,6 +2573,7 @@ class TestJobs:
             'updated_at',
             'upload',
             'verifier_timeout_multiplier',
+            'visibility',
             'worst_case_spend_usd',
         ]
 
@@ -3734,6 +3738,63 @@ class TestJobs:
                 await jobs_factory(CONFIG).upload(str(job_dir))
         assert exc.value.status == 413
         assert exc.value.code == 'upload_too_large'
+
+    @pytest.mark.asyncio
+    async def test_share_sends_the_grant_and_maps_the_share_state(self):
+        """jobs.share() — POST on the share route with the grant verbatim
+        (the server lowercases and validates), the share state back typed."""
+        state = {
+            'visibility': 'LINK',
+            'link': {'enabled': True, 'url': 'https://dash.test/shared/abc123'},
+            'emails': [{'email': 'alice@example.org', 'shared_by': 'owner@example.org',
+                        'created_at': '2026-09-18T00:00:00.000Z'}],
+        }
+        fake = FakeUrlopen([('/api/jobs/job-1/share', state)])
+        with patch('evolve._http.urlopen', fake):
+            shares = await jobs_factory(CONFIG).share('job-1', link=True, emails=['Alice@Example.org'])
+
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith('/api/jobs/job-1/share')
+        assert json.loads(fake.requests[0].data.decode('utf-8')) == {'link': True, 'emails': ['Alice@Example.org']}
+        assert shares == JobShares(
+            visibility='LINK',
+            link=JobShareLink(enabled=True, url='https://dash.test/shared/abc123'),
+            emails=[JobShareEmail(email='alice@example.org', shared_by='owner@example.org',
+                                  created_at='2026-09-18T00:00:00.000Z')],
+        )
+
+    @pytest.mark.asyncio
+    async def test_unshare_and_shares_read_the_same_state(self):
+        """jobs.unshare() sends the same grammar to the unshare route; jobs.shares()
+        reads with GET; a revoked link has no url."""
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1/unshare', {'visibility': 'PRIVATE', 'link': {'enabled': False}, 'emails': []}),
+            ('/api/jobs/job-1/shares', {'visibility': 'PRIVATE', 'link': {'enabled': False}, 'emails': []}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            revoked = await jobs_factory(CONFIG).unshare('job-1', link=True)
+            listed = await jobs_factory(CONFIG).shares('job-1')
+
+        assert fake.requests[0].get_method() == 'POST'
+        assert json.loads(fake.requests[0].data.decode('utf-8')) == {'link': True}
+        assert fake.requests[1].get_method() == 'GET'
+        assert fake.requests[1].full_url.endswith('/api/jobs/job-1/shares')
+        assert revoked == JobShares(visibility='PRIVATE', link=JobShareLink(enabled=False, url=None), emails=[])
+        assert listed == revoked
+
+    @pytest.mark.asyncio
+    async def test_job_visibility_defaults_to_private(self):
+        """Job.visibility carries the server's word; a server older than the
+        field reads as PRIVATE, exactly how such a server behaves."""
+        fake = FakeUrlopen([
+            ('/api/jobs/job-old', dict(JOB_SUMMARY, id='job-old')),
+            ('/api/jobs/job-link', dict(JOB_SUMMARY, id='job-link', visibility='LINK')),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            older = await jobs_factory(CONFIG).get('job-old')
+            linked = await jobs_factory(CONFIG).get('job-link')
+        assert older.visibility == 'PRIVATE'
+        assert linked.visibility == 'LINK'
 
     @pytest.mark.asyncio
     async def test_delete_sends_delete_and_maps_the_receipt(self):

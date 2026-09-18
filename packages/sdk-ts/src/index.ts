@@ -613,6 +613,11 @@ export {
   type TrialTaskLink,
   type JobTaskLink,
   type JobDeleteResult,
+  type JobShareEmail,
+  type JobShareLink,
+  type JobShareRequest,
+  type JobShares,
+  type JobVisibility,
   // Remote inspection: job-wide grep, the per-trial file tree, and the
   // client-side Harbor-tree assembly behind trial/analysis/job download —
   // with the per-harness table and the home placement rule it applies (the

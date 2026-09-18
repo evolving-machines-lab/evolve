@@ -1346,6 +1346,37 @@ class JobDeleteResult:
 
 
 @dataclass
+class JobShareEmail:
+    """One email share of a job."""
+    #: The shared address, lowercased.
+    email: str
+    #: The email of the account that granted the share.
+    shared_by: str
+    created_at: str
+
+
+@dataclass
+class JobShareLink:
+    """The job's link state; ``url`` is set exactly while the link is enabled
+    (the owner can always copy it again)."""
+    enabled: bool
+    url: Optional[str] = None
+
+
+@dataclass
+class JobShares:
+    """A job's whole share state — the answer of ``GET /api/jobs/{jobId}/shares``
+    and of both verbs that change it (``share`` / ``unshare``).
+
+    ``visibility`` is ``'PRIVATE'`` or ``'LINK'`` (an unlisted link reaches
+    the job); there is no PUBLIC. ``emails`` are the email shares.
+    """
+    visibility: str
+    link: JobShareLink
+    emails: List[JobShareEmail] = field(default_factory=list)
+
+
+@dataclass
 class SourceJob:
     """Provenance of a derived job.
 
@@ -2204,6 +2235,11 @@ class Job:
     #: creator's personal org. None only on a regrade job whose source job
     #: has been deleted, or from a server older than the field.
     org: Optional[str] = field(default=None, kw_only=True)
+    #: ``'PRIVATE'``, or ``'LINK'`` when an unlisted share link reaches the job
+    #: (``jobs().share(id, link=True)``). Email shares are not a visibility:
+    #: ``jobs().shares(id)`` lists them. Always ``'PRIVATE'`` on a regrade job;
+    #: a server older than the field reads as ``'PRIVATE'``.
+    visibility: str = field(default='PRIVATE', kw_only=True)
 
 
 @dataclass
@@ -4360,6 +4396,29 @@ def _map_job(data: Dict[str, Any]) -> Job:
         updated_at=data.get('updated_at', ''),
         finished_at=data.get('finished_at'),
         org=data['org'] if isinstance(data.get('org'), str) else None,
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+    )
+
+
+def _map_job_shares(data: Dict[str, Any]) -> JobShares:
+    """The wire's JobShares, read in the same tolerant shape every required
+    field here uses."""
+    link = data.get('link') if isinstance(data.get('link'), dict) else {}
+    return JobShares(
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        link=JobShareLink(
+            enabled=link.get('enabled') is True,
+            url=link['url'] if isinstance(link.get('url'), str) else None,
+        ),
+        emails=[
+            JobShareEmail(
+                email=str(entry.get('email', '')),
+                shared_by=str(entry.get('shared_by', '')),
+                created_at=str(entry.get('created_at', '')),
+            )
+            for entry in (data.get('emails') or [])
+            if isinstance(entry, dict)
+        ],
     )
 
 
@@ -8410,6 +8469,55 @@ class JobsClient:
             f'/api/jobs/{urllib.parse.quote(id)}', method='DELETE'
         )
         return _map_job_delete_result(raw)
+
+    async def share(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Share a job you created — by link, by email, or both (Harbor's
+        ``harbor job share``; the platform shares a person by email address
+        and never makes a job public: ``link=True`` mints an UNLISTED link
+        instead, the same link on every later call).
+
+        Each new address is emailed a link to the run; an address with no
+        account gets a sign-up link for exactly that address (no gateway
+        credits). An email share reads the job and lists it under
+        ``scope='shared'``; it never operates it. Creator-only: an org
+        member is refused ``org_forbidden`` (403), a stranger sees 404; a
+        regrade job id is 404. The answer is the job's whole share state.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/share', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def unshare(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Revoke a job's link (``link=True`` — the old link is dead at once; a
+        later ``share`` mints a new one) and/or email shares (``emails``).
+        Idempotent; creator-only like ``share``.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/unshare', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def shares(self, id: str) -> JobShares:
+        """The job's share state (Harbor's ``harbor hub job shares``): its
+        visibility, the link with its URL while enabled, and every email
+        share. Creator-only."""
+        raw = await self._http.request_json(f'/api/jobs/{urllib.parse.quote(id)}/shares')
+        return _map_job_shares(raw)
 
     async def grep(
         self,

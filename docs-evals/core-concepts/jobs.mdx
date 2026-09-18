@@ -99,6 +99,19 @@ evolve job delete <job-id> --yes
 
 Only the job's creator may delete it; another member of the organization is refused with `org_forbidden`. The job must be finished: a live job, a running analysis wave or a live regrade derived from it refuses, naming what to wait for. Regrade jobs and the `source_jobs` entries of derived jobs stay. Deleting an uploaded job is how it is replaced; see [upload](/core-concepts/upload).
 
+## Share
+
+```bash
+evolve job share <job-id> --link
+evolve job share <job-id> --email alice@example.org
+evolve job shares <job-id>
+evolve job unshare <job-id> --link
+```
+
+A job you created can be shared two ways, and both may be on at once. `--link` turns on an unlisted link: anyone holding it reads the run — the summary, trials, traces, logs, and files when the tasks are your own organization's — without signing in. The link is never listed anywhere; `job shares` prints it again whenever you need it, and `job unshare --link` kills it at once. `--email` shares the run with a person by address: they get an email with a link to the run and read it after signing in with that address (a person without an account gets a sign-up link in the same email). A run shared with you appears under `evolve job list --scope shared`.
+
+Sharing is read-only: whoever holds the link or the email share cannot cancel, retry, regrade, analyze or delete the job. Only the creator may share or unshare; another member of the organization is refused with `org_forbidden`. A job's `visibility` field says `PRIVATE` or `LINK`.
+
 ## Download
 
 ```bash
