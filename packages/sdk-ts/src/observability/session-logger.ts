@@ -46,7 +46,7 @@ export interface SessionLoggerConfig {
   /** Exact tag to use (skips generation). Takes precedence over tagPrefix. */
   tag?: string;
   tagPrefix?: string;
-  /** Owning organization (slug or id) named on the ingest that creates the session row. */
+  /** Owning organization (slug or id), stamped on the session row by the first ingest. */
   org?: string;
   apiKey?: string;
   /** Observability metadata for trace grouping (generic key-value, domain-agnostic) */
