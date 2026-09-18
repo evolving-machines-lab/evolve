@@ -39,7 +39,7 @@ import type {
 } from './types';
 
 // The fields of the typed sandbox errors, copied into the JSON-RPC error data so Python raises the same exception.
-const TYPED_ERROR_FIELDS = ['feature', 'provider', 'reason', 'path', 'sandboxId', 'state'] as const;
+const TYPED_ERROR_FIELDS = ['feature', 'provider', 'reason', 'path', 'sandboxId', 'state', 'field'] as const;
 
 function pickTypedErrorFields(error: unknown): Record<string, string> {
   const out: Record<string, string> = {};

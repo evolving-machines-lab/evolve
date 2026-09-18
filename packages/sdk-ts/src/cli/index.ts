@@ -1313,11 +1313,8 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
-  // Managed-agent SESSIONS — the other hosted lane, read-only here: the runs
-  // the SDK's `.run()` recorded to the dashboard, listed and inspected
-  // headless through sessions(). A session names an organization like a job,
-  // so --scope means here what it means on every other list; the organization
-  // itself is chosen where the run starts, which is the SDK.
+  // Managed-agent SESSIONS — the other hosted lane, read-only here: a session
+  // names an organization like a job, so --scope means what it means on every list.
   session: {
     summary: "List and inspect managed-agent sessions",
     commands: {

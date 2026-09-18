@@ -3358,9 +3358,7 @@ class Agent:
     """
     # The name to put in job agents[].name
     name: str
-    # The owning organization's slug. Its members may NAME this agent in a
-    # job; only its owner may edit or delete it. None on a server predating
-    # the field.
+    # The owning organization's slug: its members may name this agent in a job; only the owner edits it.
     org: Optional[str]
     # How the executables were produced: "install_script" | "tarball"
     source: str
@@ -3706,9 +3704,7 @@ class SkillUpload:
     """
     id: str
     name: str
-    #: The owning organization's slug. Its members may REFERENCE this skill
-    #: from a job; only its owner may delete it. None on a server predating
-    #: the field.
+    #: The owning organization's slug: its members may reference this skill from a job; only the owner deletes it.
     org: Optional[str]
     digest: str
     size_bytes: int
