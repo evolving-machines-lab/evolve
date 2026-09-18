@@ -64,8 +64,11 @@ from evolve import (
     EvolveIncompleteDownloadError,
     HostedClientConfig,
     OrganizationDetail,
+    OrgInviteCreated,
+    OrgMember,
     OrgQuota,
     OrgUsage,
+    orgs as orgs_factory,
     JobCounts,
     JobDeleteResult,
     JobImport,
@@ -2554,6 +2557,7 @@ class TestJobs:
             'n_attempts',
             'n_concurrent_trials',
             'n_total_trials',
+            'org',
             'retry',
             'sandbox_provider',
             'source_jobs',
@@ -5429,3 +5433,94 @@ class TestRunFilesystem:
         assert bare.system_log is False
         with pytest.raises(ValueError):
             await trials_factory(CONFIG).artifact('run-1', 'filesystem')
+
+
+ACME = {
+    'org_id': 'org-1', 'slug': 'acme', 'display_name': 'Acme Corp', 'personal': False,
+    'role': 'owner', 'created_at': '2026-08-01T00:00:00.000Z',
+}
+
+
+class TestOrgsTeamVerbs:
+    """orgs().create / invite / join / members, and the org default on
+    jobs().start and datasets().publish (the call's own org wins, the
+    config default fills an absent one, neither sends nothing)."""
+
+    @pytest.mark.asyncio
+    async def test_create_posts_slug_and_optional_display_name(self):
+        fake = FakeUrlopen([('/api/orgs', ACME)])
+        with patch('evolve._http.urlopen', fake):
+            org = await orgs_factory(CONFIG).create('acme', display_name='Acme Corp')
+            await orgs_factory(CONFIG).create('bare')
+        assert fake.requests[0].get_method() == 'POST'
+        assert json.loads(fake.requests[0].data.decode('utf-8')) == {'slug': 'acme', 'display_name': 'Acme Corp'}
+        assert json.loads(fake.requests[1].data.decode('utf-8')) == {'slug': 'bare'}
+        assert org.slug == 'acme' and org.role == 'owner'
+
+    @pytest.mark.asyncio
+    async def test_invite_mints_a_token_once(self):
+        fake = FakeUrlopen([('/api/orgs/acme/invites', {
+            'invite_id': 'inv-1', 'expires_at': '2026-09-24T00:00:00.000Z', 'max_uses': None,
+            'uses': 0, 'revoked_at': None, 'created_at': '2026-09-17T00:00:00.000Z', 'token': 'evi_secret',
+        })])
+        with patch('evolve._http.urlopen', fake):
+            invite = await orgs_factory(CONFIG).invite('acme')
+        assert fake.requests[0].get_method() == 'POST'
+        assert fake.requests[0].full_url.endswith('/api/orgs/acme/invites')
+        assert isinstance(invite, OrgInviteCreated)
+        assert invite.token == 'evi_secret' and invite.max_uses is None and invite.uses == 0
+
+    @pytest.mark.asyncio
+    async def test_join_posts_the_token_and_maps_already_member(self):
+        fake = FakeUrlopen([('/api/orgs/invites/accept', {'org': {**ACME, 'role': 'member'}, 'already_member': True})])
+        with patch('evolve._http.urlopen', fake):
+            joined = await orgs_factory(CONFIG).join('evi_secret')
+        assert json.loads(fake.requests[0].data.decode('utf-8')) == {'token': 'evi_secret'}
+        assert joined.org.slug == 'acme' and joined.org.role == 'member'
+        assert joined.already_member is True
+
+    @pytest.mark.asyncio
+    async def test_members_lists_email_and_role(self):
+        fake = FakeUrlopen([('/api/orgs/acme/members', {'items': [
+            {'user_id': 'u1', 'email': 'vaibhav@example.com', 'role': 'owner', 'joined_at': '2026-08-01T00:00:00.000Z'},
+            {'user_id': 'u2', 'email': 'tanay@example.com', 'role': 'member', 'joined_at': '2026-09-17T00:00:00.000Z'},
+        ]})])
+        with patch('evolve._http.urlopen', fake):
+            members = await orgs_factory(CONFIG).members('acme')
+        assert [(m.email, m.role) for m in members] == [('vaibhav@example.com', 'owner'), ('tanay@example.com', 'member')]
+        assert all(isinstance(m, OrgMember) for m in members)
+
+    @pytest.mark.asyncio
+    async def test_start_org_flag_then_config_default_then_nothing(self):
+        fake = FakeUrlopen([('/api/jobs', {**JOB_SUMMARY, 'org': 'acme'})])
+        arms = dict(datasets=[{'name': 'deep-swe'}], agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}])
+        with patch('evolve._http.urlopen', fake):
+            job = await jobs_factory(HostedClientConfig(api_key='k', base_url='http://localhost:3000', org='acme')).start(**arms)
+            await jobs_factory(HostedClientConfig(api_key='k', base_url='http://localhost:3000', org='acme')).start(org='other', **arms)
+            await jobs_factory(CONFIG).start(**arms)
+        bodies = [json.loads(r.data.decode('utf-8')) for r in fake.requests]
+        assert bodies[0]['org'] == 'acme'
+        assert list(bodies[0])[0] == 'org'
+        assert bodies[1]['org'] == 'other'
+        assert 'org' not in bodies[2]
+        assert job.org == 'acme'
+
+    @pytest.mark.asyncio
+    async def test_job_org_is_none_from_an_older_server(self):
+        fake = FakeUrlopen([('/api/jobs/job-1', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake):
+            job = await jobs_factory(CONFIG).get('job-1')
+        assert job.org is None
+
+    @pytest.mark.asyncio
+    async def test_publish_org_part_flag_then_config_default_then_nothing(self):
+        accepted = {'id': 'imp-1', 'status': 'QUEUED', 'name': 'hello-world', 'version': '1', 'failure': None, 'warnings': []}
+        fake = FakeUrlopen([('/api/datasets/publish', accepted)])
+        with patch('evolve._http.urlopen', fake):
+            await datasets_factory(HostedClientConfig(api_key='k', base_url='http://localhost:3000', org='acme')).publish(hub_package='cookbook/hello-world')
+            await datasets_factory(HostedClientConfig(api_key='k', base_url='http://localhost:3000', org='acme')).publish(hub_package='cookbook/hello-world', org='other')
+            await datasets_factory(CONFIG).publish(hub_package='cookbook/hello-world')
+        parts = [_multipart_parts(r) for r in fake.requests]
+        assert parts[0]['org'] == b'acme'
+        assert parts[1]['org'] == b'other'
+        assert 'org' not in parts[2]

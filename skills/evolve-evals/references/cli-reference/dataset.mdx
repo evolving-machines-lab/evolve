@@ -90,6 +90,10 @@ A directory upload prints `upload <sent>/<total> (P%)` once per 10% of the archi
   Version label for the published version. Optional with `--dir` when `dataset.toml` declares one, and with `--from hub:…`, which defaults to the resolved revision. Required with `--git` and `--from <url>`.
 </ParamField>
 
+<ParamField path="--org" type="name">
+  Organization a new dataset lands in, so your teammates can run it. Omitted, the default set with `evolve auth org use`, else your personal organization. An existing dataset stays where it is; naming a different organization for it is refused.
+</ParamField>
+
 <ParamField path="--watch">
   Poll until the publish settles: the version `READY` (built and active) or `FAILED`.
 </ParamField>
@@ -100,6 +104,7 @@ A directory upload prints `upload <sent>/<total> (P%)` once per 10% of the archi
 
 ```bash
 evolve dataset publish --from hub:cookbook/hello-world --watch
+evolve dataset publish --dir ./corpus --name my-swe --version 1.0 --org acme
 ```
 
 ## dataset watch

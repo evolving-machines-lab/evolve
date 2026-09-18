@@ -13,6 +13,7 @@ One client per noun, each built by a factory. Every factory reads `EVOLVE_API_KE
     interface HostedClientConfig {
       apiKey?: string;   // default: process.env.EVOLVE_API_KEY
       baseUrl?: string;  // default: the Evolve dashboard API
+      org?: string;      // default organization for jobs().start() and datasets().publish(); omitted: your personal one
     }
 
     function jobs(config?: HostedClientConfig): JobsClient
@@ -37,6 +38,7 @@ One client per noun, each built by a factory. Every factory reads `EVOLVE_API_KE
     class HostedClientConfig:
         api_key: Optional[str] = None   # default: EVOLVE_API_KEY
         base_url: Optional[str] = None  # default: the Evolve dashboard API
+        org: Optional[str] = None       # default organization for jobs().start() and datasets().publish(); None: your personal one
 
     def jobs(config: Optional[HostedClientConfig] = None) -> JobsClient
     def hosted(config: Optional[HostedClientConfig] = None) -> HostedEvolve

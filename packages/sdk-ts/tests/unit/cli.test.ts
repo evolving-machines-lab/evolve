@@ -137,7 +137,7 @@ function restoreFetch() {
 // =============================================================================
 
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,6 +185,10 @@ function captureIO(tty = false): { io: CliIO; out: string[]; err: string[] } {
 }
 
 const AUTH = ["--api-key", "test-key", "--base-url", BASE];
+// The CLI's config file (`auth org use`) lives under $XDG_CONFIG_HOME; every
+// run here reads a throwaway one, never the developer's own default org.
+const XDG_HOME = mkdtempSync(join(tmpdir(), "evolve-cli-xdg-"));
+process.env.XDG_CONFIG_HOME = XDG_HOME;
 /** The line every API refusal ends with on stderr: the errors page the CLI itself serves (cli-skills.test.ts). */
 const DOCS_FOOTER = "Docs: evolve skills get evals sdk-reference/errors";
 
@@ -2399,7 +2403,8 @@ async function testRunWatchEndToEnd() {
     assert(streamCall !== undefined, "connects to the SSE event stream");
 
     // Rendered output
-    assert(out[0].includes("eval-1") && out[0].includes("watching"), "prints the created header");
+    assertEqual(out[0], "org  personal", "the first line names the org the job landed in");
+    assert(out[1].includes("eval-1") && out[1].includes("watching"), "prints the created header");
     assert(out.some((l) => l.includes("job.created")), "renders job.created event line");
     assert(
       out.some((l) => l.includes("trial.settled") && l.includes("run-1") && l.includes("reward=1")),
@@ -8459,6 +8464,144 @@ const ORG_DETAIL = {
   },
 };
 
+// =============================================================================
+// AUTH ORG — the team verbs (create / invite / join / use) and --org on run
+// and dataset publish (flag > config file > personal), the run's first line
+// =============================================================================
+
+async function testAuthOrgTeamVerbs() {
+  console.log("\n--- runCli: auth org create / invite / join / use; --org on run and dataset publish ---");
+
+  console.log("  [grammar]");
+  const create = parseArgs(["auth", "org", "create", "acme", "--display-name", "Acme Corp"]);
+  assertEqual([create.command, create.positionals, create.flags["display-name"]], ["auth org create", ["acme"], "Acme Corp"], "org create resolves with its positional and flag");
+  assertEqual(parseArgs(["auth", "org", "invite", "acme"]).command, "auth org invite", "org invite resolves");
+  assertEqual(parseArgs(["auth", "org", "join", "evi_x"]).command, "auth org join", "org join resolves");
+  assertEqual(parseArgs(["auth", "org", "use"]).positionals, [], "org use takes no positional");
+  assertEqual(parseArgs(["auth", "org", "use", "acme"]).positionals, ["acme"], "org use takes one");
+  assertEqual(parseArgs(["run", "--org", "acme", "-d", "x", "-a", "codex", "-m", "m"]).flags.org, "acme", "--org parses on run");
+  assertEqual(parseArgs(["dataset", "publish", "--org", "acme", "--from", "hub:a/b"]).flags.org, "acme", "--org parses on dataset publish");
+  const help = captureIO();
+  assertEqual(await runCli(["help", "auth", "org", "use"], help.io), 0, "help on org use exits 0");
+  assert(help.out.join("\n").includes("[<name> | personal]"), "help documents the personal spelling");
+
+  const configPath = join(XDG_HOME, "evolve", "config.json");
+  assert(!existsSync(configPath), "no config file before the first use");
+
+  installMockFetch();
+  try {
+    const ACME = { org_id: "org-1", slug: "acme", display_name: "Acme Corp", personal: false, role: "owner", created_at: "2026-08-01T00:00:00.000Z" };
+    setMockResponse("/api/orgs/acme/invites", {
+      status: 201,
+      body: { invite_id: "inv-1", expires_at: "2026-09-24T00:00:00.000Z", max_uses: null, uses: 0, revoked_at: null, created_at: "2026-09-17T00:00:00.000Z", token: "evi_secret" },
+    });
+    setMockResponse("/api/orgs/invites/accept", { status: 200, body: { org: { ...ACME, role: "member" }, already_member: false } });
+    setMockResponse("/api/orgs", { status: 201, body: ACME });
+    setMockResponse("/api/jobs", { status: 202, body: { ...wireJob(), org: "acme" } });
+    setMockResponse("/api/datasets/publish", {
+      status: 202,
+      body: { id: "imp-1", status: "QUEUED", name: "hello-world", version: "1", failure: null, warnings: [] },
+    });
+
+    console.log("  [create]");
+    const created = captureIO();
+    assertEqual(await runCli(["auth", "org", "create", "acme", "--display-name", "Acme Corp", ...AUTH], created.io), 0, "create exits 0");
+    let call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/orgs") && call.init?.method === "POST", "create POSTs /api/orgs");
+    assertEqual(JSON.parse(call.init?.body as string), { slug: "acme", display_name: "Acme Corp" }, "create body: slug + display_name");
+    assertEqual(created.out[0], "Created organization acme", "create names the org");
+    assert(created.out.some((l) => l.includes("evolve auth org invite acme")), "create points at the invite verb");
+    const createdJson = captureIO();
+    await runCli(["auth", "org", "create", "acme", "--json", ...AUTH], createdJson.io);
+    assertEqual(JSON.parse(createdJson.out[0]).slug, "acme", "--json prints the Organization");
+
+    console.log("  [invite]");
+    const invited = captureIO();
+    assertEqual(await runCli(["auth", "org", "invite", "acme", ...AUTH], invited.io), 0, "invite exits 0");
+    call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/orgs/acme/invites") && call.init?.method === "POST", "invite POSTs /api/orgs/{org}/invites");
+    assertEqual(invited.out[0], "token    evi_secret", "the token is the first line");
+    assert(invited.out.some((l) => l.endsWith("evolve auth org join evi_secret")), "and the exact join command follows — no URL, there is no web accept page yet");
+    assert(!invited.out.some((l) => /https?:\/\//.test(l)), "no link is printed");
+    const invitedJson = captureIO();
+    await runCli(["auth", "org", "invite", "acme", "--json", ...AUTH], invitedJson.io);
+    assertEqual(JSON.parse(invitedJson.out[0]).token, "evi_secret", "--json carries the token");
+
+    console.log("  [join]");
+    const joined = captureIO();
+    assertEqual(await runCli(["auth", "org", "join", "evi_secret", ...AUTH], joined.io), 0, "join exits 0");
+    call = fetchCalls[fetchCalls.length - 1];
+    assertEqual(JSON.parse(call.init?.body as string), { token: "evi_secret" }, "join POSTs the token");
+    assertEqual(joined.out[0], "Joined acme as member", "join says so");
+    const joinedJson = captureIO();
+    await runCli(["auth", "org", "join", "evi_secret", "--json", ...AUTH], joinedJson.io);
+    assertEqual(JSON.parse(joinedJson.out[0]).already_member, false, "--json carries already_member");
+
+    console.log("  [use — the config file]");
+    const before = fetchCalls.length;
+    const none = captureIO();
+    assertEqual(await runCli(["auth", "org", "use"], none.io), 0, "bare use exits 0");
+    assertEqual(none.out[0], `org  personal  (no default in ${configPath})`, "no file = personal, and where the file would be");
+    const set = captureIO();
+    assertEqual(await runCli(["auth", "org", "use", "acme"], set.io), 0, "use <name> exits 0");
+    assertEqual(set.out[0], `Default org: acme (${configPath})`, "use names the org and the file");
+    assertEqual(JSON.parse(readFileSync(configPath, "utf8")), { org: "acme" }, "the file carries exactly the org key");
+    assertEqual(statSync(configPath).mode & 0o777, 0o600, "the file is 0600");
+    const show = captureIO();
+    await runCli(["auth", "org", "use"], show.io);
+    assertEqual(show.out[0], `org  acme  (from ${configPath})`, "bare use prints the default and its source");
+    const showJson = captureIO();
+    await runCli(["auth", "org", "use", "--json"], showJson.io);
+    assertEqual(JSON.parse(showJson.out[0]), { org: "acme", source: "config", path: configPath }, "--json: org, source, path");
+    assertEqual(fetchCalls.length, before, "use makes no request");
+
+    console.log("  [run: flag > config file > personal, and the first line]");
+    const RUN = ["-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", ...AUTH];
+    const viaConfig = captureIO();
+    assertEqual(await runCli(["run", ...RUN], viaConfig.io), 0, "run exits 0");
+    let body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "acme", "the config default rides the body");
+    assertEqual(viaConfig.out[0], "org  acme", "the FIRST line names the org");
+    const viaFlag = captureIO();
+    await runCli(["run", "--org", "other", ...RUN], viaFlag.io);
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "other", "--org wins over the config file");
+    assertEqual(viaFlag.out[0], "org  other", "and the first line says so");
+    const printed = captureIO();
+    await runCli(["run", "--print-config", ...RUN], printed.io);
+    assertEqual(JSON.parse(printed.out.join("\n")).org, "acme", "--print-config shows the resolved org");
+    const asJson = captureIO();
+    await runCli(["run", "--json", ...RUN], asJson.io);
+    assertEqual(JSON.parse(asJson.out[0]).org, "acme", "--json: the org is the created job's own field, no extra line");
+    assertEqual(asJson.out.length, 1, "--json stays one document");
+
+    console.log("  [dataset publish --org]");
+    const pub = captureIO();
+    assertEqual(await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", ...AUTH], pub.io), 0, "publish exits 0");
+    let form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "acme", "the config default is the org part");
+    await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", "--org", "other", ...AUTH], captureIO().io);
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "other", "--org wins on publish too");
+
+    console.log("  [use personal]");
+    const cleared = captureIO();
+    assertEqual(await runCli(["auth", "org", "use", "personal"], cleared.io), 0, "use personal exits 0");
+    assertEqual(cleared.out[0], `Default org cleared: personal (${configPath})`, "personal clears the default");
+    assertEqual(JSON.parse(readFileSync(configPath, "utf8")), {}, "the key is removed, nothing else is written");
+    const personal = captureIO();
+    await runCli(["run", ...RUN], personal.io);
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assert(!("org" in body), "no org anywhere = no org key on the wire");
+    assertEqual(personal.out[0], "org  personal", "the first line says personal");
+    await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", ...AUTH], captureIO().io);
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assert(!form.has("org"), "no org part on publish either");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testAuthOrgVerbs() {
   console.log("\n--- runCli: auth org list / show ---");
 
@@ -9828,6 +9971,7 @@ async function main() {
   await testCheckShowDefaults();
   await testFilesVerbs();
   await testSessionListAndShow();
+  await testAuthOrgTeamVerbs();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

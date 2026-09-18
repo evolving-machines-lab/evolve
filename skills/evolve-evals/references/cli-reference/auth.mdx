@@ -57,4 +57,77 @@ Show one organization: your role, its members, its quota and live usage.
 evolve auth org show acme
 ```
 
+## auth org create
+
+```bash
+evolve auth org create <name> [--display-name <text>]
+```
+
+Create an organization. You become its owner. The name is its slug: lowercase letters, digits and single hyphens.
+
+```bash
+evolve auth org create acme --display-name "Acme Corp"
+```
+
+```text
+Created organization acme
+slug          acme
+display name  Acme Corp
+role          owner
+
+Invite a teammate with: evolve auth org invite acme
+```
+
+## auth org invite
+
+```bash
+evolve auth org invite <org>
+```
+
+Mint an invite token for an organization you own. The token is shown once; send your teammate the join command it prints.
+
+```bash
+evolve auth org invite acme
+```
+
+```text
+token    evi_...
+expires  2026-09-24T00:00:00.000Z
+uses     unlimited
+
+Send the teammate this command: evolve auth org join evi_...
+```
+
+## auth org join
+
+```bash
+evolve auth org join <token>
+```
+
+Join the organization an invite token names, as a member. Running it again with the same token is harmless.
+
+```bash
+evolve auth org join evi_...
+```
+
+```text
+Joined acme as member
+```
+
+## auth org use
+
+```bash
+evolve auth org use [<name> | personal]
+```
+
+Set the organization your jobs and datasets land in when a command names none. It is written to `$XDG_CONFIG_HOME/evolve/config.json`, else `~/.config/evolve/config.json`. `personal` clears it; with no argument it prints the current default. `--org` on `evolve run` or `evolve dataset publish` always wins over it.
+
+```bash
+evolve auth org use acme
+```
+
+```text
+Default org: acme (/Users/you/.config/evolve/config.json)
+```
+
 <GlobalOptions />

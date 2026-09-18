@@ -91,9 +91,14 @@ class HostedClientConfig:
     Args:
         api_key: Evolve API key override (default: EVOLVE_API_KEY)
         base_url: API base URL override (default: the Evolve dashboard API)
+        org: The organization (slug or id) a job or a published dataset
+            lands in when the call names none — the client-level default. A
+            call's own ``org`` always wins; with neither, the caller's
+            personal org.
     """
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    org: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {}
@@ -101,6 +106,8 @@ class HostedClientConfig:
             result['api_key'] = self.api_key
         if self.base_url:
             result['base_url'] = self.base_url
+        if self.org:
+            result['org'] = self.org
         return result
 
 

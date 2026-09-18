@@ -22,6 +22,12 @@ export interface HostedClientConfig {
   apiKey?: string;
   /** API base URL override (default: the Evolve dashboard API) */
   baseUrl?: string;
+  /**
+   * The organization (slug or id) a job or a published dataset lands in when
+   * the call names none — the client-level default. A call's own `org`
+   * always wins; with neither, the caller's personal org.
+   */
+  org?: string;
 }
 
 /**
@@ -699,6 +705,11 @@ export interface AnalyzeConfig {
 export interface JobCreate {
   /** User-facing label; server-generated when omitted. */
   job_name?: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else the caller's personal org.
+   */
+  org?: string;
   datasets: DatasetSelector[];
   agents: AgentArmInput[];
   /** Attempts per task per agent arm (default 1, max 100). */
@@ -1356,6 +1367,12 @@ export interface Job {
    * on a job this platform ran.
    */
   sandbox_provider: EvalSandboxProvider | null;
+  /**
+   * The owning organization's slug — the `org` named at create, else the
+   * creator's personal org. Null only on a regrade job whose source job has
+   * been deleted, or from a server older than the field.
+   */
+  org: string | null;
   /** The create's `system_log`; derived jobs inherit it, a regrade and every pre-switch job answer false. */
   system_log: boolean;
   /** Entity cardinality only — things with no status of their own. */
@@ -3006,6 +3023,12 @@ export interface PublishDatasetInput {
    * required otherwise.
    */
   version?: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else a NEW dataset lands in the
+   * caller's personal org and an existing one stays where it is.
+   */
+  org?: string;
 }
 
 /** Options for datasets().publish() */
@@ -5108,17 +5131,60 @@ export interface OrganizationDetail extends Organization {
   usage: OrgUsage;
 }
 
+/** One member of an organization (`GET /api/orgs/{org}/members` item). */
+export interface OrgMember {
+  user_id: string;
+  email: string;
+  role: OrgRole;
+  joined_at: string;
+}
+
+/** An invite link's descriptor — the token itself is returned once, at creation. */
+export interface OrgInvite {
+  invite_id: string;
+  /** Null = never expires. */
+  expires_at: string | null;
+  /** Null = unlimited uses. */
+  max_uses: number | null;
+  /** Accepted joins so far. */
+  uses: number;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+/** A freshly minted invite: the descriptor plus its one-time token (`POST /api/orgs/{org}/invites`). */
+export interface OrgInviteCreated extends OrgInvite {
+  /** The invite link's credential, returned ONCE — whoever presents it while signed in joins as member. */
+  token: string;
+}
+
+/** The answer to redeeming an invite token (`POST /api/orgs/invites/accept`). */
+export interface OrgJoined {
+  org: Organization;
+  /** True when the caller was already a member (no use of the link consumed). */
+  already_member: boolean;
+}
+
 /**
- * Client for the caller's organizations — the read pair. Creating, renaming,
- * deleting, members and invite links are served by the API and stay outside
- * the SDK until a wave asks for them; quotas are set only from the platform
- * administrator's dashboard session, so no SDK method could ever set one.
+ * Client for the caller's organizations: the read pair (Harbor's `auth org
+ * list` shape and the hosted `auth org show` extension), and the team
+ * verbs — create, invite, join, members. Renaming, deleting, member roles
+ * and invite revocation stay outside the SDK until a wave asks; quotas are
+ * set only from the platform administrator's dashboard session.
  */
 export interface OrgsClient {
   /** Every organization the caller belongs to, personal first (`GET /api/orgs`). */
   list(): Promise<Organization[]>;
   /** One organization by slug (or id): role, member count, quota, usage (`GET /api/orgs/{org}`). */
   get(org: string): Promise<OrganizationDetail>;
+  /** Create a shared organization under `name` (its slug); the caller becomes its owner (`POST /api/orgs`). */
+  create(name: string, options?: { displayName?: string }): Promise<Organization>;
+  /** Mint an invite link for an org you own; the response carries the token once (`POST /api/orgs/{org}/invites`). */
+  invite(org: string): Promise<OrgInviteCreated>;
+  /** Redeem an invite token: join its org as member (`POST /api/orgs/invites/accept`). */
+  join(token: string): Promise<OrgJoined>;
+  /** The org's members, owners first; any member may read it (`GET /api/orgs/{org}/members`). */
+  members(org: string): Promise<OrgMember[]>;
 }
 
 // =============================================================================

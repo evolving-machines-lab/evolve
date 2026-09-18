@@ -30,6 +30,7 @@ One shape from `start`, `get`, `list`, `cancel`, `resume`, `retry` and `regrade`
 | `timeout_multiplier` | number | The global multiplier, 1.0 when none was named. |
 | `agent_timeout_multiplier`, `verifier_timeout_multiplier`, `agent_setup_timeout_multiplier`, `environment_build_timeout_multiplier` | number \| null | Null means the global applies. |
 | `sandbox_provider` | `e2b` `daytona` `modal` \| null | Null exactly on an uploaded job. |
+| `org` | string \| null | Slug of the organization the job belongs to: the one named at create, else the creator's personal one. Null only on a regrade whose source job was deleted. |
 | `counts` | `{ agents, tasks }` | Entity counts. |
 | `build_exclusions` | `JobBuildExclusion[]` | One entry per dataset whose selection lost tasks that failed to build; empty otherwise, and always empty on a derived job. See [datasets](/core-concepts/datasets#partially-built-versions). |
 | `n_total_trials` | number | |

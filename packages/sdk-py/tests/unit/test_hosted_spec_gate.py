@@ -320,16 +320,16 @@ OPERATION_TO_METHOD = {
     # ever set one.
     'listOrgs': (OrgsClient, 'list'),
     'getOrg': (OrgsClient, 'get'),
-    'createOrg': None,
+    'createOrg': (OrgsClient, 'create'),
     'updateOrg': None,
     'deleteOrg': None,
-    'listOrgMembers': None,
+    'listOrgMembers': (OrgsClient, 'members'),
     'updateOrgMember': None,
     'removeOrgMember': None,
     'listOrgInvites': None,
-    'createOrgInvite': None,
+    'createOrgInvite': (OrgsClient, 'invite'),
     'revokeOrgInvite': None,
-    'acceptOrgInvite': None,
+    'acceptOrgInvite': (OrgsClient, 'join'),
 }
 
 

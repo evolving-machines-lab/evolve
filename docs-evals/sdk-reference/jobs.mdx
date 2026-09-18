@@ -16,12 +16,13 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `n_attempts`, `n_concurrent_trials` (1 to 150), `max_trial_spend_usd`, `sandbox_provider`, `retry`, `analyze`, `system_log` (record the box's own system log stream beside `agent`, `verifier`, `setup` and `metrics`; off by default), the five `*_timeout_multiplier` fields, `verifier_env` (`REWARDKIT_JUDGE` and `REWARDKIT_MODEL` only) and `secrets`. `agent_env` is in the shape but refused by the server.
+    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `org` (the organization the job lands in; omitted, the client's `org` default, else your personal one), `n_attempts`, `n_concurrent_trials` (1 to 150), `max_trial_spend_usd`, `sandbox_provider`, `retry`, `analyze`, `system_log` (record the box's own system log stream beside `agent`, `verifier`, `setup` and `metrics`; off by default), the five `*_timeout_multiplier` fields, `verifier_env` (`REWARDKIT_JUDGE` and `REWARDKIT_MODEL` only) and `secrets`. `agent_env` is in the shape but refused by the server.
 
-    The response is the [Job](/sdk-reference/types#job), with the resolved `max_trial_spend_usd`, `worst_case_spend_usd`, `retry`, `analyze` and multipliers. `options.idempotencyKey` makes a repeated call return the same job, with `idempotent_replay` true; a different request under a used key is refused with `idempotency_key_reused`.
+    The response is the [Job](/sdk-reference/types#job), with the resolved `max_trial_spend_usd`, `worst_case_spend_usd`, `retry`, `analyze` and multipliers, and `org`, the slug of the organization it landed in. `options.idempotencyKey` makes a repeated call return the same job, with `idempotent_replay` true; a different request under a used key is refused with `idempotency_key_reused`.
 
     ```ts
     const job = await jobs().start({
+      org: "acme",
       datasets: [{ name: "terminal-bench-4", version: "4.0", n_tasks: 5 }],
       agents: [{ name: "codex", model_name: "gpt-6-astra" }],
     });
@@ -34,6 +35,7 @@ description: "Start, follow, and derive jobs."
         datasets: List[DatasetSelector | dict],
         agents: List[AgentArm | dict],
         job_name=None,
+        org=None,
         n_attempts=None,
         n_concurrent_trials=None,
         max_trial_spend_usd=None,
@@ -56,6 +58,7 @@ description: "Start, follow, and derive jobs."
 
     ```python
     job = await jobs().start(
+        org="acme",
         datasets=[{"name": "terminal-bench-4", "version": "4.0", "n_tasks": 5}],
         agents=[{"name": "codex", "model_name": "gpt-6-astra"}],
     )
