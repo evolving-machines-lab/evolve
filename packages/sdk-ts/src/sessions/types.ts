@@ -1,4 +1,4 @@
-import type { GatewayUsageEvent, UsageReading } from "../hosted/types";
+import type { GatewayUsageEvent, JobShareRequest, JobShares, JobVisibility, UsageReading } from "../hosted/types";
 
 /** Options for listing sessions */
 export interface ListSessionsOptions {
@@ -14,6 +14,12 @@ export interface ListSessionsOptions {
   tagPrefix?: string;
   /** Sort order (default: "newest") */
   sort?: "newest" | "oldest" | "cost";
+  /**
+   * Whose sessions: `my`, the ones you started (the default), or `shared`,
+   * the ones other people shared with your address. A session belongs to no
+   * organization, so `shared` here is the email shares alone.
+   */
+  scope?: "my" | "shared";
 }
 
 /** Paginated list of sessions */
@@ -55,6 +61,11 @@ export interface SessionInfo {
   endedAt: string | null;
   stepCount: number;
   toolStats: Record<string, number> | null;
+  /**
+   * The share link's switch: `LINK` while the session's unlisted link is on,
+   * `PRIVATE` otherwise. An older server that sends none reads as `PRIVATE`.
+   */
+  visibility: JobVisibility;
 }
 
 /** Raw parsed JSONL event — no imposed schema */
@@ -155,4 +166,25 @@ export interface SessionsClient {
   download(id: string, options?: DownloadSessionOptions): Promise<string>;
   /** Wait for browser replay and return Dashboard-owned replay/download URLs. */
   browserReplay(id: string, options?: BrowserReplayOptions): Promise<BrowserReplay>;
+  /**
+   * Share a session you started, the way a job shares (`jobs().share`):
+   * `link: true` mints its unlisted link (the same link on every later call;
+   * what the link reads is the session, its transcript and its trace file),
+   * `emails` shares it with those addresses — each new one emailed a link,
+   * reading the session once signed in with that address and finding it under
+   * `list({ scope: "shared" })`. Read-only: neither can stop the session.
+   * Creator-only.
+   */
+  share(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * Revoke a session's link (`link: true` — the old link is dead at once; a
+   * later share mints a new one) and/or email shares (`emails`). Idempotent;
+   * creator-only like `share`.
+   */
+  unshare(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * The session's share state: visibility, the link with its URL while
+   * enabled, and every email share. Creator-only.
+   */
+  shares(id: string): Promise<JobShares>;
 }

@@ -112,6 +112,8 @@ A job you created can be shared two ways, and both may be on at once. `--link` t
 
 Sharing is read-only: whoever holds the link or the email share cannot cancel, retry, regrade, analyze or delete the job. Only the creator may share or unshare; another member of the organization is refused with `org_forbidden`. A job's `visibility` field says `PRIVATE` or `LINK`.
 
+A [check](/core-concepts/check#share) and a managed-agent session share the same two ways, each on its own id: `evolve check share <check-id>` and `evolve session share <session-id>` take the same `--link` and `--email` flags and answer the same share state. A session belongs to no organization, so only the addresses it was shared with — never a teammate by membership — read it; the [Traces page](/dashboard/traces) covers what a session's link opens.
+
 ## Download
 
 ```bash

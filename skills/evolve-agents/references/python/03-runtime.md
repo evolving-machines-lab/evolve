@@ -792,6 +792,7 @@ async with sessions() as session:
         transcript = await session.transcript(info.id)
         path = await session.download(info.id, to='./traces')
         replay = await session.browser_replay(info.id)
+        await session.share(info.id, link=True, emails=['alice@example.org'])
 
         print(info.runtime_status)   # 'alive' | 'dead' | 'unknown'
         print(len(recent_events))    # Parsed JSONL objects
@@ -799,9 +800,9 @@ async with sessions() as session:
         print(replay.replay_url)     # Browser replay URL
 ```
 
-The CLI wraps the same client headless — `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>` — with no Python code involved.
+The CLI wraps the same client headless — `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, `--scope my|shared`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page), `evolve session show <id>`, and `evolve session share|unshare|shares <id>` (`--link`, `--email <address>`) — with no Python code involved.
 
-The `sessions()` factory returns a `SessionsClient` with six methods:
+The `sessions()` factory returns a `SessionsClient` with nine methods:
 
 ```python
 page = await session.list(
@@ -811,6 +812,7 @@ page = await session.list(
     agent='claude',
     tag_prefix='my-project',
     sort='newest',       # 'newest' | 'oldest' | 'cost'
+    scope='my',          # 'my' | 'shared'
 )
 
 info = await session.get('session-id')
@@ -822,6 +824,10 @@ replay = await session.browser_replay(
     timeout_ms=600_000,  # optional; default 10 minutes
     interval_ms=5_000,   # optional; default 5 seconds
 )
+
+state = await session.share('session-id', link=True, emails=['alice@example.org'])
+state = await session.unshare('session-id', link=True)
+state = await session.shares('session-id')
 ```
 
 - `list()` returns `SessionPage(items, next_cursor, has_more)`
@@ -835,6 +841,8 @@ replay = await session.browser_replay(
 - `events()` returns parsed JSONL objects for programmatic inspection
 - `transcript()` is the same read whole: `SessionTranscript(session, events, total, gateway_calls, stored_at=None)` — `total` counts every stored event (the next delta's `since`), and `gateway_calls` are the gateway meter's per-call lines (the spec's `GatewayUsageEvent`, its own camelCase keys: `call['update']['usage']` carries `promptTokens`, `completionTokens`, `cachedTokens`, `costUsd`), in time order, the same line a trial's trace carries; they ride beside `events`, never inside them, and are the only per-call tokens and money a client should show. `stored_at` is the server's write instant of each event's row, one per entry of `events` and index-aligned: present on every row-served page (an empty page carries an empty list), `None` when the transcript was served from its file. It places the gateway meter's calls under the harness's steps for harnesses whose lines carry no clock of their own (codex, kimi, qwen); a reader that does not place calls needs nothing from it. The session's total stays on `session.usage` / `session.cost`.
 - `download()` saves the raw `.jsonl` trace file to disk and returns the path
+- `share()`, `unshare()` and `shares()` share a session you started the way a job shares. `share(id, link=True)` turns on its unlisted link and returns it — anyone holding the link reads the session, its transcript and its trace file, without signing in, and nothing else of it: no file system and no browser replay, because a session's box holds whatever you put in it. `share(id, emails=[...])` shares it with people by address: each new address gets an email with a link and reads the session after signing in with that address (a person without an account gets a sign-up link in the same email). Both may ride one call. All three answer the session's whole share state as `JobShares` — `visibility` (`'PRIVATE'` or `'LINK'`, also on every `SessionInfo`), the link, and every email share. `unshare(id, link=True)` kills the link at once; a later share mints a new one. Sharing is read-only: neither the link nor an address can stop the session. Only the account that started the session may share it
+- `list(scope='shared')` lists the sessions other people shared with your address; a session belongs to no organization, so that scope is the email shares alone
 - `browser_replay()` waits for the managed browser replay and returns
   `replay_url` plus `download_url`
   - Use `replay_url` in your UI for browser playback

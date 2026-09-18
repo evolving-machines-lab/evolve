@@ -87,6 +87,7 @@
     "no_checkable_tasks",
     "too_many_concurrent_check_uploads",
     "no_analyzable_trials",
+    "session_not_found",
     "not_a_job_dir",
     "invalid_trial",
     "trial_too_large",

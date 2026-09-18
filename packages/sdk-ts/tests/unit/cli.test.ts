@@ -9616,6 +9616,68 @@ async function testSessionListAndShow() {
   }
 }
 
+async function testSessionShare() {
+  console.log("\n--- runCli: session share / unshare / shares — the job verbs on a managed-agent session ---");
+
+  assertThrowsUsage(() => parseArgs(["session", "share"]), "requires", "share needs an id");
+  assertThrowsUsage(() => parseArgs(["session", "shares", "a", "b"]), "unexpected argument", "shares takes one id");
+
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/abc789" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/sessions/sess-1/share", { status: 200, body: state });
+    setMockResponse("/api/sessions/sess-1/unshare", { status: 200, body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] } });
+    setMockResponse("/api/sessions/sess-1/shares", { status: 200, body: state });
+
+    const bare = captureIO();
+    assertEqual(await runCli(["session", "share", "sess-1", ...AUTH], bare.io), 2, "share without --link or --email exits 2");
+    assert(bare.err.some((l) => l.includes("--link") && l.includes("--email")), "the refusal names both flags");
+    assertEqual(fetchCalls.length, 0, "nothing was requested");
+
+    const link = captureIO();
+    assertEqual(await runCli(["session", "share", "sess-1", "--link", "--email", "alice@example.org", ...AUTH], link.io), 0, "share exits 0");
+    const shareCall = fetchCalls.find((c) => c.url.endsWith("/api/sessions/sess-1/share"));
+    assert(shareCall !== undefined && shareCall.init?.method === "POST", "share POSTs the session's share route");
+    assertEqual(JSON.parse(String(shareCall?.init?.body)), { link: true, emails: ["alice@example.org"] }, "--link and --email ride one body");
+    assert(link.out.some((l) => l.includes("https://dash.test/shared/abc789")), "the link is printed");
+    assert(link.out.some((l) => l.includes("alice@example.org")), "the addresses are printed");
+
+    const json = captureIO();
+    await runCli(["session", "shares", "sess-1", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out.join("\n")), state, "--json prints the JobShares wire shape verbatim");
+
+    const off = captureIO();
+    assertEqual(await runCli(["session", "unshare", "sess-1", "--link", ...AUTH], off.io), 0, "unshare exits 0");
+    const unshareCall = fetchCalls.find((c) => c.url.endsWith("/api/sessions/sess-1/unshare"));
+    assertEqual(JSON.parse(String(unshareCall?.init?.body)), { link: true }, "unshare sends the same grammar");
+    assert(off.out.some((l) => l.includes("link       off")), "a revoked link prints off");
+
+    // session show prints the visibility row; an older server's body reads as PRIVATE.
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession({ visibility: "LINK" }) });
+    const show = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], show.io);
+    assert(/^visibility\s+LINK$/m.test(show.out.join("\n")), "session show prints visibility");
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession() });
+    const older = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], older.io);
+    assert(/^visibility\s+PRIVATE$/m.test(older.out.join("\n")), "no visibility on the wire reads as PRIVATE");
+
+    // list --scope shared asks the server for the sessions shared with the caller.
+    setMockResponse("/api/sessions?", { status: 200, body: { items: [], nextCursor: null, hasMore: false, paginationMode: "cursor" } });
+    const shared = captureIO();
+    assertEqual(await runCli(["session", "list", "--scope", "shared", ...AUTH], shared.io), 0, "list --scope shared exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("scope=shared"), "the scope rides the list request");
+    const badScope = captureIO();
+    assertEqual(await runCli(["session", "list", "--scope", "all", ...AUTH], badScope.io), 2, "an unknown scope is a usage error");
+  } finally {
+    restoreFetch();
+  }
+}
+
 // =============================================================================
 // CHECK — Harbor's `harbor check <PATH>`, hosted (top-level verb + read group)
 // =============================================================================
@@ -10093,6 +10155,7 @@ async function main() {
   await testCheckShowDefaults();
   await testFilesVerbs();
   await testSessionListAndShow();
+  await testSessionShare();
   await testAuthOrgTeamVerbs();
 
   console.log(`\n${passed} passed, ${failed} failed`);
