@@ -57,7 +57,7 @@ evolve check unshare <check-id> --link
 
 A check you created shares the two ways a [job](/core-concepts/jobs#share) does, and both may be on at once. `--link` turns on an unlisted link: anyone holding it reads the check's report and downloads its check folder, without signing in. `check shares` prints the link again whenever you need it, and `check unshare --link` kills it at once. `--email` shares the check with a person by address: they get an email with a link and read the check after signing in with that address (a person without an account gets a sign-up link in the same email). A check shared with you appears under `evolve check list --scope shared`.
 
-Sharing is read-only: whoever holds the link or the email share cannot delete the check. Only the creator may share or unshare; another member of the organization is refused with `org_forbidden`. A check's `visibility` field says `PRIVATE` or `LINK`.
+Sharing is read-only: whoever holds the link or the email share reads the check and can never stop one of its task checks; that stays with the creator. Only the creator may share or unshare; another member of the organization is refused with `org_forbidden`. A check's `visibility` field says `PRIVATE` or `LINK`.
 
 <Card title="check reference" icon="terminal" href="/cli-reference/check">
   Every flag of `evolve check`.
