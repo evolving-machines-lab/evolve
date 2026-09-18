@@ -84,6 +84,8 @@ export class SessionLogger {
   private metaWritten = false;
   // Reserved metadata keys already reported, so a bad key warns once per session
   private readonly warnedKeys = new Set<string>();
+  // Refusals already reported, keyed by status and code, so a wrong org warns once per session
+  private readonly warnedRefusals = new Set<string>();
 
   // Local file: sequential write queue
   private localQueue: Promise<void> = Promise.resolve();
@@ -379,10 +381,8 @@ export class SessionLogger {
           continue;
         }
 
-        // Non-retryable client error - drop
-        console.debug(
-          `[SessionLogger] Dashboard ${res.status}, dropping events`,
-        );
+        // Non-retryable refusal: the batch is lost, so the caller hears it (once per code).
+        await this.warnRefusal(res, events.length);
         return;
       } catch (error) {
         if (attempt === DASHBOARD_MAX_RETRIES) {
@@ -400,6 +400,30 @@ export class SessionLogger {
 
   private requeueEvents(events: unknown[]): void {
     this.eventBuffer.unshift(...events);
+  }
+
+  private async warnRefusal(res: Response, dropped: number): Promise<void> {
+    let code = "unknown_error";
+    let message = res.statusText;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (body?.error && typeof body.error === "object") {
+        const err = body.error as { code?: unknown; message?: unknown };
+        if (typeof err.code === "string") code = err.code;
+        if (typeof err.message === "string") message = err.message;
+      } else if (typeof body?.error === "string") {
+        message = body.error;
+      }
+    } catch {
+      // An unreadable body still names the status and the code.
+    }
+    const key = `${res.status}:${code}`;
+    if (this.warnedRefusals.has(key)) return;
+    this.warnedRefusals.add(key);
+    console.warn(
+      `[SessionLogger] Dashboard refused session "${this.tag}" (HTTP ${res.status} ${code}): ${message}. ` +
+        `${dropped} trace event(s) dropped; further refusals of this kind are not repeated.`,
+    );
   }
 
   // ===========================================================================

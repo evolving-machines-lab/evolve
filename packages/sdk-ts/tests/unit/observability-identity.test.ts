@@ -276,6 +276,134 @@ async function testOrgRidesTheIngest(): Promise<void> {
   }
 }
 
+async function testRefusedBatchIsLoud(): Promise<void> {
+  console.log("\n[6] A refused ingest batch is reported, with the server's code, not dropped in silence");
+
+  const originalHome = process.env.HOME;
+  const originalDashboard = process.env.EVOLVE_DASHBOARD_URL;
+  const tempHome = mkdtempSync(join(tmpdir(), "evolve-session-logs-"));
+  process.env.HOME = tempHome;
+  process.env.EVOLVE_DASHBOARD_URL = "http://localhost:3000";
+
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const originalDebug = console.debug;
+  const warnings: string[] = [];
+  const debugs: string[] = [];
+  let posts = 0;
+
+  try {
+    const { SessionLogger } = await import("../../src/observability/session-logger.js");
+
+    // The dashboard's answer to an org the caller is not in (or mistyped):
+    // lib/orgs.ts requireOrgAccess → 404 org_not_found on every batch.
+    globalThis.fetch = (async () => {
+      posts++;
+      return new Response(
+        JSON.stringify({ error: { code: "org_not_found", message: "Organization not found: acm" } }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    console.warn = (msg?: unknown) => {
+      warnings.push(String(msg));
+    };
+    console.debug = (msg?: unknown) => {
+      debugs.push(String(msg));
+    };
+
+    const logger = new SessionLogger({
+      provider: "e2b",
+      agent: "claude",
+      model: "claude-opus-5",
+      sandboxId: "sbx-refused",
+      tag: "evolve-refused",
+      apiKey: "key",
+      org: "acm",
+    });
+    logger.writePrompt("hello");
+    await logger.flush();
+
+    assertEqual(posts, 1, "a 404 is not retried");
+    assertEqual(warnings.length, 1, "the refusal reaches console.warn");
+    assert(warnings[0].includes("org_not_found"), "the warning carries the server's error code");
+    assert(warnings[0].includes("404"), "the warning carries the HTTP status");
+    assert(warnings[0].includes("evolve-refused"), "the warning names the session");
+    assert(warnings[0].includes("Organization not found: acm"), "the warning carries the server's message");
+    assert(
+      !debugs.some((d) => d.includes("dropping events")),
+      "the old debug-only drop line is gone",
+    );
+
+    // A second refused batch of the same kind does not repeat the warning.
+    logger.writePrompt("again");
+    await logger.flush();
+    assertEqual(posts, 2, "the second batch was still sent");
+    assertEqual(warnings.length, 1, "one warning per refusal code per session");
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+    console.debug = originalDebug;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalDashboard === undefined) delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = originalDashboard;
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+}
+
+async function testOrgIsResolvedBeforeTheRun(): Promise<void> {
+  console.log("\n[7] The org a run names is resolved before the run: a 404 is a typed config error");
+
+  const originalDashboard = process.env.EVOLVE_DASHBOARD_URL;
+  process.env.EVOLVE_DASHBOARD_URL = "http://localhost:3000";
+  const originalFetch = globalThis.fetch;
+  const urls: string[] = [];
+
+  try {
+    const { requireOrgMembership } = await import("../../src/observability/org-membership.js");
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith("/api/orgs/acme")) {
+        return new Response(JSON.stringify({ id: "org-1", slug: "acme", display_name: "Acme", role: "member", created_at: "2026-09-18T00:00:00.000Z", member_count: 2, is_personal: false, quota: {}, usage: {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({ error: { code: "org_not_found", message: `Organization not found: ${url.split("/").pop()}` } }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    let thrown: unknown;
+    try {
+      await requireOrgMembership("acme", "key");
+    } catch (e) {
+      thrown = e;
+    }
+    assertEqual(thrown, undefined, "a member's org resolves");
+    assert(urls[0]?.endsWith("/api/orgs/acme") ?? false, "the check reads GET /api/orgs/{org}");
+
+    thrown = undefined;
+    try {
+      await requireOrgMembership("acm", "key");
+    } catch (e) {
+      thrown = e;
+    }
+    const error = thrown as { name?: string; field?: string; message?: string } | undefined;
+    assertEqual(error?.name, "EvolveConfigError", "a 404 is an EvolveConfigError");
+    assertEqual(error?.field, "org", "the error names the org field");
+    assert(String(error?.message).includes("org_not_found"), "the error carries the server's code");
+    assert(String(error?.message).includes('"acm"'), "the error quotes the org as typed");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDashboard === undefined) delete process.env.EVOLVE_DASHBOARD_URL;
+    else process.env.EVOLVE_DASHBOARD_URL = originalDashboard;
+  }
+}
+
 // =============================================================================
 // RUNNER
 // =============================================================================
@@ -288,6 +416,8 @@ async function main(): Promise<void> {
   testSwarmMetadataStillPasses();
   await testLoggerKeepsItsIdentity();
   await testOrgRidesTheIngest();
+  await testRefusedBatchIsLoud();
+  await testOrgIsResolvedBeforeTheRun();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

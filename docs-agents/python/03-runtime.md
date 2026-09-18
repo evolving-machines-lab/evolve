@@ -780,6 +780,13 @@ evolve = Evolve(
     org='acme',
 )
 ```
+
+The organization is checked before the run starts: a name that does not exist,
+or one you are not a member of, makes `run()` raise a configuration error on
+the `org` field, so a mistyped slug never becomes a run whose trace the
+dashboard silently refuses. Should the dashboard still refuse a batch of trace
+events, the SDK warns once with the server's error code instead of dropping it
+quietly.
 - Long-running sessions (pause/resume or ACP auto-resume) keep appending to the
   current file, so you always have the full timeline.
 - Logging is buffered inside the SDK, so it never blocks streaming output.

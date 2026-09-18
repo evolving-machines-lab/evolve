@@ -769,6 +769,13 @@ const evolve = new Evolve()
   .withOrg("acme");
 ```
 
+The organization is checked before the run starts: a name that does not exist,
+or one you are not a member of, makes `run()` throw an `EvolveConfigError` on
+the `org` field, so a mistyped slug never becomes a run whose trace the
+dashboard silently refuses. Should the dashboard still refuse a batch of trace
+events, the SDK warns once with the server's error code instead of dropping it
+quietly.
+
 Use the tag together with the sandbox id to correlate logs with files saved in
 `/output/`.
 
