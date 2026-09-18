@@ -777,6 +777,7 @@ const page = await session.list({
   agent: "claude",
   tagPrefix: "my-proj",
   sort: "cost",
+  scope: "org",
 });
 const page2 = await session.list({ cursor: page.nextCursor });
 const info = await session.get(page.items[0].id);
@@ -787,11 +788,12 @@ const replay = await session.browserReplay(info.id);
 ```
 
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
-- `get()` returns `SessionInfo` with `sandboxId`, `reasoningEffort` (the effort the session was started with; `null` when the harness has none or the session predates the field), `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
+- `list()` takes `scope`: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (every session in your organizations, yours included). A session belongs to an organization the way a job does — the one it was started under, else your personal one — and its members read it; stopping and deleting stay with whoever ran it.
+- `get()` returns `SessionInfo` with `org` (the owning organization's slug), `sandboxId`, `reasoningEffort` (the effort the session was started with; `null` when the harness has none or the session predates the field), `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `transcript()` is the same read whole: `SessionTranscript { session, events, total, gatewayCalls, storedAt? }` — `total` counts every stored event (the next delta's `since`), and `gatewayCalls` are the gateway meter's per-call lines (`GatewayUsageEvent`: `update.usage.promptTokens`, `completionTokens`, `cachedTokens`, `costUsd`), in time order, the same line a trial's trace carries; they ride beside `events`, never inside them, and are the only per-call tokens and money a client should show. `storedAt` is the server's write instant of each event's row, one per entry of `events` and index-aligned: present on every row-served page (an empty page carries an empty list), absent when the transcript was served from its file. It places the gateway meter's calls under the harness's steps for harnesses whose lines carry no clock of their own (codex, kimi, qwen); a reader that does not place calls needs nothing from it. The session's total stays on `session.usage` / `session.cost`.
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
-- The CLI wraps the same client headless: `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>`
+- The CLI wraps the same client headless: `evolve session list` (`--scope my|shared|org`, `--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>`
 - `browserReplay()` waits for the managed browser replay and returns `replayUrl` plus `downloadUrl`
   - Use `replayUrl` in your UI for browser playback
   - Use `downloadUrl` when users need the raw `.mp4` file

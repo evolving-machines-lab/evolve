@@ -110,6 +110,7 @@ import type {
   ListJobTasksOptions,
   ListJobsOptions,
   ListSkillsOptions,
+  UploadSkillOptions,
   ListTrialFilesOptions,
   ListTrialsOptions,
   Page,
@@ -360,6 +361,7 @@ export type {
   ListAnalysesOptions,
   ListJobsOptions,
   ListSkillsOptions,
+  UploadSkillOptions,
   ListTrialFilesOptions,
   ListTrialsOptions,
   ManagedProviderCapability,
@@ -1453,6 +1455,8 @@ function mapTrialUploadProvenance(raw: unknown): Trial["upload"] {
 function mapAgent(raw: Record<string, unknown>): Agent {
   return {
     name: raw.name as string,
+    // Absent on a server predating the org axis: null, never an invented slug.
+    org: typeof raw.org === "string" ? raw.org : null,
     source: raw.source as AgentSource,
     run_command: raw.run_command as string,
     env: (raw.env as Record<string, string>) ?? {},
@@ -3016,7 +3020,7 @@ export function agents(config?: HostedClientConfig): AgentsClient {
       // env are named PARTS — they used to ride the query string of an upload,
       // which put a shell command and a set of environment values into every
       // access log and proxy buffer on the way here.
-      const parts = agentUploadParts("agents().create()", input);
+      const parts = agentUploadParts("agents().create()", { ...input, org: input.org ?? cfg.org });
       const res = parts.directory
         ? await uploadDirectory(cfg, "/api/agents", {
             fields: parts.fields,
@@ -3030,7 +3034,7 @@ export function agents(config?: HostedClientConfig): AgentsClient {
     list(options?: ListAgentsOptions): AgentList {
       // Await for one page; for-await to walk them all across cursor pages.
       return makePaginated(async (opts) => {
-        const res = await request(cfg, `/api/agents${pageQuery(opts)}`);
+        const res = await request(cfg, `/api/agents${pageQuery(opts, { scope: options?.scope })}`);
         return mapPage((await res.json()) as Record<string, unknown>, mapAgent);
       }, options);
     },
@@ -3052,7 +3056,11 @@ export function agents(config?: HostedClientConfig): AgentsClient {
       // delete()+create() makes it. Same body grammar as create(), name part
       // included — the URL names the agent too, and the server treats the
       // path as authoritative.
-      const parts = agentUploadParts("agents().upsert()", { ...input, name });
+      const parts = agentUploadParts("agents().upsert()", {
+        ...input,
+        name,
+        org: input.org ?? cfg.org,
+      });
       const res = parts.directory
         ? await uploadDirectory(cfg, `/api/agents/${encodeURIComponent(name)}`, {
             method: "PUT",
@@ -3079,7 +3087,7 @@ export function agents(config?: HostedClientConfig): AgentsClient {
  */
 function agentUploadParts(
   caller: string,
-  input: AgentInput
+  input: AgentInput & { org?: string }
 ): { fields: Record<string, string | undefined>; directory?: string } {
   // Same division of labour as datasets().publish(): AgentSourceInput is a
   // union, so a TypeScript caller cannot pass both or neither. These checks
@@ -3101,6 +3109,8 @@ function agentUploadParts(
   }
   const fields: Record<string, string | undefined> = {
     name: input.name,
+    // The owning org rides as a named part, like every other metadata field.
+    org: input.org,
     run_command: input.run_command,
     ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
     ...(hasInstallScript ? { install_script: input.install_script } : {}),
@@ -3116,6 +3126,7 @@ function mapSkillUpload(raw: Record<string, unknown>): SkillUpload {
   return {
     id: raw.id as string,
     name: raw.name as string,
+    org: typeof raw.org === "string" ? raw.org : null,
     digest: raw.digest as string,
     size_bytes: (raw.size_bytes as number) ?? 0,
     description: (raw.description as string | null) ?? null,
@@ -3146,7 +3157,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
   const cfg = resolveConfig("skills", config);
 
   return {
-    async upload(directory: string): Promise<SkillUpload[]> {
+    async upload(directory: string, options?: UploadSkillOptions): Promise<SkillUpload[]> {
       if (typeof directory !== "string" || !directory.trim()) {
         throw new Error("skills().upload() requires a local skill directory path");
       }
@@ -3156,7 +3167,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
       // upload is recorded — and later mounted — under its folder name.
       const folderName = basename(resolve(directory));
       const res = await uploadDirectory(cfg, "/api/skills", {
-        fields: { name: folderName || undefined },
+        fields: { name: folderName || undefined, org: options?.org ?? cfg.org },
         directory,
         filename: "skill.tar.gz",
       });
@@ -3167,7 +3178,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
 
     list(options?: ListSkillsOptions): SkillUploadList {
       return makePaginated(async (opts) => {
-        const res = await request(cfg, `/api/skills${pageQuery(opts)}`);
+        const res = await request(cfg, `/api/skills${pageQuery(opts, { scope: options?.scope })}`);
         return mapPage((await res.json()) as Record<string, unknown>, mapSkillUpload);
       }, options);
     },

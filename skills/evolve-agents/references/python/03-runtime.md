@@ -799,7 +799,7 @@ async with sessions() as session:
         print(replay.replay_url)     # Browser replay URL
 ```
 
-The CLI wraps the same client headless — `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>` — with no Python code involved.
+The CLI wraps the same client headless — `evolve session list` (`--scope my|shared|org`, `--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>` — with no Python code involved.
 
 The `sessions()` factory returns a `SessionsClient` with six methods:
 
@@ -811,6 +811,7 @@ page = await session.list(
     agent='claude',
     tag_prefix='my-project',
     sort='newest',       # 'newest' | 'oldest' | 'cost'
+    scope='my',          # 'my' | 'shared' | 'org'
 )
 
 info = await session.get('session-id')
@@ -825,7 +826,12 @@ replay = await session.browser_replay(
 ```
 
 - `list()` returns `SessionPage(items, next_cursor, has_more)`
-- `get()` returns `SessionInfo` with snake_case fields such as `sandbox_id`,
+- `list()` takes `scope`: `'my'` (yours, the default), `'shared'` (your organizations' other
+  members') or `'org'` (every session in your organizations, yours included). A session belongs to
+  an organization the way a job does — the one it was started under, else your personal one — and
+  its members read it; stopping and deleting stay with whoever ran it.
+- `get()` returns `SessionInfo` with snake_case fields such as `org` (the owning
+  organization's slug), `sandbox_id`,
   `reasoning_effort` (the effort the session was started with; `None` when the
   harness has none or the session predates the field), `runtime_status`,
   `created_at`, and `tool_stats` — plus `usage`, the

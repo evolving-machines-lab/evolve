@@ -796,6 +796,7 @@ export class EvolveAdapter {
       agent: params.agent,
       tagPrefix: params.tag_prefix,
       sort: params.sort,
+      scope: params.scope,
     });
     return {
       items: page.items.map(info => this.toSessionInfoResponse(info)),
@@ -892,6 +893,7 @@ export class EvolveAdapter {
       model: info.model ?? null,
       reasoning_effort: info.reasoningEffort ?? null,
       provider: info.provider,
+      org: info.org ?? null,
       sandbox_id: info.sandboxId ?? null,
       state: info.state,
       runtime_status: info.runtimeStatus,

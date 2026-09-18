@@ -10,10 +10,10 @@ description: "Register and manage your own agents."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    create(input: { name: string; run_command: string; env?: Record<string, string> } & ({ install_script: string } | { directory: string })): Promise<Agent>
+    create(input: { name: string; org?: string; run_command: string; env?: Record<string, string> } & ({ install_script: string } | { directory: string })): Promise<Agent>
     ```
 
-    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory; what it can rely on, and the registration limit, are on [agents](/core-concepts/agents#register-your-own-agent).
+    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory; what it can rely on, and the registration limit, are on [agents](/core-concepts/agents#register-your-own-agent). The registration belongs to you and to an organization (`org`, a slug or id; omitted, the client's `org` default, else your personal one): its members may name the agent in their own jobs, and only you can change or delete it. A name stays unique per person, so two teammates may each register their own `acme-cli`.
 
     ```ts
     const agent = await agents().create({
@@ -32,10 +32,11 @@ description: "Register and manage your own agents."
         directory: Optional[str] = None,
         run_command: str,
         env: Optional[Dict[str, str]] = None,
+        org: Optional[str] = None,
     ) -> Agent
     ```
 
-    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory; what it can rely on, and the registration limit, are on [agents](/core-concepts/agents#register-your-own-agent).
+    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory; what it can rely on, and the registration limit, are on [agents](/core-concepts/agents#register-your-own-agent). The registration belongs to you and to an organization (`org`, a slug or id; omitted, the client's `org` default, else your personal one): its members may name the agent in their own jobs, and only you can change or delete it. A name stays unique per person, so two teammates may each register their own `acme-cli`.
 
     ```python
     agent = await agents().create(
@@ -52,7 +53,7 @@ description: "Register and manage your own agents."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    list(options?: { limit?: number; cursor?: string }): AgentList
+    list(options?: { scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): AgentList
     get(name: string): Promise<Agent>
     upsert(
       name: string,
@@ -61,7 +62,7 @@ description: "Register and manage your own agents."
     delete(name: string): Promise<void>
     ```
 
-    Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
+    Registered agents, one agent, replace one without a gap, or delete one. `scope` is the lists' own vocabulary: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (every registration in your organizations, yours included); `get` takes a name, which is yours by construction. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
 
     ```ts
     await agents().upsert(
@@ -77,6 +78,7 @@ description: "Register and manage your own agents."
     ```python
     def list(
         *,
+        scope: Optional[Literal['my', 'shared', 'org']] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     )
@@ -88,11 +90,12 @@ description: "Register and manage your own agents."
         install_script: Optional[str] = None,
         directory: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
+        org: Optional[str] = None,
     ) -> Agent
     async def delete(name: str) -> None
     ```
 
-    Your agents, one agent, replace one without a gap, or delete one. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
+    Registered agents, one agent, replace one without a gap, or delete one. `scope` is the lists' own vocabulary: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (every registration in your organizations, yours included); `get` takes a name, which is yours by construction. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
 
     ```python
     await agents().upsert(

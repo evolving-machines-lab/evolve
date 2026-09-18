@@ -1870,6 +1870,8 @@ class TestDatasets:
 
 REGISTERED_AGENT = {
     'name': 'acme-cli',
+    # The owning org's slug: whose members may name this agent in a job.
+    'org': 'acme',
     'source': 'install_script',
     'run_command': 'acme-cli --headless',
     'env': {'ACME_PROFILE': 'bench'},
@@ -1923,6 +1925,41 @@ class TestSkills:
 
         assert uploaded[0].name == 'my-solo-skill'
         assert uploaded[0].ref == 'upload:sk_1'
+        # No org anywhere: no org part, and the record's org reads None.
+        assert 'org' not in parts
+        assert uploaded[0].org is None
+
+    @pytest.mark.asyncio
+    async def test_upload_sends_the_owning_org_when_one_is_named(self, tmp_path):
+        from evolve import skills as skills_factory
+
+        skill_dir = tmp_path / 'team-skill'
+        skill_dir.mkdir()
+        (skill_dir / 'SKILL.md').write_text('# team\n')
+
+        body = {
+            'skills': [{
+                'id': 'sk_org',
+                'name': 'team-skill',
+                'org': 'acme',
+                'digest': 'sha256:' + '1' * 64,
+                'size_bytes': 7,
+                'description': None,
+                'ref': 'upload:sk_org',
+                'created_at': '2026-09-18T00:00:00Z',
+            }],
+        }
+        fake = FakeUrlopen([('/api/skills', body), ('/api/skills', body)])
+        with patch('evolve._http.urlopen', fake):
+            named = await skills_factory(CONFIG).upload(str(skill_dir), org='acme')
+            # The client-level default rides when the call names none.
+            await skills_factory(
+                HostedClientConfig(api_key=CONFIG.api_key, base_url=CONFIG.base_url, org='fallback')
+            ).upload(str(skill_dir))
+
+        assert _multipart_parts(fake.requests[0])['org'] == b'acme'
+        assert _multipart_parts(fake.requests[1])['org'] == b'fallback'
+        assert named[0].org == 'acme'
 
 
 class TestAgents:

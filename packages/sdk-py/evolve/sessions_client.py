@@ -68,8 +68,14 @@ class SessionsClient:
         agent: Optional[str] = None,
         tag_prefix: Optional[str] = None,
         sort: Optional[Literal['newest', 'oldest', 'cost']] = None,
+        scope: Optional[Literal['my', 'shared', 'org']] = None,
     ) -> SessionPage:
-        """List historical sessions with optional filtering and pagination."""
+        """List sessions with optional filtering and pagination.
+
+        ``scope`` is the hosted lists' own vocabulary: ``'my'`` (yours, the
+        default), ``'shared'`` (your organizations' other members') or
+        ``'org'`` (every session in your organizations, yours included).
+        """
         await self._ensure_ready()
         params = self._build_params(
             limit=limit,
@@ -78,6 +84,7 @@ class SessionsClient:
             agent=agent,
             tag_prefix=tag_prefix,
             sort=sort,
+            scope=scope,
         )
         response = await self._bridge.call('sessions_list', params)
         return SessionPage(

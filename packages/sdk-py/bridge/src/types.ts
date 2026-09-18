@@ -426,6 +426,7 @@ export interface SessionsListParams {
   agent?: string;
   tag_prefix?: string;
   sort?: 'newest' | 'oldest' | 'cost';
+  scope?: 'my' | 'shared' | 'org';
 }
 
 export interface SessionsGetParams {
@@ -459,6 +460,8 @@ export interface SessionInfoResponse {
   model: string | null;
   reasoning_effort: string | null;
   provider: string;
+  /** The owning organization's slug; null on a server predating the field. */
+  org: string | null;
   sandbox_id: string | null;
   state: 'live' | 'ended';
   runtime_status: 'alive' | 'dead' | 'unknown';

@@ -98,7 +98,7 @@ description: "Start, follow, and derive jobs."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    list(options?: { search?: string; scope?: "my" | "shared"; limit?: number; cursor?: string }): JobList
+    list(options?: { search?: string; scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): JobList
     ```
 
     Your jobs, newest first. Await one page, or iterate every page.
