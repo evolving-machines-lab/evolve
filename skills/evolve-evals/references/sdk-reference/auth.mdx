@@ -113,4 +113,4 @@ description: "Who you are, and your organizations."
 
 A `0` pauses that kind of work: creates are refused at `max_queued_trials` 0, work waits at 0 on the concurrency ceilings, and `monthly_budget_usd` 0 pauses all model spend for the month.
 
-`usage` is the live load: `in_flight_trials`, `queued_trials`, `in_flight_imports`, `in_flight_analyses`, `active_sessions` (always 0 on a shared organization), and `month_spend_usd` with `month_spend_as_of`, the month-to-date model spend as of that time (UTC calendar month, reset on the 1st); it may lag by a few minutes. It is null, never 0, when no reading is held; `evolve auth org show` prints `unavailable` then.
+`usage` is the live load: `in_flight_trials`, `queued_trials`, `in_flight_imports`, `in_flight_analyses`, `active_sessions` (the organization's managed-agent sessions not yet ended), and `month_spend_usd` with `month_spend_as_of`, the month-to-date model spend as of that time (UTC calendar month, reset on the 1st); it may lag by a few minutes. It is null, never 0, when no reading is held; `evolve auth org show` prints `unavailable` then.

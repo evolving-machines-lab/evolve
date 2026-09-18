@@ -1,5 +1,8 @@
 import type { GatewayUsageEvent, JobShareRequest, JobShares, JobVisibility, UsageReading } from "../hosted/types";
 
+/** Visibility scope of a session list — the hosted lists' own vocabulary. */
+export type SessionListScope = "my" | "shared" | "org";
+
 /** Options for listing sessions */
 export interface ListSessionsOptions {
   /** Max items per page (default: 20, max: 200) */
@@ -15,11 +18,11 @@ export interface ListSessionsOptions {
   /** Sort order (default: "newest") */
   sort?: "newest" | "oldest" | "cost";
   /**
-   * Whose sessions: `my`, the ones you started (the default), or `shared`,
-   * the ones other people shared with your address. A session belongs to no
-   * organization, so `shared` here is the email shares alone.
+   * Whose sessions to list: `my` (yours, the default), `shared` (your
+   * organizations' other members' and the ones shared with your address) or
+   * `org` (every session in your organizations, your own included).
    */
-  scope?: "my" | "shared";
+  scope?: SessionListScope;
 }
 
 /** Paginated list of sessions */
@@ -41,6 +44,12 @@ export interface SessionInfo {
    */
   reasoningEffort: string | null;
   provider: string;
+  /**
+   * The owning organization's slug — the `org` the run was started under,
+   * else the caller's personal organization. Null on a server predating the
+   * field.
+   */
+  org: string | null;
   sandboxId: string | null;
   /** Ergonomic state: "live" (still running) or "ended" */
   state: "live" | "ended";

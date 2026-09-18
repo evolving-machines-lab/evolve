@@ -69,13 +69,14 @@ class SessionsClient:
         agent: Optional[str] = None,
         tag_prefix: Optional[str] = None,
         sort: Optional[Literal['newest', 'oldest', 'cost']] = None,
-        scope: Optional[Literal['my', 'shared']] = None,
+        scope: Optional[Literal['my', 'shared', 'org']] = None,
     ) -> SessionPage:
-        """List historical sessions with optional filtering and pagination.
+        """List sessions with optional filtering and pagination.
 
-        ``scope='shared'`` lists the sessions other people shared with your
-        address instead of the ones you started; a session belongs to no
-        organization, so that scope is the email shares alone.
+        ``scope`` is the hosted lists' own vocabulary: ``'my'`` (yours, the
+        default), ``'shared'`` (your organizations' other members' sessions and
+        the ones shared with your address) or ``'org'`` (every session in your
+        organizations, yours included).
         """
         await self._ensure_ready()
         params = self._build_params(

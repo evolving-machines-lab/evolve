@@ -234,6 +234,7 @@ export class EvolveAdapter {
     if (params.working_directory) kit.withWorkingDirectory(params.working_directory);
     if (params.system_prompt) kit.withSystemPrompt(params.system_prompt);
     if (params.session_tag_prefix) kit.withSessionTagPrefix(params.session_tag_prefix);
+    if (params.org) kit.withOrg(params.org);
     if (params.schema) kit.withSchema(params.schema, params.schema_options);
     if (params.context && Object.keys(params.context).length > 0) {
       kit.withContext(decodeFiles(params.context));
@@ -925,6 +926,7 @@ export class EvolveAdapter {
       model: info.model ?? null,
       reasoning_effort: info.reasoningEffort ?? null,
       provider: info.provider,
+      org: info.org ?? null,
       sandbox_id: info.sandboxId ?? null,
       state: info.state,
       runtime_status: info.runtimeStatus,

@@ -137,7 +137,7 @@ export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
  * the CLI refuses it at the keyboard. A runtime value for the same reason as
  * TRIAL_STATUSES: the CLI validates `--scope` against it.
  */
-export const JOB_LIST_SCOPES = ["my", "shared"] as const;
+export const JOB_LIST_SCOPES = ["my", "shared", "org"] as const;
 
 /** One list scope — see JOB_LIST_SCOPES. */
 export type JobListScope = (typeof JOB_LIST_SCOPES)[number];
@@ -3315,6 +3315,11 @@ export type AgentSource = "install_script" | "tarball";
 export interface Agent {
   /** The name to put in job agents[].name */
   name: string;
+  /**
+   * The owning organization's slug. Its members may NAME this agent in a job;
+   * only its owner may edit or delete it. Null on a server predating the field.
+   */
+  org: string | null;
   /** How the executables were produced */
   source: AgentSource;
   /** The command run headless with `sh -c` at the task working directory */
@@ -3362,6 +3367,12 @@ export type AgentSourceInput =
 export type AgentInput = AgentSourceInput & {
   /** Agent name; also the value used later in job agents[].name */
   name: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else your personal organization.
+   * Its members may then name this agent in their own jobs.
+   */
+  org?: string;
   /** Command run headless with `sh -c` at the task working directory */
   run_command: string;
   /** Env injected at RUN time only; may not override the run contract's keys */
@@ -3374,6 +3385,12 @@ export type AgentInput = AgentSourceInput & {
  * a field of it.
  */
 export type AgentUpsertInput = AgentSourceInput & {
+  /**
+   * Owning organization, by slug or id. Set at registration and fixed: naming
+   * a different one on a replace is refused rather than handing the agent to
+   * another team.
+   */
+  org?: string;
   /** Command run headless with `sh -c` at the task working directory */
   run_command: string;
   /** Env injected at RUN time only; may not override the run contract's keys */
@@ -3406,7 +3423,8 @@ export interface ListJobsOptions extends PageOptions {
   /**
    * Visibility scope (Harbor's `--scope`): `my` — jobs you created, the
    * server's default; `shared` — your organizations' jobs that teammates
-   * created. See JOB_LIST_SCOPES.
+   * created; `org` — every job in your organizations, your own included.
+   * See JOB_LIST_SCOPES.
    */
   scope?: JobListScope;
 }
@@ -3449,7 +3467,10 @@ export interface ListDatasetsOptions extends PageOptions {
 }
 
 /** Options for agents().list() (default page 50, max 200) */
-export interface ListAgentsOptions extends PageOptions {}
+export interface ListAgentsOptions extends PageOptions {
+  /** Visibility scope, exactly as on jobs().list(): `my` (the default), `shared` or `org`. */
+  scope?: JobListScope;
+}
 
 /** Options for datasets().get() / getActive(): pages the TASK list (default 200, max 500) */
 export interface GetDatasetOptions extends PageOptions {}
@@ -3975,6 +3996,11 @@ export interface SkillUpload {
   id: string;
   /** Folder name = the name the harness sees when mounted. */
   name: string;
+  /**
+   * The owning organization's slug. Its members may REFERENCE this skill from
+   * a job; only its owner may delete it. Null on a server predating the field.
+   */
+  org: string | null;
   /** Content digest, "sha256:<hex>" — Harbor's recipe. */
   digest: string;
   size_bytes: number;
@@ -3985,9 +4011,22 @@ export interface SkillUpload {
   created_at: string;
 }
 
+/** Options for skills().upload() */
+export interface UploadSkillOptions {
+  /**
+   * Owning organization, by slug or id. Requires membership; omitted, the
+   * client's `org` default, else your personal organization. Its members may
+   * then reference the record from their own jobs.
+   */
+  org?: string;
+}
+
 export type SkillUploadPage = Page<SkillUpload>;
 export interface SkillUploadList extends Awaitable<SkillUploadPage>, AsyncIterable<SkillUpload> {}
-export interface ListSkillsOptions extends PageOptions {}
+export interface ListSkillsOptions extends PageOptions {
+  /** Visibility scope, exactly as on jobs().list(): `my` (the default), `shared` or `org`. */
+  scope?: JobListScope;
+}
 
 /** Client for platform-stored skills (uploads referenced as `upload:<id>`). */
 export interface SkillsClient {
@@ -4002,8 +4041,8 @@ export interface SkillsClient {
    * their immutable `upload:<id>` handles), and `name:<skill-name>` in
    * `agents[].skills` resolves through it at job create.
    */
-  upload(directory: string): Promise<SkillUpload[]>;
-  /** List the caller's uploaded skills (cursor-paged). */
+  upload(directory: string, options?: UploadSkillOptions): Promise<SkillUpload[]>;
+  /** List uploaded skills (cursor-paged); `scope` widens past your own. */
   list(options?: ListSkillsOptions): SkillUploadList;
   /**
    * Get one uploaded skill, including its SKILL.md text. Takes a record id,

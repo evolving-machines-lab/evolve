@@ -26,7 +26,7 @@ Start a job; add `--watch` to follow it. Exactly the options of [`evolve run`](/
 evolve job list [options]
 ```
 
-List jobs, newest first: yours, or `--scope shared` for your organizations'.
+List jobs, newest first: yours, `--scope shared` for what teammates created, `--scope org` for everything in your organizations.
 
 <ListFlags />
 
@@ -34,8 +34,8 @@ List jobs, newest first: yours, or `--scope shared` for your organizations'.
   Free-text filter over job name and dataset names.
 </ParamField>
 
-<ParamField path="--scope" type="my | shared">
-  Visibility scope: `my`, what you created (the default), or `shared`, your organizations' rows that teammates created.
+<ParamField path="--scope" type="my | shared | org">
+  Visibility scope: `my`, what you created (the default); `shared`, your organizations' rows that teammates created; or `org`, every row in your organizations, your own included.
 </ParamField>
 
 ```bash

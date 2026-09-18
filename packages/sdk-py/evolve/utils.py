@@ -90,6 +90,7 @@ def _parse_session_info(data: Optional[Dict[str, Any]]) -> Optional['SessionInfo
         usage=_usage_reading_from_data(data.get('usage')),
         reasoning_effort=data['reasoning_effort'] if isinstance(data.get('reasoning_effort'), str) else None,
         visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        org=data['org'] if isinstance(data.get('org'), str) else None,
     )
 
 

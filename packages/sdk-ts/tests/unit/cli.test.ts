@@ -7539,6 +7539,7 @@ async function testAgentAdd() {
         "--install-script", scriptPath,
         "--run", "acme-cli --headless",
         "--ae", "ACME_PROFILE=bench",
+        "--org", "acme",
         ...AUTH,
       ],
       io
@@ -7558,6 +7559,7 @@ async function testAgentAdd() {
     );
     assertEqual(form.get("run_command"), "acme-cli --headless", "run_command part");
     assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "--ae env is a JSON part");
+    assertEqual(form.get("org"), "acme", "--org is the owning organization part");
     const text = out.join("\n");
     assert(text.includes("acme-cli"), "renders the agent name");
     assert(text.includes("install_script"), "renders the source");
@@ -7657,7 +7659,10 @@ async function testSkillUpload() {
 
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["skill", "upload", skillDir, "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`],
+      [
+        "skill", "upload", skillDir, "--org", "acme",
+        "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`,
+      ],
       io
     );
     assertEqual(code, 0, "exit 0");
@@ -7670,6 +7675,10 @@ async function testSkillUpload() {
       "the folder's own name travels as the name part"
     );
     assert(call.body.includes('name="archive"'), "the content rides as the archive part");
+    assert(
+      call.body.includes('name="org"') && call.body.includes("acme"),
+      "--org travels as the owning organization part",
+    );
     const text = out.join("\n");
     assert(text.includes(CLI_SKILL.ref), "prints the immutable upload:<id> handle");
     assert(text.includes("my-skill"), "prints the record's name");
@@ -9517,6 +9526,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
     endedAt: "2026-09-01T10:05:00.000Z",
     stepCount: 12,
     toolStats: { Bash: 7, Read: 5 },
+    org: "acme",
     ...overrides,
   };
 }
@@ -9568,6 +9578,22 @@ async function testSessionListAndShow() {
     assertEqual(f.searchParams.get("pageSize"), "7", "-l is the page size");
     assertEqual(f.searchParams.get("cursor"), "sess-9", "--cursor rides the query");
 
+    // A session names an org, so the list takes the same --scope every other
+    // hosted list takes, and refuses Harbor's `all` by name.
+    const scoped = captureIO();
+    await runCli(["session", "list", "--scope", "org", ...AUTH], scoped.io);
+    assertEqual(
+      new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("scope"),
+      "org",
+      "--scope rides the query",
+    );
+    const badScope = captureIO();
+    assertEqual(
+      await runCli(["session", "list", "--scope", "all", ...AUTH], badScope.io),
+      2,
+      "Harbor's `all` is a usage error at the keyboard \u2014 nothing hosted is public",
+    );
+
     const badState = captureIO();
     assertEqual(await runCli(["session", "list", "--state", "paused", ...AUTH], badState.io), 2, "an unknown state is a usage error");
 
@@ -9593,6 +9619,7 @@ async function testSessionListAndShow() {
     );
     assert(text.includes("12"), "renders the step count");
     assert(/^effort\s+high$/m.test(text), "renders the effort the session was started with, after the model (B181)");
+    assert(/^org\s+acme$/m.test(text), "renders the owning organization");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
 
     // A session without an effort (a harness that has none, or one ingested before the field) shows "-".

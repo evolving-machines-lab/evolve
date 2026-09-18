@@ -31,6 +31,7 @@ export type {
   SessionsClient,
   SessionsConfig,
   ListSessionsOptions,
+  SessionListScope,
   SessionPage,
   SessionInfo,
   SessionEvent,
@@ -102,6 +103,7 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       model: (raw.model as string) || null,
       reasoningEffort: typeof raw.reasoningEffort === "string" ? raw.reasoningEffort : null,
       provider: raw.provider as string,
+      org: typeof raw.org === "string" ? raw.org : null,
       sandboxId: (raw.sandboxId as string) || null,
       state: raw.isEnded ? "ended" : "live",
       runtimeStatus:
@@ -198,6 +200,7 @@ export function sessions(config?: SessionsConfig): SessionsClient {
         params.set("state", options.state);
       if (options?.agent) params.set("agent", options.agent);
       if (options?.tagPrefix) params.set("tagPrefix", options.tagPrefix);
+      if (options?.scope) params.set("scope", options.scope);
       if (options?.sort) {
         const sortMap = {
           newest: "desc",

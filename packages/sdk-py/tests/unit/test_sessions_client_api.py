@@ -232,6 +232,7 @@ class TestSessionsClientList:
             agent='claude',
             tag_prefix='demo',
             sort='cost',
+            scope='org',
         )
 
         calls = _get_calls(bridge, 'sessions_list')
@@ -247,6 +248,9 @@ class TestSessionsClientList:
         assert params['agent'] == 'claude'
         assert params['tag_prefix'] == 'demo'
         assert params['sort'] == 'cost'
+        # A session names an org, so the list takes the same scope every other
+        # hosted list takes.
+        assert params['scope'] == 'org'
 
     @pytest.mark.asyncio
     async def test_parses_session_page(self):
@@ -288,6 +292,7 @@ class TestSessionsClientList:
         assert 'agent' not in params
         assert 'tag_prefix' not in params
         assert 'sort' not in params
+        assert 'scope' not in params
 
 
 class TestSessionsClientGet:

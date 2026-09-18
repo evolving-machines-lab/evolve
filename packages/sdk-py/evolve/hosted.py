@@ -569,7 +569,7 @@ EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 #: the per-id doors already open for you that is not your own. Harbor's
 #: ``all`` adds public rows; nothing hosted is public, so the server refuses
 #: it (``invalid_input``).
-JobListScope = Literal['my', 'shared']
+JobListScope = Literal['my', 'shared', 'org']
 
 #: An analysis's own lifecycle ladder — lowercase, the object's Harbor
 #: dialect (spec ``TrialAnalysis.status``).
@@ -3355,12 +3355,15 @@ class Agent:
     """A private agent registered by the caller.
 
     Once registered, ``name`` is usable in job ``agents[].name`` exactly like a
-    built-in ("claude", "codex", ...). Private to its owner: another user's
-    name reads as ``agent_not_found``, never as a permission error — existence
-    is never leaked.
+    built-in ("claude", "codex", ...). Owned by its registrant and belonging to
+    an organization: its members may name it in their own jobs, while editing
+    and deleting stay with the owner. A name outside both reads as
+    ``agent_not_found``, never as a permission error — existence is never leaked.
     """
     # The name to put in job agents[].name
     name: str
+    # The owning organization's slug: its members may name this agent in a job; only the owner edits it.
+    org: Optional[str]
     # How the executables were produced: "install_script" | "tarball"
     source: str
     # The command run headless with `sh -c` at the task working directory
@@ -3705,6 +3708,8 @@ class SkillUpload:
     """
     id: str
     name: str
+    #: The owning organization's slug: its members may reference this skill from a job; only the owner deletes it.
+    org: Optional[str]
     digest: str
     size_bytes: int
     description: Optional[str]
@@ -4918,6 +4923,8 @@ def _map_import_failure(data: Any) -> Optional[DatasetImportFailure]:
 def _map_agent(data: Dict[str, Any]) -> Agent:
     return Agent(
         name=data.get('name', ''),
+        # Absent on a server predating the org axis: None, never an invented slug.
+        org=data.get('org') if isinstance(data.get('org'), str) else None,
         source=data.get('source', ''),
         run_command=data.get('run_command', ''),
         env=data.get('env') or {},
@@ -4930,6 +4937,7 @@ def _map_skill_upload(data: Dict[str, Any]) -> SkillUpload:
     return SkillUpload(
         id=data.get('id', ''),
         name=data.get('name', ''),
+        org=data.get('org') if isinstance(data.get('org'), str) else None,
         digest=data.get('digest', ''),
         size_bytes=data.get('size_bytes', 0) if isinstance(data.get('size_bytes'), int) else 0,
         description=data.get('description') if isinstance(data.get('description'), str) else None,
@@ -5983,6 +5991,7 @@ def _agent_upload_fields(
     install_script: Optional[str],
     directory: Optional[str],
     env: Optional[Dict[str, str]],
+    org: Optional[str] = None,
 ) -> 'tuple[Dict[str, Optional[str]], Optional[str]]':
     """The metadata parts both ``create()`` and ``upsert()`` send, plus the
     directory to stream when the agent ships as an uploaded tarball.
@@ -6004,6 +6013,9 @@ def _agent_upload_fields(
             'or a local directory (directory=...), plus run_command=...'
         )
     fields: Dict[str, Optional[str]] = {'name': name, 'run_command': run_command}
+    # The owning org rides as a named part, like every other metadata field.
+    if org is not None:
+        fields['org'] = org
     if env is not None:
         fields['env'] = json.dumps(env)
     if install_script is not None:
@@ -7092,6 +7104,7 @@ class AgentsClient:
         directory: Optional[str] = None,
         run_command: str,
         env: Optional[Dict[str, str]] = None,
+        org: Optional[str] = None,
     ) -> Agent:
         """Register a private agent.
 
@@ -7104,7 +7117,10 @@ class AgentsClient:
 
         ``run_command`` is run headless with ``sh -c`` at the task working
         directory. ``env`` is injected at RUN time only and may not override
-        the run contract's own keys.
+        the run contract's own keys. ``org`` is the organization the
+        registration belongs to — a slug or id, membership required; omitted,
+        the client's ``org`` default, else your personal organization. Its
+        members may then name this agent in their own jobs.
         """
         # ONE body grammar: multipart/form-data. The run command and the
         # declared env are named PARTS — they used to ride the query string of
@@ -7117,6 +7133,7 @@ class AgentsClient:
             install_script=install_script,
             directory=directory,
             env=env,
+            org=org if org is not None else self._http.default_org(),
         )
         if source_directory is not None:
             raw = await _upload_directory_archive(
@@ -7132,16 +7149,20 @@ class AgentsClient:
     def list(
         self,
         *,
+        scope: Optional[JobListScope] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's registered agents (cursor-paged).
+        """List registered agents (cursor-paged).
 
-        ``await`` the result for one page, or ``async for`` it to walk them all.
+        ``await`` the result for one page, or ``async for`` it to walk them
+        all. ``scope`` is the lists' own vocabulary: ``'my'`` (yours, the
+        server's default), ``'shared'`` (your organizations' other members')
+        or ``'org'`` (every registration in your organizations, yours included).
         """
         async def fetch_page(page_limit, page_cursor) -> AgentPage:
             raw = await self._http.request_json(
-                f'/api/agents{_page_query(page_limit, page_cursor)}'
+                f'/api/agents{_page_query(page_limit, page_cursor, scope=scope)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return AgentPage(
@@ -7169,6 +7190,7 @@ class AgentsClient:
         install_script: Optional[str] = None,
         directory: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
+        org: Optional[str] = None,
     ) -> Agent:
         """Register or replace an agent in ONE call, under ``name``.
 
@@ -7178,7 +7200,9 @@ class AgentsClient:
         ever meant to be an edit.
 
         This is a full REPLACEMENT, not a patch — every field comes from this
-        call, and an omitted ``env`` becomes empty.
+        call, and an omitted ``env`` becomes empty. The owning ``org`` is set
+        at registration and fixed: naming a different one here is refused
+        rather than handing the agent to another team.
         """
         fields, source_directory = _agent_upload_fields(
             'upsert()',
@@ -7187,6 +7211,7 @@ class AgentsClient:
             install_script=install_script,
             directory=directory,
             env=env,
+            org=org if org is not None else self._http.default_org(),
         )
         if source_directory is not None:
             raw = await _upload_directory_archive(
@@ -7261,7 +7286,7 @@ class SkillsClient:
     async def close(self) -> None:
         return None
 
-    async def upload(self, directory: str) -> List[SkillUpload]:
+    async def upload(self, directory: str, *, org: Optional[str] = None) -> List[SkillUpload]:
         """Upload a local skill folder and return its records.
 
         The folder must contain ``SKILL.md``, or be a root whose immediate
@@ -7273,7 +7298,10 @@ class SkillsClient:
         name's current one (different content = new record, pointer moves;
         old records keep their immutable ``upload:<id>`` handles), and
         ``name:<skill-name>`` in ``agents[].skills`` resolves through it at
-        job create.
+        job create. ``org`` is the organization the record belongs to — a slug
+        or id, membership required; omitted, the client's ``org`` default, else
+        your personal organization. Its members may then reference the record
+        from their own jobs; deleting stays with you.
         """
         if not isinstance(directory, str) or not directory.strip():
             raise ValueError('skills().upload() requires a local skill directory path')
@@ -7282,6 +7310,9 @@ class SkillsClient:
         # upload is recorded — and later mounted — under its folder name.
         folder_name = os.path.basename(os.path.abspath(directory))
         fields: Dict[str, Optional[str]] = {'name': folder_name} if folder_name else {}
+        owning_org = org if org is not None else self._http.default_org()
+        if owning_org is not None:
+            fields['org'] = owning_org
         raw = await _upload_directory_archive(
             self._http, '/api/skills', fields, directory, 'skill.tar.gz'
         )
@@ -7293,16 +7324,20 @@ class SkillsClient:
     def list(
         self,
         *,
+        scope: Optional[JobListScope] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's uploaded skills (cursor-paged).
+        """List uploaded skills (cursor-paged).
 
-        ``await`` the result for one page, or ``async for`` it to walk them all.
+        ``await`` the result for one page, or ``async for`` it to walk them
+        all. ``scope`` is the lists' own vocabulary: ``'my'`` (yours, the
+        server's default), ``'shared'`` (your organizations' other members')
+        or ``'org'`` (every upload in your organizations, yours included).
         """
         async def fetch_page(page_limit, page_cursor) -> SkillUploadPage:
             raw = await self._http.request_json(
-                f'/api/skills{_page_query(page_limit, page_cursor)}'
+                f'/api/skills{_page_query(page_limit, page_cursor, scope=scope)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return SkillUploadPage(
@@ -7615,8 +7650,9 @@ class JobsClient:
         ``async for`` it to walk every job across cursor pages. ``search`` is
         a server-side free-text filter over job name and dataset names;
         ``scope`` is Harbor's ``--scope`` — ``'my'`` (yours, the server's
-        default) or ``'shared'`` (your organizations' jobs that teammates
-        created). Both are sent on every page fetch.
+        default), ``'shared'`` (your organizations' jobs that teammates
+        created) or ``'org'`` (every job in your organizations, yours
+        included). Both are sent on every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(

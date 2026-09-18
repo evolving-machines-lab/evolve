@@ -256,6 +256,7 @@ from .bridge import (
     SandboxFeatureUnsupportedError,
     SandboxPathNotFoundError,
     SandboxNotRunningError,
+    EvolveConfigError,
     BridgeConnectionError,
     BridgeBuildError,
 )
@@ -896,6 +897,7 @@ __all__ = [
     'SandboxFeatureUnsupportedError',
     'SandboxPathNotFoundError',
     'SandboxNotRunningError',
+    'EvolveConfigError',
     'BridgeConnectionError',
     'BridgeBuildError',
 ]

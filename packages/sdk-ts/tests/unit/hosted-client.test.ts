@@ -230,6 +230,7 @@ import {
   orgs,
   skills,
   trials,
+  JOB_LIST_SCOPES,
   EvolveApiError,
   EvolveDigestMismatchError,
   EvolveIncompleteDownloadError,
@@ -2213,6 +2214,8 @@ async function testWatchImportFailureReReadIsBounded() {
 
 const REGISTERED_AGENT = {
   name: "acme-cli",
+  // The owning org's slug: whose members may name this agent in a job.
+  org: "acme",
   source: "install_script",
   run_command: "acme-cli --headless",
   env: { ACME_PROFILE: "bench" },
@@ -2248,6 +2251,7 @@ async function testAgentCreateInstallScript() {
     assertEqual(form.get("run_command"), "acme-cli --headless", "run_command is a named part");
     assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "env is a JSON part");
     assertEqual(form.get("archive"), null, "no archive part for the install-script source");
+    assertEqual(form.get("org"), null, "no org part when neither the call nor the client names one");
     assertEqual(created, REGISTERED_AGENT, "201 response mapped (name, source, run_command, env, timestamps)");
   } finally {
     restoreFetch();
@@ -2399,6 +2403,84 @@ async function testSkillsUploadCarriesFolderName() {
     await server.close();
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+async function testOrgAxisOnSkillsAndAgents() {
+  console.log("\n--- the org axis: `org` on the create doors, `scope` on the lists ---");
+  const server = await startCaptureServer({
+    status: 201,
+    body: {
+      skills: [
+        {
+          id: "sk_org",
+          name: "team-skill",
+          org: "acme",
+          digest: "sha256:" + "1".repeat(64),
+          size_bytes: 7,
+          description: null,
+          ref: "upload:sk_org",
+          created_at: "2026-09-18T00:00:00Z",
+        },
+      ],
+    },
+  });
+  const dir = await mkdtemp(join(tmpdir(), "evolve-skill-org-"));
+  const skillDir = join(dir, "team-skill");
+  try {
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# team\n");
+
+    // The call's own org wins; with none, the client default rides.
+    const s1 = skills({ apiKey: "test-key", baseUrl: server.base, org: "fallback" });
+    const uploaded = await s1.upload(skillDir, { org: "acme" });
+    let parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "org")?.toString(), "acme", "the call's own org is the org part");
+    assertEqual(uploaded[0]?.org, "acme", "the mapped record carries the owning org's slug");
+
+    await s1.upload(skillDir);
+    parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "org")?.toString(), "fallback", "the client default rides when the call names none");
+
+    const s2 = skills({ apiKey: "test-key", baseUrl: server.base });
+    await s2.upload(skillDir);
+    parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "org"), null, "no org anywhere = no org part (the server's personal default)");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  // The lists take the same three-value scope every other hosted list takes.
+  installMockFetch();
+  try {
+    setMockResponse("/api/skills", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    await skills({ apiKey: "test-key", baseUrl: BASE }).list({ scope: "org" });
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.includes("scope=org"),
+      "skills().list({ scope }) sends the scope"
+    );
+
+    setMockResponse("/api/agents", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    await agents({ apiKey: "test-key", baseUrl: BASE }).list({ scope: "shared" });
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.includes("scope=shared"),
+      "agents().list({ scope }) sends the scope"
+    );
+
+    setMockResponse("/api/agents", { status: 201, body: { ...REGISTERED_AGENT, org: "acme" } });
+    const created = await agents({ apiKey: "test-key", baseUrl: BASE, org: "acme" }).create({
+      name: "acme-cli",
+      install_script: "true",
+      run_command: "acme-cli --headless",
+    });
+    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "acme", "the client default is the agent's org part");
+    assertEqual(created.org, "acme", "the mapped agent carries the owning org's slug");
+  } finally {
+    restoreFetch();
+  }
+
+  assertEqual(JOB_LIST_SCOPES.join(","), "my,shared,org", "the scope vocabulary carries org");
 }
 
 async function testAgentCreateRequiresOneSource() {
@@ -7847,6 +7929,7 @@ async function main() {
   await testAgentCreateTarball();
   await testAgentUpsertTarball();
   await testSkillsUploadCarriesFolderName();
+  await testOrgAxisOnSkillsAndAgents();
   await testAgentCreateRequiresOneSource();
   await testAgentListGetDelete();
   await testAgentNotFoundIsTypedError();

@@ -10,7 +10,7 @@ description: "Read trace-analysis runs."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    list(options?: { scope?: "my" | "shared"; job?: string; status?: AnalysisStatus[]; limit?: number; cursor?: string }): AnalysisList
+    list(options?: { scope?: "my" | "shared" | "org"; job?: string; status?: AnalysisStatus[]; limit?: number; cursor?: string }): AnalysisList
     ```
 
     Analysis runs, newest first, each naming the trial, job and task it judged.

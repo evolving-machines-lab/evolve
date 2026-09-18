@@ -107,6 +107,7 @@ import {
   revokeProviderRuntimeToken as revokeProviderRuntimeTokenRequest,
   type ProviderRuntimeToken,
 } from "./provider-secrets";
+import { requireOrgMembership } from "./observability/org-membership";
 import {
   bindManagedSecretRuntimeToken,
   createManagedSecretRuntimeToken,
@@ -321,6 +322,7 @@ export class Agent {
   /** Previous session tag — preserved across kill()/setSession() so cost queries still work */
   private previousSessionTag?: string;
   private sessionLogger?: SessionLogger;
+  private orgResolved = false;
   private activeCommand?: SandboxCommandHandle;
   private activeProcessId: string | null = null;
   private activeOperationId: number | null = null;
@@ -1349,6 +1351,13 @@ export class Agent {
     return token;
   }
 
+  // A wrong org would make the ingest drop every batch: prove it once, before any sandbox.
+  private async ensureOrgResolved(): Promise<void> {
+    if (this.orgResolved || !this.options.org || this.agentConfig.isDirectMode) return;
+    await requireOrgMembership(this.options.org, this.agentConfig.apiKey);
+    this.orgResolved = true;
+  }
+
   private ensureSessionLogger(sandbox: SandboxInstance): void {
     if (this.sessionLogger) return;
     const provider = this.options.sandboxProvider;
@@ -1359,6 +1368,7 @@ export class Agent {
       reasoningEffort: this.reasoningEffort(),
       sandboxId: sandbox.sandboxId,
       tag: this.sessionTag,
+      org: this.options.org,
       apiKey: this.agentConfig.isDirectMode
         ? undefined
         : this.agentConfig.apiKey,
@@ -2179,6 +2189,7 @@ export class Agent {
         "Agent is already running. Call interrupt(), wait for the active/background run to finish, or create a new Evolve instance.",
       );
     }
+    await this.ensureOrgResolved();
 
     // =========================================================================
     // GUARD: mutual exclusivity check before any network calls
