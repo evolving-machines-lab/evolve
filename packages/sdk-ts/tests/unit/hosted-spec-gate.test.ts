@@ -337,7 +337,7 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   downloadSharedCheck: null,
   // The link's analysis doors (no key, no SDK wrapper), like the trial doors above.
   listSharedJobAnalyses: null,
-  getSharedAnalysis: null,
+  : null,
   getSharedAnalysisSandboxLog: null,
   streamSharedAnalysisSandboxLogs: null,
   getSharedAnalysisFilesystem: null,
