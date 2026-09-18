@@ -107,6 +107,7 @@ import type {
   HostedClientConfig,
   Job,
   JobShares,
+  JobsClient,
   JobAnalysisStats,
   JobCreate,
   JobEvent,
@@ -206,6 +207,10 @@ const GLOBAL_FLAGS: Record<string, FlagSpec> = {
   "api-key": { kind: "string", value: "<key>", help: "API key", default: "$EVOLVE_API_KEY" },
   "base-url": { kind: "string", value: "<url>", help: "API base URL", default: "the Evolve dashboard API" },
 };
+
+/** The share verbs' --email, on a job and on a check: one spelling. */
+const SHARE_EMAIL_FLAG = { kind: "repeat", value: "<address>", help: "Share with this address; repeatable" } as const;
+const UNSHARE_EMAIL_FLAG = { kind: "repeat", value: "<address>", help: "Remove this address's share; repeatable" } as const;
 
 /** The shared read-side flags every list command carries. */
 const LIST_FLAGS: Record<string, FlagSpec> = {
@@ -645,7 +650,7 @@ const GROUPS: Record<string, GroupSpec> = {
         notes: "--link prints the run's unlisted link (the same one every time). Each --email gets a link to the run by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
         flags: {
           link: { kind: "boolean", help: "Enable the job's unlisted link and print it" },
-          email: { kind: "repeat", value: "<address>", help: "Share with this address; repeatable" },
+          email: SHARE_EMAIL_FLAG,
         },
         minPositionals: 1,
         maxPositionals: 1,
@@ -657,7 +662,7 @@ const GROUPS: Record<string, GroupSpec> = {
         notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
         flags: {
           link: { kind: "boolean", help: "Disable the job's link" },
-          email: { kind: "repeat", value: "<address>", help: "Remove this address's share; repeatable" },
+          email: UNSHARE_EMAIL_FLAG,
         },
         minPositionals: 1,
         maxPositionals: 1,
@@ -1142,6 +1147,39 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<check-id>",
         examples: ["evolve check show 5f2c9b1e"],
+      },
+      // The job share verbs on a check — the same flags and words.
+      share: {
+        summary: "Share a check you created by link or by email",
+        notes: "--link prints the check's unlisted link (the same one every time). Each --email gets a link to the check by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
+        flags: {
+          link: { kind: "boolean", help: "Enable the check's unlisted link and print it" },
+          email: SHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<check-id>",
+        examples: ["evolve check share 5f2c9b1e --link", "evolve check share 5f2c9b1e --email alice@example.org"],
+      },
+      unshare: {
+        summary: "Revoke a check's link or email shares",
+        notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
+        flags: {
+          link: { kind: "boolean", help: "Disable the check's link" },
+          email: UNSHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<check-id>",
+        examples: ["evolve check unshare 5f2c9b1e --link", "evolve check unshare 5f2c9b1e --email alice@example.org"],
+      },
+      shares: {
+        summary: "Show who a check is shared with",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<check-id>",
+        examples: ["evolve check shares 5f2c9b1e", "evolve check shares 5f2c9b1e --json"],
       },
       // The per-task reads — a task check read like an analysis run (owner
       // ruling 2026-09-09): the analysis verbs' flags, verbatim, on the TASK
@@ -5354,29 +5392,32 @@ function printShares(inv: Invocation, io: CliIO, shares: JobShares): number {
   return 0;
 }
 
+/** The three share verbs of a kind, as its client speaks them: jobs() and checks() both do. */
+type ShareClient = Pick<JobsClient, "share" | "unshare" | "shares">;
+
 // Harbor's `harbor job share <id> --org … --user …` (their docs/sharing/jobs.mdx),
 // recorded deviations: a person is shared by --email (our login is an address)
 // and --link makes the job reachable by an unlisted link where Harbor has --public.
-async function cmdJobShare(inv: Invocation, io: CliIO): Promise<number> {
-  const grant = shareGrant(inv);
-  const client = jobs(clientConfig(inv));
-  const shares = await client.share(await resolveId(inv, "job", inv.positionals[0]), grant);
-  return printShares(inv, io, shares);
+// A check shares the same way, on its own id namespace.
+function shareVerbs(noun: "job" | "check", client: (inv: Invocation) => ShareClient) {
+  const share = async (inv: Invocation, io: CliIO): Promise<number> => {
+    const grant = shareGrant(inv);
+    const shares = await client(inv).share(await resolveId(inv, noun, inv.positionals[0]), grant);
+    return printShares(inv, io, shares);
+  };
+  const unshare = async (inv: Invocation, io: CliIO): Promise<number> => {
+    const grant = shareGrant(inv);
+    const shares = await client(inv).unshare(await resolveId(inv, noun, inv.positionals[0]), grant);
+    return printShares(inv, io, shares);
+  };
+  // Harbor's `harbor hub job shares <id>`.
+  const shares = async (inv: Invocation, io: CliIO): Promise<number> =>
+    printShares(inv, io, await client(inv).shares(await resolveId(inv, noun, inv.positionals[0])));
+  return { share, unshare, shares };
 }
 
-async function cmdJobUnshare(inv: Invocation, io: CliIO): Promise<number> {
-  const grant = shareGrant(inv);
-  const client = jobs(clientConfig(inv));
-  const shares = await client.unshare(await resolveId(inv, "job", inv.positionals[0]), grant);
-  return printShares(inv, io, shares);
-}
-
-// Harbor's `harbor hub job shares <id>`.
-async function cmdJobShares(inv: Invocation, io: CliIO): Promise<number> {
-  const client = jobs(clientConfig(inv));
-  const shares = await client.shares(await resolveId(inv, "job", inv.positionals[0]));
-  return printShares(inv, io, shares);
-}
+const JOB_SHARE = shareVerbs("job", (inv) => jobs(clientConfig(inv)));
+const CHECK_SHARE = shareVerbs("check", (inv) => checks(clientConfig(inv)));
 
 /**
  * PURE SUGAR over surfaces that already exist — the job body's datasets[],
@@ -5809,6 +5850,8 @@ export function checkDetailLines(check: Check): string[] {
     ["model", `${check.model_name} at effort ${check.reasoning_effort}`],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
     ["provider", check.sandbox_provider],
+    // PRIVATE or LINK (an unlisted link reaches the check); `check shares` prints the link and the addresses.
+    ["visibility", check.visibility],
   ];
   if (check.prompt !== null) rows.push(["prompt", "custom (Harbor's -p text)"]);
   if (check.n_concurrent !== null) rows.push(["n_concurrent", String(check.n_concurrent)]);
@@ -8764,9 +8807,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job compare": cmdJobCompare,
   "job cancel": cmdJobCancel,
   "job delete": cmdJobDelete,
-  "job share": cmdJobShare,
-  "job unshare": cmdJobUnshare,
-  "job shares": cmdJobShares,
+  "job share": JOB_SHARE.share,
+  "job unshare": JOB_SHARE.unshare,
+  "job shares": JOB_SHARE.shares,
   "job stop": cmdJobStop,
   "job resume": cmdJobResume,
   "job retry": cmdJobRetry,
@@ -8803,6 +8846,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "analysis procs": ANALYSIS_FILES.procs,
   "check list": cmdCheckList,
   "check show": cmdCheckShow,
+  "check share": CHECK_SHARE.share,
+  "check unshare": CHECK_SHARE.unshare,
+  "check shares": CHECK_SHARE.shares,
   "check trace": cmdCheckTrace,
   "check download": cmdCheckDownload,
   "check files status": CHECK_FILES.status,

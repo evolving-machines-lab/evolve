@@ -285,6 +285,24 @@ OPERATION_TO_METHOD = {
     'getTaskCheckSandboxLog': (ChecksClient, 'task_filesystem'),
     'streamTaskCheckSandboxLogs': (ChecksClient, 'task_filesystem'),
     'getTaskCheckProcs': (ChecksClient, 'task_filesystem'),
+    # A check shares as a job does: the creator's three verbs are SDK methods;
+    # the check link's archive door is the link viewer's, like the job link's doors.
+    'shareCheck': (ChecksClient, 'share'),
+    'unshareCheck': (ChecksClient, 'unshare'),
+    'getCheckShares': (ChecksClient, 'shares'),
+    'downloadSharedCheck': None,
+    # The link's analysis doors (no key, no SDK wrapper), like the trial doors above.
+    'listSharedJobAnalyses': None,
+    'getSharedAnalysisSandboxLog': None,
+    'streamSharedAnalysisSandboxLogs': None,
+    'getSharedAnalysisFilesystem': None,
+    'listSharedAnalysisFilesystemFolder': None,
+    'readSharedAnalysisFilesystemFile': None,
+    'searchSharedAnalysisFilesystem': None,
+    'listSharedAnalysisFilesystemChanges': None,
+    'downloadSharedAnalysisFilesystemArchive': None,
+    'streamSharedAnalysisFilesystemEvents': None,
+    'downloadSharedAnalysis': None,
     # Datasets
     'listDatasets': (DatasetsClient, 'list'),
     'getDataset': (DatasetsClient, 'get'),
