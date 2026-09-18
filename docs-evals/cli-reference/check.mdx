@@ -17,6 +17,7 @@ evolve check ./tasks \
   -i 'abs-*' \
   -l 5 \
   --watch
+evolve check --show-defaults
 ```
 
 ## Options
@@ -43,6 +44,10 @@ evolve check ./tasks \
 
 <ParamField path="-e, --env" type="provider">
   Sandbox provider the checker runs on. Defaults to the platform's analysis default.
+</ParamField>
+
+<ParamField path="--show-defaults">
+  Print the defaults a check runs under when you name none: model, effort, provider, the rubric's criteria and the built-in prompt template, then exit. With `--json`, one object. Takes no path and no other check flag.
 </ParamField>
 
 <ParamField path="-n, --n-concurrent" type="n">
@@ -93,8 +98,13 @@ List your task quality checks, newest first.
   Filter by check status: `queued`, `running`, `completed`.
 </ParamField>
 
+<ParamField path="-d, --dataset" type="name[@version]">
+  Only checks on this dataset. A bare name is every version, `name@version` one version. A value with an empty half (`name@`, `@version`) is refused as `invalid_input` on `dataset`.
+</ParamField>
+
 ```bash
 evolve check list --status running
+evolve check list --dataset terminal-bench-4@4.0
 ```
 
 ### check show

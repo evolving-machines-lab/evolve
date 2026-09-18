@@ -2034,6 +2034,22 @@ class Check(TypedDict):
     finished_at: Optional[str]
 
 
+class CheckDefaults(TypedDict):
+    """The policy an empty check config resolves to (``GET
+    /api/checks/defaults``): each key the value :class:`Check` echoes for a
+    check created with no config, except ``prompt``, which ``Check`` serves
+    as None and this serves as the template text. A plain wire dict at
+    runtime.
+    """
+    model_name: str
+    rubric: Rubric
+    #: The built-in check prompt template, unrendered — pass it as ``prompt`` to run the default body explicitly, or edit it from here.
+    prompt: str
+    #: The effort the default model runs at when the config names none.
+    reasoning_effort: str
+    sandbox_provider: EvalSandboxProvider
+
+
 class JobRetryConfig(TypedDict):
     """The RESOLVED auto-retry policy a job runs under — the spec's
     ``RetryConfig`` schema, echoed on every job body as ``Job.retry``: the
@@ -9270,19 +9286,29 @@ class ChecksClient:
         raw = await self._http.request_json(f'/api/checks/{urllib.parse.quote(check_id)}')
         return _map_check(raw)
 
+    async def defaults(self) -> CheckDefaults:
+        """The defaults a check runs under when its config names nothing
+        (``GET /api/checks/defaults``): model, effort, provider, rubric and
+        the unrendered prompt template (:class:`CheckDefaults`)."""
+        raw = await self._http.request_json('/api/checks/defaults')
+        return cast(CheckDefaults, raw)
+
     def list(
         self,
         *,
         scope: Optional[JobListScope] = None,
         status: Optional[List[CheckStatus]] = None,
+        dataset: Optional[str] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
         """Every check you may read, newest first (cursor-paged). ``scope``
         is Harbor's ``--scope`` (``'my'`` — checks you created, the default;
         ``'shared'`` — your organizations' checks that teammates created);
-        ``status`` filters by the check's own ladder (:data:`CheckStatus`).
-        ``await`` for one page, ``async for`` to walk them all."""
+        ``status`` filters by the check's own ladder (:data:`CheckStatus`);
+        ``dataset`` keeps only checks on that dataset — ``'name'`` for every
+        version, ``'name@version'`` for one. ``await`` for one page,
+        ``async for`` to walk them all."""
         async def fetch_page(page_limit, page_cursor) -> CheckPage:
             raw = await self._http.request_json(
                 '/api/checks'
@@ -9291,6 +9317,7 @@ class ChecksClient:
                     page_cursor,
                     scope=scope,
                     status=','.join(status) if status else None,
+                    dataset=dataset,
                 )
             )
             items, next_cursor, has_more = _page_parts(raw)

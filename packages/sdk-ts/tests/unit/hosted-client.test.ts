@@ -7570,6 +7570,12 @@ async function testChecksReadsAndWatch() {
     assertEqual(url.searchParams.get("status"), "running,completed", "status forwarded comma-joined");
     assertEqual(url.searchParams.get("limit"), "5", "limit forwarded");
     assertEqual(page.items.length, 1, "maps the items");
+    await c.list({ dataset: "tb@4.0" });
+    const byDataset = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(byDataset.searchParams.get("dataset"), "tb@4.0", "dataset forwarded verbatim (name@version)");
+    assert(byDataset.search.includes("dataset=tb%404.0"), "the wire carries the @ encoded");
+    await c.list({ scope: "my" });
+    assert(!new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("dataset"), "no dataset key when none was given");
 
     // watch: the first read answers queued, the next completed — one change observed.
     let reads = 0;
@@ -7589,6 +7595,30 @@ async function testChecksReadsAndWatch() {
       globalThis.fetch = original;
     }
     assert(hosted({ apiKey: "test-key", baseUrl: BASE }).checks !== undefined, "the facade exposes checks");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testChecksDefaults() {
+  console.log("\n--- checks().defaults() reads GET /api/checks/defaults and pins the wire ---");
+  installMockFetch();
+  try {
+    const defaults = {
+      model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+      rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }] },
+      prompt: "Check {task_path}\n{file_tree}\n{criteria_guidance}",
+      reasoning_effort: "high",
+      sandbox_provider: "daytona",
+    };
+    // Registered BEFORE the list door: the mock matches by substring, in order.
+    setMockResponse("/api/checks/defaults", { status: 200, body: defaults });
+    setMockResponse("/api/checks", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const got = await checks({ apiKey: "test-key", baseUrl: BASE }).defaults();
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/checks/defaults", "one GET on the defaults door");
+    assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
+    assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
   } finally {
     restoreFetch();
   }
@@ -7732,6 +7762,7 @@ async function main() {
   await testChecksCreateDirectory();
   await testChecksCreateDataset();
   await testChecksReadsAndWatch();
+  await testChecksDefaults();
   await testChecksTaskReads();
   await testOrgs();
 
