@@ -9672,7 +9672,13 @@ async function testSessionShare() {
     assertEqual(await runCli(["session", "list", "--scope", "shared", ...AUTH], shared.io), 0, "list --scope shared exits 0");
     assert(fetchCalls[fetchCalls.length - 1].url.includes("scope=shared"), "the scope rides the list request");
     const badScope = captureIO();
+    const before = fetchCalls.length;
     assertEqual(await runCli(["session", "list", "--scope", "all", ...AUTH], badScope.io), 2, "an unknown scope is a usage error");
+    assert(
+      badScope.err[0].includes("my") && badScope.err[0].includes("shared") && badScope.err[0].includes("Harbor"),
+      "session list refuses with the one shared scope sentence, Harbor's all explained"
+    );
+    assertEqual(fetchCalls.length, before, "no request was made");
   } finally {
     restoreFetch();
   }

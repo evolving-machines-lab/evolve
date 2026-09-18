@@ -8316,10 +8316,7 @@ async function cmdSessionList(inv: Invocation, io: CliIO): Promise<number> {
   if (state !== undefined && state !== "live" && state !== "ended") {
     throw new CliUsageError(`--state must be live or ended; got: ${state}`);
   }
-  const scope = inv.flags.scope === undefined ? undefined : String(inv.flags.scope);
-  if (scope !== undefined && scope !== "my" && scope !== "shared") {
-    throw new CliUsageError(`--scope must be my or shared; got: ${scope}`);
-  }
+  const scope = parseScopeFlag(inv);
   const client = sessions(sessionsConfig(inv));
   const page = await client.list({
     ...pageOptions(inv),
