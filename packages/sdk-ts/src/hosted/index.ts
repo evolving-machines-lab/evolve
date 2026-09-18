@@ -4205,7 +4205,9 @@ function mapCheck(raw: unknown): Check {
         (row): row is TaskCheck => !!row && typeof row === "object" && !Array.isArray(row)
       )
     : [];
-  return { ...(value as unknown as Check), results };
+  // The share link's switch; an older server that sends none reads as PRIVATE (mapJob's rule).
+  const visibility = value.visibility === "LINK" ? "LINK" : "PRIVATE";
+  return { ...(value as unknown as Check), visibility, results };
 }
 
 /**
@@ -4411,6 +4413,30 @@ export function checks(config?: HostedClientConfig): ChecksClient {
       options?: DownloadJobOptions
     ): Promise<Buffer | string | ReadableStream<Uint8Array>> =>
       downloadArchive(cfg, `/api/checks/${encodeURIComponent(id)}/download`, options, `check-${id}.tar.gz`)) as ChecksClient["download"],
+
+    // The job share verbs on a check (the same body, the same JobShares back).
+    async share(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(cfg, `/api/checks/${encodeURIComponent(id)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async unshare(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(cfg, `/api/checks/${encodeURIComponent(id)}/unshare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async shares(id: string): Promise<JobShares> {
+      const res = await request(cfg, `/api/checks/${encodeURIComponent(id)}/shares`);
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
 
     async watch(checkId: string, options?: WatchCheckOptions): Promise<Check> {
       // The analysis watch's poll shape (jobs().watchAnalysis): the interval

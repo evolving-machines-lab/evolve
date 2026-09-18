@@ -7676,6 +7676,53 @@ async function testChecksTaskReads() {
   }
 }
 
+async function testShareCheck() {
+  console.log("\n--- checks().share() / unshare() / shares(): the job verbs on a check, the same JobShares back ---");
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/def456" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/checks/chk-1/share", { status: 200, body: state });
+    setMockResponse("/api/checks/chk-1/shares", { status: 200, body: state });
+    setMockResponse("/api/checks/chk-1/unshare", {
+      status: 200,
+      body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] },
+    });
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+
+    const shared = await c.share("chk-1", { link: true, emails: ["Alice@Example.org"] });
+    assert(fetchCalls[0].url.endsWith("/api/checks/chk-1/share"), "share POSTs the check's share route");
+    assertEqual(fetchCalls[0].init?.method, "POST", "share uses POST");
+    assertEqual(
+      JSON.parse(String(fetchCalls[0].init?.body)),
+      { link: true, emails: ["Alice@Example.org"] },
+      "the body is the grant verbatim — the server lowercases and validates"
+    );
+    assertEqual(shared, state, "the share state comes back in the job's shape");
+
+    const listed = await c.shares("chk-1");
+    assertEqual(fetchCalls[1].init?.method ?? "GET", "GET", "shares reads with GET");
+    assert(fetchCalls[1].url.endsWith("/api/checks/chk-1/shares"), "shares hits the check's shares route");
+    assertEqual(listed.link.url, "https://dash.test/shared/def456", "the owner can copy the link again");
+
+    const revoked = await c.unshare("chk-1", { link: true });
+    assert(fetchCalls[2].url.endsWith("/api/checks/chk-1/unshare"), "unshare POSTs the check's unshare route");
+    assertEqual(JSON.parse(String(fetchCalls[2].init?.body)), { link: true }, "unshare sends the same grammar");
+    assertEqual(revoked, { visibility: "PRIVATE", link: { enabled: false }, emails: [] }, "a revoked link has no url");
+
+    // Check.visibility: the server's word, or PRIVATE from a server older than the field.
+    setMockResponse("/api/checks/chk-2", { status: 200, body: checkFixture({ id: "chk-2" }) });
+    assertEqual((await c.get("chk-2")).visibility, "PRIVATE", "Check.visibility defaults to PRIVATE when the server sends none");
+    setMockResponse("/api/checks/chk-3", { status: 200, body: checkFixture({ id: "chk-3", visibility: "LINK" }) });
+    assertEqual((await c.get("chk-3")).visibility, "LINK", "Check.visibility carries LINK");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testChecksReadsAndWatch() {
   console.log("\n--- checks().get()/list()/watch() ride the contract's two GETs; watch polls to completed ---");
   installMockFetch();
@@ -7895,6 +7942,7 @@ async function main() {
   await testChecksCreateDirectory();
   await testChecksCreateDataset();
   await testChecksReadsAndWatch();
+  await testShareCheck();
   await testChecksDefaults();
   await testChecksTaskReads();
   await testOrgs();

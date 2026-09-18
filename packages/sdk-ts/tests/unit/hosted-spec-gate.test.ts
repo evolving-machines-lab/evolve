@@ -329,6 +329,12 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   getTaskCheckSandboxLog: "checks.taskFilesystem",
   streamTaskCheckSandboxLogs: "checks.taskFilesystem",
   getTaskCheckProcs: "checks.taskFilesystem",
+  // A check shares as a job does: the creator's three verbs are SDK methods;
+  // the check link's archive door is the link viewer's, like the job link's doors.
+  shareCheck: "checks.share",
+  unshareCheck: "checks.unshare",
+  getCheckShares: "checks.shares",
+  downloadSharedCheck: null,
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
