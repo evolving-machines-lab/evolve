@@ -89,7 +89,7 @@ Counters are cumulative: errored trials are a subset of completed, cancelled a s
 
 ### UploadProvenance
 
-`original_job_id` and `original_job_name` (what the archive's own files said; null when they said nothing), `uploaded_at`, `reported_totals` (`cost_usd`, `n_input_tokens`, `n_cache_tokens`, `n_output_tokens`, each null when no trial reported it, plus `n_trials_reporting`; null on jobs ingested before the field existed), `task_links` (`JobTaskLink[]`; null on jobs ingested before task linking existed).
+`original_job_id` and `original_job_name` (what the archive's own files said; null when they said nothing), `datasets` (`UploadDataset[]`: the `name` and `version` its config.json declared, or null), `uploaded_at`, `reported_totals` (`cost_usd`, `n_input_tokens`, `n_cache_tokens`, `n_output_tokens`, each null when no trial reported it, plus `n_trials_reporting`; null on jobs ingested before the field existed), `task_links` (`JobTaskLink[]`; null on jobs ingested before task linking existed).
 
 `JobTaskLink`: `task_name`, `n_trials`, `n_linked`, `n_unlinked`, `linked_by` (`dataset_flag`, `job_dataset_record`, `task_hash` or `none`), `datasets` (the `name@version` refs linked to), `link_reasons` (a count per reason: `hash_mismatch`, `task_not_in_dataset`, `no_dataset_named`, `dataset_ambiguous`, `no_hash_match`, `no_task_digest`), `candidates` (the refs an ambiguous hash matched).
 

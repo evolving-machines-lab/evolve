@@ -1189,6 +1189,18 @@ export interface UploadProvenance {
    * law existed (not backfillable, never guessed).
    */
   task_links: JobTaskLink[] | null;
+  /**
+   * The archive config.json's own `datasets` list as it declared them (name
+   * and `ref`), nothing resolved or fabricated; null when it declared none.
+   */
+  datasets: UploadDataset[] | null;
+}
+
+/** One dataset the uploaded archive's config.json declared (spec UploadDataset). */
+export interface UploadDataset {
+  name: string;
+  /** The `ref` or `version` it wrote; null when it wrote neither. */
+  version: string | null;
 }
 
 /**

@@ -1311,6 +1311,17 @@ class UploadProvenance:
     #: task — and so analyze with the task folder — and why the rest did
     #: not. None only on jobs ingested before the link law existed.
     task_links: Optional[List['JobTaskLink']] = None
+    #: The archive config.json's own ``datasets`` as it declared them (name and
+    #: ``ref``), nothing resolved or fabricated; None when it declared none.
+    datasets: Optional[List['UploadDataset']] = None
+
+
+@dataclass
+class UploadDataset:
+    """One dataset the uploaded archive's config.json declared (spec ``UploadDataset``)."""
+    name: str
+    #: The ``ref`` or ``version`` it wrote; None when it wrote neither.
+    version: Optional[str]
 
 
 @dataclass
@@ -4244,7 +4255,22 @@ def _map_upload_provenance(data: Any) -> Optional[UploadProvenance]:
         uploaded_at=uploaded_at,
         reported_totals=reported_totals,
         task_links=_map_task_links(data.get('task_links')),
+        datasets=_map_upload_datasets(data.get('datasets')),
     )
+
+
+def _map_upload_datasets(raw: Any) -> Optional[List[UploadDataset]]:
+    """The archive's declared datasets (spec ``UploadDataset[]``): absent, empty or
+    malformed all read None — one bad entry nulls the list, never a shorter one."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: List[UploadDataset] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get('name'), str) or not entry['name']:
+            return None
+        version = entry.get('version')
+        out.append(UploadDataset(name=entry['name'], version=version if isinstance(version, str) else None))
+    return out
 
 
 #: The contract's ``TaskLinkedBy`` enum (spec/openapi.yaml), in its order.

@@ -4622,6 +4622,7 @@ async function testUploadProvenanceMappingEdges() {
         // Absent totals (a pre-field ingest) read null, never invented.
         reported_totals: null,
         task_links: null,
+        datasets: null,
       },
       "null originals pass through as null"
     );
@@ -4643,6 +4644,7 @@ async function testUploadProvenanceMappingEdges() {
         uploaded_at: "2026-08-28T10:00:00.000Z",
         reported_totals: null,
         task_links: null,
+        datasets: null,
       },
       "a non-string original_job_name reads null while the rest maps"
     );

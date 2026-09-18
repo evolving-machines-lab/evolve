@@ -24,7 +24,7 @@ evolve job import <import-id> --watch
 
 The trials' facts, never a re-judgment: a rewarded trial arrives `SCORED` with its rewards untouched, a trial with no rewards arrives `INDETERMINATE`, and an errored trial keeps its exception. The trajectory, the agent's logs and home folder, and the verifier log land where a native trial's do, so every trace and artifact read works unchanged. Prior `analysis.json`, `lock.json`, `artifacts/` and `steps/` content are not imported.
 
-The ingested job carries `upload`: the archive's own `original_job_id` and `original_job_name`, `uploaded_at`, the uploader's `reported_totals`, and `task_links`. It is null on every job this platform ran. Resume, retry and regrade refuse an uploaded job with `job_uploaded`; analyze works on it unchanged.
+The ingested job carries `upload`: the archive's own `original_job_id` and `original_job_name`, the `datasets` its config.json declared (name and version, or null when it declared none), `uploaded_at`, the uploader's `reported_totals`, and `task_links`. It is null on every job this platform ran. Resume, retry and regrade refuse an uploaded job with `job_uploaded`; analyze works on it unchanged.
 
 An uploaded job never claims an execution: its `sandbox_provider` is null, the CLI prints `ported`, and the metered spend and token fields stay null. The archive's own figures ride `trial.upload.reported_agent_result` and `upload.reported_totals`, and `job show` prints them as `reported $X.XX (N/M trials reporting)`.
 
