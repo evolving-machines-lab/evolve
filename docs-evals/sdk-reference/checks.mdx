@@ -53,11 +53,11 @@ description: "Start and read task quality checks."
   <Tab title="TypeScript">
     ```ts
     get(checkId: string): Promise<Check>
-    list(options?: { scope?: "my" | "shared"; status?: CheckStatus[]; dataset?: string; limit?: number; cursor?: string }): CheckList
+    list(options?: { scope?: "my" | "shared" | "org"; status?: CheckStatus[]; dataset?: string; limit?: number; cursor?: string }): CheckList
     watch(checkId: string, options?: { onProgress?: (check: Check) => void; signal?: AbortSignal; pollIntervalMs?: number }): Promise<Check>
     ```
 
-    One check with its per-task results, your checks (`scope: "shared"` adds your organizations' and the checks shared with your address), or a poll until every task settled. `dataset` keeps only the checks on one dataset: a bare name is every version, `name@version` one version.
+    One check with its per-task results, your checks (`scope: "shared"` is your organizations' and the checks shared with your address; `scope: "org"` is every check in your organizations, yours included), or a poll until every task settled. `dataset` keeps only the checks on one dataset: a bare name is every version, `name@version` one version.
 
     ```ts
     const done = await checks().watch(check.id);

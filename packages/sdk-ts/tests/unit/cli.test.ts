@@ -7539,6 +7539,7 @@ async function testAgentAdd() {
         "--install-script", scriptPath,
         "--run", "acme-cli --headless",
         "--ae", "ACME_PROFILE=bench",
+        "--org", "acme",
         ...AUTH,
       ],
       io
@@ -7558,6 +7559,7 @@ async function testAgentAdd() {
     );
     assertEqual(form.get("run_command"), "acme-cli --headless", "run_command part");
     assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "--ae env is a JSON part");
+    assertEqual(form.get("org"), "acme", "--org is the owning organization part");
     const text = out.join("\n");
     assert(text.includes("acme-cli"), "renders the agent name");
     assert(text.includes("install_script"), "renders the source");
@@ -7657,7 +7659,10 @@ async function testSkillUpload() {
 
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["skill", "upload", skillDir, "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`],
+      [
+        "skill", "upload", skillDir, "--org", "acme",
+        "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`,
+      ],
       io
     );
     assertEqual(code, 0, "exit 0");
@@ -7670,6 +7675,10 @@ async function testSkillUpload() {
       "the folder's own name travels as the name part"
     );
     assert(call.body.includes('name="archive"'), "the content rides as the archive part");
+    assert(
+      call.body.includes('name="org"') && call.body.includes("acme"),
+      "--org travels as the owning organization part",
+    );
     const text = out.join("\n");
     assert(text.includes(CLI_SKILL.ref), "prints the immutable upload:<id> handle");
     assert(text.includes("my-skill"), "prints the record's name");
@@ -9517,6 +9526,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
     endedAt: "2026-09-01T10:05:00.000Z",
     stepCount: 12,
     toolStats: { Bash: 7, Read: 5 },
+    org: "acme",
     ...overrides,
   };
 }
@@ -9568,6 +9578,22 @@ async function testSessionListAndShow() {
     assertEqual(f.searchParams.get("pageSize"), "7", "-l is the page size");
     assertEqual(f.searchParams.get("cursor"), "sess-9", "--cursor rides the query");
 
+    // A session names an org, so the list takes the same --scope every other
+    // hosted list takes, and refuses Harbor's `all` by name.
+    const scoped = captureIO();
+    await runCli(["session", "list", "--scope", "org", ...AUTH], scoped.io);
+    assertEqual(
+      new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("scope"),
+      "org",
+      "--scope rides the query",
+    );
+    const badScope = captureIO();
+    assertEqual(
+      await runCli(["session", "list", "--scope", "all", ...AUTH], badScope.io),
+      2,
+      "Harbor's `all` is a usage error at the keyboard \u2014 nothing hosted is public",
+    );
+
     const badState = captureIO();
     assertEqual(await runCli(["session", "list", "--state", "paused", ...AUTH], badState.io), 2, "an unknown state is a usage error");
 
@@ -9593,6 +9619,7 @@ async function testSessionListAndShow() {
     );
     assert(text.includes("12"), "renders the step count");
     assert(/^effort\s+high$/m.test(text), "renders the effort the session was started with, after the model (B181)");
+    assert(/^org\s+acme$/m.test(text), "renders the owning organization");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
 
     // A session without an effort (a harness that has none, or one ingested before the field) shows "-".
@@ -9611,6 +9638,74 @@ async function testSessionListAndShow() {
     // The plural noun answers as the hidden alias, like every other group.
     const alias = captureIO();
     assertEqual(await runCli(["sessions", "list", ...AUTH], alias.io), 0, "sessions aliases session");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testSessionShare() {
+  console.log("\n--- runCli: session share / unshare / shares — the job verbs on a managed-agent session ---");
+
+  assertThrowsUsage(() => parseArgs(["session", "share"]), "requires", "share needs an id");
+  assertThrowsUsage(() => parseArgs(["session", "shares", "a", "b"]), "unexpected argument", "shares takes one id");
+
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/abc789" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/sessions/sess-1/share", { status: 200, body: state });
+    setMockResponse("/api/sessions/sess-1/unshare", { status: 200, body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] } });
+    setMockResponse("/api/sessions/sess-1/shares", { status: 200, body: state });
+
+    const bare = captureIO();
+    assertEqual(await runCli(["session", "share", "sess-1", ...AUTH], bare.io), 2, "share without --link or --email exits 2");
+    assert(bare.err.some((l) => l.includes("--link") && l.includes("--email")), "the refusal names both flags");
+    assertEqual(fetchCalls.length, 0, "nothing was requested");
+
+    const link = captureIO();
+    assertEqual(await runCli(["session", "share", "sess-1", "--link", "--email", "alice@example.org", ...AUTH], link.io), 0, "share exits 0");
+    const shareCall = fetchCalls.find((c) => c.url.endsWith("/api/sessions/sess-1/share"));
+    assert(shareCall !== undefined && shareCall.init?.method === "POST", "share POSTs the session's share route");
+    assertEqual(JSON.parse(String(shareCall?.init?.body)), { link: true, emails: ["alice@example.org"] }, "--link and --email ride one body");
+    assert(link.out.some((l) => l.includes("https://dash.test/shared/abc789")), "the link is printed");
+    assert(link.out.some((l) => l.includes("alice@example.org")), "the addresses are printed");
+
+    const json = captureIO();
+    await runCli(["session", "shares", "sess-1", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out.join("\n")), state, "--json prints the JobShares wire shape verbatim");
+
+    const off = captureIO();
+    assertEqual(await runCli(["session", "unshare", "sess-1", "--link", ...AUTH], off.io), 0, "unshare exits 0");
+    const unshareCall = fetchCalls.find((c) => c.url.endsWith("/api/sessions/sess-1/unshare"));
+    assertEqual(JSON.parse(String(unshareCall?.init?.body)), { link: true }, "unshare sends the same grammar");
+    assert(off.out.some((l) => l.includes("link       off")), "a revoked link prints off");
+
+    // session show prints the visibility row; an older server's body reads as PRIVATE.
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession({ visibility: "LINK" }) });
+    const show = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], show.io);
+    assert(/^visibility\s+LINK$/m.test(show.out.join("\n")), "session show prints visibility");
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession() });
+    const older = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], older.io);
+    assert(/^visibility\s+PRIVATE$/m.test(older.out.join("\n")), "no visibility on the wire reads as PRIVATE");
+
+    // list --scope shared asks the server for the sessions shared with the caller.
+    setMockResponse("/api/sessions?", { status: 200, body: { items: [], nextCursor: null, hasMore: false, paginationMode: "cursor" } });
+    const shared = captureIO();
+    assertEqual(await runCli(["session", "list", "--scope", "shared", ...AUTH], shared.io), 0, "list --scope shared exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("scope=shared"), "the scope rides the list request");
+    const badScope = captureIO();
+    const before = fetchCalls.length;
+    assertEqual(await runCli(["session", "list", "--scope", "all", ...AUTH], badScope.io), 2, "an unknown scope is a usage error");
+    assert(
+      badScope.err[0].includes("my") && badScope.err[0].includes("shared") && badScope.err[0].includes("Harbor"),
+      "session list refuses with the one shared scope sentence, Harbor's all explained"
+    );
+    assertEqual(fetchCalls.length, before, "no request was made");
   } finally {
     restoreFetch();
   }
@@ -10093,6 +10188,7 @@ async function main() {
   await testCheckShowDefaults();
   await testFilesVerbs();
   await testSessionListAndShow();
+  await testSessionShare();
   await testAuthOrgTeamVerbs();
 
   console.log(`\n${passed} passed, ${failed} failed`);

@@ -70,8 +70,16 @@ class SandboxNotRunningError(Exception):
         self.state = state
 
 
+class EvolveConfigError(Exception):
+    """A configuration value refused before the run starts; `field` names it (e.g. 'org', 'model')."""
+
+    def __init__(self, message: str, *, field: str = ''):
+        super().__init__(message)
+        self.field = field
+
+
 def _typed_bridge_error(message: str, data: Any) -> Optional[Exception]:
-    """The Python exception for a bridge error that names a typed sandbox error, else None."""
+    """The Python exception for a bridge error that names a typed SDK error, else None."""
     if not isinstance(data, dict):
         return None
     error_type = data.get('errorType')
@@ -85,6 +93,8 @@ def _typed_bridge_error(message: str, data: Any) -> Optional[Exception]:
         return SandboxNotRunningError(
             message, sandbox_id=data.get('sandboxId', ''), provider=data.get('provider', ''), state=data.get('state', ''),
         )
+    if error_type == 'EvolveConfigError':
+        return EvolveConfigError(message, field=data.get('field', ''))
     return None
 
 

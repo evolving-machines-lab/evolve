@@ -58,6 +58,7 @@ await evolve.run({ prompt: "Hello world" });
 | `.withSecrets()` | [Configuration → Evolve Instance](./02-configuration.md#evolve-instance) |
 | `.withStorage()` (checkpointing) | [Runtime → Storage & Checkpointing](./03-runtime.md#storage--checkpointing) |
 | `.withSessionTagPrefix()` (observability) | [Runtime → Observability](./03-runtime.md#observability) |
+| `.withOrg()` (the session's organization) | [Runtime → Observability](./03-runtime.md#observability) |
 | Skills catalog (PDF, browser, research, etc.) | [Configuration → Agent Skills](./02-configuration.md#agent-skills) |
 | Integration auth/account helpers | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |
 | Integration tool filtering | [Configuration → Managed Integrations](./02-configuration.md#managed-integrations) |

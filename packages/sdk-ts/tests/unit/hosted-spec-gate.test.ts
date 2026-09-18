@@ -335,6 +335,10 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   unshareCheck: "checks.unshare",
   getCheckShares: "checks.shares",
   downloadSharedCheck: null,
+  // The session link's transcript door, like every other link door: no key,
+  // so no SDK wrapper (the session share verbs themselves are on the runtime
+  // plane's own map below).
+  getSharedSessionTranscript: null,
   // The link's analysis doors (no key, no SDK wrapper), like the trial doors above.
   listSharedJobAnalyses: null,
   getSharedAnalysisSandboxLog: null,
@@ -436,6 +440,11 @@ const RUNTIME_OPERATION_TO_MODULE: Record<string, string> = {
   deleteSessions: "src/sessions/index.ts",
   getSession: "src/sessions/index.ts",
   deleteSession: "src/sessions/index.ts",
+  // Sharing a managed-agent session: the creator's three verbs, the job
+  // client's shapes on the sessions client (shareVerbs in the CLI).
+  shareSession: "src/sessions/index.ts",
+  unshareSession: "src/sessions/index.ts",
+  getSessionShares: "src/sessions/index.ts",
   ingestSessionEvents: "src/observability/session-logger.ts",
   getSessionSpend: "src/sessions/index.ts (cost surface)",
   listCheckpoints: "src/storage/index.ts",

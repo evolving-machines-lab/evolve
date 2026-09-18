@@ -291,6 +291,9 @@ OPERATION_TO_METHOD = {
     'unshareCheck': (ChecksClient, 'unshare'),
     'getCheckShares': (ChecksClient, 'shares'),
     'downloadSharedCheck': None,
+    # The session link's transcript door, like every other link door: no key,
+    # so no SDK wrapper (the session share verbs live on the runtime map below).
+    'getSharedSessionTranscript': None,
     # The link's analysis doors (no key, no SDK wrapper), like the trial doors above.
     'listSharedJobAnalyses': None,
     'getSharedAnalysisSandboxLog': None,
@@ -389,6 +392,11 @@ RUNTIME_OPERATION_TO_MODULE = {
     'deleteSessions': 'evolve/sessions_client.py',
     'getSession': 'evolve/sessions_client.py',
     'deleteSession': 'evolve/sessions_client.py',
+    # Sharing a managed-agent session: the creator's three verbs, the job
+    # client's shapes on the sessions client.
+    'shareSession': 'evolve/sessions_client.py',
+    'unshareSession': 'evolve/sessions_client.py',
+    'getSessionShares': 'evolve/sessions_client.py',
     'ingestSessionEvents': 'evolve/agent.py (observability push)',
     'getSessionSpend': 'evolve/sessions_client.py (cost surface)',
     'listCheckpoints': 'evolve/storage_client.py',

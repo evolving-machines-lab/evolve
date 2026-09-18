@@ -63,6 +63,7 @@ class Evolve:
         managed_secrets: Optional[List[Union[ManagedSecretRef, Dict[str, Any]]]] = None,
         sandbox_id: Optional[str] = None,
         session_tag_prefix: Optional[str] = None,
+        org: Optional[str] = None,
         schema: Optional[Union[Type, Dict[str, Any]]] = None,
         schema_options: Optional[SchemaOptions] = None,
         integrations: Optional[IntegrationsSetup] = None,
@@ -99,6 +100,8 @@ class Evolve:
                      egress proxy; direct secrets land as raw env values
             sandbox_id: Existing sandbox ID to reconnect to
             session_tag_prefix: Optional semantic label for observability log files (e.g., 'experiment-7')
+            org: Owning organization (slug or id) for the managed session this run
+                     registers; omitted, the caller's personal organization
             schema: Schema for structured output - Pydantic model, dataclass, or JSON Schema dict
             schema_options: Validation options (mode: 'strict' or 'loose', default: 'loose')
             integrations: managed app integrations setup
@@ -126,6 +129,7 @@ class Evolve:
         self.managed_secrets = self._normalize_managed_secrets(managed_secrets)
         self.sandbox_id = sandbox_id
         self.session_tag_prefix = session_tag_prefix
+        self.org = org
         self.schema_options = schema_options or SchemaOptions()
         self._integrations = integrations
         self._storage_config = storage
@@ -179,6 +183,7 @@ class Evolve:
                 'managed_secrets': self.managed_secrets,
                 'sandbox_id': self.sandbox_id,
                 'session_tag_prefix': self.session_tag_prefix,
+                'org': self.org,
                 'schema': self._schema_json,
                 'schema_options': {'mode': self.schema_options.mode} if self._schema_json else None,
                 # Managed integrations

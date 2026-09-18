@@ -88,6 +88,8 @@ import type {
   SessionsConfigParams,
   SessionsListParams,
   SessionsGetParams,
+  SessionsShareParams,
+  JobSharesResponse,
   SessionsEventsParams,
   SessionsDownloadParams,
   SessionsBrowserReplayParams,
@@ -232,6 +234,7 @@ export class EvolveAdapter {
     if (params.working_directory) kit.withWorkingDirectory(params.working_directory);
     if (params.system_prompt) kit.withSystemPrompt(params.system_prompt);
     if (params.session_tag_prefix) kit.withSessionTagPrefix(params.session_tag_prefix);
+    if (params.org) kit.withOrg(params.org);
     if (params.schema) kit.withSchema(params.schema, params.schema_options);
     if (params.context && Object.keys(params.context).length > 0) {
       kit.withContext(decodeFiles(params.context));
@@ -364,6 +367,12 @@ export class EvolveAdapter {
         return this.sessionsDownload(params);
       case 'sessions_browser_replay':
         return this.sessionsBrowserReplay(params);
+      case 'sessions_share':
+        return this.sessionsShare(params);
+      case 'sessions_unshare':
+        return this.sessionsUnshare(params);
+      case 'sessions_shares':
+        return this.sessionsShares(params);
       // Multi-instance methods (for Swarm)
       case 'create_instance':
         return this.createInstance(params);
@@ -796,6 +805,7 @@ export class EvolveAdapter {
       agent: params.agent,
       tagPrefix: params.tag_prefix,
       sort: params.sort,
+      scope: params.scope,
     });
     return {
       items: page.items.map(info => this.toSessionInfoResponse(info)),
@@ -851,6 +861,30 @@ export class EvolveAdapter {
     return this.toBrowserReplayResponse(replay);
   }
 
+  // The share verbs' body is the wire's own shape on every surface, so these
+  // three pass it straight through in both directions.
+  async sessionsShare(params: SessionsShareParams): Promise<JobSharesResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    return (await client.share(params.id, this.toShareRequest(params))) as JobSharesResponse;
+  }
+
+  async sessionsUnshare(params: SessionsShareParams): Promise<JobSharesResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    return (await client.unshare(params.id, this.toShareRequest(params))) as JobSharesResponse;
+  }
+
+  async sessionsShares(params: SessionsGetParams): Promise<JobSharesResponse> {
+    const client = this.getSessionsClient(params.sessions);
+    return (await client.shares(params.id)) as JobSharesResponse;
+  }
+
+  private toShareRequest(params: SessionsShareParams): { link?: boolean; emails?: string[] } {
+    return {
+      ...(params.link === true ? { link: true } : {}),
+      ...(params.emails && params.emails.length > 0 ? { emails: params.emails } : {}),
+    };
+  }
+
   /**
    * Convert TS SDK CheckpointInfo (camelCase) to bridge response (snake_case)
    */
@@ -892,6 +926,7 @@ export class EvolveAdapter {
       model: info.model ?? null,
       reasoning_effort: info.reasoningEffort ?? null,
       provider: info.provider,
+      org: info.org ?? null,
       sandbox_id: info.sandboxId ?? null,
       state: info.state,
       runtime_status: info.runtimeStatus,
@@ -902,6 +937,7 @@ export class EvolveAdapter {
       tool_stats: info.toolStats ?? null,
       // Already snake_case on the wire and in the TS type — passed through.
       usage: (info.usage as Record<string, unknown> | null) ?? null,
+      visibility: info.visibility,
     };
   }
 

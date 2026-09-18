@@ -36,6 +36,7 @@ export interface EvolveConfig {
   schema?: ZodType<unknown> | JsonSchema;
   schemaOptions?: SchemaValidationOptions;
   sessionTagPrefix?: string;
+  org?: string;
   observability?: Record<string, unknown>;
   integrations?: IntegrationsSetup;
   storage?: StorageConfig;
@@ -1008,6 +1009,8 @@ export interface AgentOptions {
   // Observability options
   /** Session tag prefix (default: "evolve") */
   sessionTagPrefix?: string;
+  /** Owning organization (slug or id) for the managed session this run registers. */
+  org?: string;
   /** Observability metadata for trace grouping (generic key-value, domain-agnostic) */
   observability?: Record<string, unknown>;
 
