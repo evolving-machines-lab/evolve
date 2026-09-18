@@ -8323,6 +8323,12 @@ function writeConfiguredOrg(org: string | null): string {
 /** Flag > config file > (undefined = the server's personal default). */
 function withDefaultOrg<T extends { org?: string }>(input: T, inv: Invocation): T {
   const flag = typeof inv.flags.org === "string" ? inv.flags.org.trim() : undefined;
+  // `--org personal` names the personal org for one command over a `use`d default;
+  // it is never sent (the server reserves the slug), so the job lands with no org.
+  if (flag === "personal") {
+    const { org: _dropped, ...rest } = input;
+    return rest as T;
+  }
   const org = flag !== undefined && flag !== "" ? flag : input.org ?? configuredOrg();
   return org !== undefined ? { ...input, org } : input;
 }

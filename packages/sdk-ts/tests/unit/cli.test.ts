@@ -8567,6 +8567,11 @@ async function testAuthOrgTeamVerbs() {
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assertEqual(body.org, "other", "--org wins over the config file");
     assertEqual(viaFlag.out[0], "org  other", "and the first line says so");
+    const viaPersonal = captureIO();
+    assertEqual(await runCli(["run", "--org", "personal", ...RUN], viaPersonal.io), 0, "--org personal exits 0");
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assert(!("org" in body), "--org personal over a `use`d default sends NO org (the slug is the server's reserved word)");
+    assertEqual(viaPersonal.out[0], "org  personal", "and the first line says personal");
     const printed = captureIO();
     await runCli(["run", "--print-config", ...RUN], printed.io);
     assertEqual(JSON.parse(printed.out.join("\n")).org, "acme", "--print-config shows the resolved org");
@@ -8583,6 +8588,9 @@ async function testAuthOrgTeamVerbs() {
     await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", "--org", "other", ...AUTH], captureIO().io);
     form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
     assertEqual(form.get("org"), "other", "--org wins on publish too");
+    await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", "--org", "personal", ...AUTH], captureIO().io);
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assert(!form.has("org"), "--org personal on publish sends no org part over the `use`d default");
 
     console.log("  [use personal]");
     const cleared = captureIO();
