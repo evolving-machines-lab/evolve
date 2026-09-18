@@ -25,7 +25,8 @@
  * FAILED or CANCELLED / any analysis failed), 2 usage error.
  */
 
-import { existsSync, readFileSync, realpathSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { join, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -105,6 +106,7 @@ import type {
   GrepJobOptions,
   HostedClientConfig,
   Job,
+  JobShares,
   JobAnalysisStats,
   JobCreate,
   JobEvent,
@@ -260,6 +262,12 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
   },
   "print-config": { kind: "boolean", help: "Print the resolved job body as JSON and exit", group: "Config" },
   "job-name": { kind: "string", value: "<name>", help: "Label for the job", default: "generated", group: "Job" },
+  org: {
+    kind: "string",
+    value: "<name>",
+    help: "Organization the job lands in; else the default from `evolve auth org use`, else your personal org",
+    group: "Job",
+  },
   "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task and arm", default: "1", group: "Job" },
   "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials", default: "4", group: "Job" },
   yes: {
@@ -631,6 +639,38 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<id>",
         examples: ["evolve job delete 3e1f9a2c", "evolve job delete 3e1f9a2c --yes"],
+      },
+      share: {
+        summary: "Share a job you created by link or by email",
+        notes: "--link prints the run's unlisted link (the same one every time). Each --email gets a link to the run by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
+        flags: {
+          link: { kind: "boolean", help: "Enable the job's unlisted link and print it" },
+          email: { kind: "repeat", value: "<address>", help: "Share with this address; repeatable" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job share 3e1f9a2c --link", "evolve job share 3e1f9a2c --email alice@example.org --email bob@example.org"],
+      },
+      unshare: {
+        summary: "Revoke a job's link or email shares",
+        notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
+        flags: {
+          link: { kind: "boolean", help: "Disable the job's link" },
+          email: { kind: "repeat", value: "<address>", help: "Remove this address's share; repeatable" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job unshare 3e1f9a2c --link", "evolve job unshare 3e1f9a2c --email alice@example.org"],
+      },
+      shares: {
+        summary: "Show who a job is shared with",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job shares 3e1f9a2c", "evolve job shares 3e1f9a2c --json"],
       },
       stop: {
         summary: "Stop one dataset's live trials, keeping the job",
@@ -1307,6 +1347,12 @@ const GROUPS: Record<string, GroupSpec> = {
           },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend", group: "Version" },
           version: { kind: "string", value: "<v>", help: "Version label for the published version", group: "Version" },
+          org: {
+            kind: "string",
+            value: "<name>",
+            help: "Organization a new dataset lands in; else the default from `evolve auth org use`, else your personal org",
+            group: "Version",
+          },
           watch: { kind: "boolean", help: "Poll until the version is READY or FAILED", group: "Output" },
           "skip-preflight": { kind: "boolean", help: "Upload a --dir without the pre-flight check", group: "Source" },
         },
@@ -1500,6 +1546,46 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<slug>",
         examples: ["evolve auth org show acme"],
+      },
+      // The team verbs (owner's ruling 2026-09-17): Harbor creates orgs on its
+      // web hub only; here they are CLI verbs over routes that already exist.
+      "org create": {
+        summary: "Create an organization; you become its owner",
+        flags: {
+          "display-name": { kind: "string", value: "<text>", help: "Human-facing name; defaults to the slug", group: "Organization" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<name>",
+        examples: ["evolve auth org create acme --display-name 'Acme Corp'"],
+      },
+      "org invite": {
+        summary: "Mint an invite token for an organization you own",
+        notes: "The token is shown once. Whoever runs `evolve auth org join <token>` while signed in joins as member.",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<org>",
+        examples: ["evolve auth org invite acme"],
+      },
+      "org join": {
+        summary: "Join an organization with an invite token",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<token>",
+        examples: ["evolve auth org join evi_..."],
+      },
+      "org use": {
+        summary: "Set the default organization for jobs and datasets",
+        notes:
+          "Written to $XDG_CONFIG_HOME/evolve/config.json (else ~/.config/evolve/config.json). " +
+          "`personal` clears it; no argument prints the current default. --org on a command always wins.",
+        flags: {},
+        minPositionals: 0,
+        maxPositionals: 1,
+        positionalUsage: "[<name> | personal]",
+        examples: ["evolve auth org use acme", "evolve auth org use personal", "evolve auth org use"],
       },
     },
   },
@@ -3802,6 +3888,8 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   // value: the wire's sandbox_provider is null there because nothing
   // executed, and the closed provider vocabulary gains no fake member.
   rows.push(["provider", e.upload ? "ported" : (e.sandbox_provider ?? "-")]);
+  // PRIVATE or LINK (an unlisted link reaches the run); `job shares` prints the link and the addresses.
+  rows.push(["visibility", e.visibility]);
   // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
   // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
   // _usd comes out LOWER than what was really spent"). A freshly finished job
@@ -4984,7 +5072,7 @@ async function resolveLocalSkillUploads(
 }
 
 async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
-  const input = buildJobInput(inv);
+  const input = withDefaultOrg(buildJobInput(inv), inv);
   if (inv.flags["print-config"] === true) {
     // The resolved body, nothing sent: the dry-run a paid remote run deserves.
     io.out(JSON.stringify(input, null, 2));
@@ -4996,6 +5084,8 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
 
   const created = await client.start(await resolveLocalSkillUploads(input, inv, io));
+  // The first human line names where the job landed (--json carries it as the job's `org`).
+  if (!json) io.out(`org  ${input.org ?? "personal"}`);
   if (!watch) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -5227,6 +5317,65 @@ async function cmdJobDelete(inv: Invocation, io: CliIO): Promise<number> {
     );
   }
   return 0;
+}
+
+/** The share and unshare verbs' one grammar: --link and/or --email, at least one. */
+function shareGrant(inv: Invocation): { link?: true; emails?: string[] } {
+  const emails = (inv.flags.email as string[] | undefined) ?? [];
+  const link = inv.flags.link === true;
+  if (!link && emails.length === 0) {
+    throw new CliUsageError("name a grant: --link and/or --email <address>");
+  }
+  return { ...(link ? { link: true as const } : {}), ...(emails.length > 0 ? { emails } : {}) };
+}
+
+/** The human rendering of a job's share state — the link, then one line per address. */
+function shareLines(shares: JobShares): string[] {
+  const lines = [
+    `visibility ${shares.visibility}`,
+    shares.link.enabled ? `link       ${shares.link.url ?? "(enabled)"}` : "link       off",
+  ];
+  if (shares.emails.length === 0) {
+    lines.push("emails     none");
+  } else {
+    for (const share of shares.emails) {
+      lines.push(`email      ${share.email}  (shared by ${share.shared_by}, ${share.created_at})`);
+    }
+  }
+  return lines;
+}
+
+function printShares(inv: Invocation, io: CliIO, shares: JobShares): number {
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(shares));
+  } else {
+    for (const line of shareLines(shares)) io.out(line);
+  }
+  return 0;
+}
+
+// Harbor's `harbor job share <id> --org … --user …` (their docs/sharing/jobs.mdx),
+// recorded deviations: a person is shared by --email (our login is an address)
+// and --link makes the job reachable by an unlisted link where Harbor has --public.
+async function cmdJobShare(inv: Invocation, io: CliIO): Promise<number> {
+  const grant = shareGrant(inv);
+  const client = jobs(clientConfig(inv));
+  const shares = await client.share(await resolveId(inv, "job", inv.positionals[0]), grant);
+  return printShares(inv, io, shares);
+}
+
+async function cmdJobUnshare(inv: Invocation, io: CliIO): Promise<number> {
+  const grant = shareGrant(inv);
+  const client = jobs(clientConfig(inv));
+  const shares = await client.unshare(await resolveId(inv, "job", inv.positionals[0]), grant);
+  return printShares(inv, io, shares);
+}
+
+// Harbor's `harbor hub job shares <id>`.
+async function cmdJobShares(inv: Invocation, io: CliIO): Promise<number> {
+  const client = jobs(clientConfig(inv));
+  const shares = await client.shares(await resolveId(inv, "job", inv.positionals[0]));
+  return printShares(inv, io, shares);
 }
 
 /**
@@ -7483,7 +7632,7 @@ async function cmdDatasetCheck(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const client = datasets(clientConfig(inv));
-  const input = buildPublishInput(inv);
+  const input = withDefaultOrg(buildPublishInput(inv), inv);
   // THE PRE-FLIGHT, automatic for a directory source: the metadata files
   // (kilobytes) go first, and refusals are printed BEFORE the corpus is
   // tarred and uploaded — the importer's own sentences, from the same
@@ -8221,6 +8370,130 @@ async function cmdAuthOrgShow(inv: Invocation, io: CliIO): Promise<number> {
   return 0;
 }
 
+// -----------------------------------------------------------------------------
+// The org default: `evolve auth org use` writes { "org": "<slug>" } to the
+// CLI's config file; `--org` on a command always wins; neither = personal.
+// -----------------------------------------------------------------------------
+
+/** `$XDG_CONFIG_HOME/evolve/config.json`, else `~/.config/evolve/config.json`. */
+export function cliConfigPath(): string {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const base = xdg && xdg.trim() !== "" ? xdg : join(homedir(), ".config");
+  return join(base, "evolve", "config.json");
+}
+
+function readCliConfig(): Record<string, unknown> {
+  const path = cliConfigPath();
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    throw new CliUsageError(`${path} is not valid JSON — fix or delete it`);
+  }
+}
+
+/** The org default from the config file, or undefined (personal). */
+function configuredOrg(): string | undefined {
+  const org = readCliConfig().org;
+  return typeof org === "string" && org.trim() !== "" ? org.trim() : undefined;
+}
+
+/** Write (or, with null, remove) the `org` key; the file is created 0600 on first use. */
+function writeConfiguredOrg(org: string | null): string {
+  const path = cliConfigPath();
+  const current = readCliConfig();
+  if (org === null) delete current.org;
+  else current.org = org;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify(current, null, 2) + "\n", { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return path;
+}
+
+/** Flag > config file > (undefined = the server's personal default). */
+function withDefaultOrg<T extends { org?: string }>(input: T, inv: Invocation): T {
+  const flag = typeof inv.flags.org === "string" ? inv.flags.org.trim() : undefined;
+  // `--org personal` names the personal org for one command over a `use`d default;
+  // it is never sent (the server reserves the slug), so the job lands with no org.
+  if (flag === "personal") {
+    const { org: _dropped, ...rest } = input;
+    return rest as T;
+  }
+  const org = flag !== undefined && flag !== "" ? flag : input.org ?? configuredOrg();
+  return org !== undefined ? { ...input, org } : input;
+}
+
+async function cmdAuthOrgCreate(inv: Invocation, io: CliIO): Promise<number> {
+  const displayName =
+    typeof inv.flags["display-name"] === "string" ? String(inv.flags["display-name"]) : undefined;
+  const org = await orgs(clientConfig(inv)).create(inv.positionals[0], { displayName });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(org));
+    return 0;
+  }
+  io.out(`Created organization ${org.slug}`);
+  io.out(`slug          ${org.slug}`);
+  io.out(`display name  ${org.display_name}`);
+  io.out(`role          ${org.role ?? "owner"}`);
+  io.out("");
+  io.out(`Invite a teammate with: evolve auth org invite ${org.slug}`);
+  return 0;
+}
+
+async function cmdAuthOrgInvite(inv: Invocation, io: CliIO): Promise<number> {
+  const invite = await orgs(clientConfig(inv)).invite(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(invite));
+    return 0;
+  }
+  io.out(`token    ${invite.token}`);
+  io.out(`expires  ${invite.expires_at ?? "never"}`);
+  io.out(`uses     ${invite.max_uses === null ? "unlimited" : String(invite.max_uses)}`);
+  io.out("");
+  io.out(`Send the teammate this command: evolve auth org join ${invite.token}`);
+  return 0;
+}
+
+async function cmdAuthOrgJoin(inv: Invocation, io: CliIO): Promise<number> {
+  const joined = await orgs(clientConfig(inv)).join(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(joined));
+    return 0;
+  }
+  io.out(
+    joined.already_member
+      ? `Already a member of ${joined.org.slug}`
+      : `Joined ${joined.org.slug} as member`
+  );
+  io.out(`Run in it with: evolve run --org ${joined.org.slug} ... or set it once: evolve auth org use ${joined.org.slug}`);
+  return 0;
+}
+
+async function cmdAuthOrgUse(inv: Invocation, io: CliIO): Promise<number> {
+  const json = inv.flags.json === true;
+  const arg = inv.positionals[0];
+  if (arg === undefined) {
+    const org = configuredOrg();
+    const path = cliConfigPath();
+    if (json) {
+      io.out(JSON.stringify({ org: org ?? null, source: org !== undefined ? "config" : "personal", path }));
+    } else {
+      io.out(org !== undefined ? `org  ${org}  (from ${path})` : `org  personal  (no default in ${path})`);
+    }
+    return 0;
+  }
+  const name = arg.trim();
+  if (name === "") throw new CliUsageError("org name must not be empty");
+  const path = writeConfiguredOrg(name === "personal" ? null : name);
+  if (json) {
+    io.out(JSON.stringify({ org: name === "personal" ? null : name, path }));
+  } else {
+    io.out(name === "personal" ? `Default org cleared: personal (${path})` : `Default org: ${name} (${path})`);
+  }
+  return 0;
+}
+
 /**
  * The secrets verbs speak the managed-agents door (dashboard base URL), not
  * the hosted jobs client — same key, same host, its own client config shape.
@@ -8491,6 +8764,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job compare": cmdJobCompare,
   "job cancel": cmdJobCancel,
   "job delete": cmdJobDelete,
+  "job share": cmdJobShare,
+  "job unshare": cmdJobUnshare,
+  "job shares": cmdJobShares,
   "job stop": cmdJobStop,
   "job resume": cmdJobResume,
   "job retry": cmdJobRetry,
@@ -8560,6 +8836,10 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "auth status": cmdAuthStatus,
   "auth org list": cmdAuthOrgList,
   "auth org show": cmdAuthOrgShow,
+  "auth org create": cmdAuthOrgCreate,
+  "auth org invite": cmdAuthOrgInvite,
+  "auth org join": cmdAuthOrgJoin,
+  "auth org use": cmdAuthOrgUse,
   "secrets set": cmdSecretsSet,
   "secrets list": cmdSecretsList,
   "secrets delete": cmdSecretsDelete,

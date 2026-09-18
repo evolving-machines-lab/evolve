@@ -1346,6 +1346,37 @@ class JobDeleteResult:
 
 
 @dataclass
+class JobShareEmail:
+    """One email share of a job."""
+    #: The shared address, lowercased.
+    email: str
+    #: The email of the account that granted the share.
+    shared_by: str
+    created_at: str
+
+
+@dataclass
+class JobShareLink:
+    """The job's link state; ``url`` is set exactly while the link is enabled
+    (the owner can always copy it again)."""
+    enabled: bool
+    url: Optional[str] = None
+
+
+@dataclass
+class JobShares:
+    """A job's whole share state — the answer of ``GET /api/jobs/{jobId}/shares``
+    and of both verbs that change it (``share`` / ``unshare``).
+
+    ``visibility`` is ``'PRIVATE'`` or ``'LINK'`` (an unlisted link reaches
+    the job); there is no PUBLIC. ``emails`` are the email shares.
+    """
+    visibility: str
+    link: JobShareLink
+    emails: List[JobShareEmail] = field(default_factory=list)
+
+
+@dataclass
 class SourceJob:
     """Provenance of a derived job.
 
@@ -2200,6 +2231,15 @@ class Job:
     updated_at: str
     #: None while the job is live.
     finished_at: Optional[str]
+    #: The owning organization's slug — the ``org`` named at create, else the
+    #: creator's personal org. None only on a regrade job whose source job
+    #: has been deleted, or from a server older than the field.
+    org: Optional[str] = field(default=None, kw_only=True)
+    #: ``'PRIVATE'``, or ``'LINK'`` when an unlisted share link reaches the job
+    #: (``jobs().share(id, link=True)``). Email shares are not a visibility:
+    #: ``jobs().shares(id)`` lists them. Always ``'PRIVATE'`` on a regrade job;
+    #: a server older than the field reads as ``'PRIVATE'``.
+    visibility: str = field(default='PRIVATE', kw_only=True)
 
 
 @dataclass
@@ -3427,6 +3467,46 @@ class OrganizationDetail(Organization):
     usage: OrgUsage = field(kw_only=True)
 
 
+@dataclass
+class OrgMember:
+    """One member of an organization (``GET /api/orgs/{org}/members`` item)."""
+    user_id: str
+    email: str
+    role: OrgRole
+    joined_at: str
+
+
+@dataclass
+class OrgInvite:
+    """An invite link's descriptor — the token itself is returned once, at creation."""
+    invite_id: str
+    #: None = never expires.
+    expires_at: Optional[str]
+    #: None = unlimited uses.
+    max_uses: Optional[int]
+    #: Accepted joins so far.
+    uses: int
+    revoked_at: Optional[str]
+    created_at: str
+
+
+@dataclass
+class OrgInviteCreated(OrgInvite):
+    """A freshly minted invite: the descriptor plus its one-time token
+    (``POST /api/orgs/{org}/invites``)."""
+    #: The invite link's credential, returned ONCE — whoever presents it while
+    #: signed in joins as member.
+    token: str = field(kw_only=True)
+
+
+@dataclass
+class OrgJoined:
+    """The answer to redeeming an invite token (``POST /api/orgs/invites/accept``)."""
+    org: Organization
+    #: True when the caller was already a member (no use of the link consumed).
+    already_member: bool
+
+
 # The ONE page envelope, on every collection this surface returns — top level
 # or nested. ``next_cursor`` means one thing everywhere: pass it back as
 # ``cursor=`` for the next page, and None means there is no next page. It never
@@ -4315,6 +4395,30 @@ def _map_job(data: Dict[str, Any]) -> Job:
         started_at=data.get('started_at', ''),
         updated_at=data.get('updated_at', ''),
         finished_at=data.get('finished_at'),
+        org=data['org'] if isinstance(data.get('org'), str) else None,
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+    )
+
+
+def _map_job_shares(data: Dict[str, Any]) -> JobShares:
+    """The wire's JobShares, read in the same tolerant shape every required
+    field here uses."""
+    link = data.get('link') if isinstance(data.get('link'), dict) else {}
+    return JobShares(
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        link=JobShareLink(
+            enabled=link.get('enabled') is True,
+            url=link['url'] if isinstance(link.get('url'), str) else None,
+        ),
+        emails=[
+            JobShareEmail(
+                email=str(entry.get('email', '')),
+                shared_by=str(entry.get('shared_by', '')),
+                created_at=str(entry.get('created_at', '')),
+            )
+            for entry in (data.get('emails') or [])
+            if isinstance(entry, dict)
+        ],
     )
 
 
@@ -4355,6 +4459,27 @@ def _map_organization(data: Dict[str, Any]) -> Organization:
         personal=data.get('personal') is True,
         role=role if role in ('owner', 'member') else None,
         created_at=data.get('created_at', ''),
+    )
+
+
+def _map_org_member(data: Dict[str, Any]) -> OrgMember:
+    return OrgMember(
+        user_id=data.get('user_id', ''),
+        email=data.get('email', ''),
+        role='owner' if data.get('role') == 'owner' else 'member',
+        joined_at=data.get('joined_at', ''),
+    )
+
+
+def _map_org_invite_created(data: Dict[str, Any]) -> OrgInviteCreated:
+    return OrgInviteCreated(
+        invite_id=data.get('invite_id', ''),
+        expires_at=data['expires_at'] if isinstance(data.get('expires_at'), str) else None,
+        max_uses=data['max_uses'] if isinstance(data.get('max_uses'), int) else None,
+        uses=int(data.get('uses', 0)),
+        revoked_at=data['revoked_at'] if isinstance(data.get('revoked_at'), str) else None,
+        created_at=data.get('created_at', ''),
+        token=data.get('token', ''),
     )
 
 
@@ -5205,6 +5330,10 @@ class _HostedHttp:
             or os.environ.get('EVOLVE_DASHBOARD_URL')
             or DEFAULT_BASE_URL
         ).rstrip('/')
+
+    def default_org(self) -> Optional[str]:
+        """The client-level org default (``HostedClientConfig.org``); None = personal."""
+        return self._config.org or None
 
     def api_key(self) -> str:
         api_key = self._config.api_key or os.environ.get('EVOLVE_API_KEY')
@@ -6364,6 +6493,7 @@ class DatasetsClient:
         hub_package: Optional[str] = None,
         name: Optional[str] = None,
         version: Optional[str] = None,
+        org: Optional[str] = None,
         on_upload_progress: Optional[Callable[[int, int], None]] = None,
         on_registered: Optional[Callable[[str], None]] = None,
     ) -> DatasetImport:
@@ -6438,6 +6568,9 @@ class DatasetsClient:
                 'publish() takes EXACTLY ONE source: git_url=... + git_ref=..., '
                 'directory=..., archive_url=..., or hub_package=...'
             )
+        # The call's own org wins; the client default fills an absent one;
+        # neither = no part, and the server's personal-org default applies.
+        owning_org = org if org is not None else self._http.default_org()
         if archive_url is not None:
             if name is None or version is None:
                 raise ValueError(
@@ -6446,7 +6579,7 @@ class DatasetsClient:
                     'is accepted, so a manifest cannot supply them'
                 )
             body, content_type = _multipart_body(
-                {'name': name, 'version': version, 'archive_url': archive_url}
+                {'name': name, 'version': version, 'archive_url': archive_url, 'org': owning_org}
             )
             raw = await self._http.request_upload(
                 '/api/datasets/publish', body, {'Content-Type': content_type}
@@ -6460,6 +6593,7 @@ class DatasetsClient:
                 fields['name'] = name
             if version is not None:
                 fields['version'] = version
+            fields['org'] = owning_org
             body, content_type = _multipart_body(fields)
             raw = await self._http.request_upload(
                 '/api/datasets/publish', body, {'Content-Type': content_type}
@@ -6485,7 +6619,7 @@ class DatasetsClient:
             raw = await _upload_directory_archive(
                 self._http,
                 '/api/datasets/publish',
-                {'name': name, 'version': version},
+                {'name': name, 'version': version, 'org': owning_org},
                 directory,
                 'corpus.tar.gz',
                 resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
@@ -6506,6 +6640,7 @@ class DatasetsClient:
                 'version': version,
                 'git_url': git_url,
                 'git_ref': git_ref,
+                'org': owning_org,
             }
             # Only when narrowing to a subfolder: an absent part means "the
             # repository root", and an empty part would be refused.
@@ -7285,6 +7420,7 @@ class JobsClient:
         datasets: List[Union[DatasetSelector, Dict[str, Any]]],
         agents: List[Union[AgentArm, Dict[str, Any]]],
         job_name: Optional[str] = None,
+        org: Optional[str] = None,
         n_attempts: Optional[int] = None,
         n_concurrent_trials: Optional[int] = None,
         max_trial_spend_usd: Optional[float] = None,
@@ -7400,6 +7536,11 @@ class JobsClient:
         body: Dict[str, Any] = {}
         if job_name is not None:
             body['job_name'] = job_name
+        # The call's own org wins; the client default fills an absent one;
+        # neither = no key, and the server's personal-org default applies.
+        owning_org = org if org is not None else self._http.default_org()
+        if owning_org is not None:
+            body['org'] = owning_org
         body['datasets'] = [
             (item if isinstance(item, DatasetSelector) else DatasetSelector(**item))._to_wire()
             for item in datasets
@@ -8328,6 +8469,57 @@ class JobsClient:
             f'/api/jobs/{urllib.parse.quote(id)}', method='DELETE'
         )
         return _map_job_delete_result(raw)
+
+    async def share(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Share a job you created — by link, by email, or both (Harbor's
+        ``harbor job share``; the platform shares a person by email address
+        and never makes a job public: ``link=True`` mints an UNLISTED link
+        instead, the same link on every later call).
+
+        Each new address is emailed a link to the run; an address with no
+        account gets a sign-up link for exactly that address (no gateway
+        credits), while an address already on the waitlist or holding an
+        invite gets the email without a sign-up link and uses that invite
+        instead. An email share reads the job and lists it under
+        ``scope='shared'``; it never operates it. Creator-only: an org
+        member is refused ``org_forbidden`` (403), a stranger sees 404; a
+        regrade job id is 404. The answer is the job's whole share state.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/share', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def unshare(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Revoke a job's link (``link=True`` — the old link is dead at once; a
+        later ``share`` mints a new one) and/or email shares (``emails``).
+        Idempotent; creator-only like ``share``.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/unshare', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def shares(self, id: str) -> JobShares:
+        """The job's share state (Harbor's ``harbor hub job shares``): its
+        visibility, the link with its URL while enabled, and every email
+        share. Creator-only."""
+        raw = await self._http.request_json(f'/api/jobs/{urllib.parse.quote(id)}/shares')
+        return _map_job_shares(raw)
 
     async def grep(
         self,
@@ -9458,16 +9650,16 @@ class AuthClient:
 
 
 class OrgsClient:
-    """Client for the caller's organizations — the read pair.
+    """Client for the caller's organizations.
 
     Created via the standalone ``orgs()`` factory. ``list()`` is Harbor's
     ``harbor auth org list`` shape; ``get()`` is the hosted extension that
-    reads one organization's quota and usage. Creating, renaming, deleting,
-    members and invite links are served by the API and stay outside the SDK
-    until a wave asks for them; quotas are set only from the platform
-    administrator's dashboard session, so no SDK method could ever set one.
-    Requires ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is
-    given.
+    reads one organization's quota and usage; ``create()``, ``invite()``,
+    ``join()`` and ``members()`` are the team verbs. Renaming, deleting,
+    member roles and invite revocation stay outside the SDK until a wave
+    asks for them; quotas are set only from the platform administrator's
+    dashboard session, so no SDK method could ever set one. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
     """
 
     def __init__(self, config: Optional[HostedClientConfig] = None):
@@ -9492,6 +9684,41 @@ class OrgsClient:
         """One organization by slug (or id): role, member count, quota, usage (``GET /api/orgs/{org}``)."""
         raw = await self._http.request_json(f'/api/orgs/{urllib.parse.quote(org, safe="")}')
         return _map_organization_detail(raw)
+
+    async def create(self, name: str, *, display_name: Optional[str] = None) -> Organization:
+        """Create a shared organization under ``name`` (its slug); the caller
+        becomes its owner (``POST /api/orgs``). A taken slug is refused
+        ``org_slug_taken``."""
+        body: Dict[str, Any] = {'slug': name}
+        if display_name is not None:
+            body['display_name'] = display_name
+        raw = await self._http.request_json('/api/orgs', method='POST', body=body)
+        return _map_organization(raw)
+
+    async def invite(self, org: str) -> OrgInviteCreated:
+        """Mint an invite link for an org you own; the response carries the
+        token ONCE (``POST /api/orgs/{org}/invites``, the server's defaults:
+        7 days, unlimited uses)."""
+        raw = await self._http.request_json(
+            f'/api/orgs/{urllib.parse.quote(org, safe="")}/invites', method='POST', body={}
+        )
+        return _map_org_invite_created(raw)
+
+    async def join(self, token: str) -> OrgJoined:
+        """Redeem an invite token: join its org as member
+        (``POST /api/orgs/invites/accept``). Idempotent for an existing
+        member (``already_member`` True)."""
+        raw = await self._http.request_json(
+            '/api/orgs/invites/accept', method='POST', body={'token': token}
+        )
+        org_raw = raw.get('org') if isinstance(raw.get('org'), dict) else {}
+        return OrgJoined(org=_map_organization(org_raw), already_member=raw.get('already_member') is True)
+
+    async def members(self, org: str) -> List[OrgMember]:
+        """The org's members, owners first; any member may read it (``GET /api/orgs/{org}/members``)."""
+        raw = await self._http.request_json(f'/api/orgs/{urllib.parse.quote(org, safe="")}/members')
+        items = raw.get('items') if isinstance(raw.get('items'), list) else []
+        return [_map_org_member(item) for item in items if isinstance(item, dict)]
 
 
 def _parse_dataset_ref(ref: str) -> 'tuple[str, Optional[str]]':

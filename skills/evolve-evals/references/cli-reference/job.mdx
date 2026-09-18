@@ -48,7 +48,7 @@ evolve job list --limit 20 -q
 evolve job show <id> [id...]
 ```
 
-Show one or more jobs in full. It ends with a pass@k block, one line per arm and dataset that has numbers; `--json` carries the raw `stats.evals[].pass_at_k`. An `analyze` row holds the embedded policy and an `analysis` row the tally with the analyzer's spend. An uploaded job prints its provider as `ported` and its spend as `reported $X.XX (N/M trials reporting)`.
+Show one or more jobs in full. It ends with a pass@k block, one line per arm and dataset that has numbers; `--json` carries the raw `stats.evals[].pass_at_k`. An `analyze` row holds the embedded policy and an `analysis` row the tally with the analyzer's spend. An uploaded job prints its provider as `ported` and its spend as `reported $X.XX (N/M trials reporting)`. The `visibility` row is `PRIVATE` or `LINK` — whether the job's share link is on ([job shares](#job-shares) prints the link and the addresses).
 
 ## job trials
 
@@ -109,6 +109,40 @@ Permanently delete a job you created: its trials, traces, analyses and stored fi
 <ParamField path="-y, --yes">
   Delete without a confirmation prompt. On a non-interactive stdin the command refuses without it, rather than guessing. With `--json` the receipt is `{"job_id", "trials_deleted", "analyses_deleted"}`.
 </ParamField>
+
+## job share
+
+```bash
+evolve job share <id> --link
+evolve job share <id> --email <address> [--email <address>...]
+```
+
+Share a job you created. `--link` turns on the job's unlisted link and prints it; running it again prints the same link. `--email` shares the run with an address: that person gets an email with a link to the run and reads it after signing in with the same address (a person without an account gets a sign-up link in the same email; an address already on the waitlist or holding an invite gets the share email without a sign-up link and uses that invite instead). Both flags may ride one command. Someone the run is shared with can read it — the job, its trials, traces and files — and finds it under `evolve job list --scope shared`; they cannot cancel, retry, regrade, analyze or delete it. Only the job's creator may share it; another member of the organization is refused with `org_forbidden`.
+
+<ParamField path="--link">
+  Enable the job's unlisted link and print it. Anyone holding the link reads the run without signing in.
+</ParamField>
+
+<ParamField path="--email" type="address">
+  Share with this address; repeatable. At most 50 addresses per job.
+</ParamField>
+
+## job unshare
+
+```bash
+evolve job unshare <id> --link
+evolve job unshare <id> --email <address>
+```
+
+Take a share back. `--link` turns the link off at once — the old link stops working, and a later `job share --link` prints a new one. `--email` removes that address's share. Both are safe to repeat.
+
+## job shares
+
+```bash
+evolve job shares <id>
+```
+
+Print who the job is shared with: its visibility, the link while it is on, and every address with who shared it and when. `--json` prints the same as `{"visibility", "link": {"enabled", "url"}, "emails": [{"email", "shared_by", "created_at"}]}`.
 
 ## job stop
 

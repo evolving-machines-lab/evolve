@@ -22,6 +22,12 @@ export interface HostedClientConfig {
   apiKey?: string;
   /** API base URL override (default: the Evolve dashboard API) */
   baseUrl?: string;
+  /**
+   * The organization (slug or id) a job or a published dataset lands in when
+   * the call names none — the client-level default. A call's own `org`
+   * always wins; with neither, the caller's personal org.
+   */
+  org?: string;
 }
 
 /**
@@ -699,6 +705,11 @@ export interface AnalyzeConfig {
 export interface JobCreate {
   /** User-facing label; server-generated when omitted. */
   job_name?: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else the caller's personal org.
+   */
+  org?: string;
   datasets: DatasetSelector[];
   agents: AgentArmInput[];
   /** Attempts per task per agent arm (default 1, max 100). */
@@ -1269,6 +1280,53 @@ export interface JobDeleteResult {
 }
 
 /**
+ * Who can reach a job without being its creator, an org member or an email
+ * share: `PRIVATE` (nobody) or `LINK` (anyone holding its unlisted link).
+ * There is no PUBLIC — nothing on this platform is listed for everyone.
+ */
+export type JobVisibility = "PRIVATE" | "LINK";
+
+/**
+ * The share and unshare verbs' one body (`POST /api/jobs/{jobId}/share`,
+ * `/unshare`): a link grant, an email grant, or both. `link: true` grants
+ * (or, on unshare, revokes) the job's unlisted link; `emails` are the
+ * addresses to share with (or remove) — one address each, at most 50 per
+ * job. A body naming neither is refused (`invalid_input`).
+ */
+export interface JobShareRequest {
+  link?: boolean;
+  emails?: string[];
+}
+
+/** One email share of a job. */
+export interface JobShareEmail {
+  /** The shared address, lowercased. */
+  email: string;
+  /** The email of the account that granted the share. */
+  shared_by: string;
+  created_at: string;
+}
+
+/**
+ * The job's link state. `url` is present exactly while the link is enabled —
+ * the owner can always copy it again.
+ */
+export interface JobShareLink {
+  enabled: boolean;
+  url?: string;
+}
+
+/**
+ * A job's whole share state — the answer of `GET /api/jobs/{jobId}/shares`
+ * and of both verbs that change it.
+ */
+export interface JobShares {
+  visibility: JobVisibility;
+  link: JobShareLink;
+  emails: JobShareEmail[];
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -1356,6 +1414,19 @@ export interface Job {
    * on a job this platform ran.
    */
   sandbox_provider: EvalSandboxProvider | null;
+  /**
+   * The owning organization's slug — the `org` named at create, else the
+   * creator's personal org. Null only on a regrade job whose source job has
+   * been deleted, or from a server older than the field.
+   */
+  org: string | null;
+  /**
+   * `PRIVATE`, or `LINK` when an unlisted share link reaches the job
+   * (`jobs().share(id, { link: true })`). Email shares are not a
+   * visibility: `jobs().shares(id)` lists them. Always `PRIVATE` on a
+   * regrade job; a server older than the field reads as `PRIVATE`.
+   */
+  visibility: JobVisibility;
   /** The create's `system_log`; derived jobs inherit it, a regrade and every pre-switch job answer false. */
   system_log: boolean;
   /** Entity cardinality only — things with no status of their own. */
@@ -3006,6 +3077,12 @@ export interface PublishDatasetInput {
    * required otherwise.
    */
   version?: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else a NEW dataset lands in the
+   * caller's personal org and an existing one stays where it is.
+   */
+  org?: string;
 }
 
 /** Options for datasets().publish() */
@@ -4127,6 +4204,31 @@ export interface JobsClient {
    */
   delete(id: string): Promise<JobDeleteResult>;
   /**
+   * Share a job you created — by link, by email, or both (Harbor's
+   * `harbor job share`; the platform shares a person by email address and
+   * never makes a job public: `link: true` mints an UNLISTED link instead,
+   * the same link on every later call). Each new address is emailed a link
+   * to the run; an address with no account gets a sign-up link for exactly
+   * that address (no gateway credits), while an address already on the
+   * waitlist or holding an invite gets the email without a sign-up link and
+   * uses that invite instead. An email share reads the job and
+   * lists it under `scope: "shared"`; it never operates it. Creator-only:
+   * an org member is refused `org_forbidden` (403), a stranger sees 404; a
+   * regrade job id is 404. The response is the job's whole share state.
+   */
+  share(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * Revoke a job's link (`link: true` — the old link is dead at once; a
+   * later share mints a new one) and/or email shares (`emails`). Idempotent;
+   * creator-only like `share`.
+   */
+  unshare(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * The job's share state (Harbor's `harbor hub job shares`): visibility, the
+   * link with its URL while enabled, and every email share. Creator-only.
+   */
+  shares(id: string): Promise<JobShares>;
+  /**
    * Grep the parsed trace of EVERY trial of the job in one server-side pass.
    * `q` is the trace filter's grammar: a case-insensitive POSIX regex over
    * each event's type and serialized content, where a plain string is a
@@ -5108,17 +5210,60 @@ export interface OrganizationDetail extends Organization {
   usage: OrgUsage;
 }
 
+/** One member of an organization (`GET /api/orgs/{org}/members` item). */
+export interface OrgMember {
+  user_id: string;
+  email: string;
+  role: OrgRole;
+  joined_at: string;
+}
+
+/** An invite link's descriptor — the token itself is returned once, at creation. */
+export interface OrgInvite {
+  invite_id: string;
+  /** Null = never expires. */
+  expires_at: string | null;
+  /** Null = unlimited uses. */
+  max_uses: number | null;
+  /** Accepted joins so far. */
+  uses: number;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+/** A freshly minted invite: the descriptor plus its one-time token (`POST /api/orgs/{org}/invites`). */
+export interface OrgInviteCreated extends OrgInvite {
+  /** The invite link's credential, returned ONCE — whoever presents it while signed in joins as member. */
+  token: string;
+}
+
+/** The answer to redeeming an invite token (`POST /api/orgs/invites/accept`). */
+export interface OrgJoined {
+  org: Organization;
+  /** True when the caller was already a member (no use of the link consumed). */
+  already_member: boolean;
+}
+
 /**
- * Client for the caller's organizations — the read pair. Creating, renaming,
- * deleting, members and invite links are served by the API and stay outside
- * the SDK until a wave asks for them; quotas are set only from the platform
- * administrator's dashboard session, so no SDK method could ever set one.
+ * Client for the caller's organizations: the read pair (Harbor's `auth org
+ * list` shape and the hosted `auth org show` extension), and the team
+ * verbs — create, invite, join, members. Renaming, deleting, member roles
+ * and invite revocation stay outside the SDK until a wave asks; quotas are
+ * set only from the platform administrator's dashboard session.
  */
 export interface OrgsClient {
   /** Every organization the caller belongs to, personal first (`GET /api/orgs`). */
   list(): Promise<Organization[]>;
   /** One organization by slug (or id): role, member count, quota, usage (`GET /api/orgs/{org}`). */
   get(org: string): Promise<OrganizationDetail>;
+  /** Create a shared organization under `name` (its slug); the caller becomes its owner (`POST /api/orgs`). */
+  create(name: string, options?: { displayName?: string }): Promise<Organization>;
+  /** Mint an invite link for an org you own; the response carries the token once (`POST /api/orgs/{org}/invites`). */
+  invite(org: string): Promise<OrgInviteCreated>;
+  /** Redeem an invite token: join its org as member (`POST /api/orgs/invites/accept`). */
+  join(token: string): Promise<OrgJoined>;
+  /** The org's members, owners first; any member may read it (`GET /api/orgs/{org}/members`). */
+  members(org: string): Promise<OrgMember[]>;
 }
 
 // =============================================================================

@@ -241,6 +241,28 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   listJobImports: "jobs.listImports",
   getJobImport: "jobs.getImport",
   deleteJob: "jobs.delete",
+  // Sharing (B190): the creator's three verbs are SDK methods; the share
+  // LINK's own doors (x-wave: 5) are the no-login viewer page's and never
+  // SDK methods — an SDK caller holds a key and reads a run it was shared
+  // through the job and trial doors, which an email share opens.
+  shareJob: "jobs.share",
+  unshareJob: "jobs.unshare",
+  getJobShares: "jobs.shares",
+  getSharedJob: null,
+  listSharedJobTrials: null,
+  getSharedTrial: null,
+  getSharedTrialTrace: null,
+  listSharedTrialFiles: null,
+  getSharedTrialFile: null,
+  getSharedTrialFilesystem: null,
+  listSharedTrialFilesystemFolder: null,
+  readSharedTrialFilesystemFile: null,
+  searchSharedTrialFilesystem: null,
+  listSharedTrialFilesystemChanges: null,
+  downloadSharedTrialFilesystemArchive: null,
+  streamSharedTrialFilesystemEvents: null,
+  getSharedTrialSandboxLog: null,
+  streamSharedTrialSandboxLogs: null,
   resumeJob: "jobs.resume",
   retryJob: "jobs.retry",
   regradeJob: "jobs.regrade",
@@ -358,22 +380,22 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   revokeApiKey: null, // wave 2 — no SDK method yet
   // Team accounts (x-wave: 4). The SDK speaks the READ pair — Harbor's
   // `auth org list` shape and the hosted `auth org show` extension (quota
-  // + usage). The other ten verbs are served by the API and stay outside
-  // the SDK until a wave asks for them; quotas are set only from the
-  // platform administrator's dashboard session, so no SDK method could
-  // ever set one.
+  // + usage) — and the team verbs (owner's ruling 2026-09-17): create,
+  // invite, join, members. Rename, delete, member roles and invite
+  // revocation stay outside the SDK until a wave asks for them; quotas are
+  // set only from the platform administrator's dashboard session.
   listOrgs: "orgs.list",
   getOrg: "orgs.get",
-  createOrg: null,
+  createOrg: "orgs.create",
   updateOrg: null,
   deleteOrg: null,
-  listOrgMembers: null,
+  listOrgMembers: "orgs.members",
   updateOrgMember: null,
   removeOrgMember: null,
   listOrgInvites: null,
-  createOrgInvite: null,
+  createOrgInvite: "orgs.invite",
   revokeOrgInvite: null,
-  acceptOrgInvite: null,
+  acceptOrgInvite: "orgs.join",
 };
 
 function resolve(path: string): unknown {

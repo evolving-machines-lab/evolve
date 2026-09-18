@@ -43,6 +43,10 @@ import type {
   AuthStatus,
   Organization,
   OrganizationDetail,
+  OrgInvite,
+  OrgInviteCreated,
+  OrgJoined,
+  OrgMember,
   OrgQuota,
   OrgRole,
   OrgUsage,
@@ -89,6 +93,8 @@ import type {
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobShareRequest,
+  JobShares,
   JobList,
   JobPage,
   JobStats,
@@ -270,6 +276,10 @@ export type {
   AuthStatus,
   Organization,
   OrganizationDetail,
+  OrgInvite,
+  OrgInviteCreated,
+  OrgJoined,
+  OrgMember,
   OrgQuota,
   OrgRole,
   OrgUsage,
@@ -324,6 +334,11 @@ export type {
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobShareEmail,
+  JobShareLink,
+  JobShareRequest,
+  JobShares,
+  JobVisibility,
   JobAnalysisStats,
   JobList,
   JobPage,
@@ -738,6 +753,8 @@ const DEFAULT_IMPORT_SETTLE_TIMEOUT_MS = 30 * 60_000;
 interface ResolvedConfig {
   apiKey: string;
   baseUrl: string;
+  /** The client-level org default (HostedClientConfig.org); undefined = the caller's personal org. */
+  org?: string;
 }
 
 function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedConfig {
@@ -748,7 +765,7 @@ function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedCo
     );
   }
   const baseUrl = (config?.baseUrl || process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL).replace(/\/$/, "");
-  return { apiKey, baseUrl };
+  return { apiKey, baseUrl, ...(config?.org ? { org: config.org } : {}) };
 }
 
 async function request(
@@ -1157,6 +1174,26 @@ function mapTrialTaskLink(raw: unknown): TrialTaskLink | null {
   };
 }
 
+/** The wire's JobShares, read in the same tolerant shape every required field here uses. */
+function mapJobShares(raw: Record<string, unknown>): JobShares {
+  const link = (raw.link ?? {}) as Record<string, unknown>;
+  return {
+    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+    link: {
+      enabled: link.enabled === true,
+      ...(typeof link.url === "string" ? { url: link.url } : {}),
+    },
+    emails: (Array.isArray(raw.emails) ? raw.emails : []).map((entry) => {
+      const share = entry as Record<string, unknown>;
+      return {
+        email: String(share.email ?? ""),
+        shared_by: String(share.shared_by ?? ""),
+        created_at: String(share.created_at ?? ""),
+      };
+    }),
+  };
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
@@ -1191,6 +1228,11 @@ function mapJob(raw: Record<string, unknown>): Job {
     // Null exactly on an uploaded job — the record executed on no platform
     // sandbox, so naming a provider would be an execution claim.
     sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
+    // The owning org's slug; an older server that sends none reads as null.
+    org: typeof raw.org === "string" ? raw.org : null,
+    // The share link's switch; an older server that sends none reads as
+    // PRIVATE, exactly how such a server behaves.
+    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
     // The system log switch — an older server that sends nothing reads as
     // off, exactly how such a server behaves.
     system_log: raw.system_log === true,
@@ -2654,6 +2696,9 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       options?: PublishDatasetOptions
     ): Promise<DatasetImport> {
       const src = input.source;
+      // The call's own org wins; the client default fills an absent one;
+      // neither = no part, and the server's personal-org default applies.
+      const org = input.org ?? cfg.org;
       // ONE body grammar: multipart/form-data, metadata in named parts. The
       // corpus is the `archive` part; a git source is the git_url + git_ref
       // parts. Nothing rides the query string, where it would land in access
@@ -2686,7 +2731,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           }
         }
         const res = await uploadDirectory(cfg, "/api/datasets/publish", {
-          fields: { name: input.name, version: input.version },
+          fields: { name: input.name, version: input.version, org },
           directory: src.directory,
           filename: "corpus.tar.gz",
           // Upload progress renders CLIENT-SIDE from the stream: the send
@@ -2730,6 +2775,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             name: input.name,
             version: input.version,
             archive_url: src.archive_url,
+            org,
           }),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
@@ -2743,6 +2789,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             ...(input.name !== undefined ? { name: input.name } : {}),
             ...(input.version !== undefined ? { version: input.version } : {}),
             hub_package: src.hub_package,
+            org,
           }),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
@@ -2768,6 +2815,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             // Only when narrowing to a subfolder: an absent part means "the
             // repository root", and sending an empty part would be refused.
             ...(src.git_path !== undefined ? { git_path: src.git_path } : {}),
+            org,
           }),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
@@ -3349,6 +3397,10 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
   return {
     async start(input: JobCreate, options?: StartJobOptions): Promise<Job> {
+      // The call's own org wins; the client default fills an absent one
+      // (an explicit `org: undefined` counts as absent, so it is never spread last).
+      const org = input.org ?? cfg.org;
+      const body: JobCreate = org !== undefined ? { ...input, org } : input;
       const res = await request(cfg, "/api/jobs", {
         method: "POST",
         headers: {
@@ -3357,7 +3409,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
             ? { "Idempotency-Key": options.idempotencyKey }
             : {}),
         },
-        body: JSON.stringify(input),
+        body: JSON.stringify(body),
       });
       return mapJob((await res.json()) as Record<string, unknown>);
     },
@@ -3683,6 +3735,31 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         trials_deleted: (data.trials_deleted as number) ?? 0,
         analyses_deleted: (data.analyses_deleted as number) ?? 0,
       };
+    },
+
+    async share(id: string, req: JobShareRequest): Promise<JobShares> {
+      // The body is the wire's verbatim; the server owns every rule (creator
+      // only, the address cap, the idempotent link) and every refusal arrives typed.
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async unshare(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/unshare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async shares(id: string): Promise<JobShares> {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/shares`);
+      return mapJobShares((await res.json()) as Record<string, unknown>);
     },
 
     async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {
@@ -4406,8 +4483,30 @@ export function auth(config?: HostedClientConfig): AuthClient {
 
 // =============================================================================
 // ORGS CLIENT — the read pair (Harbor's `auth org list` shape + the hosted
-// `auth org show` extension: quota and usage are hosted facts)
+// `auth org show` extension: quota and usage are hosted facts) and the team
+// verbs: create, invite, join, members
 // =============================================================================
+
+function mapOrgMember(raw: Record<string, unknown>): OrgMember {
+  return {
+    user_id: raw.user_id as string,
+    email: raw.email as string,
+    role: raw.role === "owner" ? "owner" : "member",
+    joined_at: raw.joined_at as string,
+  };
+}
+
+function mapOrgInviteCreated(raw: Record<string, unknown>): OrgInviteCreated {
+  return {
+    invite_id: raw.invite_id as string,
+    expires_at: typeof raw.expires_at === "string" ? raw.expires_at : null,
+    max_uses: typeof raw.max_uses === "number" ? raw.max_uses : null,
+    uses: typeof raw.uses === "number" ? raw.uses : 0,
+    revoked_at: typeof raw.revoked_at === "string" ? raw.revoked_at : null,
+    created_at: raw.created_at as string,
+    token: raw.token as string,
+  };
+}
 
 function mapOrganization(raw: Record<string, unknown>): Organization {
   return {
@@ -4473,6 +4572,48 @@ export function orgs(config?: HostedClientConfig): OrgsClient {
     async get(org: string): Promise<OrganizationDetail> {
       const res = await request(cfg, `/api/orgs/${encodeURIComponent(org)}`);
       return mapOrganizationDetail((await res.json()) as Record<string, unknown>);
+    },
+
+    async create(name: string, options?: { displayName?: string }): Promise<Organization> {
+      const res = await request(cfg, "/api/orgs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug: name,
+          ...(options?.displayName !== undefined ? { display_name: options.displayName } : {}),
+        }),
+      });
+      return mapOrganization((await res.json()) as Record<string, unknown>);
+    },
+
+    async invite(org: string): Promise<OrgInviteCreated> {
+      // No body: the server's defaults (7 days, unlimited uses) — Harbor's
+      // invite has no knobs on the CLI either.
+      const res = await request(cfg, `/api/orgs/${encodeURIComponent(org)}/invites`, {
+        method: "POST",
+      });
+      return mapOrgInviteCreated((await res.json()) as Record<string, unknown>);
+    },
+
+    async join(token: string): Promise<OrgJoined> {
+      const res = await request(cfg, "/api/orgs/invites/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const raw = (await res.json()) as Record<string, unknown>;
+      return {
+        org: mapOrganization((raw.org ?? {}) as Record<string, unknown>),
+        already_member: raw.already_member === true,
+      };
+    },
+
+    async members(org: string): Promise<OrgMember[]> {
+      const res = await request(cfg, `/api/orgs/${encodeURIComponent(org)}/members`);
+      const raw = (await res.json()) as { items?: unknown };
+      return (Array.isArray(raw.items) ? raw.items : []).map((item) =>
+        mapOrgMember(item as Record<string, unknown>)
+      );
     },
   };
 }

@@ -3,7 +3,7 @@ title: "auth and orgs"
 description: "Who you are, and your organizations."
 ---
 
-`auth()` returns the identity client, `orgs()` the organizations client. Every job, dataset and analysis belongs to an organization, today your personal one; the API accepts an `org` on a job or a publish, but the SDK and CLI do not name one yet.
+`auth()` returns the identity client, `orgs()` the organizations client. Every job, dataset and analysis belongs to an organization: your personal one unless you name another. Name it per call (`org` on `jobs().start()` and `datasets().publish()`) or once for a client (`HostedClientConfig.org`); the call's own value wins.
 
 ## auth.status
 
@@ -57,6 +57,46 @@ description: "Who you are, and your organizations."
 
     ```python
     org = await orgs().get("acme")
+    ```
+  </Tab>
+</Tabs>
+
+## orgs.create, orgs.invite, orgs.join, orgs.members
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    create(name: string, options?: { displayName?: string }): Promise<Organization>
+    invite(org: string): Promise<OrgInviteCreated>
+    join(token: string): Promise<OrgJoined>
+    members(org: string): Promise<OrgMember[]>
+    ```
+
+    Create an organization (you become its owner; the name is its slug), mint an invite token for one you own (the token is in the response once), join the organization a token names (`already_member` says whether you were in it already), or list an organization's members with their `email` and `role`.
+
+    ```ts
+    const org = await orgs().create("acme", { displayName: "Acme Corp" });
+    const invite = await orgs().invite("acme");
+    // send invite.token to a teammate, who runs:
+    const joined = await orgs().join(invite.token);
+    const members = await orgs().members("acme");
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def create(name: str, *, display_name: str | None = None) -> Organization
+    async def invite(org: str) -> OrgInviteCreated
+    async def join(token: str) -> OrgJoined
+    async def members(org: str) -> List[OrgMember]
+    ```
+
+    The same four verbs: create an organization, mint an invite token for one you own, join with a token, list members.
+
+    ```python
+    org = await orgs().create("acme", display_name="Acme Corp")
+    invite = await orgs().invite("acme")
+    joined = await orgs().join(invite.token)
+    members = await orgs().members("acme")
     ```
   </Tab>
 </Tabs>
