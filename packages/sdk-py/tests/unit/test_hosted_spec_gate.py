@@ -293,7 +293,6 @@ OPERATION_TO_METHOD = {
     'downloadSharedCheck': None,
     # The link's analysis doors (no key, no SDK wrapper), like the trial doors above.
     'listSharedJobAnalyses': None,
-    '': None,
     'getSharedAnalysisSandboxLog': None,
     'streamSharedAnalysisSandboxLogs': None,
     'getSharedAnalysisFilesystem': None,
