@@ -166,8 +166,10 @@ class SessionsClient:
         (the same link on every later call); each new address is emailed a
         link and reads the session, its transcript and its trace file, and
         lists it under ``scope='shared'``; it never stops the session.
-        Creator-only: anyone else sees ``session_not_found`` (404). The answer
-        is the session's whole share state, the job's :class:`JobShares` shape.
+        Creator-only: an account that can read the session but did not start
+        it is refused ``org_forbidden`` (403), a stranger sees
+        ``session_not_found`` (404). The answer is the session's whole share
+        state, the job's :class:`JobShares` shape.
         """
         await self._ensure_ready()
         response = await self._bridge.call(
