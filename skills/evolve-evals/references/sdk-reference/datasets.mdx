@@ -168,7 +168,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     publish(input: { source: DatasetSource; name?: string; version?: string; org?: string }, options?: { onUploadProgress?: (sentBytes: number, totalBytes: number) => void; onRegistered?: (importId: string) => void }): Promise<DatasetImport>
     ```
 
-    Publish a version from one `source`: `{ git_url, git_ref, git_path? }` (an `https://` URL, and a subfolder that exists at the ref), `{ directory }`, `{ archive_url }` or `{ hub_package }`. `org` names the organization a new dataset lands in (omitted, the client's `org` default, else your personal one; an existing dataset stays where it is). Returns the import record; follow it with `watchImport`.
+    Publish a version from one `source`: `{ git_url, git_ref, git_path? }` (an `https://` URL, and a subfolder that exists at the ref), `{ directory }`, `{ archive_url }` or `{ hub_package }`. `org` names the organization a new dataset lands in (omitted, the client's `org` default, else your personal one). An existing dataset stays where it is only when no org reaches the server; a named org, the client default included, that is not the dataset's own is refused with `invalid_input`, so a re-publish never moves a dataset. Returns the import record; follow it with `watchImport`.
 
     `onUploadProgress` reports sent bytes for a directory source, and `onRegistered` fires once with the import id when a large upload begins. What is packed is on [datasets](/core-concepts/datasets#publish-your-own).
 
@@ -198,7 +198,7 @@ description: "The catalog: list, read, publish, download, activate, delete."
     ) -> DatasetImport
     ```
 
-    Publish a version from one source: `git_url` with `git_ref` (and `git_path`), `directory`, `archive_url`, or `hub_package`. `org` names the organization a new dataset lands in (omitted, the client's `org` default, else your personal one). Returns the import record; follow it with `watch_import`.
+    Publish a version from one source: `git_url` with `git_ref` (and `git_path`), `directory`, `archive_url`, or `hub_package`. `org` names the organization a new dataset lands in (omitted, the client's `org` default, else your personal one). An existing dataset stays where it is only when no org reaches the server; a named org, the client default included, that is not the dataset's own is refused with `invalid_input`, so a re-publish never moves a dataset. Returns the import record; follow it with `watch_import`.
 
     ```python
     imp = await datasets().publish(
