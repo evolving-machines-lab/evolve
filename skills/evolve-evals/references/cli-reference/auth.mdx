@@ -63,7 +63,7 @@ evolve auth org show acme
 evolve auth org create <name> [--display-name <text>]
 ```
 
-Create an organization. You become its owner. The name is its slug: lowercase letters, digits and single hyphens; `personal` is reserved.
+Create an organization. You become its owner. The name is its slug: lowercase letters, digits and hyphens, starting and ending with a letter or digit, 48 characters at most; `personal` is reserved.
 
 ```bash
 evolve auth org create acme --display-name "Acme Corp"

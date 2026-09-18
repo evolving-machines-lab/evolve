@@ -3367,9 +3367,10 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
   return {
     async start(input: JobCreate, options?: StartJobOptions): Promise<Job> {
-      // The call's own org wins; the client default fills an absent one.
-      const body: JobCreate =
-        input.org === undefined && cfg.org !== undefined ? { org: cfg.org, ...input } : input;
+      // The call's own org wins; the client default fills an absent one
+      // (an explicit `org: undefined` counts as absent, so it is never spread last).
+      const org = input.org ?? cfg.org;
+      const body: JobCreate = org !== undefined ? { ...input, org } : input;
       const res = await request(cfg, "/api/jobs", {
         method: "POST",
         headers: {

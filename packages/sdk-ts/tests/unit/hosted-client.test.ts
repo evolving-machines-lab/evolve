@@ -7199,6 +7199,9 @@ async function testOrgsTeamVerbs() {
     await jobs({ apiKey: "k", baseUrl: BASE }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assert(!("org" in body), "start: no org anywhere = no org key (the server's personal default)");
+    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: undefined, datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "acme", "start: an explicit `org: undefined` on the call is absent, so the config default still rides");
     const plain = await jobs({ apiKey: "k", baseUrl: BASE }).get("job-1").catch(() => null);
     assert(plain === null || plain.org === "acme" || plain.org === null, "Job.org is null from a server that sends none");
 
