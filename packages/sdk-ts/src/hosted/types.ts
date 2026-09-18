@@ -1327,6 +1327,30 @@ export interface JobShares {
 }
 
 /**
+ * The wire's JobShares, read in the same tolerant shape every required field
+ * here uses. One reader for every kind that shares — jobs, checks, sessions —
+ * so no client can read the same body differently.
+ */
+export function mapJobShares(raw: Record<string, unknown>): JobShares {
+  const link = (raw.link ?? {}) as Record<string, unknown>;
+  return {
+    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+    link: {
+      enabled: link.enabled === true,
+      ...(typeof link.url === "string" ? { url: link.url } : {}),
+    },
+    emails: (Array.isArray(raw.emails) ? raw.emails : []).map((entry) => {
+      const share = entry as Record<string, unknown>;
+      return {
+        email: String(share.email ?? ""),
+        shared_by: String(share.shared_by ?? ""),
+        created_at: String(share.created_at ?? ""),
+      };
+    }),
+  };
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -5443,6 +5467,9 @@ export const HOSTED_ERROR_CODES = [
   "no_checkable_tasks",
   "too_many_concurrent_check_uploads",
   "no_analyzable_trials",
+  // Sharing a managed-agent session: a session the caller cannot read, or
+  // that never existed (404). The session link's doors answer it too.
+  "session_not_found",
   // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
   // directory (no result.json / config.json at its root, or they do not
   // parse); one trial directory that cannot be ingested (the refusal names

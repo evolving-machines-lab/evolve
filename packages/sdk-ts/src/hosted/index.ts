@@ -222,6 +222,7 @@ export {
   GATEWAY_TRACE_SEQ_BASE,
   gatewayUsageOf,
   isHostedErrorCode,
+  mapJobShares,
   mapUsageReading,
   passAtK,
 } from "./types";
@@ -478,6 +479,7 @@ import {
   TASK_LINKED_BY,
   TASK_LINK_REASONS,
   isHostedErrorCode,
+  mapJobShares,
   mapStoredAt,
   mapUsageReading,
   type Awaitable,
@@ -1171,26 +1173,6 @@ function mapTrialTaskLink(raw: unknown): TrialTaskLink | null {
     version: typeof blob.version === "string" ? blob.version : null,
     task_digest: typeof blob.task_digest === "string" ? blob.task_digest : null,
     candidates,
-  };
-}
-
-/** The wire's JobShares, read in the same tolerant shape every required field here uses. */
-function mapJobShares(raw: Record<string, unknown>): JobShares {
-  const link = (raw.link ?? {}) as Record<string, unknown>;
-  return {
-    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
-    link: {
-      enabled: link.enabled === true,
-      ...(typeof link.url === "string" ? { url: link.url } : {}),
-    },
-    emails: (Array.isArray(raw.emails) ? raw.emails : []).map((entry) => {
-      const share = entry as Record<string, unknown>;
-      return {
-        email: String(share.email ?? ""),
-        shared_by: String(share.shared_by ?? ""),
-        created_at: String(share.created_at ?? ""),
-      };
-    }),
   };
 }
 

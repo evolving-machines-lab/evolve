@@ -816,6 +816,83 @@ async function testBrowserReplayRejectsInvalidPollingOptions() {
   }
 }
 
+async function testShareVerbs() {
+  console.log("\n--- share / unshare / shares — the job verbs on a session ---");
+  installMockFetch();
+  try {
+    const wire = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/deadbeef" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/sessions/sess-1/share", { status: 200, body: wire });
+    setMockResponse("/api/sessions/sess-1/unshare", { status: 200, body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] } });
+    setMockResponse("/api/sessions/sess-1/shares", { status: 200, body: wire });
+
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+
+    const granted = await s.share("sess-1", { link: true, emails: ["alice@example.org"] });
+    let call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/sessions/sess-1/share"), "share posts to the session's share door");
+    assertEqual(call.init?.method, "POST", "share is a POST");
+    assertEqual(call.init?.body, JSON.stringify({ link: true, emails: ["alice@example.org"] }), "the body is the wire's verbatim");
+    assertEqual(granted.visibility, "LINK", "share reads the visibility back");
+    assertEqual(granted.link.url, "https://dash.test/shared/deadbeef", "share reads the link url back");
+    assertEqual(granted.emails[0].email, "alice@example.org", "share reads the address back");
+
+    const revoked = await s.unshare("sess-1", { link: true });
+    call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/sessions/sess-1/unshare"), "unshare posts to the unshare door");
+    assertEqual(revoked.visibility, "PRIVATE", "unshare reads PRIVATE back");
+    assertEqual(revoked.link.enabled, false, "the link is off");
+
+    const state = await s.shares("sess-1");
+    call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/sessions/sess-1/shares"), "shares reads the shares door");
+    assertEqual(call.init?.method, undefined, "shares is a GET");
+    assertEqual(state.emails.length, 1, "shares lists the one address");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testListScope() {
+  console.log("\n--- list({ scope }) asks for the sessions shared with the caller ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+
+    await s.list();
+    assert(!fetchCalls[fetchCalls.length - 1].url.includes("scope="), "no scope by default");
+
+    await s.list({ scope: "shared" });
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("scope=shared"), "scope forwarded");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testVisibilityIsReadBack() {
+  console.log("\n--- a session's visibility rides the document, PRIVATE when absent ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/sessions/sess-linked", {
+      status: 200,
+      body: { id: "sess-linked", tag: "t", agent: "claude", provider: "e2b", isEnded: true, createdAt: "2026-01-01", visibility: "LINK" },
+    });
+    setMockResponse("/api/sessions/sess-old", {
+      status: 200,
+      body: { id: "sess-old", tag: "t", agent: "claude", provider: "e2b", isEnded: true, createdAt: "2026-01-01" },
+    });
+    const s = sessions({ apiKey: "test-key", dashboardUrl: "http://localhost:3000" });
+    assertEqual((await s.get("sess-linked")).visibility, "LINK", "LINK is read through");
+    assertEqual((await s.get("sess-old")).visibility, "PRIVATE", "an older server reads PRIVATE");
+  } finally {
+    restoreFetch();
+  }
+}
+
 // =============================================================================
 // RUN
 // =============================================================================
@@ -845,6 +922,9 @@ async function main() {
   await testBrowserReplayThrowsOn404();
   await testBrowserReplayFailedThrows();
   await testBrowserReplayRejectsInvalidPollingOptions();
+  await testShareVerbs();
+  await testListScope();
+  await testVisibilityIsReadBack();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

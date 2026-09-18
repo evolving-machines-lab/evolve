@@ -3,6 +3,7 @@
 import asyncio
 from typing import Any, Dict, List, Literal, Optional
 
+from .hosted import JobShares, _map_job_shares
 from .results import BrowserReplay, SessionEvent, SessionInfo, SessionPage, SessionTranscript
 from .utils import (
     _filter_none,
@@ -68,8 +69,14 @@ class SessionsClient:
         agent: Optional[str] = None,
         tag_prefix: Optional[str] = None,
         sort: Optional[Literal['newest', 'oldest', 'cost']] = None,
+        scope: Optional[Literal['my', 'shared']] = None,
     ) -> SessionPage:
-        """List historical sessions with optional filtering and pagination."""
+        """List historical sessions with optional filtering and pagination.
+
+        ``scope='shared'`` lists the sessions other people shared with your
+        address instead of the ones you started; a session belongs to no
+        organization, so that scope is the email shares alone.
+        """
         await self._ensure_ready()
         params = self._build_params(
             limit=limit,
@@ -78,6 +85,7 @@ class SessionsClient:
             agent=agent,
             tag_prefix=tag_prefix,
             sort=sort,
+            scope=scope,
         )
         response = await self._bridge.call('sessions_list', params)
         return SessionPage(
@@ -149,6 +157,44 @@ class SessionsClient:
             timeout_s=rpc_timeout_s,
         )
         return _require_browser_replay(response)
+
+    async def share(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Share a session you started — :meth:`JobsClient.share` on a
+        managed-agent session: ``link=True`` mints the session's unlisted link
+        (the same link on every later call); each new address is emailed a
+        link and reads the session, its transcript and its trace file, and
+        lists it under ``scope='shared'``; it never stops the session.
+        Creator-only: an account that can read the session but did not start
+        it is refused ``org_forbidden`` (403), a stranger sees
+        ``session_not_found`` (404). The answer is the session's whole share
+        state, the job's :class:`JobShares` shape.
+        """
+        await self._ensure_ready()
+        response = await self._bridge.call(
+            'sessions_share', self._build_params(id=id, link=link or None, emails=list(emails) if emails else None)
+        )
+        return _map_job_shares(response)
+
+    async def unshare(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Revoke a session's link (``link=True``) and/or email shares
+        (``emails``) — :meth:`JobsClient.unshare` on a session. Idempotent;
+        creator-only."""
+        await self._ensure_ready()
+        response = await self._bridge.call(
+            'sessions_unshare', self._build_params(id=id, link=link or None, emails=list(emails) if emails else None)
+        )
+        return _map_job_shares(response)
+
+    async def shares(self, id: str) -> JobShares:
+        """The session's share state: its visibility, the link with its URL
+        while enabled, and every email share. Creator-only."""
+        await self._ensure_ready()
+        response = await self._bridge.call('sessions_shares', self._build_params(id=id))
+        return _map_job_shares(response)
 
     async def close(self) -> None:
         """Close the sessions client and release resources."""

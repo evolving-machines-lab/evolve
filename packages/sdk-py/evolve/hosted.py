@@ -284,6 +284,10 @@ HostedErrorCode = Literal[
     'no_checkable_tasks',
     'too_many_concurrent_check_uploads',
     'no_analyzable_trials',
+    # Sharing a managed-agent session (POST /api/sessions/{sessionId}/share):
+    # a session the caller cannot read, or that never existed (404). The
+    # session link's own doors answer it for a token of another kind.
+    'session_not_found',
     # Job upload (POST /api/jobs/upload): the archive is not a Harbor job
     # directory (no result.json / config.json at its root, or they do not
     # parse); one trial directory that cannot be ingested (the refusal names

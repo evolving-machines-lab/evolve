@@ -261,6 +261,9 @@ class SessionInfo:
     #: The reasoning effort the session was started with, as the SDK resolved
     #: it; None for a harness without one and for sessions recorded before the field.
     reasoning_effort: Optional[str] = None
+    #: The share link's switch: ``'LINK'`` while the session's unlisted link is
+    #: on, ``'PRIVATE'`` otherwise (and on servers predating the field).
+    visibility: Literal['PRIVATE', 'LINK'] = 'PRIVATE'
 
 
 @dataclass

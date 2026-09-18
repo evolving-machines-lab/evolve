@@ -1305,17 +1305,18 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
-  // Managed-agent SESSIONS — the other hosted lane, read-only here: the runs
-  // the SDK's `.run()` recorded to the dashboard, listed and inspected
-  // headless through sessions(). A session has one owner and no
-  // organization, so there is no --scope: `my` is the only visibility.
+  // Managed-agent SESSIONS — the other hosted lane: the runs the SDK's
+  // `.run()` recorded to the dashboard, listed and inspected headless through
+  // sessions(), and shared the two ways a job is. A session belongs to no
+  // organization, so --scope shared is the addresses it was shared with.
   session: {
-    summary: "List and inspect managed-agent sessions",
+    summary: "List, inspect and share managed-agent sessions",
     commands: {
       list: {
         summary: "List your sessions, newest first",
         flags: {
           ...LIST_FLAGS,
+          scope: { ...SCOPE_FLAG, help: "The sessions you started, or the ones shared with your address" },
           state: { kind: "string", value: "<live|ended>", help: "Only live or only ended sessions", group: "Filter" },
           agent: { kind: "string", value: "<name>", help: "Only sessions of this agent harness", group: "Filter" },
           "tag-prefix": { kind: "string", value: "<prefix>", help: "Only sessions whose tag starts with this prefix", group: "Filter" },
@@ -1331,6 +1332,38 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<session-id>",
         examples: ["evolve session show 5f2c1a0e"],
+      },
+      share: {
+        summary: "Share a session you started by link or by email",
+        notes: "--link prints the session's unlisted link (the same one every time); it opens the session, its transcript and its trace file, and nothing else. Each --email gets a link by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
+        flags: {
+          link: { kind: "boolean", help: "Enable the session's unlisted link and print it" },
+          email: SHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<session-id>",
+        examples: ["evolve session share 5f2c1a0e --link", "evolve session share 5f2c1a0e --email alice@example.org"],
+      },
+      unshare: {
+        summary: "Revoke a session's link or email shares",
+        notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
+        flags: {
+          link: { kind: "boolean", help: "Disable the session's link" },
+          email: UNSHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<session-id>",
+        examples: ["evolve session unshare 5f2c1a0e --link", "evolve session unshare 5f2c1a0e --email alice@example.org"],
+      },
+      shares: {
+        summary: "Show who a session is shared with",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<session-id>",
+        examples: ["evolve session shares 5f2c1a0e", "evolve session shares 5f2c1a0e --json"],
       },
     },
   },
@@ -5392,14 +5425,15 @@ function printShares(inv: Invocation, io: CliIO, shares: JobShares): number {
   return 0;
 }
 
-/** The three share verbs of a kind, as its client speaks them: jobs() and checks() both do. */
+/** The three share verbs of a kind, as its client speaks them: jobs(), checks() and sessions() all do. */
 type ShareClient = Pick<JobsClient, "share" | "unshare" | "shares">;
 
 // Harbor's `harbor job share <id> --org … --user …` (their docs/sharing/jobs.mdx),
 // recorded deviations: a person is shared by --email (our login is an address)
 // and --link makes the job reachable by an unlisted link where Harbor has --public.
-// A check shares the same way, on its own id namespace.
-function shareVerbs(noun: "job" | "check", client: (inv: Invocation) => ShareClient) {
+// A check and a managed-agent session share the same way, each on its own id
+// namespace; Harbor has no sessions, so that third noun is ours alone.
+function shareVerbs(noun: "job" | "check" | "session", client: (inv: Invocation) => ShareClient) {
   const share = async (inv: Invocation, io: CliIO): Promise<number> => {
     const grant = shareGrant(inv);
     const shares = await client(inv).share(await resolveId(inv, noun, inv.positionals[0]), grant);
@@ -5418,6 +5452,7 @@ function shareVerbs(noun: "job" | "check", client: (inv: Invocation) => ShareCli
 
 const JOB_SHARE = shareVerbs("job", (inv) => jobs(clientConfig(inv)));
 const CHECK_SHARE = shareVerbs("check", (inv) => checks(clientConfig(inv)));
+const SESSION_SHARE = shareVerbs("session", (inv) => sessions(sessionsConfig(inv)));
 
 /**
  * PURE SUGAR over surfaces that already exist — the job body's datasets[],
@@ -8249,6 +8284,7 @@ function sessionDetailLines(s: SessionInfo): string[] {
     ["sandbox", s.sandboxId ?? "-"],
     ["state", s.state],
     ["runtime", s.runtimeStatus],
+    ["visibility", s.visibility],
     ["cost", fmtSessionCost(s)],
   ];
   if (s.usage) {
@@ -8280,9 +8316,11 @@ async function cmdSessionList(inv: Invocation, io: CliIO): Promise<number> {
   if (state !== undefined && state !== "live" && state !== "ended") {
     throw new CliUsageError(`--state must be live or ended; got: ${state}`);
   }
+  const scope = parseScopeFlag(inv);
   const client = sessions(sessionsConfig(inv));
   const page = await client.list({
     ...pageOptions(inv),
+    ...(scope !== undefined ? { scope } : {}),
     ...(state !== undefined ? { state } : {}),
     ...(inv.flags.agent !== undefined ? { agent: String(inv.flags.agent) } : {}),
     ...(inv.flags["tag-prefix"] !== undefined ? { tagPrefix: String(inv.flags["tag-prefix"]) } : {}),
@@ -8861,6 +8899,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "check procs": CHECK_FILES.procs,
   "session list": cmdSessionList,
   "session show": cmdSessionShow,
+  "session share": SESSION_SHARE.share,
+  "session unshare": SESSION_SHARE.unshare,
+  "session shares": SESSION_SHARE.shares,
   "dataset list": cmdDatasetList,
   "dataset show": cmdDatasetShow,
   "dataset check": cmdDatasetCheck,

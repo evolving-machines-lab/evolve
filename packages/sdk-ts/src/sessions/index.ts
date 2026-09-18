@@ -1,4 +1,12 @@
-import { gatewayUsageOf, mapStoredAt, mapUsageReading, type GatewayUsageEvent } from "../hosted/types";
+import {
+  gatewayUsageOf,
+  mapJobShares,
+  mapStoredAt,
+  mapUsageReading,
+  type GatewayUsageEvent,
+  type JobShareRequest,
+  type JobShares,
+} from "../hosted/types";
 import { createWriteStream } from "fs";
 import { mkdir } from "fs/promises";
 import { join } from "path";
@@ -106,6 +114,8 @@ export function sessions(config?: SessionsConfig): SessionsClient {
       endedAt: (raw.endedAt as string) || null,
       stepCount: (raw.stepCount as number) || 0,
       toolStats: (raw.toolStats as Record<string, number>) || null,
+      // The share link's switch; an older server that sends none reads as PRIVATE.
+      visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
     };
   }
 
@@ -182,6 +192,7 @@ export function sessions(config?: SessionsConfig): SessionsClient {
         pageSize: String(Math.min(options?.limit ?? 20, 200)),
         paginated: "true",
       });
+      if (options?.scope) params.set("scope", options.scope);
       if (options?.cursor) params.set("cursor", options.cursor);
       if (options?.state && options.state !== "all")
         params.set("state", options.state);
@@ -316,6 +327,31 @@ export function sessions(config?: SessionsConfig): SessionsClient {
         }
         await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
       }
+    },
+
+    async share(id: string, req: JobShareRequest): Promise<JobShares> {
+      // The body is the wire's verbatim; the server owns every rule (creator
+      // only, the address cap, the idempotent link) and every refusal arrives typed.
+      const res = await request(`/api/sessions/${encodeURIComponent(id)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async unshare(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(`/api/sessions/${encodeURIComponent(id)}/unshare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async shares(id: string): Promise<JobShares> {
+      const res = await request(`/api/sessions/${encodeURIComponent(id)}/shares`);
+      return mapJobShares((await res.json()) as Record<string, unknown>);
     },
   };
 }

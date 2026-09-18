@@ -7,6 +7,8 @@ Coverage:
 - SessionsClient.events() — returns parsed JSONL objects, passes since
 - SessionsClient.transcript() — the feed whole: session, events, total, the gateway's per-call lines
 - SessionsClient.download() — returns file path, passes to
+- SessionsClient.share/unshare/shares() — the three bridge ops, the JobShares mapping
+- list(scope=...) and SessionInfo.visibility — the share's two reading surfaces
 - standalone sessions() — sync factory, gateway mode, explicit config
 - Context manager / cleanup behavior
 """
@@ -14,7 +16,16 @@ Coverage:
 import pytest
 from unittest.mock import patch
 
-from evolve import BrowserReplay, SessionInfo, SessionPage, SessionsClient, SessionsConfig
+from evolve import (
+    BrowserReplay,
+    JobShareEmail,
+    JobShareLink,
+    JobShares,
+    SessionInfo,
+    SessionPage,
+    SessionsClient,
+    SessionsConfig,
+)
 from evolve import sessions as sessions_factory
 
 
@@ -161,6 +172,22 @@ class MockBridgeManager:
 
         if method == 'sessions_download':
             return {'path': '/tmp/traces/demo-a.jsonl'}
+
+        if method in ('sessions_share', 'sessions_shares'):
+            return {
+                'visibility': 'LINK',
+                'link': {'enabled': True, 'url': 'https://dash.test/shared/abc123'},
+                'emails': [
+                    {
+                        'email': 'alice@example.org',
+                        'shared_by': 'owner@example.org',
+                        'created_at': '2026-09-18T00:00:00.000Z',
+                    },
+                ],
+            }
+
+        if method == 'sessions_unshare':
+            return {'visibility': 'PRIVATE', 'link': {'enabled': False}, 'emails': []}
 
         if method == 'sessions_browser_replay':
             return {
@@ -497,3 +524,86 @@ class TestContextManagerAndCleanup:
         assert not bridge.started
         await client.list()
         assert bridge.started
+
+
+SHARED_STATE = JobShares(
+    visibility='LINK',
+    link=JobShareLink(enabled=True, url='https://dash.test/shared/abc123'),
+    emails=[
+        JobShareEmail(
+            email='alice@example.org',
+            shared_by='owner@example.org',
+            created_at='2026-09-18T00:00:00.000Z',
+        ),
+    ],
+)
+
+
+class TestSessionsClientSharing:
+    """sessions().share/unshare/shares — jobs' three verbs on a session row."""
+
+    @pytest.mark.asyncio
+    async def test_share_sends_the_grant_and_maps_the_share_state(self):
+        client, bridge = _make_client(api_key='sk-test')
+
+        shares = await client.share('sess-1', link=True, emails=['Alice@Example.org'])
+
+        params = _get_calls(bridge, 'sessions_share')[0][1]
+        assert params['id'] == 'sess-1'
+        assert params['link'] is True
+        assert params['emails'] == ['Alice@Example.org']
+        assert shares == SHARED_STATE
+
+    @pytest.mark.asyncio
+    async def test_share_omits_an_ungranted_link_and_an_empty_address_list(self):
+        client, bridge = _make_client()
+
+        await client.share('sess-1', emails=['alice@example.org'])
+        await client.share('sess-1', link=True)
+
+        emails_only, link_only = (c[1] for c in _get_calls(bridge, 'sessions_share'))
+        assert 'link' not in emails_only
+        assert emails_only['emails'] == ['alice@example.org']
+        assert link_only['link'] is True
+        assert 'emails' not in link_only
+
+    @pytest.mark.asyncio
+    async def test_unshare_and_shares_read_the_same_state(self):
+        client, bridge = _make_client()
+
+        revoked = await client.unshare('sess-1', link=True)
+        listed = await client.shares('sess-1')
+
+        assert _get_calls(bridge, 'sessions_unshare')[0][1] == {'sessions': {}, 'id': 'sess-1', 'link': True}
+        assert _get_calls(bridge, 'sessions_shares')[0][1] == {'sessions': {}, 'id': 'sess-1'}
+        assert revoked == JobShares(
+            visibility='PRIVATE', link=JobShareLink(enabled=False, url=None), emails=[]
+        )
+        assert listed == SHARED_STATE
+
+
+class TestSessionsClientVisibility:
+    @pytest.mark.asyncio
+    async def test_scope_rides_the_list_call(self):
+        client, bridge = _make_client()
+
+        await client.list(scope='shared')
+        await client.list()
+
+        with_scope, without = (c[1] for c in _get_calls(bridge, 'sessions_list'))
+        assert with_scope['scope'] == 'shared'
+        assert 'scope' not in without
+
+    @pytest.mark.asyncio
+    async def test_visibility_reads_link_and_defaults_to_private(self):
+        client, bridge = _make_client()
+
+        linked_wire = dict(await bridge.call('sessions_get', {'id': 'sess-1'}), visibility='LINK')
+        bridge.overrides['sessions_get'] = linked_wire
+        linked = await client.get('sess-1')
+        bridge.overrides['sessions_get'] = {k: v for k, v in linked_wire.items() if k != 'visibility'}
+        older = await client.get('sess-1')
+
+        assert linked.visibility == 'LINK'
+        # A server predating the field answers no visibility: the closed reading.
+        assert older.visibility == 'PRIVATE'

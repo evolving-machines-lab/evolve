@@ -426,11 +426,27 @@ export interface SessionsListParams {
   agent?: string;
   tag_prefix?: string;
   sort?: 'newest' | 'oldest' | 'cost';
+  scope?: 'my' | 'shared';
 }
 
 export interface SessionsGetParams {
   sessions?: SessionsConfigParams;
   id: string;
+}
+
+/** The share and unshare verbs' body on a session; `sessions_shares` takes the id alone. */
+export interface SessionsShareParams {
+  sessions?: SessionsConfigParams;
+  id: string;
+  link?: boolean;
+  emails?: string[];
+}
+
+/** The wire's JobShares, as the bridge hands it on (already snake_case). */
+export interface JobSharesResponse {
+  visibility: 'PRIVATE' | 'LINK';
+  link: { enabled: boolean; url?: string };
+  emails: { email: string; shared_by: string; created_at: string }[];
 }
 
 export interface SessionsEventsParams {
@@ -470,6 +486,8 @@ export interface SessionInfoResponse {
   // The one-home usage reading, verbatim from the wire (already snake_case —
   // its keys are identical on every surface by design).
   usage: Record<string, unknown> | null;
+  // The share link's switch: LINK while the session's unlisted link is on.
+  visibility: 'PRIVATE' | 'LINK';
 }
 
 export interface SessionPageResponse {
