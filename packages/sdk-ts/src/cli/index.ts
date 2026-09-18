@@ -1514,9 +1514,8 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<slug>",
         examples: ["evolve auth org show acme"],
       },
-      // The team verbs (owner's ruling 2026-09-17): Harbor creates orgs on
-      // its web hub only; here create, invite, join and use are CLI verbs
-      // over the routes that already exist.
+      // The team verbs (owner's ruling 2026-09-17): Harbor creates orgs on its
+      // web hub only; here they are CLI verbs over routes that already exist.
       "org create": {
         summary: "Create an organization; you become its owner",
         flags: {
@@ -5050,9 +5049,7 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
 
   const created = await client.start(await resolveLocalSkillUploads(input, inv, io));
-  // The FIRST human line names where the job landed — the org the request
-  // named (flag, else the `auth org use` default), or `personal`. In --json
-  // it is the created job's own `org` field.
+  // The first human line names where the job landed (--json carries it as the job's `org`).
   if (!json) io.out(`org  ${input.org ?? "personal"}`);
   if (!watch) {
     if (json) {
