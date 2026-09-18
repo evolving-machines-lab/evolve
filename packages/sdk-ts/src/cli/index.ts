@@ -642,7 +642,7 @@ const GROUPS: Record<string, GroupSpec> = {
       },
       share: {
         summary: "Share a job you created by link or by email",
-        notes: "--link prints the run's unlisted link (the same one every time). Each --email gets a link to the run by mail; an address without an account gets a sign-up link. Both flags may ride one command.",
+        notes: "--link prints the run's unlisted link (the same one every time). Each --email gets a link to the run by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
         flags: {
           link: { kind: "boolean", help: "Enable the job's unlisted link and print it" },
           email: { kind: "repeat", value: "<address>", help: "Share with this address; repeatable" },
