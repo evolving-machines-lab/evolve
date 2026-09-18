@@ -4266,11 +4266,15 @@ def _map_upload_datasets(raw: Any) -> Optional[List[UploadDataset]]:
         return None
     out: List[UploadDataset] = []
     for entry in raw:
-        if not isinstance(entry, dict) or not isinstance(entry.get('name'), str) or not entry['name']:
+        if not isinstance(entry, dict):
+            return None
+        if 'name' not in entry and isinstance(entry.get('path'), str):
+            continue  # a local-path dataset entry declares no name: nothing to serve
+        if not isinstance(entry.get('name'), str) or not entry['name']:
             return None
         version = entry.get('version')
         out.append(UploadDataset(name=entry['name'], version=version if isinstance(version, str) else None))
-    return out
+    return out or None
 
 
 #: The contract's ``TaskLinkedBy`` enum (spec/openapi.yaml), in its order.

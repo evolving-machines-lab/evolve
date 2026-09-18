@@ -30,7 +30,7 @@ List registered agents.
 evolve agent show <name>
 ```
 
-Show one of your own registered agents. A name is unique per person, so a teammate's registration listed under `--scope shared` or `org` has no `show` address and answers `agent_not_found`; name it in a job's `agents[].name` instead.
+Show a registered agent: your own of that name first, else the oldest of that name in an organization you belong to — the one a job of that organization runs. A name outside your organizations answers `agent_not_found`.
 
 ## agent add
 

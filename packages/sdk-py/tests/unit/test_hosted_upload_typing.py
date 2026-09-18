@@ -411,3 +411,10 @@ def test_mapper_nulls_an_absent_or_malformed_datasets_list() -> None:
     assert _map_job(_wire_job(upload=base)).upload.datasets is None
     assert _map_job(_wire_job(upload={**base, 'datasets': []})).upload.datasets is None
     assert _map_job(_wire_job(upload={**base, 'datasets': [{'name': 'ok', 'version': '1'}, {'version': '2'}]})).upload.datasets is None
+
+
+def test_mapper_skips_a_local_path_entry_and_keeps_the_named_ones() -> None:
+    base = {'original_job_id': None, 'original_job_name': None, 'uploaded_at': '2026-09-18T20:00:00.000Z', 'reported_totals': None, 'task_links': None}
+    job = _map_job(_wire_job(upload={**base, 'datasets': [{'path': './local-bench'}, {'name': 'terminal-bench', 'version': '2.0'}]}))
+    assert job.upload.datasets == [UploadDataset(name='terminal-bench', version='2.0')]
+    assert _map_job(_wire_job(upload={**base, 'datasets': [{'path': './local-bench'}]})).upload.datasets is None

@@ -69,7 +69,7 @@ evolve agent show acme-cli
 evolve agent remove acme-cli
 ```
 
-Removing an agent keeps the record of the past jobs that ran it. Registered agents are private, so another account's name reads as `agent_not_found`. The number you may hold is published as `agent_registration.max_per_user`; past it, `agent_limit_reached`.
+Removing an agent keeps the record of the past jobs that ran it. A registered agent belongs to its owner and to an organization: teammates may name it in their jobs and open it by name; a name outside your organizations reads as `agent_not_found`. The number you may hold is published as `agent_registration.max_per_user`; past it, `agent_limit_reached`.
 
 The install script, or the uploaded directory, runs once with internet and no secrets: fetch only public sources and leave the executables in `$PREFIX/bin`. To change an agent without a gap, use `upsert` rather than remove and add.
 
