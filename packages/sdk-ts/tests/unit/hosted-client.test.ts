@@ -4649,6 +4649,46 @@ async function testUploadProvenanceMappingEdges() {
       "a non-string original_job_name reads null while the rest maps"
     );
 
+    // The archive's declared datasets ride as declared; a Harbor local-path
+    // entry (no name) is skipped; one nameless entry of another shape nulls the list.
+    setMockResponse("/api/jobs/eval-ds", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-ds",
+        upload: {
+          original_job_id: null,
+          original_job_name: null,
+          uploaded_at: "2026-08-28T10:00:00.000Z",
+          reported_totals: null,
+          task_links: null,
+          datasets: [{ path: "./local-bench" }, { name: "terminal-bench", version: "2.0" }, { name: "bare" }],
+        },
+      }),
+    });
+    assertEqual(
+      (await e.get("eval-ds")).upload?.datasets,
+      [
+        { name: "terminal-bench", version: "2.0" },
+        { name: "bare", version: null },
+      ],
+      "declared datasets map, the local-path entry skipped"
+    );
+    setMockResponse("/api/jobs/eval-badlist", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-badlist",
+        upload: {
+          original_job_id: null,
+          original_job_name: null,
+          uploaded_at: "2026-08-28T10:00:00.000Z",
+          reported_totals: null,
+          task_links: null,
+          datasets: [{ name: "ok", version: "1" }, { version: "2" }],
+        },
+      }),
+    });
+    assertEqual((await e.get("eval-badlist")).upload?.datasets, null, "a nameless entry nulls the whole list");
+
     // A fractional trial count is a malformed totals object and voids it
     // whole — the count must be a genuine integer (the Python mapper's rule).
     setMockResponse("/api/jobs/eval-frac", {
