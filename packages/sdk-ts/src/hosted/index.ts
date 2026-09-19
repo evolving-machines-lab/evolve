@@ -166,6 +166,7 @@ import type {
   JobImportSkippedTrial,
   JobImportSource,
   JobTaskLink,
+  UploadDataset,
   ListJobImportsOptions,
   TrialTaskLink,
   WatchJobImportOptions,
@@ -1106,6 +1107,7 @@ function mapUploadProvenance(raw: unknown): Job["upload"] {
     uploaded_at: blob.uploaded_at,
     reported_totals: reportedTotals,
     task_links: mapTaskLinks(blob.task_links),
+    datasets: mapUploadDatasets(blob.datasets),
   };
 }
 
@@ -1153,6 +1155,21 @@ function mapTaskLinks(raw: unknown): JobTaskLink[] | null {
     });
   }
   return out;
+}
+
+/** The archive's declared datasets (spec UploadDataset[]): absent, empty or malformed read null — one bad entry nulls the list. */
+function mapUploadDatasets(raw: unknown): UploadDataset[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: UploadDataset[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const { name, version, path } = entry as Record<string, unknown>;
+    // A local-path dataset entry declares no name: nothing to serve, nothing invented.
+    if (name === undefined && typeof path === "string") continue;
+    if (typeof name !== "string" || name === "") return null;
+    out.push({ name, version: typeof version === "string" ? version : null });
+  }
+  return out.length > 0 ? out : null;
 }
 
 /**

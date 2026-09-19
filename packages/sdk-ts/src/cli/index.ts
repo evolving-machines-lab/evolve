@@ -4028,6 +4028,10 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
       rows.push(["reported tokens", reportedTokens.join(" · ")]);
     }
   }
+  // What the archive itself said it ran over, one row (upload.datasets).
+  if (e.upload?.datasets && e.upload.datasets.length > 0) {
+    rows.push(["archive datasets", e.upload.datasets.map((d) => (d.version ? `${d.name}@${d.version}` : d.name)).join(", ")]);
+  }
   // The task-folder fact of an uploaded job, one row: how many trials
   // linked to a stored task (upload.task_links) — nothing on a pre-feature
   // record (null) or a trial-less one. The upload follow passes
