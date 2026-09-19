@@ -97,7 +97,7 @@ Every `list` command, and `job trials`, `job tasks` and `job imports`, share one
 
 ## Scope
 
-`--scope` on `job list`, `analysis list` and `check list` is `my`, what you created and the default, or `shared`, your organizations' rows that teammates created. `all` is refused. Every id printed under either scope resolves on its `show`, `trace` and `download`; an id outside your organizations answers the noun's not-found code, exactly like an id that does not exist.
+`--scope` on `job list`, `analysis list`, `check list`, `session list`, `skill list` and `agent list` is `my`, what you created and the default; `shared`, your organizations' rows that teammates created; or `org`, everything in your organizations, your own rows included. `all` is refused. Every id printed under any scope resolves on its `show`, `trace` and `download`; an id outside your organizations answers the noun's not-found code, exactly like an id that does not exist. The one exception is a registered agent, addressed by name rather than id: `agent show <name>` opens your own registration of that name, else a teammate's in one of your organizations there — it is usable in a job's `agents[].name`, not on `show`.
 
 ## Values
 

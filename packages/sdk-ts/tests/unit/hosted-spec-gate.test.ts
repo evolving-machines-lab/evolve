@@ -241,6 +241,28 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   listJobImports: "jobs.listImports",
   getJobImport: "jobs.getImport",
   deleteJob: "jobs.delete",
+  // Sharing (B190): the creator's three verbs are SDK methods; the share
+  // LINK's own doors (x-wave: 5) are the no-login viewer page's and never
+  // SDK methods — an SDK caller holds a key and reads a run it was shared
+  // through the job and trial doors, which an email share opens.
+  shareJob: "jobs.share",
+  unshareJob: "jobs.unshare",
+  getJobShares: "jobs.shares",
+  getSharedJob: null,
+  listSharedJobTrials: null,
+  getSharedTrial: null,
+  getSharedTrialTrace: null,
+  listSharedTrialFiles: null,
+  getSharedTrialFile: null,
+  getSharedTrialFilesystem: null,
+  listSharedTrialFilesystemFolder: null,
+  readSharedTrialFilesystemFile: null,
+  searchSharedTrialFilesystem: null,
+  listSharedTrialFilesystemChanges: null,
+  downloadSharedTrialFilesystemArchive: null,
+  streamSharedTrialFilesystemEvents: null,
+  getSharedTrialSandboxLog: null,
+  streamSharedTrialSandboxLogs: null,
   resumeJob: "jobs.resume",
   retryJob: "jobs.retry",
   regradeJob: "jobs.regrade",
@@ -307,6 +329,28 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   getTaskCheckSandboxLog: "checks.taskFilesystem",
   streamTaskCheckSandboxLogs: "checks.taskFilesystem",
   getTaskCheckProcs: "checks.taskFilesystem",
+  // A check shares as a job does: the creator's three verbs are SDK methods;
+  // the check link's archive door is the link viewer's, like the job link's doors.
+  shareCheck: "checks.share",
+  unshareCheck: "checks.unshare",
+  getCheckShares: "checks.shares",
+  downloadSharedCheck: null,
+  // The session link's transcript door, like every other link door: no key,
+  // so no SDK wrapper (the session share verbs themselves are on the runtime
+  // plane's own map below).
+  getSharedSessionTranscript: null,
+  // The link's analysis doors (no key, no SDK wrapper), like the trial doors above.
+  listSharedJobAnalyses: null,
+  getSharedAnalysisSandboxLog: null,
+  streamSharedAnalysisSandboxLogs: null,
+  getSharedAnalysisFilesystem: null,
+  listSharedAnalysisFilesystemFolder: null,
+  readSharedAnalysisFilesystemFile: null,
+  searchSharedAnalysisFilesystem: null,
+  listSharedAnalysisFilesystemChanges: null,
+  downloadSharedAnalysisFilesystemArchive: null,
+  streamSharedAnalysisFilesystemEvents: null,
+  downloadSharedAnalysis: null,
   // Datasets
   listDatasets: "datasets.list",
   getDataset: "datasets.get",
@@ -358,22 +402,22 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   revokeApiKey: null, // wave 2 — no SDK method yet
   // Team accounts (x-wave: 4). The SDK speaks the READ pair — Harbor's
   // `auth org list` shape and the hosted `auth org show` extension (quota
-  // + usage). The other ten verbs are served by the API and stay outside
-  // the SDK until a wave asks for them; quotas are set only from the
-  // platform administrator's dashboard session, so no SDK method could
-  // ever set one.
+  // + usage) — and the team verbs (owner's ruling 2026-09-17): create,
+  // invite, join, members. Rename, delete, member roles and invite
+  // revocation stay outside the SDK until a wave asks for them; quotas are
+  // set only from the platform administrator's dashboard session.
   listOrgs: "orgs.list",
   getOrg: "orgs.get",
-  createOrg: null,
+  createOrg: "orgs.create",
   updateOrg: null,
   deleteOrg: null,
-  listOrgMembers: null,
+  listOrgMembers: "orgs.members",
   updateOrgMember: null,
   removeOrgMember: null,
   listOrgInvites: null,
-  createOrgInvite: null,
+  createOrgInvite: "orgs.invite",
   revokeOrgInvite: null,
-  acceptOrgInvite: null,
+  acceptOrgInvite: "orgs.join",
 };
 
 function resolve(path: string): unknown {
@@ -396,6 +440,11 @@ const RUNTIME_OPERATION_TO_MODULE: Record<string, string> = {
   deleteSessions: "src/sessions/index.ts",
   getSession: "src/sessions/index.ts",
   deleteSession: "src/sessions/index.ts",
+  // Sharing a managed-agent session: the creator's three verbs, the job
+  // client's shapes on the sessions client (shareVerbs in the CLI).
+  shareSession: "src/sessions/index.ts",
+  unshareSession: "src/sessions/index.ts",
+  getSessionShares: "src/sessions/index.ts",
   ingestSessionEvents: "src/observability/session-logger.ts",
   getSessionSpend: "src/sessions/index.ts (cost surface)",
   listCheckpoints: "src/storage/index.ts",

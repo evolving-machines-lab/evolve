@@ -32,7 +32,7 @@ from evolve import (
     TrialUploadProvenance,
     UploadProvenance,
 )
-from evolve.hosted import EvalSandboxProvider, _map_job, _map_trial
+from evolve.hosted import UploadDataset, EvalSandboxProvider, _map_job, _map_trial
 from tests.unit.conftest import resolve_spec_path
 
 SPEC_PATH = resolve_spec_path()
@@ -388,3 +388,33 @@ def test_task_links_mapper_reads_the_contract_and_defends_it() -> None:
     imported = _map_job_import({'id': 'imp-1', 'status': 'COMPLETED', 'task_links': rollup})
     assert [row.task_name for row in imported.task_links] == ['ok-task', 'foo-task']
     assert _map_job_import({'id': 'imp-1', 'status': 'QUEUED'}).task_links is None
+
+
+def test_mapper_reads_the_archives_declared_datasets() -> None:
+    job = _map_job(_wire_job(upload={
+        'original_job_id': None,
+        'original_job_name': None,
+        'uploaded_at': '2026-09-18T20:00:00.000Z',
+        'reported_totals': None,
+        'task_links': None,
+        'datasets': [{'name': 'terminal-bench/terminal-bench', 'version': '4'}, {'name': 'bare', 'version': None}],
+    }))
+    assert job.upload is not None
+    assert job.upload.datasets == [
+        UploadDataset(name='terminal-bench/terminal-bench', version='4'),
+        UploadDataset(name='bare', version=None),
+    ]
+
+
+def test_mapper_nulls_an_absent_or_malformed_datasets_list() -> None:
+    base = {'original_job_id': None, 'original_job_name': None, 'uploaded_at': '2026-09-18T20:00:00.000Z', 'reported_totals': None, 'task_links': None}
+    assert _map_job(_wire_job(upload=base)).upload.datasets is None
+    assert _map_job(_wire_job(upload={**base, 'datasets': []})).upload.datasets is None
+    assert _map_job(_wire_job(upload={**base, 'datasets': [{'name': 'ok', 'version': '1'}, {'version': '2'}]})).upload.datasets is None
+
+
+def test_mapper_skips_a_local_path_entry_and_keeps_the_named_ones() -> None:
+    base = {'original_job_id': None, 'original_job_name': None, 'uploaded_at': '2026-09-18T20:00:00.000Z', 'reported_totals': None, 'task_links': None}
+    job = _map_job(_wire_job(upload={**base, 'datasets': [{'path': './local-bench'}, {'name': 'terminal-bench', 'version': '2.0'}]}))
+    assert job.upload.datasets == [UploadDataset(name='terminal-bench', version='2.0')]
+    assert _map_job(_wire_job(upload={**base, 'datasets': [{'path': './local-bench'}]})).upload.datasets is None

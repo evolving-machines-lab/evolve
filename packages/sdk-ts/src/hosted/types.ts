@@ -22,6 +22,12 @@ export interface HostedClientConfig {
   apiKey?: string;
   /** API base URL override (default: the Evolve dashboard API) */
   baseUrl?: string;
+  /**
+   * The organization (slug or id) a job or a published dataset lands in when
+   * the call names none — the client-level default. A call's own `org`
+   * always wins; with neither, the caller's personal org.
+   */
+  org?: string;
 }
 
 /**
@@ -131,7 +137,7 @@ export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
  * the CLI refuses it at the keyboard. A runtime value for the same reason as
  * TRIAL_STATUSES: the CLI validates `--scope` against it.
  */
-export const JOB_LIST_SCOPES = ["my", "shared"] as const;
+export const JOB_LIST_SCOPES = ["my", "shared", "org"] as const;
 
 /** One list scope — see JOB_LIST_SCOPES. */
 export type JobListScope = (typeof JOB_LIST_SCOPES)[number];
@@ -699,6 +705,11 @@ export interface AnalyzeConfig {
 export interface JobCreate {
   /** User-facing label; server-generated when omitted. */
   job_name?: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else the caller's personal org.
+   */
+  org?: string;
   datasets: DatasetSelector[];
   agents: AgentArmInput[];
   /** Attempts per task per agent arm (default 1, max 100). */
@@ -1178,6 +1189,18 @@ export interface UploadProvenance {
    * law existed (not backfillable, never guessed).
    */
   task_links: JobTaskLink[] | null;
+  /**
+   * The archive config.json's own `datasets` list as it declared them (name
+   * and `ref`), nothing resolved or fabricated; null when it declared none.
+   */
+  datasets: UploadDataset[] | null;
+}
+
+/** One dataset the uploaded archive's config.json declared (spec UploadDataset). */
+export interface UploadDataset {
+  name: string;
+  /** The `ref` or `version` it wrote; null when it wrote neither. */
+  version: string | null;
 }
 
 /**
@@ -1269,6 +1292,77 @@ export interface JobDeleteResult {
 }
 
 /**
+ * Who can reach a job without being its creator, an org member or an email
+ * share: `PRIVATE` (nobody) or `LINK` (anyone holding its unlisted link).
+ * There is no PUBLIC — nothing on this platform is listed for everyone.
+ */
+export type JobVisibility = "PRIVATE" | "LINK";
+
+/**
+ * The share and unshare verbs' one body (`POST /api/jobs/{jobId}/share`,
+ * `/unshare`): a link grant, an email grant, or both. `link: true` grants
+ * (or, on unshare, revokes) the job's unlisted link; `emails` are the
+ * addresses to share with (or remove) — one address each, at most 50 per
+ * job. A body naming neither is refused (`invalid_input`).
+ */
+export interface JobShareRequest {
+  link?: boolean;
+  emails?: string[];
+}
+
+/** One email share of a job. */
+export interface JobShareEmail {
+  /** The shared address, lowercased. */
+  email: string;
+  /** The email of the account that granted the share. */
+  shared_by: string;
+  created_at: string;
+}
+
+/**
+ * The job's link state. `url` is present exactly while the link is enabled —
+ * the owner can always copy it again.
+ */
+export interface JobShareLink {
+  enabled: boolean;
+  url?: string;
+}
+
+/**
+ * A job's whole share state — the answer of `GET /api/jobs/{jobId}/shares`
+ * and of both verbs that change it.
+ */
+export interface JobShares {
+  visibility: JobVisibility;
+  link: JobShareLink;
+  emails: JobShareEmail[];
+}
+
+/**
+ * The wire's JobShares, read in the same tolerant shape every required field
+ * here uses. One reader for every kind that shares — jobs, checks, sessions —
+ * so no client can read the same body differently.
+ */
+export function mapJobShares(raw: Record<string, unknown>): JobShares {
+  const link = (raw.link ?? {}) as Record<string, unknown>;
+  return {
+    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+    link: {
+      enabled: link.enabled === true,
+      ...(typeof link.url === "string" ? { url: link.url } : {}),
+    },
+    emails: (Array.isArray(raw.emails) ? raw.emails : []).map((entry) => {
+      const share = entry as Record<string, unknown>;
+      return {
+        email: String(share.email ?? ""),
+        shared_by: String(share.shared_by ?? ""),
+        created_at: String(share.created_at ?? ""),
+      };
+    }),
+  };
+}
+
+/**
  * Why a job FAILED — deliberately NOT under the key `error`, which on this
  * surface always means "this request failed". `if (body.error) throw` stays
  * correct on a healthy 200 read of a failed job.
@@ -1356,6 +1450,19 @@ export interface Job {
    * on a job this platform ran.
    */
   sandbox_provider: EvalSandboxProvider | null;
+  /**
+   * The owning organization's slug — the `org` named at create, else the
+   * creator's personal org. Null only on a regrade job whose source job has
+   * been deleted, or from a server older than the field.
+   */
+  org: string | null;
+  /**
+   * `PRIVATE`, or `LINK` when an unlisted share link reaches the job
+   * (`jobs().share(id, { link: true })`). Email shares are not a
+   * visibility: `jobs().shares(id)` lists them. Always `PRIVATE` on a
+   * regrade job; a server older than the field reads as `PRIVATE`.
+   */
+  visibility: JobVisibility;
   /** The create's `system_log`; derived jobs inherit it, a regrade and every pre-switch job answer false. */
   system_log: boolean;
   /** Entity cardinality only — things with no status of their own. */
@@ -3006,6 +3113,12 @@ export interface PublishDatasetInput {
    * required otherwise.
    */
   version?: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else a NEW dataset lands in the
+   * caller's personal org and an existing one stays where it is.
+   */
+  org?: string;
 }
 
 /** Options for datasets().publish() */
@@ -3214,6 +3327,11 @@ export type AgentSource = "install_script" | "tarball";
 export interface Agent {
   /** The name to put in job agents[].name */
   name: string;
+  /**
+   * The owning organization's slug. Its members may NAME this agent in a job;
+   * only its owner may edit or delete it. Null on a server predating the field.
+   */
+  org: string | null;
   /** How the executables were produced */
   source: AgentSource;
   /** The command run headless with `sh -c` at the task working directory */
@@ -3261,6 +3379,12 @@ export type AgentSourceInput =
 export type AgentInput = AgentSourceInput & {
   /** Agent name; also the value used later in job agents[].name */
   name: string;
+  /**
+   * Owning organization, by slug or id (team accounts). Requires membership;
+   * omitted, the client's `org` default, else your personal organization.
+   * Its members may then name this agent in their own jobs.
+   */
+  org?: string;
   /** Command run headless with `sh -c` at the task working directory */
   run_command: string;
   /** Env injected at RUN time only; may not override the run contract's keys */
@@ -3273,6 +3397,12 @@ export type AgentInput = AgentSourceInput & {
  * a field of it.
  */
 export type AgentUpsertInput = AgentSourceInput & {
+  /**
+   * Owning organization, by slug or id. Set at registration and fixed: naming
+   * a different one on a replace is refused rather than handing the agent to
+   * another team.
+   */
+  org?: string;
   /** Command run headless with `sh -c` at the task working directory */
   run_command: string;
   /** Env injected at RUN time only; may not override the run contract's keys */
@@ -3305,7 +3435,8 @@ export interface ListJobsOptions extends PageOptions {
   /**
    * Visibility scope (Harbor's `--scope`): `my` — jobs you created, the
    * server's default; `shared` — your organizations' jobs that teammates
-   * created. See JOB_LIST_SCOPES.
+   * created; `org` — every job in your organizations, your own included.
+   * See JOB_LIST_SCOPES.
    */
   scope?: JobListScope;
 }
@@ -3348,7 +3479,10 @@ export interface ListDatasetsOptions extends PageOptions {
 }
 
 /** Options for agents().list() (default page 50, max 200) */
-export interface ListAgentsOptions extends PageOptions {}
+export interface ListAgentsOptions extends PageOptions {
+  /** Visibility scope, exactly as on jobs().list(): `my` (the default), `shared` or `org`. */
+  scope?: JobListScope;
+}
 
 /** Options for datasets().get() / getActive(): pages the TASK list (default 200, max 500) */
 export interface GetDatasetOptions extends PageOptions {}
@@ -3874,6 +4008,11 @@ export interface SkillUpload {
   id: string;
   /** Folder name = the name the harness sees when mounted. */
   name: string;
+  /**
+   * The owning organization's slug. Its members may REFERENCE this skill from
+   * a job; only its owner may delete it. Null on a server predating the field.
+   */
+  org: string | null;
   /** Content digest, "sha256:<hex>" — Harbor's recipe. */
   digest: string;
   size_bytes: number;
@@ -3884,9 +4023,22 @@ export interface SkillUpload {
   created_at: string;
 }
 
+/** Options for skills().upload() */
+export interface UploadSkillOptions {
+  /**
+   * Owning organization, by slug or id. Requires membership; omitted, the
+   * client's `org` default, else your personal organization. Its members may
+   * then reference the record from their own jobs.
+   */
+  org?: string;
+}
+
 export type SkillUploadPage = Page<SkillUpload>;
 export interface SkillUploadList extends Awaitable<SkillUploadPage>, AsyncIterable<SkillUpload> {}
-export interface ListSkillsOptions extends PageOptions {}
+export interface ListSkillsOptions extends PageOptions {
+  /** Visibility scope, exactly as on jobs().list(): `my` (the default), `shared` or `org`. */
+  scope?: JobListScope;
+}
 
 /** Client for platform-stored skills (uploads referenced as `upload:<id>`). */
 export interface SkillsClient {
@@ -3901,8 +4053,8 @@ export interface SkillsClient {
    * their immutable `upload:<id>` handles), and `name:<skill-name>` in
    * `agents[].skills` resolves through it at job create.
    */
-  upload(directory: string): Promise<SkillUpload[]>;
-  /** List the caller's uploaded skills (cursor-paged). */
+  upload(directory: string, options?: UploadSkillOptions): Promise<SkillUpload[]>;
+  /** List uploaded skills (cursor-paged); `scope` widens past your own. */
   list(options?: ListSkillsOptions): SkillUploadList;
   /**
    * Get one uploaded skill, including its SKILL.md text. Takes a record id,
@@ -4126,6 +4278,31 @@ export interface JobsClient {
    * The response is the receipt: what was destroyed, counted.
    */
   delete(id: string): Promise<JobDeleteResult>;
+  /**
+   * Share a job you created — by link, by email, or both (Harbor's
+   * `harbor job share`; the platform shares a person by email address and
+   * never makes a job public: `link: true` mints an UNLISTED link instead,
+   * the same link on every later call). Each new address is emailed a link
+   * to the run; an address with no account gets a sign-up link for exactly
+   * that address (no gateway credits), while an address already on the
+   * waitlist or holding an invite gets the email without a sign-up link and
+   * uses that invite instead. An email share reads the job and
+   * lists it under `scope: "shared"`; it never operates it. Creator-only:
+   * an org member is refused `org_forbidden` (403), a stranger sees 404; a
+   * regrade job id is 404. The response is the job's whole share state.
+   */
+  share(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * Revoke a job's link (`link: true` — the old link is dead at once; a
+   * later share mints a new one) and/or email shares (`emails`). Idempotent;
+   * creator-only like `share`.
+   */
+  unshare(id: string, request: JobShareRequest): Promise<JobShares>;
+  /**
+   * The job's share state (Harbor's `harbor hub job shares`): visibility, the
+   * link with its URL while enabled, and every email share. Creator-only.
+   */
+  shares(id: string): Promise<JobShares>;
   /**
    * Grep the parsed trace of EVERY trial of the job in one server-side pass.
    * `q` is the trace filter's grammar: a case-insensitive POSIX regex over
@@ -4861,6 +5038,13 @@ export interface Check {
   exclude_task_names: string[];
   /** Harbor's -l/--n-tasks as stored; null = no cap. */
   n_tasks: number | null;
+  /**
+   * `PRIVATE`, or `LINK` when an unlisted share link reaches the check
+   * (`checks().share(id, { link: true })`). Email shares are not a
+   * visibility: `checks().shares(id)` lists them. A server older than the
+   * field reads as `PRIVATE`.
+   */
+  visibility: JobVisibility;
   /** One entry per task directory checked, sorted by task name. */
   results: TaskCheck[];
   cost_usd: number | null;
@@ -5010,6 +5194,20 @@ export interface ChecksClient {
     id: string,
     options?: DownloadJobOptions
   ): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+  /**
+   * Share a check you created — `jobs().share` on a check: `link: true`
+   * mints the check's unlisted link (the same link on every later call);
+   * each new address is emailed a link and reads the check, its task
+   * checks and the download, and lists it under `scope: "shared"`; it
+   * never operates it. Creator-only: an org member is refused
+   * `org_forbidden` (403), a stranger sees 404. The response is the
+   * check's whole share state, the job's `JobShares` shape.
+   */
+  share(id: string, request: JobShareRequest): Promise<JobShares>;
+  /** Revoke a check's link and/or email shares — `jobs().unshare` on a check. Idempotent; creator-only. */
+  unshare(id: string, request: JobShareRequest): Promise<JobShares>;
+  /** The check's share state: visibility, the link with its URL while enabled, and every email share. Creator-only. */
+  shares(id: string): Promise<JobShares>;
 }
 
 /** A key descriptor. The secret is never returned. */
@@ -5108,17 +5306,60 @@ export interface OrganizationDetail extends Organization {
   usage: OrgUsage;
 }
 
+/** One member of an organization (`GET /api/orgs/{org}/members` item). */
+export interface OrgMember {
+  user_id: string;
+  email: string;
+  role: OrgRole;
+  joined_at: string;
+}
+
+/** An invite link's descriptor — the token itself is returned once, at creation. */
+export interface OrgInvite {
+  invite_id: string;
+  /** Null = never expires. */
+  expires_at: string | null;
+  /** Null = unlimited uses. */
+  max_uses: number | null;
+  /** Accepted joins so far. */
+  uses: number;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+/** A freshly minted invite: the descriptor plus its one-time token (`POST /api/orgs/{org}/invites`). */
+export interface OrgInviteCreated extends OrgInvite {
+  /** The invite link's credential, returned ONCE — whoever presents it while signed in joins as member. */
+  token: string;
+}
+
+/** The answer to redeeming an invite token (`POST /api/orgs/invites/accept`). */
+export interface OrgJoined {
+  org: Organization;
+  /** True when the caller was already a member (no use of the link consumed). */
+  already_member: boolean;
+}
+
 /**
- * Client for the caller's organizations — the read pair. Creating, renaming,
- * deleting, members and invite links are served by the API and stay outside
- * the SDK until a wave asks for them; quotas are set only from the platform
- * administrator's dashboard session, so no SDK method could ever set one.
+ * Client for the caller's organizations: the read pair (Harbor's `auth org
+ * list` shape and the hosted `auth org show` extension), and the team
+ * verbs — create, invite, join, members. Renaming, deleting, member roles
+ * and invite revocation stay outside the SDK until a wave asks; quotas are
+ * set only from the platform administrator's dashboard session.
  */
 export interface OrgsClient {
   /** Every organization the caller belongs to, personal first (`GET /api/orgs`). */
   list(): Promise<Organization[]>;
   /** One organization by slug (or id): role, member count, quota, usage (`GET /api/orgs/{org}`). */
   get(org: string): Promise<OrganizationDetail>;
+  /** Create a shared organization under `name` (its slug); the caller becomes its owner (`POST /api/orgs`). */
+  create(name: string, options?: { displayName?: string }): Promise<Organization>;
+  /** Mint an invite link for an org you own; the response carries the token once (`POST /api/orgs/{org}/invites`). */
+  invite(org: string): Promise<OrgInviteCreated>;
+  /** Redeem an invite token: join its org as member (`POST /api/orgs/invites/accept`). */
+  join(token: string): Promise<OrgJoined>;
+  /** The org's members, owners first; any member may read it (`GET /api/orgs/{org}/members`). */
+  members(org: string): Promise<OrgMember[]>;
 }
 
 // =============================================================================
@@ -5277,6 +5518,9 @@ export const HOSTED_ERROR_CODES = [
   "no_checkable_tasks",
   "too_many_concurrent_check_uploads",
   "no_analyzable_trials",
+  // Sharing a managed-agent session: a session the caller cannot read, or
+  // that never existed (404). The session link's doors answer it too.
+  "session_not_found",
   // Job upload (POST /api/jobs/upload): the archive is not a Harbor job
   // directory (no result.json / config.json at its root, or they do not
   // parse); one trial directory that cannot be ingested (the refusal names

@@ -284,6 +284,10 @@ HostedErrorCode = Literal[
     'no_checkable_tasks',
     'too_many_concurrent_check_uploads',
     'no_analyzable_trials',
+    # Sharing a managed-agent session (POST /api/sessions/{sessionId}/share):
+    # a session the caller cannot read, or that never existed (404). The
+    # session link's own doors answer it for a token of another kind.
+    'session_not_found',
     # Job upload (POST /api/jobs/upload): the archive is not a Harbor job
     # directory (no result.json / config.json at its root, or they do not
     # parse); one trial directory that cannot be ingested (the refusal names
@@ -565,7 +569,7 @@ EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 #: the per-id doors already open for you that is not your own. Harbor's
 #: ``all`` adds public rows; nothing hosted is public, so the server refuses
 #: it (``invalid_input``).
-JobListScope = Literal['my', 'shared']
+JobListScope = Literal['my', 'shared', 'org']
 
 #: An analysis's own lifecycle ladder — lowercase, the object's Harbor
 #: dialect (spec ``TrialAnalysis.status``).
@@ -1307,6 +1311,17 @@ class UploadProvenance:
     #: task — and so analyze with the task folder — and why the rest did
     #: not. None only on jobs ingested before the link law existed.
     task_links: Optional[List['JobTaskLink']] = None
+    #: The archive config.json's own ``datasets`` as it declared them (name and
+    #: ``ref``), nothing resolved or fabricated; None when it declared none.
+    datasets: Optional[List['UploadDataset']] = None
+
+
+@dataclass
+class UploadDataset:
+    """One dataset the uploaded archive's config.json declared (spec ``UploadDataset``)."""
+    name: str
+    #: The ``ref`` or ``version`` it wrote; None when it wrote neither.
+    version: Optional[str]
 
 
 @dataclass
@@ -1343,6 +1358,37 @@ class JobDeleteResult:
     job_id: str
     trials_deleted: int
     analyses_deleted: int
+
+
+@dataclass
+class JobShareEmail:
+    """One email share of a job."""
+    #: The shared address, lowercased.
+    email: str
+    #: The email of the account that granted the share.
+    shared_by: str
+    created_at: str
+
+
+@dataclass
+class JobShareLink:
+    """The job's link state; ``url`` is set exactly while the link is enabled
+    (the owner can always copy it again)."""
+    enabled: bool
+    url: Optional[str] = None
+
+
+@dataclass
+class JobShares:
+    """A job's whole share state — the answer of ``GET /api/jobs/{jobId}/shares``
+    and of both verbs that change it (``share`` / ``unshare``).
+
+    ``visibility`` is ``'PRIVATE'`` or ``'LINK'`` (an unlisted link reaches
+    the job); there is no PUBLIC. ``emails`` are the email shares.
+    """
+    visibility: str
+    link: JobShareLink
+    emails: List[JobShareEmail] = field(default_factory=list)
 
 
 @dataclass
@@ -2030,6 +2076,10 @@ class Check(TypedDict):
     exclude_task_names: List[str]
     #: Harbor's -l/--n-tasks as stored; None = no cap.
     n_tasks: Optional[int]
+    #: ``'PRIVATE'``, or ``'LINK'`` when an unlisted share link reaches the check
+    #: (``checks().share(id, link=True)``). Email shares are not a visibility:
+    #: ``checks().shares(id)`` lists them. A server older than the field reads as ``'PRIVATE'``.
+    visibility: str
     #: One entry per task directory checked, sorted by task name.
     results: List[TaskCheck]
     cost_usd: Optional[float]
@@ -2200,6 +2250,15 @@ class Job:
     updated_at: str
     #: None while the job is live.
     finished_at: Optional[str]
+    #: The owning organization's slug — the ``org`` named at create, else the
+    #: creator's personal org. None only on a regrade job whose source job
+    #: has been deleted, or from a server older than the field.
+    org: Optional[str] = field(default=None, kw_only=True)
+    #: ``'PRIVATE'``, or ``'LINK'`` when an unlisted share link reaches the job
+    #: (``jobs().share(id, link=True)``). Email shares are not a visibility:
+    #: ``jobs().shares(id)`` lists them. Always ``'PRIVATE'`` on a regrade job;
+    #: a server older than the field reads as ``'PRIVATE'``.
+    visibility: str = field(default='PRIVATE', kw_only=True)
 
 
 @dataclass
@@ -3307,12 +3366,15 @@ class Agent:
     """A private agent registered by the caller.
 
     Once registered, ``name`` is usable in job ``agents[].name`` exactly like a
-    built-in ("claude", "codex", ...). Private to its owner: another user's
-    name reads as ``agent_not_found``, never as a permission error — existence
-    is never leaked.
+    built-in ("claude", "codex", ...). Owned by its registrant and belonging to
+    an organization: its members may name it in their own jobs, while editing
+    and deleting stay with the owner. A name outside both reads as
+    ``agent_not_found``, never as a permission error — existence is never leaked.
     """
     # The name to put in job agents[].name
     name: str
+    # The owning organization's slug: its members may name this agent in a job; only the owner edits it.
+    org: Optional[str]
     # How the executables were produced: "install_script" | "tarball"
     source: str
     # The command run headless with `sh -c` at the task working directory
@@ -3425,6 +3487,46 @@ class OrganizationDetail(Organization):
     member_count: int = field(kw_only=True)
     quota: OrgQuota = field(kw_only=True)
     usage: OrgUsage = field(kw_only=True)
+
+
+@dataclass
+class OrgMember:
+    """One member of an organization (``GET /api/orgs/{org}/members`` item)."""
+    user_id: str
+    email: str
+    role: OrgRole
+    joined_at: str
+
+
+@dataclass
+class OrgInvite:
+    """An invite link's descriptor — the token itself is returned once, at creation."""
+    invite_id: str
+    #: None = never expires.
+    expires_at: Optional[str]
+    #: None = unlimited uses.
+    max_uses: Optional[int]
+    #: Accepted joins so far.
+    uses: int
+    revoked_at: Optional[str]
+    created_at: str
+
+
+@dataclass
+class OrgInviteCreated(OrgInvite):
+    """A freshly minted invite: the descriptor plus its one-time token
+    (``POST /api/orgs/{org}/invites``)."""
+    #: The invite link's credential, returned ONCE — whoever presents it while
+    #: signed in joins as member.
+    token: str = field(kw_only=True)
+
+
+@dataclass
+class OrgJoined:
+    """The answer to redeeming an invite token (``POST /api/orgs/invites/accept``)."""
+    org: Organization
+    #: True when the caller was already a member (no use of the link consumed).
+    already_member: bool
 
 
 # The ONE page envelope, on every collection this surface returns — top level
@@ -3617,6 +3719,8 @@ class SkillUpload:
     """
     id: str
     name: str
+    #: The owning organization's slug: its members may reference this skill from a job; only the owner deletes it.
+    org: Optional[str]
     digest: str
     size_bytes: int
     description: Optional[str]
@@ -4151,7 +4255,26 @@ def _map_upload_provenance(data: Any) -> Optional[UploadProvenance]:
         uploaded_at=uploaded_at,
         reported_totals=reported_totals,
         task_links=_map_task_links(data.get('task_links')),
+        datasets=_map_upload_datasets(data.get('datasets')),
     )
+
+
+def _map_upload_datasets(raw: Any) -> Optional[List[UploadDataset]]:
+    """The archive's declared datasets (spec ``UploadDataset[]``): absent, empty or
+    malformed all read None — one bad entry nulls the list, never a shorter one."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: List[UploadDataset] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        if 'name' not in entry and isinstance(entry.get('path'), str):
+            continue  # a local-path dataset entry declares no name: nothing to serve
+        if not isinstance(entry.get('name'), str) or not entry['name']:
+            return None
+        version = entry.get('version')
+        out.append(UploadDataset(name=entry['name'], version=version if isinstance(version, str) else None))
+    return out or None
 
 
 #: The contract's ``TaskLinkedBy`` enum (spec/openapi.yaml), in its order.
@@ -4315,6 +4438,30 @@ def _map_job(data: Dict[str, Any]) -> Job:
         started_at=data.get('started_at', ''),
         updated_at=data.get('updated_at', ''),
         finished_at=data.get('finished_at'),
+        org=data['org'] if isinstance(data.get('org'), str) else None,
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+    )
+
+
+def _map_job_shares(data: Dict[str, Any]) -> JobShares:
+    """The wire's JobShares, read in the same tolerant shape every required
+    field here uses."""
+    link = data.get('link') if isinstance(data.get('link'), dict) else {}
+    return JobShares(
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        link=JobShareLink(
+            enabled=link.get('enabled') is True,
+            url=link['url'] if isinstance(link.get('url'), str) else None,
+        ),
+        emails=[
+            JobShareEmail(
+                email=str(entry.get('email', '')),
+                shared_by=str(entry.get('shared_by', '')),
+                created_at=str(entry.get('created_at', '')),
+            )
+            for entry in (data.get('emails') or [])
+            if isinstance(entry, dict)
+        ],
     )
 
 
@@ -4355,6 +4502,27 @@ def _map_organization(data: Dict[str, Any]) -> Organization:
         personal=data.get('personal') is True,
         role=role if role in ('owner', 'member') else None,
         created_at=data.get('created_at', ''),
+    )
+
+
+def _map_org_member(data: Dict[str, Any]) -> OrgMember:
+    return OrgMember(
+        user_id=data.get('user_id', ''),
+        email=data.get('email', ''),
+        role='owner' if data.get('role') == 'owner' else 'member',
+        joined_at=data.get('joined_at', ''),
+    )
+
+
+def _map_org_invite_created(data: Dict[str, Any]) -> OrgInviteCreated:
+    return OrgInviteCreated(
+        invite_id=data.get('invite_id', ''),
+        expires_at=data['expires_at'] if isinstance(data.get('expires_at'), str) else None,
+        max_uses=data['max_uses'] if isinstance(data.get('max_uses'), int) else None,
+        uses=int(data.get('uses', 0)),
+        revoked_at=data['revoked_at'] if isinstance(data.get('revoked_at'), str) else None,
+        created_at=data.get('created_at', ''),
+        token=data.get('token', ''),
     )
 
 
@@ -4463,7 +4631,12 @@ def _map_check(data: Any) -> Check:
     results = data.get('results')
     return cast(
         Check,
-        {**data, 'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else []},
+        {
+            **data,
+            # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
+            'visibility': 'LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+            'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else [],
+        },
     )
 
 
@@ -4780,6 +4953,8 @@ def _map_import_failure(data: Any) -> Optional[DatasetImportFailure]:
 def _map_agent(data: Dict[str, Any]) -> Agent:
     return Agent(
         name=data.get('name', ''),
+        # Absent on a server predating the org axis: None, never an invented slug.
+        org=data.get('org') if isinstance(data.get('org'), str) else None,
         source=data.get('source', ''),
         run_command=data.get('run_command', ''),
         env=data.get('env') or {},
@@ -4792,6 +4967,7 @@ def _map_skill_upload(data: Dict[str, Any]) -> SkillUpload:
     return SkillUpload(
         id=data.get('id', ''),
         name=data.get('name', ''),
+        org=data.get('org') if isinstance(data.get('org'), str) else None,
         digest=data.get('digest', ''),
         size_bytes=data.get('size_bytes', 0) if isinstance(data.get('size_bytes'), int) else 0,
         description=data.get('description') if isinstance(data.get('description'), str) else None,
@@ -5205,6 +5381,10 @@ class _HostedHttp:
             or os.environ.get('EVOLVE_DASHBOARD_URL')
             or DEFAULT_BASE_URL
         ).rstrip('/')
+
+    def default_org(self) -> Optional[str]:
+        """The client-level org default (``HostedClientConfig.org``); None = personal."""
+        return self._config.org or None
 
     def api_key(self) -> str:
         api_key = self._config.api_key or os.environ.get('EVOLVE_API_KEY')
@@ -5841,6 +6021,7 @@ def _agent_upload_fields(
     install_script: Optional[str],
     directory: Optional[str],
     env: Optional[Dict[str, str]],
+    org: Optional[str] = None,
 ) -> 'tuple[Dict[str, Optional[str]], Optional[str]]':
     """The metadata parts both ``create()`` and ``upsert()`` send, plus the
     directory to stream when the agent ships as an uploaded tarball.
@@ -5862,6 +6043,9 @@ def _agent_upload_fields(
             'or a local directory (directory=...), plus run_command=...'
         )
     fields: Dict[str, Optional[str]] = {'name': name, 'run_command': run_command}
+    # The owning org rides as a named part, like every other metadata field.
+    if org is not None:
+        fields['org'] = org
     if env is not None:
         fields['env'] = json.dumps(env)
     if install_script is not None:
@@ -6364,6 +6548,7 @@ class DatasetsClient:
         hub_package: Optional[str] = None,
         name: Optional[str] = None,
         version: Optional[str] = None,
+        org: Optional[str] = None,
         on_upload_progress: Optional[Callable[[int, int], None]] = None,
         on_registered: Optional[Callable[[str], None]] = None,
     ) -> DatasetImport:
@@ -6438,6 +6623,9 @@ class DatasetsClient:
                 'publish() takes EXACTLY ONE source: git_url=... + git_ref=..., '
                 'directory=..., archive_url=..., or hub_package=...'
             )
+        # The call's own org wins; the client default fills an absent one;
+        # neither = no part, and the server's personal-org default applies.
+        owning_org = org if org is not None else self._http.default_org()
         if archive_url is not None:
             if name is None or version is None:
                 raise ValueError(
@@ -6446,7 +6634,7 @@ class DatasetsClient:
                     'is accepted, so a manifest cannot supply them'
                 )
             body, content_type = _multipart_body(
-                {'name': name, 'version': version, 'archive_url': archive_url}
+                {'name': name, 'version': version, 'archive_url': archive_url, 'org': owning_org}
             )
             raw = await self._http.request_upload(
                 '/api/datasets/publish', body, {'Content-Type': content_type}
@@ -6460,6 +6648,7 @@ class DatasetsClient:
                 fields['name'] = name
             if version is not None:
                 fields['version'] = version
+            fields['org'] = owning_org
             body, content_type = _multipart_body(fields)
             raw = await self._http.request_upload(
                 '/api/datasets/publish', body, {'Content-Type': content_type}
@@ -6485,7 +6674,7 @@ class DatasetsClient:
             raw = await _upload_directory_archive(
                 self._http,
                 '/api/datasets/publish',
-                {'name': name, 'version': version},
+                {'name': name, 'version': version, 'org': owning_org},
                 directory,
                 'corpus.tar.gz',
                 resumable_over=RESUMABLE_UPLOAD_THRESHOLD_BYTES,
@@ -6506,6 +6695,7 @@ class DatasetsClient:
                 'version': version,
                 'git_url': git_url,
                 'git_ref': git_ref,
+                'org': owning_org,
             }
             # Only when narrowing to a subfolder: an absent part means "the
             # repository root", and an empty part would be refused.
@@ -6944,6 +7134,7 @@ class AgentsClient:
         directory: Optional[str] = None,
         run_command: str,
         env: Optional[Dict[str, str]] = None,
+        org: Optional[str] = None,
     ) -> Agent:
         """Register a private agent.
 
@@ -6956,7 +7147,10 @@ class AgentsClient:
 
         ``run_command`` is run headless with ``sh -c`` at the task working
         directory. ``env`` is injected at RUN time only and may not override
-        the run contract's own keys.
+        the run contract's own keys. ``org`` is the organization the
+        registration belongs to — a slug or id, membership required; omitted,
+        the client's ``org`` default, else your personal organization. Its
+        members may then name this agent in their own jobs.
         """
         # ONE body grammar: multipart/form-data. The run command and the
         # declared env are named PARTS — they used to ride the query string of
@@ -6969,6 +7163,7 @@ class AgentsClient:
             install_script=install_script,
             directory=directory,
             env=env,
+            org=org if org is not None else self._http.default_org(),
         )
         if source_directory is not None:
             raw = await _upload_directory_archive(
@@ -6984,16 +7179,20 @@ class AgentsClient:
     def list(
         self,
         *,
+        scope: Optional[JobListScope] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's registered agents (cursor-paged).
+        """List registered agents (cursor-paged).
 
-        ``await`` the result for one page, or ``async for`` it to walk them all.
+        ``await`` the result for one page, or ``async for`` it to walk them
+        all. ``scope`` is the lists' own vocabulary: ``'my'`` (yours, the
+        server's default), ``'shared'`` (your organizations' other members')
+        or ``'org'`` (every registration in your organizations, yours included).
         """
         async def fetch_page(page_limit, page_cursor) -> AgentPage:
             raw = await self._http.request_json(
-                f'/api/agents{_page_query(page_limit, page_cursor)}'
+                f'/api/agents{_page_query(page_limit, page_cursor, scope=scope)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return AgentPage(
@@ -7021,6 +7220,7 @@ class AgentsClient:
         install_script: Optional[str] = None,
         directory: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
+        org: Optional[str] = None,
     ) -> Agent:
         """Register or replace an agent in ONE call, under ``name``.
 
@@ -7030,7 +7230,9 @@ class AgentsClient:
         ever meant to be an edit.
 
         This is a full REPLACEMENT, not a patch — every field comes from this
-        call, and an omitted ``env`` becomes empty.
+        call, and an omitted ``env`` becomes empty. The owning ``org`` is set
+        at registration and fixed: naming a different one here is refused
+        rather than handing the agent to another team.
         """
         fields, source_directory = _agent_upload_fields(
             'upsert()',
@@ -7039,6 +7241,7 @@ class AgentsClient:
             install_script=install_script,
             directory=directory,
             env=env,
+            org=org if org is not None else self._http.default_org(),
         )
         if source_directory is not None:
             raw = await _upload_directory_archive(
@@ -7113,7 +7316,7 @@ class SkillsClient:
     async def close(self) -> None:
         return None
 
-    async def upload(self, directory: str) -> List[SkillUpload]:
+    async def upload(self, directory: str, *, org: Optional[str] = None) -> List[SkillUpload]:
         """Upload a local skill folder and return its records.
 
         The folder must contain ``SKILL.md``, or be a root whose immediate
@@ -7125,7 +7328,10 @@ class SkillsClient:
         name's current one (different content = new record, pointer moves;
         old records keep their immutable ``upload:<id>`` handles), and
         ``name:<skill-name>`` in ``agents[].skills`` resolves through it at
-        job create.
+        job create. ``org`` is the organization the record belongs to — a slug
+        or id, membership required; omitted, the client's ``org`` default, else
+        your personal organization. Its members may then reference the record
+        from their own jobs; deleting stays with you.
         """
         if not isinstance(directory, str) or not directory.strip():
             raise ValueError('skills().upload() requires a local skill directory path')
@@ -7134,6 +7340,9 @@ class SkillsClient:
         # upload is recorded — and later mounted — under its folder name.
         folder_name = os.path.basename(os.path.abspath(directory))
         fields: Dict[str, Optional[str]] = {'name': folder_name} if folder_name else {}
+        owning_org = org if org is not None else self._http.default_org()
+        if owning_org is not None:
+            fields['org'] = owning_org
         raw = await _upload_directory_archive(
             self._http, '/api/skills', fields, directory, 'skill.tar.gz'
         )
@@ -7145,16 +7354,20 @@ class SkillsClient:
     def list(
         self,
         *,
+        scope: Optional[JobListScope] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
-        """List the caller's uploaded skills (cursor-paged).
+        """List uploaded skills (cursor-paged).
 
-        ``await`` the result for one page, or ``async for`` it to walk them all.
+        ``await`` the result for one page, or ``async for`` it to walk them
+        all. ``scope`` is the lists' own vocabulary: ``'my'`` (yours, the
+        server's default), ``'shared'`` (your organizations' other members')
+        or ``'org'`` (every upload in your organizations, yours included).
         """
         async def fetch_page(page_limit, page_cursor) -> SkillUploadPage:
             raw = await self._http.request_json(
-                f'/api/skills{_page_query(page_limit, page_cursor)}'
+                f'/api/skills{_page_query(page_limit, page_cursor, scope=scope)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return SkillUploadPage(
@@ -7285,6 +7498,7 @@ class JobsClient:
         datasets: List[Union[DatasetSelector, Dict[str, Any]]],
         agents: List[Union[AgentArm, Dict[str, Any]]],
         job_name: Optional[str] = None,
+        org: Optional[str] = None,
         n_attempts: Optional[int] = None,
         n_concurrent_trials: Optional[int] = None,
         max_trial_spend_usd: Optional[float] = None,
@@ -7400,6 +7614,11 @@ class JobsClient:
         body: Dict[str, Any] = {}
         if job_name is not None:
             body['job_name'] = job_name
+        # The call's own org wins; the client default fills an absent one;
+        # neither = no key, and the server's personal-org default applies.
+        owning_org = org if org is not None else self._http.default_org()
+        if owning_org is not None:
+            body['org'] = owning_org
         body['datasets'] = [
             (item if isinstance(item, DatasetSelector) else DatasetSelector(**item))._to_wire()
             for item in datasets
@@ -7461,8 +7680,9 @@ class JobsClient:
         ``async for`` it to walk every job across cursor pages. ``search`` is
         a server-side free-text filter over job name and dataset names;
         ``scope`` is Harbor's ``--scope`` — ``'my'`` (yours, the server's
-        default) or ``'shared'`` (your organizations' jobs that teammates
-        created). Both are sent on every page fetch.
+        default), ``'shared'`` (your organizations' jobs that teammates
+        created) or ``'org'`` (every job in your organizations, yours
+        included). Both are sent on every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(
@@ -8328,6 +8548,57 @@ class JobsClient:
             f'/api/jobs/{urllib.parse.quote(id)}', method='DELETE'
         )
         return _map_job_delete_result(raw)
+
+    async def share(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Share a job you created — by link, by email, or both (Harbor's
+        ``harbor job share``; the platform shares a person by email address
+        and never makes a job public: ``link=True`` mints an UNLISTED link
+        instead, the same link on every later call).
+
+        Each new address is emailed a link to the run; an address with no
+        account gets a sign-up link for exactly that address (no gateway
+        credits), while an address already on the waitlist or holding an
+        invite gets the email without a sign-up link and uses that invite
+        instead. An email share reads the job and lists it under
+        ``scope='shared'``; it never operates it. Creator-only: an org
+        member is refused ``org_forbidden`` (403), a stranger sees 404; a
+        regrade job id is 404. The answer is the job's whole share state.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/share', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def unshare(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Revoke a job's link (``link=True`` — the old link is dead at once; a
+        later ``share`` mints a new one) and/or email shares (``emails``).
+        Idempotent; creator-only like ``share``.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/jobs/{urllib.parse.quote(id)}/unshare', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def shares(self, id: str) -> JobShares:
+        """The job's share state (Harbor's ``harbor hub job shares``): its
+        visibility, the link with its URL while enabled, and every email
+        share. Creator-only."""
+        raw = await self._http.request_json(f'/api/jobs/{urllib.parse.quote(id)}/shares')
+        return _map_job_shares(raw)
 
     async def grep(
         self,
@@ -9431,6 +9702,48 @@ class ChecksClient:
             f'/api/checks/{urllib.parse.quote(check_id)}/tasks/{urllib.parse.quote(task_check_id)}',
         )
 
+    async def share(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Share a check you created — :meth:`JobsClient.share` on a check:
+        ``link=True`` mints the check's unlisted link (the same link on every
+        later call); each new address is emailed a link and reads the check,
+        its task checks and the download, and lists it under
+        ``scope='shared'``; it never operates it. Creator-only: an org member
+        is refused ``org_forbidden`` (403), a stranger sees 404. The answer is
+        the check's whole share state, the job's :class:`JobShares` shape.
+        """
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/checks/{urllib.parse.quote(id)}/share', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def unshare(
+        self, id: str, *, link: bool = False, emails: Optional[List[str]] = None
+    ) -> JobShares:
+        """Revoke a check's link (``link=True``) and/or email shares (``emails``)
+        — :meth:`JobsClient.unshare` on a check. Idempotent; creator-only."""
+        body: Dict[str, Any] = {}
+        if link:
+            body['link'] = True
+        if emails:
+            body['emails'] = list(emails)
+        raw = await self._http.request_json(
+            f'/api/checks/{urllib.parse.quote(id)}/unshare', method='POST', body=body
+        )
+        return _map_job_shares(raw)
+
+    async def shares(self, id: str) -> JobShares:
+        """The check's share state: its visibility, the link with its URL
+        while enabled, and every email share. Creator-only."""
+        raw = await self._http.request_json(f'/api/checks/{urllib.parse.quote(id)}/shares')
+        return _map_job_shares(raw)
+
 
 class AuthClient:
     """Client for caller identity.
@@ -9458,16 +9771,16 @@ class AuthClient:
 
 
 class OrgsClient:
-    """Client for the caller's organizations — the read pair.
+    """Client for the caller's organizations.
 
     Created via the standalone ``orgs()`` factory. ``list()`` is Harbor's
     ``harbor auth org list`` shape; ``get()`` is the hosted extension that
-    reads one organization's quota and usage. Creating, renaming, deleting,
-    members and invite links are served by the API and stay outside the SDK
-    until a wave asks for them; quotas are set only from the platform
-    administrator's dashboard session, so no SDK method could ever set one.
-    Requires ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is
-    given.
+    reads one organization's quota and usage; ``create()``, ``invite()``,
+    ``join()`` and ``members()`` are the team verbs. Renaming, deleting,
+    member roles and invite revocation stay outside the SDK until a wave
+    asks for them; quotas are set only from the platform administrator's
+    dashboard session, so no SDK method could ever set one. Requires
+    ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
     """
 
     def __init__(self, config: Optional[HostedClientConfig] = None):
@@ -9492,6 +9805,41 @@ class OrgsClient:
         """One organization by slug (or id): role, member count, quota, usage (``GET /api/orgs/{org}``)."""
         raw = await self._http.request_json(f'/api/orgs/{urllib.parse.quote(org, safe="")}')
         return _map_organization_detail(raw)
+
+    async def create(self, name: str, *, display_name: Optional[str] = None) -> Organization:
+        """Create a shared organization under ``name`` (its slug); the caller
+        becomes its owner (``POST /api/orgs``). A taken slug is refused
+        ``org_slug_taken``."""
+        body: Dict[str, Any] = {'slug': name}
+        if display_name is not None:
+            body['display_name'] = display_name
+        raw = await self._http.request_json('/api/orgs', method='POST', body=body)
+        return _map_organization(raw)
+
+    async def invite(self, org: str) -> OrgInviteCreated:
+        """Mint an invite link for an org you own; the response carries the
+        token ONCE (``POST /api/orgs/{org}/invites``, the server's defaults:
+        7 days, unlimited uses)."""
+        raw = await self._http.request_json(
+            f'/api/orgs/{urllib.parse.quote(org, safe="")}/invites', method='POST', body={}
+        )
+        return _map_org_invite_created(raw)
+
+    async def join(self, token: str) -> OrgJoined:
+        """Redeem an invite token: join its org as member
+        (``POST /api/orgs/invites/accept``). Idempotent for an existing
+        member (``already_member`` True)."""
+        raw = await self._http.request_json(
+            '/api/orgs/invites/accept', method='POST', body={'token': token}
+        )
+        org_raw = raw.get('org') if isinstance(raw.get('org'), dict) else {}
+        return OrgJoined(org=_map_organization(org_raw), already_member=raw.get('already_member') is True)
+
+    async def members(self, org: str) -> List[OrgMember]:
+        """The org's members, owners first; any member may read it (``GET /api/orgs/{org}/members``)."""
+        raw = await self._http.request_json(f'/api/orgs/{urllib.parse.quote(org, safe="")}/members')
+        items = raw.get('items') if isinstance(raw.get('items'), list) else []
+        return [_map_org_member(item) for item in items if isinstance(item, dict)]
 
 
 def _parse_dataset_ref(ref: str) -> 'tuple[str, Optional[str]]':

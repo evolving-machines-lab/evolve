@@ -383,6 +383,7 @@ export {
   type ListSessionsOptions,
   type SessionPage,
   type SessionInfo,
+  type SessionListScope,
   type SessionEvent,
   type SessionTranscript,
   type GetEventsOptions,
@@ -454,6 +455,10 @@ export {
   type OrgsClient,
   type Organization,
   type OrganizationDetail,
+  type OrgInvite,
+  type OrgInviteCreated,
+  type OrgJoined,
+  type OrgMember,
   type OrgQuota,
   type OrgRole,
   type OrgUsage,
@@ -482,6 +487,7 @@ export {
   type SkillUploadList,
   type SkillsClient,
   type ListSkillsOptions,
+  type UploadSkillOptions,
   type JobCreate,
   type Job,
   type JobFailure,
@@ -609,6 +615,11 @@ export {
   type TrialTaskLink,
   type JobTaskLink,
   type JobDeleteResult,
+  type JobShareEmail,
+  type JobShareLink,
+  type JobShareRequest,
+  type JobShares,
+  type JobVisibility,
   // Remote inspection: job-wide grep, the per-trial file tree, and the
   // client-side Harbor-tree assembly behind trial/analysis/job download —
   // with the per-harness table and the home placement rule it applies (the

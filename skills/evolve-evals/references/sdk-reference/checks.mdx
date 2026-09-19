@@ -53,11 +53,11 @@ description: "Start and read task quality checks."
   <Tab title="TypeScript">
     ```ts
     get(checkId: string): Promise<Check>
-    list(options?: { scope?: "my" | "shared"; status?: CheckStatus[]; dataset?: string; limit?: number; cursor?: string }): CheckList
+    list(options?: { scope?: "my" | "shared" | "org"; status?: CheckStatus[]; dataset?: string; limit?: number; cursor?: string }): CheckList
     watch(checkId: string, options?: { onProgress?: (check: Check) => void; signal?: AbortSignal; pollIntervalMs?: number }): Promise<Check>
     ```
 
-    One check with its per-task results, your checks, or a poll until every task settled. `dataset` keeps only the checks on one dataset: a bare name is every version, `name@version` one version.
+    One check with its per-task results, your checks (`scope: "shared"` is your organizations' and the checks shared with your address; `scope: "org"` is every check in your organizations, yours included), or a poll until every task settled. `dataset` keeps only the checks on one dataset: a bare name is every version, `name@version` one version.
 
     ```ts
     const done = await checks().watch(check.id);
@@ -192,6 +192,39 @@ description: "Start and read task quality checks."
         check.id,
         to="./checks",
     )
+    ```
+  </Tab>
+</Tabs>
+
+## share, unshare, shares
+
+Share a check you created by link, by email, or both — the [job share](/sdk-reference/jobs#share) verbs on a check, with the same arguments and the same `JobShares` answer. `link: true` turns on the check's unlisted link and returns it (the same link on every later call); whoever opens it reads the check's report and downloads its check folder without signing in. Each address in `emails` gets an email with a link and reads the check after signing in with that address; an address without an account gets a sign-up link in the same email. Someone the check is shared with reads the report, each task check's files and the download, and lists it under `scope: "shared"`; they only read, and can never stop one of its task checks. Only the creator may share; another member of the organization is refused with `org_forbidden`. `unshare` takes the same arguments and turns the link off or removes those addresses; `shares` prints the share state. A check's `visibility` field says `PRIVATE` or `LINK`.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    share(id: string, request: { link?: boolean; emails?: string[] }): Promise<JobShares>
+    unshare(id: string, request: { link?: boolean; emails?: string[] }): Promise<JobShares>
+    shares(id: string): Promise<JobShares>
+    ```
+
+    ```ts
+    const state = await checks().share(check.id, { link: true, emails: ["alice@example.org"] });
+    console.log(state.link.url);
+    await checks().unshare(check.id, { link: true });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def share(id: str, *, link: bool = False, emails: list[str] | None = None) -> JobShares
+    async def unshare(id: str, *, link: bool = False, emails: list[str] | None = None) -> JobShares
+    async def shares(id: str) -> JobShares
+    ```
+
+    ```python
+    state = await checks().share(check["id"], link=True, emails=["alice@example.org"])
+    print(state.link.url)
+    await checks().unshare(check["id"], link=True)
     ```
   </Tab>
 </Tabs>

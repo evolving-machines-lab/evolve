@@ -25,7 +25,8 @@
  * FAILED or CANCELLED / any analysis failed), 2 usage error.
  */
 
-import { existsSync, readFileSync, realpathSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { join, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -105,6 +106,8 @@ import type {
   GrepJobOptions,
   HostedClientConfig,
   Job,
+  JobShares,
+  JobsClient,
   JobAnalysisStats,
   JobCreate,
   JobEvent,
@@ -205,6 +208,10 @@ const GLOBAL_FLAGS: Record<string, FlagSpec> = {
   "base-url": { kind: "string", value: "<url>", help: "API base URL", default: "the Evolve dashboard API" },
 };
 
+/** The share verbs' --email, on a job and on a check: one spelling. */
+const SHARE_EMAIL_FLAG = { kind: "repeat", value: "<address>", help: "Share with this address; repeatable" } as const;
+const UNSHARE_EMAIL_FLAG = { kind: "repeat", value: "<address>", help: "Remove this address's share; repeatable" } as const;
+
 /** The shared read-side flags every list command carries. */
 const LIST_FLAGS: Record<string, FlagSpec> = {
   limit: { kind: "number", short: "l", value: "<n>", help: "Page size", group: "Paging" },
@@ -227,10 +234,18 @@ const LIST_FLAGS: Record<string, FlagSpec> = {
  */
 const SCOPE_FLAG: FlagSpec = {
   kind: "string",
-  value: "<my|shared>",
-  help: "What you created, or your organizations' rows that teammates created",
+  value: "<my|shared|org>",
+  help: "What you created, what teammates created, or everything in your organizations",
   default: "my",
   group: "Filter",
+};
+
+/** The owning organization of something being created, on the verbs that create one. */
+const OWNING_ORG_FLAG: FlagSpec = {
+  kind: "string",
+  value: "<name>",
+  help: "Organization it belongs to; else the default from `evolve auth org use`, else your personal org",
+  group: "Organization",
 };
 
 /**
@@ -260,6 +275,12 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
   },
   "print-config": { kind: "boolean", help: "Print the resolved job body as JSON and exit", group: "Config" },
   "job-name": { kind: "string", value: "<name>", help: "Label for the job", default: "generated", group: "Job" },
+  org: {
+    kind: "string",
+    value: "<name>",
+    help: "Organization the job lands in; else the default from `evolve auth org use`, else your personal org",
+    group: "Job",
+  },
   "n-attempts": { kind: "number", short: "k", value: "<n>", help: "Attempts per task and arm", default: "1", group: "Job" },
   "n-concurrent": { kind: "number", short: "n", value: "<n>", help: "Parallel trials", default: "4", group: "Job" },
   yes: {
@@ -631,6 +652,38 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<id>",
         examples: ["evolve job delete 3e1f9a2c", "evolve job delete 3e1f9a2c --yes"],
+      },
+      share: {
+        summary: "Share a job you created by link or by email",
+        notes: "--link prints the run's unlisted link (the same one every time). Each --email gets a link to the run by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
+        flags: {
+          link: { kind: "boolean", help: "Enable the job's unlisted link and print it" },
+          email: SHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job share 3e1f9a2c --link", "evolve job share 3e1f9a2c --email alice@example.org --email bob@example.org"],
+      },
+      unshare: {
+        summary: "Revoke a job's link or email shares",
+        notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
+        flags: {
+          link: { kind: "boolean", help: "Disable the job's link" },
+          email: UNSHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job unshare 3e1f9a2c --link", "evolve job unshare 3e1f9a2c --email alice@example.org"],
+      },
+      shares: {
+        summary: "Show who a job is shared with",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<id>",
+        examples: ["evolve job shares 3e1f9a2c", "evolve job shares 3e1f9a2c --json"],
       },
       stop: {
         summary: "Stop one dataset's live trials, keeping the job",
@@ -1103,6 +1156,39 @@ const GROUPS: Record<string, GroupSpec> = {
         positionalUsage: "<check-id>",
         examples: ["evolve check show 5f2c9b1e"],
       },
+      // The job share verbs on a check — the same flags and words.
+      share: {
+        summary: "Share a check you created by link or by email",
+        notes: "--link prints the check's unlisted link (the same one every time). Each --email gets a link to the check by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
+        flags: {
+          link: { kind: "boolean", help: "Enable the check's unlisted link and print it" },
+          email: SHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<check-id>",
+        examples: ["evolve check share 5f2c9b1e --link", "evolve check share 5f2c9b1e --email alice@example.org"],
+      },
+      unshare: {
+        summary: "Revoke a check's link or email shares",
+        notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
+        flags: {
+          link: { kind: "boolean", help: "Disable the check's link" },
+          email: UNSHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<check-id>",
+        examples: ["evolve check unshare 5f2c9b1e --link", "evolve check unshare 5f2c9b1e --email alice@example.org"],
+      },
+      shares: {
+        summary: "Show who a check is shared with",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<check-id>",
+        examples: ["evolve check shares 5f2c9b1e", "evolve check shares 5f2c9b1e --json"],
+      },
       // The per-task reads — a task check read like an analysis run (owner
       // ruling 2026-09-09): the analysis verbs' flags, verbatim, on the TASK
       // CHECK id (`check show` prints one per task).
@@ -1227,24 +1313,27 @@ const GROUPS: Record<string, GroupSpec> = {
       },
     },
   },
-  // Managed-agent SESSIONS — the other hosted lane, read-only here: the runs
-  // the SDK's `.run()` recorded to the dashboard, listed and inspected
-  // headless through sessions(). A session has one owner and no
-  // organization, so there is no --scope: `my` is the only visibility.
+  // Managed-agent SESSIONS — the other hosted lane: a session names an organization
+  // like a job, so --scope means what it means on every list, and it shares the two ways a job does.
   session: {
-    summary: "List and inspect managed-agent sessions",
+    summary: "List, inspect and share managed-agent sessions",
     commands: {
       list: {
-        summary: "List your sessions, newest first",
+        summary: "List sessions, newest first",
         flags: {
           ...LIST_FLAGS,
+          scope: SCOPE_FLAG,
           state: { kind: "string", value: "<live|ended>", help: "Only live or only ended sessions", group: "Filter" },
           agent: { kind: "string", value: "<name>", help: "Only sessions of this agent harness", group: "Filter" },
           "tag-prefix": { kind: "string", value: "<prefix>", help: "Only sessions whose tag starts with this prefix", group: "Filter" },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: ["evolve session list", "evolve session list --state ended --tag-prefix qa- -q"],
+        examples: [
+          "evolve session list",
+          "evolve session list --scope org",
+          "evolve session list --state ended --tag-prefix qa- -q",
+        ],
       },
       show: {
         summary: "Show one session in full",
@@ -1253,6 +1342,38 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<session-id>",
         examples: ["evolve session show 5f2c1a0e"],
+      },
+      share: {
+        summary: "Share a session you started by link or by email",
+        notes: "--link prints the session's unlisted link (the same one every time); it opens the session, its transcript and its trace file, and nothing else. Each --email gets a link by mail; an address with no account gets a sign-up link, unless it is already waitlisted or invited and keeps that path. Both flags may ride one command.",
+        flags: {
+          link: { kind: "boolean", help: "Enable the session's unlisted link and print it" },
+          email: SHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<session-id>",
+        examples: ["evolve session share 5f2c1a0e --link", "evolve session share 5f2c1a0e --email alice@example.org"],
+      },
+      unshare: {
+        summary: "Revoke a session's link or email shares",
+        notes: "--link kills the link at once; a later share mints a new one. --email removes that address's share.",
+        flags: {
+          link: { kind: "boolean", help: "Disable the session's link" },
+          email: UNSHARE_EMAIL_FLAG,
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<session-id>",
+        examples: ["evolve session unshare 5f2c1a0e --link", "evolve session unshare 5f2c1a0e --email alice@example.org"],
+      },
+      shares: {
+        summary: "Show who a session is shared with",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<session-id>",
+        examples: ["evolve session shares 5f2c1a0e", "evolve session shares 5f2c1a0e --json"],
       },
     },
   },
@@ -1307,6 +1428,12 @@ const GROUPS: Record<string, GroupSpec> = {
           },
           name: { kind: "string", value: "<dataset>", help: "Catalog dataset name to create or extend", group: "Version" },
           version: { kind: "string", value: "<v>", help: "Version label for the published version", group: "Version" },
+          org: {
+            kind: "string",
+            value: "<name>",
+            help: "Organization a new dataset lands in; else the default from `evolve auth org use`, else your personal org",
+            group: "Version",
+          },
           watch: { kind: "boolean", help: "Poll until the version is READY or FAILED", group: "Output" },
           "skip-preflight": { kind: "boolean", help: "Upload a --dir without the pre-flight check", group: "Source" },
         },
@@ -1380,19 +1507,22 @@ const GROUPS: Record<string, GroupSpec> = {
     summary: "Upload and manage platform-stored skills",
     commands: {
       list: {
-        summary: "List your uploaded skills, newest first",
-        flags: { ...LIST_FLAGS },
+        summary: "List uploaded skills, newest first",
+        flags: { ...LIST_FLAGS, scope: SCOPE_FLAG },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: ["evolve skill list"],
+        examples: ["evolve skill list", "evolve skill list --scope org"],
       },
       upload: {
         summary: "Upload a skill folder; its name becomes a moving pointer",
-        flags: {},
+        notes:
+          "The record belongs to you and to an organization: its members may reference it from their " +
+          "own jobs, and only you can delete it.",
+        flags: { org: OWNING_ORG_FLAG },
         minPositionals: 1,
         maxPositionals: 1,
         positionalUsage: "<dir>",
-        examples: ["evolve skill upload ./my-skill"],
+        examples: ["evolve skill upload ./my-skill", "evolve skill upload ./my-skill --org acme"],
       },
       show: {
         summary: "Show one uploaded skill, metadata and SKILL.md",
@@ -1417,11 +1547,11 @@ const GROUPS: Record<string, GroupSpec> = {
     summary: "Register and manage your own agents",
     commands: {
       list: {
-        summary: "List your registered agents",
-        flags: { ...LIST_FLAGS },
+        summary: "List registered agents",
+        flags: { ...LIST_FLAGS, scope: SCOPE_FLAG },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: ["evolve agent list"],
+        examples: ["evolve agent list", "evolve agent list --scope org"],
       },
       show: {
         summary: "Show one registered agent",
@@ -1433,7 +1563,11 @@ const GROUPS: Record<string, GroupSpec> = {
       },
       add: {
         summary: "Register an agent from an install script or a directory",
+        notes:
+          "The registration belongs to you and to an organization: its members may name the agent in " +
+          "their own jobs, and only you can change or delete it.",
         flags: {
+          org: OWNING_ORG_FLAG,
           "install-script": { kind: "string", value: "<path>", help: "Install script; its contents are uploaded", group: "Source" },
           dir: { kind: "string", value: "<path>", help: "Local agent directory, uploaded as an archive", group: "Source" },
           run: { kind: "string", value: "<command>", help: "Run command, executed with sh -c; required", group: "Run" },
@@ -1500,6 +1634,46 @@ const GROUPS: Record<string, GroupSpec> = {
         maxPositionals: 1,
         positionalUsage: "<slug>",
         examples: ["evolve auth org show acme"],
+      },
+      // The team verbs (owner's ruling 2026-09-17): Harbor creates orgs on its
+      // web hub only; here they are CLI verbs over routes that already exist.
+      "org create": {
+        summary: "Create an organization; you become its owner",
+        flags: {
+          "display-name": { kind: "string", value: "<text>", help: "Human-facing name; defaults to the slug", group: "Organization" },
+        },
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<name>",
+        examples: ["evolve auth org create acme --display-name 'Acme Corp'"],
+      },
+      "org invite": {
+        summary: "Mint an invite token for an organization you own",
+        notes: "The token is shown once. Whoever runs `evolve auth org join <token>` while signed in joins as member.",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<org>",
+        examples: ["evolve auth org invite acme"],
+      },
+      "org join": {
+        summary: "Join an organization with an invite token",
+        flags: {},
+        minPositionals: 1,
+        maxPositionals: 1,
+        positionalUsage: "<token>",
+        examples: ["evolve auth org join evi_..."],
+      },
+      "org use": {
+        summary: "Set the default organization for jobs and datasets",
+        notes:
+          "Written to $XDG_CONFIG_HOME/evolve/config.json (else ~/.config/evolve/config.json). " +
+          "`personal` clears it; no argument prints the current default. --org on a command always wins.",
+        flags: {},
+        minPositionals: 0,
+        maxPositionals: 1,
+        positionalUsage: "[<name> | personal]",
+        examples: ["evolve auth org use acme", "evolve auth org use personal", "evolve auth org use"],
       },
     },
   },
@@ -3802,6 +3976,8 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   // value: the wire's sandbox_provider is null there because nothing
   // executed, and the closed provider vocabulary gains no fake member.
   rows.push(["provider", e.upload ? "ported" : (e.sandbox_provider ?? "-")]);
+  // PRIVATE or LINK (an unlisted link reaches the run); `job shares` prints the link and the addresses.
+  rows.push(["visibility", e.visibility]);
   // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
   // — the wire counts them for exactly this reason (n_unmeasured_trials: "cost
   // _usd comes out LOWER than what was really spent"). A freshly finished job
@@ -3851,6 +4027,10 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
     if (reportedTokens.length > 0) {
       rows.push(["reported tokens", reportedTokens.join(" · ")]);
     }
+  }
+  // What the archive itself said it ran over, one row (upload.datasets).
+  if (e.upload?.datasets && e.upload.datasets.length > 0) {
+    rows.push(["archive datasets", e.upload.datasets.map((d) => (d.version ? `${d.name}@${d.version}` : d.name)).join(", ")]);
   }
   // The task-folder fact of an uploaded job, one row: how many trials
   // linked to a stored task (upload.task_links) — nothing on a pre-feature
@@ -4093,6 +4273,7 @@ function fmtBytes(bytes: number): string {
 const SKILL_COLUMNS: ListColumn<SkillUpload>[] = [
   { key: "name", header: "NAME", cell: (s) => s.name },
   { key: "id", header: "ID", cell: (s) => s.id },
+  { key: "org", header: "ORG", cell: (s) => s.org ?? "-" },
   { key: "digest", header: "DIGEST", cell: (s) => fmtDigestShort(s.digest) },
   { key: "size", header: "SIZE", cell: (s) => fmtBytes(s.size_bytes) },
   { key: "created", header: "CREATED", cell: (s) => s.created_at },
@@ -4103,6 +4284,7 @@ const SKILL_DEFAULT_COLUMNS = ["name", "id", "digest", "size", "created"];
 
 const AGENT_COLUMNS: ListColumn<Agent>[] = [
   { key: "name", header: "NAME", cell: (a) => a.name },
+  { key: "org", header: "ORG", cell: (a) => a.org ?? "-" },
   { key: "source", header: "SOURCE", cell: (a) => a.source },
   { key: "run", header: "RUN COMMAND", cell: (a) => a.run_command },
   { key: "updated", header: "UPDATED", cell: (a) => a.updated_at },
@@ -4344,6 +4526,7 @@ export function analysisDetailLines(analysis: TrialAnalysis): string[] {
 function agentLines(agent: Agent): string[] {
   const rows: string[][] = [
     ["name", agent.name],
+    ["org", agent.org ?? "-"],
     ["source", agent.source],
     ["run command", agent.run_command],
   ];
@@ -4984,7 +5167,7 @@ async function resolveLocalSkillUploads(
 }
 
 async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
-  const input = buildJobInput(inv);
+  const input = withDefaultOrg(buildJobInput(inv), inv);
   if (inv.flags["print-config"] === true) {
     // The resolved body, nothing sent: the dry-run a paid remote run deserves.
     io.out(JSON.stringify(input, null, 2));
@@ -4996,6 +5179,8 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
   const client = jobs(clientConfig(inv));
 
   const created = await client.start(await resolveLocalSkillUploads(input, inv, io));
+  // The first human line names where the job landed (--json carries it as the job's `org`).
+  if (!json) io.out(`org  ${input.org ?? "personal"}`);
   if (!watch) {
     if (json) {
       io.out(JSON.stringify(created));
@@ -5228,6 +5413,70 @@ async function cmdJobDelete(inv: Invocation, io: CliIO): Promise<number> {
   }
   return 0;
 }
+
+/** The share and unshare verbs' one grammar: --link and/or --email, at least one. */
+function shareGrant(inv: Invocation): { link?: true; emails?: string[] } {
+  const emails = (inv.flags.email as string[] | undefined) ?? [];
+  const link = inv.flags.link === true;
+  if (!link && emails.length === 0) {
+    throw new CliUsageError("name a grant: --link and/or --email <address>");
+  }
+  return { ...(link ? { link: true as const } : {}), ...(emails.length > 0 ? { emails } : {}) };
+}
+
+/** The human rendering of a job's share state — the link, then one line per address. */
+function shareLines(shares: JobShares): string[] {
+  const lines = [
+    `visibility ${shares.visibility}`,
+    shares.link.enabled ? `link       ${shares.link.url ?? "(enabled)"}` : "link       off",
+  ];
+  if (shares.emails.length === 0) {
+    lines.push("emails     none");
+  } else {
+    for (const share of shares.emails) {
+      lines.push(`email      ${share.email}  (shared by ${share.shared_by}, ${share.created_at})`);
+    }
+  }
+  return lines;
+}
+
+function printShares(inv: Invocation, io: CliIO, shares: JobShares): number {
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(shares));
+  } else {
+    for (const line of shareLines(shares)) io.out(line);
+  }
+  return 0;
+}
+
+/** The three share verbs of a kind, as its client speaks them: jobs(), checks() and sessions() all do. */
+type ShareClient = Pick<JobsClient, "share" | "unshare" | "shares">;
+
+// Harbor's `harbor job share <id> --org … --user …` (their docs/sharing/jobs.mdx),
+// recorded deviations: a person is shared by --email (our login is an address)
+// and --link makes the job reachable by an unlisted link where Harbor has --public.
+// A check and a managed-agent session share the same way, each on its own id
+// namespace; Harbor has no sessions, so that third noun is ours alone.
+function shareVerbs(noun: "job" | "check" | "session", client: (inv: Invocation) => ShareClient) {
+  const share = async (inv: Invocation, io: CliIO): Promise<number> => {
+    const grant = shareGrant(inv);
+    const shares = await client(inv).share(await resolveId(inv, noun, inv.positionals[0]), grant);
+    return printShares(inv, io, shares);
+  };
+  const unshare = async (inv: Invocation, io: CliIO): Promise<number> => {
+    const grant = shareGrant(inv);
+    const shares = await client(inv).unshare(await resolveId(inv, noun, inv.positionals[0]), grant);
+    return printShares(inv, io, shares);
+  };
+  // Harbor's `harbor hub job shares <id>`.
+  const shares = async (inv: Invocation, io: CliIO): Promise<number> =>
+    printShares(inv, io, await client(inv).shares(await resolveId(inv, noun, inv.positionals[0])));
+  return { share, unshare, shares };
+}
+
+const JOB_SHARE = shareVerbs("job", (inv) => jobs(clientConfig(inv)));
+const CHECK_SHARE = shareVerbs("check", (inv) => checks(clientConfig(inv)));
+const SESSION_SHARE = shareVerbs("session", (inv) => sessions(sessionsConfig(inv)));
 
 /**
  * PURE SUGAR over surfaces that already exist — the job body's datasets[],
@@ -5660,6 +5909,8 @@ export function checkDetailLines(check: Check): string[] {
     ["model", `${check.model_name} at effort ${check.reasoning_effort}`],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
     ["provider", check.sandbox_provider],
+    // PRIVATE or LINK (an unlisted link reaches the check); `check shares` prints the link and the addresses.
+    ["visibility", check.visibility],
   ];
   if (check.prompt !== null) rows.push(["prompt", "custom (Harbor's -p text)"]);
   if (check.n_concurrent !== null) rows.push(["n_concurrent", String(check.n_concurrent)]);
@@ -7483,7 +7734,7 @@ async function cmdDatasetCheck(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdDatasetPublish(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const client = datasets(clientConfig(inv));
-  const input = buildPublishInput(inv);
+  const input = withDefaultOrg(buildPublishInput(inv), inv);
   // THE PRE-FLIGHT, automatic for a directory source: the metadata files
   // (kilobytes) go first, and refusals are printed BEFORE the corpus is
   // tarred and uploaded — the importer's own sentences, from the same
@@ -7862,6 +8113,7 @@ function skillLines(skill: SkillUpload): string[] {
   const rows: string[][] = [
     ["name", skill.name],
     ["id", skill.id],
+    ["org", skill.org ?? "-"],
     ["ref", skill.ref],
     ["digest", skill.digest],
     ["size", fmtBytes(skill.size_bytes)],
@@ -7874,7 +8126,8 @@ function skillLines(skill: SkillUpload): string[] {
 async function cmdSkillList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, SKILL_COLUMNS)) return 0;
   const client = skills(clientConfig(inv));
-  const page = await client.list(pageOptions(inv));
+  const scope = parseScopeFlag(inv);
+  const page = await client.list({ ...pageOptions(inv), ...(scope !== undefined ? { scope } : {}) });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
     return 0;
@@ -7895,7 +8148,7 @@ async function cmdSkillUpload(inv: Invocation, io: CliIO): Promise<number> {
   // One folder, 1..n records: a root of skills uploads each child as its own
   // record (the server's discovery law). --json prints ONE document: the
   // record for a single skill, an array for a root.
-  const uploaded = await client.upload(inv.positionals[0]);
+  const uploaded = await client.upload(inv.positionals[0], withDefaultOrg({}, inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(uploaded.length === 1 ? uploaded[0] : uploaded));
     return 0;
@@ -7946,7 +8199,8 @@ async function cmdSkillDelete(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdAgentList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, AGENT_COLUMNS)) return 0;
   const client = agents(clientConfig(inv));
-  const registered = await client.list(pageOptions(inv));
+  const scope = parseScopeFlag(inv);
+  const registered = await client.list({ ...pageOptions(inv), ...(scope !== undefined ? { scope } : {}) });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(registered));
     return 0;
@@ -7972,7 +8226,7 @@ async function cmdAgentShow(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdAgentAdd(inv: Invocation, io: CliIO): Promise<number> {
   const client = agents(clientConfig(inv));
-  const created = await client.create(buildAgentInput(inv));
+  const created = await client.create(withDefaultOrg(buildAgentInput(inv), inv));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(created));
   } else {
@@ -8036,6 +8290,7 @@ const SESSION_COLUMNS: ListColumn<SessionInfo>[] = [
   { key: "agent", header: "AGENT", cell: (s) => s.agent },
   { key: "model", header: "MODEL", cell: (s) => s.model ?? "-" },
   { key: "provider", header: "PROVIDER", cell: (s) => s.provider },
+  { key: "org", header: "ORG", cell: (s) => s.org ?? "-" },
   { key: "sandbox", header: "SANDBOX", cell: (s) => s.sandboxId ?? "-" },
   { key: "state", header: "STATE", cell: (s) => s.state },
   { key: "runtime", header: "RUNTIME", cell: (s) => s.runtimeStatus },
@@ -8053,10 +8308,12 @@ function sessionDetailLines(s: SessionInfo): string[] {
     ["agent", s.agent],
     ["model", s.model ?? "-"],
     ["effort", s.reasoningEffort ?? "-"],
+    ["org", s.org ?? "-"],
     ["provider", s.provider],
     ["sandbox", s.sandboxId ?? "-"],
     ["state", s.state],
     ["runtime", s.runtimeStatus],
+    ["visibility", s.visibility],
     ["cost", fmtSessionCost(s)],
   ];
   if (s.usage) {
@@ -8088,9 +8345,11 @@ async function cmdSessionList(inv: Invocation, io: CliIO): Promise<number> {
   if (state !== undefined && state !== "live" && state !== "ended") {
     throw new CliUsageError(`--state must be live or ended; got: ${state}`);
   }
+  const scope = parseScopeFlag(inv);
   const client = sessions(sessionsConfig(inv));
   const page = await client.list({
     ...pageOptions(inv),
+    ...(scope !== undefined ? { scope } : {}),
     ...(state !== undefined ? { state } : {}),
     ...(inv.flags.agent !== undefined ? { agent: String(inv.flags.agent) } : {}),
     ...(inv.flags["tag-prefix"] !== undefined ? { tagPrefix: String(inv.flags["tag-prefix"]) } : {}),
@@ -8217,6 +8476,130 @@ async function cmdAuthOrgShow(inv: Invocation, io: CliIO): Promise<number> {
     io.out(JSON.stringify(org));
   } else {
     for (const line of orgDetailLines(org)) io.out(line);
+  }
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
+// The org default: `evolve auth org use` writes { "org": "<slug>" } to the
+// CLI's config file; `--org` on a command always wins; neither = personal.
+// -----------------------------------------------------------------------------
+
+/** `$XDG_CONFIG_HOME/evolve/config.json`, else `~/.config/evolve/config.json`. */
+export function cliConfigPath(): string {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const base = xdg && xdg.trim() !== "" ? xdg : join(homedir(), ".config");
+  return join(base, "evolve", "config.json");
+}
+
+function readCliConfig(): Record<string, unknown> {
+  const path = cliConfigPath();
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    throw new CliUsageError(`${path} is not valid JSON — fix or delete it`);
+  }
+}
+
+/** The org default from the config file, or undefined (personal). */
+function configuredOrg(): string | undefined {
+  const org = readCliConfig().org;
+  return typeof org === "string" && org.trim() !== "" ? org.trim() : undefined;
+}
+
+/** Write (or, with null, remove) the `org` key; the file is created 0600 on first use. */
+function writeConfiguredOrg(org: string | null): string {
+  const path = cliConfigPath();
+  const current = readCliConfig();
+  if (org === null) delete current.org;
+  else current.org = org;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify(current, null, 2) + "\n", { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return path;
+}
+
+/** Flag > config file > (undefined = the server's personal default). */
+function withDefaultOrg<T extends { org?: string }>(input: T, inv: Invocation): T {
+  const flag = typeof inv.flags.org === "string" ? inv.flags.org.trim() : undefined;
+  // `--org personal` names the personal org for one command over a `use`d default;
+  // it is never sent (the server reserves the slug), so the job lands with no org.
+  if (flag === "personal") {
+    const { org: _dropped, ...rest } = input;
+    return rest as T;
+  }
+  const org = flag !== undefined && flag !== "" ? flag : input.org ?? configuredOrg();
+  return org !== undefined ? { ...input, org } : input;
+}
+
+async function cmdAuthOrgCreate(inv: Invocation, io: CliIO): Promise<number> {
+  const displayName =
+    typeof inv.flags["display-name"] === "string" ? String(inv.flags["display-name"]) : undefined;
+  const org = await orgs(clientConfig(inv)).create(inv.positionals[0], { displayName });
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(org));
+    return 0;
+  }
+  io.out(`Created organization ${org.slug}`);
+  io.out(`slug          ${org.slug}`);
+  io.out(`display name  ${org.display_name}`);
+  io.out(`role          ${org.role ?? "owner"}`);
+  io.out("");
+  io.out(`Invite a teammate with: evolve auth org invite ${org.slug}`);
+  return 0;
+}
+
+async function cmdAuthOrgInvite(inv: Invocation, io: CliIO): Promise<number> {
+  const invite = await orgs(clientConfig(inv)).invite(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(invite));
+    return 0;
+  }
+  io.out(`token    ${invite.token}`);
+  io.out(`expires  ${invite.expires_at ?? "never"}`);
+  io.out(`uses     ${invite.max_uses === null ? "unlimited" : String(invite.max_uses)}`);
+  io.out("");
+  io.out(`Send the teammate this command: evolve auth org join ${invite.token}`);
+  return 0;
+}
+
+async function cmdAuthOrgJoin(inv: Invocation, io: CliIO): Promise<number> {
+  const joined = await orgs(clientConfig(inv)).join(inv.positionals[0]);
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(joined));
+    return 0;
+  }
+  io.out(
+    joined.already_member
+      ? `Already a member of ${joined.org.slug}`
+      : `Joined ${joined.org.slug} as member`
+  );
+  io.out(`Run in it with: evolve run --org ${joined.org.slug} ... or set it once: evolve auth org use ${joined.org.slug}`);
+  return 0;
+}
+
+async function cmdAuthOrgUse(inv: Invocation, io: CliIO): Promise<number> {
+  const json = inv.flags.json === true;
+  const arg = inv.positionals[0];
+  if (arg === undefined) {
+    const org = configuredOrg();
+    const path = cliConfigPath();
+    if (json) {
+      io.out(JSON.stringify({ org: org ?? null, source: org !== undefined ? "config" : "personal", path }));
+    } else {
+      io.out(org !== undefined ? `org  ${org}  (from ${path})` : `org  personal  (no default in ${path})`);
+    }
+    return 0;
+  }
+  const name = arg.trim();
+  if (name === "") throw new CliUsageError("org name must not be empty");
+  const path = writeConfiguredOrg(name === "personal" ? null : name);
+  if (json) {
+    io.out(JSON.stringify({ org: name === "personal" ? null : name, path }));
+  } else {
+    io.out(name === "personal" ? `Default org cleared: personal (${path})` : `Default org: ${name} (${path})`);
   }
   return 0;
 }
@@ -8491,6 +8874,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "job compare": cmdJobCompare,
   "job cancel": cmdJobCancel,
   "job delete": cmdJobDelete,
+  "job share": JOB_SHARE.share,
+  "job unshare": JOB_SHARE.unshare,
+  "job shares": JOB_SHARE.shares,
   "job stop": cmdJobStop,
   "job resume": cmdJobResume,
   "job retry": cmdJobRetry,
@@ -8527,6 +8913,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "analysis procs": ANALYSIS_FILES.procs,
   "check list": cmdCheckList,
   "check show": cmdCheckShow,
+  "check share": CHECK_SHARE.share,
+  "check unshare": CHECK_SHARE.unshare,
+  "check shares": CHECK_SHARE.shares,
   "check trace": cmdCheckTrace,
   "check download": cmdCheckDownload,
   "check files status": CHECK_FILES.status,
@@ -8539,6 +8928,9 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "check procs": CHECK_FILES.procs,
   "session list": cmdSessionList,
   "session show": cmdSessionShow,
+  "session share": SESSION_SHARE.share,
+  "session unshare": SESSION_SHARE.unshare,
+  "session shares": SESSION_SHARE.shares,
   "dataset list": cmdDatasetList,
   "dataset show": cmdDatasetShow,
   "dataset check": cmdDatasetCheck,
@@ -8560,6 +8952,10 @@ const HANDLERS: Record<string, (inv: Invocation, io: CliIO) => Promise<number>> 
   "auth status": cmdAuthStatus,
   "auth org list": cmdAuthOrgList,
   "auth org show": cmdAuthOrgShow,
+  "auth org create": cmdAuthOrgCreate,
+  "auth org invite": cmdAuthOrgInvite,
+  "auth org join": cmdAuthOrgJoin,
+  "auth org use": cmdAuthOrgUse,
   "secrets set": cmdSecretsSet,
   "secrets list": cmdSecretsList,
   "secrets delete": cmdSecretsDelete,

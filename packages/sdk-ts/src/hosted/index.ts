@@ -43,6 +43,10 @@ import type {
   AuthStatus,
   Organization,
   OrganizationDetail,
+  OrgInvite,
+  OrgInviteCreated,
+  OrgJoined,
+  OrgMember,
   OrgQuota,
   OrgRole,
   OrgUsage,
@@ -89,6 +93,8 @@ import type {
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobShareRequest,
+  JobShares,
   JobList,
   JobPage,
   JobStats,
@@ -104,6 +110,7 @@ import type {
   ListJobTasksOptions,
   ListJobsOptions,
   ListSkillsOptions,
+  UploadSkillOptions,
   ListTrialFilesOptions,
   ListTrialsOptions,
   Page,
@@ -159,6 +166,7 @@ import type {
   JobImportSkippedTrial,
   JobImportSource,
   JobTaskLink,
+  UploadDataset,
   ListJobImportsOptions,
   TrialTaskLink,
   WatchJobImportOptions,
@@ -216,6 +224,7 @@ export {
   GATEWAY_TRACE_SEQ_BASE,
   gatewayUsageOf,
   isHostedErrorCode,
+  mapJobShares,
   mapUsageReading,
   passAtK,
 } from "./types";
@@ -270,6 +279,10 @@ export type {
   AuthStatus,
   Organization,
   OrganizationDetail,
+  OrgInvite,
+  OrgInviteCreated,
+  OrgJoined,
+  OrgMember,
   OrgQuota,
   OrgRole,
   OrgUsage,
@@ -324,6 +337,11 @@ export type {
   JobFailure,
   JobGrepGroup,
   JobGrepPage,
+  JobShareEmail,
+  JobShareLink,
+  JobShareRequest,
+  JobShares,
+  JobVisibility,
   JobAnalysisStats,
   JobList,
   JobPage,
@@ -345,6 +363,7 @@ export type {
   ListAnalysesOptions,
   ListJobsOptions,
   ListSkillsOptions,
+  UploadSkillOptions,
   ListTrialFilesOptions,
   ListTrialsOptions,
   ManagedProviderCapability,
@@ -463,6 +482,7 @@ import {
   TASK_LINKED_BY,
   TASK_LINK_REASONS,
   isHostedErrorCode,
+  mapJobShares,
   mapStoredAt,
   mapUsageReading,
   type Awaitable,
@@ -738,6 +758,8 @@ const DEFAULT_IMPORT_SETTLE_TIMEOUT_MS = 30 * 60_000;
 interface ResolvedConfig {
   apiKey: string;
   baseUrl: string;
+  /** The client-level org default (HostedClientConfig.org); undefined = the caller's personal org. */
+  org?: string;
 }
 
 function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedConfig {
@@ -748,7 +770,7 @@ function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedCo
     );
   }
   const baseUrl = (config?.baseUrl || process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL).replace(/\/$/, "");
-  return { apiKey, baseUrl };
+  return { apiKey, baseUrl, ...(config?.org ? { org: config.org } : {}) };
 }
 
 async function request(
@@ -1085,6 +1107,7 @@ function mapUploadProvenance(raw: unknown): Job["upload"] {
     uploaded_at: blob.uploaded_at,
     reported_totals: reportedTotals,
     task_links: mapTaskLinks(blob.task_links),
+    datasets: mapUploadDatasets(blob.datasets),
   };
 }
 
@@ -1132,6 +1155,21 @@ function mapTaskLinks(raw: unknown): JobTaskLink[] | null {
     });
   }
   return out;
+}
+
+/** The archive's declared datasets (spec UploadDataset[]): absent, empty or malformed read null — one bad entry nulls the list. */
+function mapUploadDatasets(raw: unknown): UploadDataset[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: UploadDataset[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const { name, version, path } = entry as Record<string, unknown>;
+    // A local-path dataset entry declares no name: nothing to serve, nothing invented.
+    if (name === undefined && typeof path === "string") continue;
+    if (typeof name !== "string" || name === "") return null;
+    out.push({ name, version: typeof version === "string" ? version : null });
+  }
+  return out.length > 0 ? out : null;
 }
 
 /**
@@ -1191,6 +1229,11 @@ function mapJob(raw: Record<string, unknown>): Job {
     // Null exactly on an uploaded job — the record executed on no platform
     // sandbox, so naming a provider would be an execution claim.
     sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
+    // The owning org's slug; an older server that sends none reads as null.
+    org: typeof raw.org === "string" ? raw.org : null,
+    // The share link's switch; an older server that sends none reads as
+    // PRIVATE, exactly how such a server behaves.
+    visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
     // The system log switch — an older server that sends nothing reads as
     // off, exactly how such a server behaves.
     system_log: raw.system_log === true,
@@ -1411,6 +1454,8 @@ function mapTrialUploadProvenance(raw: unknown): Trial["upload"] {
 function mapAgent(raw: Record<string, unknown>): Agent {
   return {
     name: raw.name as string,
+    // Absent on a server predating the org axis: null, never an invented slug.
+    org: typeof raw.org === "string" ? raw.org : null,
     source: raw.source as AgentSource,
     run_command: raw.run_command as string,
     env: (raw.env as Record<string, string>) ?? {},
@@ -2654,6 +2699,9 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
       options?: PublishDatasetOptions
     ): Promise<DatasetImport> {
       const src = input.source;
+      // The call's own org wins; the client default fills an absent one;
+      // neither = no part, and the server's personal-org default applies.
+      const org = input.org ?? cfg.org;
       // ONE body grammar: multipart/form-data, metadata in named parts. The
       // corpus is the `archive` part; a git source is the git_url + git_ref
       // parts. Nothing rides the query string, where it would land in access
@@ -2686,7 +2734,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
           }
         }
         const res = await uploadDirectory(cfg, "/api/datasets/publish", {
-          fields: { name: input.name, version: input.version },
+          fields: { name: input.name, version: input.version, org },
           directory: src.directory,
           filename: "corpus.tar.gz",
           // Upload progress renders CLIENT-SIDE from the stream: the send
@@ -2730,6 +2778,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             name: input.name,
             version: input.version,
             archive_url: src.archive_url,
+            org,
           }),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
@@ -2743,6 +2792,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             ...(input.name !== undefined ? { name: input.name } : {}),
             ...(input.version !== undefined ? { version: input.version } : {}),
             hub_package: src.hub_package,
+            org,
           }),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
@@ -2768,6 +2818,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
             // Only when narrowing to a subfolder: an absent part means "the
             // repository root", and sending an empty part would be refused.
             ...(src.git_path !== undefined ? { git_path: src.git_path } : {}),
+            org,
           }),
         });
         return mapDatasetImport((await res.json()) as Record<string, unknown>);
@@ -2968,7 +3019,7 @@ export function agents(config?: HostedClientConfig): AgentsClient {
       // env are named PARTS — they used to ride the query string of an upload,
       // which put a shell command and a set of environment values into every
       // access log and proxy buffer on the way here.
-      const parts = agentUploadParts("agents().create()", input);
+      const parts = agentUploadParts("agents().create()", { ...input, org: input.org ?? cfg.org });
       const res = parts.directory
         ? await uploadDirectory(cfg, "/api/agents", {
             fields: parts.fields,
@@ -2982,7 +3033,7 @@ export function agents(config?: HostedClientConfig): AgentsClient {
     list(options?: ListAgentsOptions): AgentList {
       // Await for one page; for-await to walk them all across cursor pages.
       return makePaginated(async (opts) => {
-        const res = await request(cfg, `/api/agents${pageQuery(opts)}`);
+        const res = await request(cfg, `/api/agents${pageQuery(opts, { scope: options?.scope })}`);
         return mapPage((await res.json()) as Record<string, unknown>, mapAgent);
       }, options);
     },
@@ -3004,7 +3055,11 @@ export function agents(config?: HostedClientConfig): AgentsClient {
       // delete()+create() makes it. Same body grammar as create(), name part
       // included — the URL names the agent too, and the server treats the
       // path as authoritative.
-      const parts = agentUploadParts("agents().upsert()", { ...input, name });
+      const parts = agentUploadParts("agents().upsert()", {
+        ...input,
+        name,
+        org: input.org ?? cfg.org,
+      });
       const res = parts.directory
         ? await uploadDirectory(cfg, `/api/agents/${encodeURIComponent(name)}`, {
             method: "PUT",
@@ -3031,7 +3086,7 @@ export function agents(config?: HostedClientConfig): AgentsClient {
  */
 function agentUploadParts(
   caller: string,
-  input: AgentInput
+  input: AgentInput & { org?: string }
 ): { fields: Record<string, string | undefined>; directory?: string } {
   // Same division of labour as datasets().publish(): AgentSourceInput is a
   // union, so a TypeScript caller cannot pass both or neither. These checks
@@ -3053,6 +3108,8 @@ function agentUploadParts(
   }
   const fields: Record<string, string | undefined> = {
     name: input.name,
+    // The owning org rides as a named part, like every other metadata field.
+    org: input.org,
     run_command: input.run_command,
     ...(input.env !== undefined ? { env: JSON.stringify(input.env) } : {}),
     ...(hasInstallScript ? { install_script: input.install_script } : {}),
@@ -3068,6 +3125,7 @@ function mapSkillUpload(raw: Record<string, unknown>): SkillUpload {
   return {
     id: raw.id as string,
     name: raw.name as string,
+    org: typeof raw.org === "string" ? raw.org : null,
     digest: raw.digest as string,
     size_bytes: (raw.size_bytes as number) ?? 0,
     description: (raw.description as string | null) ?? null,
@@ -3098,7 +3156,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
   const cfg = resolveConfig("skills", config);
 
   return {
-    async upload(directory: string): Promise<SkillUpload[]> {
+    async upload(directory: string, options?: UploadSkillOptions): Promise<SkillUpload[]> {
       if (typeof directory !== "string" || !directory.trim()) {
         throw new Error("skills().upload() requires a local skill directory path");
       }
@@ -3108,7 +3166,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
       // upload is recorded — and later mounted — under its folder name.
       const folderName = basename(resolve(directory));
       const res = await uploadDirectory(cfg, "/api/skills", {
-        fields: { name: folderName || undefined },
+        fields: { name: folderName || undefined, org: options?.org ?? cfg.org },
         directory,
         filename: "skill.tar.gz",
       });
@@ -3119,7 +3177,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
 
     list(options?: ListSkillsOptions): SkillUploadList {
       return makePaginated(async (opts) => {
-        const res = await request(cfg, `/api/skills${pageQuery(opts)}`);
+        const res = await request(cfg, `/api/skills${pageQuery(opts, { scope: options?.scope })}`);
         return mapPage((await res.json()) as Record<string, unknown>, mapSkillUpload);
       }, options);
     },
@@ -3349,6 +3407,10 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
   return {
     async start(input: JobCreate, options?: StartJobOptions): Promise<Job> {
+      // The call's own org wins; the client default fills an absent one
+      // (an explicit `org: undefined` counts as absent, so it is never spread last).
+      const org = input.org ?? cfg.org;
+      const body: JobCreate = org !== undefined ? { ...input, org } : input;
       const res = await request(cfg, "/api/jobs", {
         method: "POST",
         headers: {
@@ -3357,7 +3419,7 @@ export function jobs(config?: HostedClientConfig): JobsClient {
             ? { "Idempotency-Key": options.idempotencyKey }
             : {}),
         },
-        body: JSON.stringify(input),
+        body: JSON.stringify(body),
       });
       return mapJob((await res.json()) as Record<string, unknown>);
     },
@@ -3683,6 +3745,31 @@ export function jobs(config?: HostedClientConfig): JobsClient {
         trials_deleted: (data.trials_deleted as number) ?? 0,
         analyses_deleted: (data.analyses_deleted as number) ?? 0,
       };
+    },
+
+    async share(id: string, req: JobShareRequest): Promise<JobShares> {
+      // The body is the wire's verbatim; the server owns every rule (creator
+      // only, the address cap, the idempotent link) and every refusal arrives typed.
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async unshare(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/unshare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async shares(id: string): Promise<JobShares> {
+      const res = await request(cfg, `/api/jobs/${encodeURIComponent(id)}/shares`);
+      return mapJobShares((await res.json()) as Record<string, unknown>);
     },
 
     async grep(id: string, q: string, options?: GrepJobOptions): Promise<JobGrepPage> {
@@ -4128,7 +4215,9 @@ function mapCheck(raw: unknown): Check {
         (row): row is TaskCheck => !!row && typeof row === "object" && !Array.isArray(row)
       )
     : [];
-  return { ...(value as unknown as Check), results };
+  // The share link's switch; an older server that sends none reads as PRIVATE (mapJob's rule).
+  const visibility = value.visibility === "LINK" ? "LINK" : "PRIVATE";
+  return { ...(value as unknown as Check), visibility, results };
 }
 
 /**
@@ -4335,6 +4424,30 @@ export function checks(config?: HostedClientConfig): ChecksClient {
     ): Promise<Buffer | string | ReadableStream<Uint8Array>> =>
       downloadArchive(cfg, `/api/checks/${encodeURIComponent(id)}/download`, options, `check-${id}.tar.gz`)) as ChecksClient["download"],
 
+    // The job share verbs on a check (the same body, the same JobShares back).
+    async share(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(cfg, `/api/checks/${encodeURIComponent(id)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async unshare(id: string, req: JobShareRequest): Promise<JobShares> {
+      const res = await request(cfg, `/api/checks/${encodeURIComponent(id)}/unshare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
+    async shares(id: string): Promise<JobShares> {
+      const res = await request(cfg, `/api/checks/${encodeURIComponent(id)}/shares`);
+      return mapJobShares((await res.json()) as Record<string, unknown>);
+    },
+
     async watch(checkId: string, options?: WatchCheckOptions): Promise<Check> {
       // The analysis watch's poll shape (jobs().watchAnalysis): the interval
       // doubles while nothing changes, up to the 30-s ceiling, and snaps
@@ -4406,8 +4519,30 @@ export function auth(config?: HostedClientConfig): AuthClient {
 
 // =============================================================================
 // ORGS CLIENT — the read pair (Harbor's `auth org list` shape + the hosted
-// `auth org show` extension: quota and usage are hosted facts)
+// `auth org show` extension: quota and usage are hosted facts) and the team
+// verbs: create, invite, join, members
 // =============================================================================
+
+function mapOrgMember(raw: Record<string, unknown>): OrgMember {
+  return {
+    user_id: raw.user_id as string,
+    email: raw.email as string,
+    role: raw.role === "owner" ? "owner" : "member",
+    joined_at: raw.joined_at as string,
+  };
+}
+
+function mapOrgInviteCreated(raw: Record<string, unknown>): OrgInviteCreated {
+  return {
+    invite_id: raw.invite_id as string,
+    expires_at: typeof raw.expires_at === "string" ? raw.expires_at : null,
+    max_uses: typeof raw.max_uses === "number" ? raw.max_uses : null,
+    uses: typeof raw.uses === "number" ? raw.uses : 0,
+    revoked_at: typeof raw.revoked_at === "string" ? raw.revoked_at : null,
+    created_at: raw.created_at as string,
+    token: raw.token as string,
+  };
+}
 
 function mapOrganization(raw: Record<string, unknown>): Organization {
   return {
@@ -4473,6 +4608,48 @@ export function orgs(config?: HostedClientConfig): OrgsClient {
     async get(org: string): Promise<OrganizationDetail> {
       const res = await request(cfg, `/api/orgs/${encodeURIComponent(org)}`);
       return mapOrganizationDetail((await res.json()) as Record<string, unknown>);
+    },
+
+    async create(name: string, options?: { displayName?: string }): Promise<Organization> {
+      const res = await request(cfg, "/api/orgs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug: name,
+          ...(options?.displayName !== undefined ? { display_name: options.displayName } : {}),
+        }),
+      });
+      return mapOrganization((await res.json()) as Record<string, unknown>);
+    },
+
+    async invite(org: string): Promise<OrgInviteCreated> {
+      // No body: the server's defaults (7 days, unlimited uses) — Harbor's
+      // invite has no knobs on the CLI either.
+      const res = await request(cfg, `/api/orgs/${encodeURIComponent(org)}/invites`, {
+        method: "POST",
+      });
+      return mapOrgInviteCreated((await res.json()) as Record<string, unknown>);
+    },
+
+    async join(token: string): Promise<OrgJoined> {
+      const res = await request(cfg, "/api/orgs/invites/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const raw = (await res.json()) as Record<string, unknown>;
+      return {
+        org: mapOrganization((raw.org ?? {}) as Record<string, unknown>),
+        already_member: raw.already_member === true,
+      };
+    },
+
+    async members(org: string): Promise<OrgMember[]> {
+      const res = await request(cfg, `/api/orgs/${encodeURIComponent(org)}/members`);
+      const raw = (await res.json()) as { items?: unknown };
+      return (Array.isArray(raw.items) ? raw.items : []).map((item) =>
+        mapOrgMember(item as Record<string, unknown>)
+      );
     },
   };
 }

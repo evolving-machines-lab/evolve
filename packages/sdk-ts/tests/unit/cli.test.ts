@@ -137,7 +137,7 @@ function restoreFetch() {
 // =============================================================================
 
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,6 +185,10 @@ function captureIO(tty = false): { io: CliIO; out: string[]; err: string[] } {
 }
 
 const AUTH = ["--api-key", "test-key", "--base-url", BASE];
+// The CLI's config file (`auth org use`) lives under $XDG_CONFIG_HOME; every
+// run here reads a throwaway one, never the developer's own default org.
+const XDG_HOME = mkdtempSync(join(tmpdir(), "evolve-cli-xdg-"));
+process.env.XDG_CONFIG_HOME = XDG_HOME;
 /** The line every API refusal ends with on stderr: the errors page the CLI itself serves (cli-skills.test.ts). */
 const DOCS_FOOTER = "Docs: evolve skills get evals sdk-reference/errors";
 
@@ -2399,7 +2403,8 @@ async function testRunWatchEndToEnd() {
     assert(streamCall !== undefined, "connects to the SSE event stream");
 
     // Rendered output
-    assert(out[0].includes("eval-1") && out[0].includes("watching"), "prints the created header");
+    assertEqual(out[0], "org  personal", "the first line names the org the job landed in");
+    assert(out[1].includes("eval-1") && out[1].includes("watching"), "prints the created header");
     assert(out.some((l) => l.includes("job.created")), "renders job.created event line");
     assert(
       out.some((l) => l.includes("trial.settled") && l.includes("run-1") && l.includes("reward=1")),
@@ -4454,6 +4459,118 @@ async function testCompareCancelDownload() {
     assertEqual(JSON.parse(jsonDownload.out[0]), { path: treeDir, files: 7 }, "--json = { path, files }");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    restoreFetch();
+  }
+}
+
+async function testJobShare() {
+  console.log("\n--- runCli: job share / unshare / shares — Harbor's share verbs, by email and by link ---");
+
+  // Grammar: exactly one id; a grant must be named.
+  assertThrowsUsage(() => parseArgs(["job", "share"]), "requires", "share needs an id");
+  assertThrowsUsage(() => parseArgs(["job", "shares", "a", "b"]), "unexpected argument", "shares takes one id");
+
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/abc123" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/jobs/eval-1/share", { status: 200, body: state });
+    setMockResponse("/api/jobs/eval-1/unshare", { status: 200, body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] } });
+    setMockResponse("/api/jobs/eval-1/shares", { status: 200, body: state });
+
+    // A share naming no grant is a usage error (exit 2, the flags named on stderr), refused before any request.
+    const bare = captureIO();
+    assertEqual(await runCli(["job", "share", "eval-1", ...AUTH], bare.io), 2, "share without --link or --email exits 2");
+    assert(bare.err.some((l) => l.includes("--link") && l.includes("--email")), "the refusal names both flags");
+    assertEqual(fetchCalls.length, 0, "nothing was requested");
+
+    const link = captureIO();
+    assertEqual(await runCli(["job", "share", "eval-1", "--link", "--email", "alice@example.org", ...AUTH], link.io), 0, "share exits 0");
+    const shareCall = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/share"));
+    assert(shareCall !== undefined && shareCall.init?.method === "POST", "share POSTs the share route");
+    assertEqual(JSON.parse(String(shareCall?.init?.body)), { link: true, emails: ["alice@example.org"] }, "--link and --email ride one body");
+    assert(link.out.some((l) => l.includes("https://dash.test/shared/abc123")), "the link is printed");
+    assert(link.out.some((l) => l.includes("alice@example.org")), "the addresses are printed");
+
+    const json = captureIO();
+    await runCli(["job", "shares", "eval-1", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out.join("\n")), state, "--json prints the JobShares wire shape verbatim");
+    const human = captureIO();
+    await runCli(["job", "shares", "eval-1", ...AUTH], human.io);
+    assert(human.out.some((l) => l.startsWith("visibility LINK")), "shares prints the visibility");
+
+    const off = captureIO();
+    assertEqual(await runCli(["job", "unshare", "eval-1", "--link", ...AUTH], off.io), 0, "unshare exits 0");
+    const unshareCall = fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/unshare"));
+    assertEqual(JSON.parse(String(unshareCall?.init?.body)), { link: true }, "unshare sends the same grammar");
+    assert(off.out.some((l) => l.includes("link       off")), "a revoked link prints off");
+
+    // job show prints the visibility row.
+    setMockResponse("/api/jobs/eval-1", { status: 200, body: wireJob({ visibility: "LINK" }) });
+    const show = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], show.io);
+    assert(show.out.some((l) => l.includes("visibility") && l.includes("LINK")), "job show prints visibility");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testCheckShare() {
+  console.log("\n--- runCli: check share / unshare / shares — the job verbs on a check ---");
+
+  assertThrowsUsage(() => parseArgs(["check", "share"]), "requires", "share needs an id");
+  assertThrowsUsage(() => parseArgs(["check", "shares", "a", "b"]), "unexpected argument", "shares takes one id");
+
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/def456" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/checks/chk-1/share", { status: 200, body: state });
+    setMockResponse("/api/checks/chk-1/unshare", { status: 200, body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] } });
+    setMockResponse("/api/checks/chk-1/shares", { status: 200, body: state });
+
+    const bare = captureIO();
+    assertEqual(await runCli(["check", "share", "chk-1", ...AUTH], bare.io), 2, "share without --link or --email exits 2");
+    assert(bare.err.some((l) => l.includes("--link") && l.includes("--email")), "the refusal names both flags");
+    assertEqual(fetchCalls.length, 0, "nothing was requested");
+
+    const link = captureIO();
+    assertEqual(await runCli(["check", "share", "chk-1", "--link", "--email", "alice@example.org", ...AUTH], link.io), 0, "share exits 0");
+    const shareCall = fetchCalls.find((c) => c.url.endsWith("/api/checks/chk-1/share"));
+    assert(shareCall !== undefined && shareCall.init?.method === "POST", "share POSTs the check's share route");
+    assertEqual(JSON.parse(String(shareCall?.init?.body)), { link: true, emails: ["alice@example.org"] }, "--link and --email ride one body");
+    assert(link.out.some((l) => l.includes("https://dash.test/shared/def456")), "the link is printed");
+    assert(link.out.some((l) => l.includes("alice@example.org")), "the addresses are printed");
+
+    const json = captureIO();
+    await runCli(["check", "shares", "chk-1", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out.join("\n")), state, "--json prints the JobShares wire shape verbatim");
+    const human = captureIO();
+    await runCli(["check", "shares", "chk-1", ...AUTH], human.io);
+    assert(human.out.some((l) => l.startsWith("visibility LINK")), "shares prints the visibility");
+
+    const off = captureIO();
+    assertEqual(await runCli(["check", "unshare", "chk-1", "--link", ...AUTH], off.io), 0, "unshare exits 0");
+    const unshareCall = fetchCalls.find((c) => c.url.endsWith("/api/checks/chk-1/unshare"));
+    assertEqual(JSON.parse(String(unshareCall?.init?.body)), { link: true }, "unshare sends the same grammar");
+    assert(off.out.some((l) => l.includes("link       off")), "a revoked link prints off");
+
+    // check show prints the visibility row; an older server's body reads as PRIVATE.
+    setMockResponse("/api/checks/chk-1", { status: 200, body: wireCheck({ visibility: "LINK" }) });
+    const show = captureIO();
+    await runCli(["check", "show", "chk-1", ...AUTH], show.io);
+    assert(show.out.some((l) => l.includes("visibility") && l.includes("LINK")), "check show prints visibility");
+    setMockResponse("/api/checks/chk-1", { status: 200, body: wireCheck() });
+    const older = captureIO();
+    await runCli(["check", "show", "chk-1", ...AUTH], older.io);
+    assert(older.out.some((l) => l.includes("visibility") && l.includes("PRIVATE")), "no visibility on the wire reads as PRIVATE");
+  } finally {
     restoreFetch();
   }
 }
@@ -7422,6 +7539,7 @@ async function testAgentAdd() {
         "--install-script", scriptPath,
         "--run", "acme-cli --headless",
         "--ae", "ACME_PROFILE=bench",
+        "--org", "acme",
         ...AUTH,
       ],
       io
@@ -7441,6 +7559,7 @@ async function testAgentAdd() {
     );
     assertEqual(form.get("run_command"), "acme-cli --headless", "run_command part");
     assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "--ae env is a JSON part");
+    assertEqual(form.get("org"), "acme", "--org is the owning organization part");
     const text = out.join("\n");
     assert(text.includes("acme-cli"), "renders the agent name");
     assert(text.includes("install_script"), "renders the source");
@@ -7540,7 +7659,10 @@ async function testSkillUpload() {
 
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["skill", "upload", skillDir, "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`],
+      [
+        "skill", "upload", skillDir, "--org", "acme",
+        "--api-key", "test-key", "--base-url", `http://127.0.0.1:${port}`,
+      ],
       io
     );
     assertEqual(code, 0, "exit 0");
@@ -7553,6 +7675,10 @@ async function testSkillUpload() {
       "the folder's own name travels as the name part"
     );
     assert(call.body.includes('name="archive"'), "the content rides as the archive part");
+    assert(
+      call.body.includes('name="org"') && call.body.includes("acme"),
+      "--org travels as the owning organization part",
+    );
     const text = out.join("\n");
     assert(text.includes(CLI_SKILL.ref), "prints the immutable upload:<id> handle");
     assert(text.includes("my-skill"), "prints the record's name");
@@ -8459,6 +8585,152 @@ const ORG_DETAIL = {
   },
 };
 
+// =============================================================================
+// AUTH ORG — the team verbs (create / invite / join / use) and --org on run
+// and dataset publish (flag > config file > personal), the run's first line
+// =============================================================================
+
+async function testAuthOrgTeamVerbs() {
+  console.log("\n--- runCli: auth org create / invite / join / use; --org on run and dataset publish ---");
+
+  console.log("  [grammar]");
+  const create = parseArgs(["auth", "org", "create", "acme", "--display-name", "Acme Corp"]);
+  assertEqual([create.command, create.positionals, create.flags["display-name"]], ["auth org create", ["acme"], "Acme Corp"], "org create resolves with its positional and flag");
+  assertEqual(parseArgs(["auth", "org", "invite", "acme"]).command, "auth org invite", "org invite resolves");
+  assertEqual(parseArgs(["auth", "org", "join", "evi_x"]).command, "auth org join", "org join resolves");
+  assertEqual(parseArgs(["auth", "org", "use"]).positionals, [], "org use takes no positional");
+  assertEqual(parseArgs(["auth", "org", "use", "acme"]).positionals, ["acme"], "org use takes one");
+  assertEqual(parseArgs(["run", "--org", "acme", "-d", "x", "-a", "codex", "-m", "m"]).flags.org, "acme", "--org parses on run");
+  assertEqual(parseArgs(["dataset", "publish", "--org", "acme", "--from", "hub:a/b"]).flags.org, "acme", "--org parses on dataset publish");
+  const help = captureIO();
+  assertEqual(await runCli(["help", "auth", "org", "use"], help.io), 0, "help on org use exits 0");
+  assert(help.out.join("\n").includes("[<name> | personal]"), "help documents the personal spelling");
+
+  const configPath = join(XDG_HOME, "evolve", "config.json");
+  assert(!existsSync(configPath), "no config file before the first use");
+
+  installMockFetch();
+  try {
+    const ACME = { org_id: "org-1", slug: "acme", display_name: "Acme Corp", personal: false, role: "owner", created_at: "2026-08-01T00:00:00.000Z" };
+    setMockResponse("/api/orgs/acme/invites", {
+      status: 201,
+      body: { invite_id: "inv-1", expires_at: "2026-09-24T00:00:00.000Z", max_uses: null, uses: 0, revoked_at: null, created_at: "2026-09-17T00:00:00.000Z", token: "evi_secret" },
+    });
+    setMockResponse("/api/orgs/invites/accept", { status: 200, body: { org: { ...ACME, role: "member" }, already_member: false } });
+    setMockResponse("/api/orgs", { status: 201, body: ACME });
+    setMockResponse("/api/jobs", { status: 202, body: { ...wireJob(), org: "acme" } });
+    setMockResponse("/api/datasets/publish", {
+      status: 202,
+      body: { id: "imp-1", status: "QUEUED", name: "hello-world", version: "1", failure: null, warnings: [] },
+    });
+
+    console.log("  [create]");
+    const created = captureIO();
+    assertEqual(await runCli(["auth", "org", "create", "acme", "--display-name", "Acme Corp", ...AUTH], created.io), 0, "create exits 0");
+    let call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/orgs") && call.init?.method === "POST", "create POSTs /api/orgs");
+    assertEqual(JSON.parse(call.init?.body as string), { slug: "acme", display_name: "Acme Corp" }, "create body: slug + display_name");
+    assertEqual(created.out[0], "Created organization acme", "create names the org");
+    assert(created.out.some((l) => l.includes("evolve auth org invite acme")), "create points at the invite verb");
+    const createdJson = captureIO();
+    await runCli(["auth", "org", "create", "acme", "--json", ...AUTH], createdJson.io);
+    assertEqual(JSON.parse(createdJson.out[0]).slug, "acme", "--json prints the Organization");
+
+    console.log("  [invite]");
+    const invited = captureIO();
+    assertEqual(await runCli(["auth", "org", "invite", "acme", ...AUTH], invited.io), 0, "invite exits 0");
+    call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/orgs/acme/invites") && call.init?.method === "POST", "invite POSTs /api/orgs/{org}/invites");
+    assertEqual(invited.out[0], "token    evi_secret", "the token is the first line");
+    assert(invited.out.some((l) => l.endsWith("evolve auth org join evi_secret")), "and the exact join command follows — no URL, there is no web accept page yet");
+    assert(!invited.out.some((l) => /https?:\/\//.test(l)), "no link is printed");
+    const invitedJson = captureIO();
+    await runCli(["auth", "org", "invite", "acme", "--json", ...AUTH], invitedJson.io);
+    assertEqual(JSON.parse(invitedJson.out[0]).token, "evi_secret", "--json carries the token");
+
+    console.log("  [join]");
+    const joined = captureIO();
+    assertEqual(await runCli(["auth", "org", "join", "evi_secret", ...AUTH], joined.io), 0, "join exits 0");
+    call = fetchCalls[fetchCalls.length - 1];
+    assertEqual(JSON.parse(call.init?.body as string), { token: "evi_secret" }, "join POSTs the token");
+    assertEqual(joined.out[0], "Joined acme as member", "join says so");
+    const joinedJson = captureIO();
+    await runCli(["auth", "org", "join", "evi_secret", "--json", ...AUTH], joinedJson.io);
+    assertEqual(JSON.parse(joinedJson.out[0]).already_member, false, "--json carries already_member");
+
+    console.log("  [use — the config file]");
+    const before = fetchCalls.length;
+    const none = captureIO();
+    assertEqual(await runCli(["auth", "org", "use"], none.io), 0, "bare use exits 0");
+    assertEqual(none.out[0], `org  personal  (no default in ${configPath})`, "no file = personal, and where the file would be");
+    const set = captureIO();
+    assertEqual(await runCli(["auth", "org", "use", "acme"], set.io), 0, "use <name> exits 0");
+    assertEqual(set.out[0], `Default org: acme (${configPath})`, "use names the org and the file");
+    assertEqual(JSON.parse(readFileSync(configPath, "utf8")), { org: "acme" }, "the file carries exactly the org key");
+    assertEqual(statSync(configPath).mode & 0o777, 0o600, "the file is 0600");
+    const show = captureIO();
+    await runCli(["auth", "org", "use"], show.io);
+    assertEqual(show.out[0], `org  acme  (from ${configPath})`, "bare use prints the default and its source");
+    const showJson = captureIO();
+    await runCli(["auth", "org", "use", "--json"], showJson.io);
+    assertEqual(JSON.parse(showJson.out[0]), { org: "acme", source: "config", path: configPath }, "--json: org, source, path");
+    assertEqual(fetchCalls.length, before, "use makes no request");
+
+    console.log("  [run: flag > config file > personal, and the first line]");
+    const RUN = ["-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", ...AUTH];
+    const viaConfig = captureIO();
+    assertEqual(await runCli(["run", ...RUN], viaConfig.io), 0, "run exits 0");
+    let body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "acme", "the config default rides the body");
+    assertEqual(viaConfig.out[0], "org  acme", "the FIRST line names the org");
+    const viaFlag = captureIO();
+    await runCli(["run", "--org", "other", ...RUN], viaFlag.io);
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "other", "--org wins over the config file");
+    assertEqual(viaFlag.out[0], "org  other", "and the first line says so");
+    const viaPersonal = captureIO();
+    assertEqual(await runCli(["run", "--org", "personal", ...RUN], viaPersonal.io), 0, "--org personal exits 0");
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assert(!("org" in body), "--org personal over a `use`d default sends NO org (the slug is the server's reserved word)");
+    assertEqual(viaPersonal.out[0], "org  personal", "and the first line says personal");
+    const printed = captureIO();
+    await runCli(["run", "--print-config", ...RUN], printed.io);
+    assertEqual(JSON.parse(printed.out.join("\n")).org, "acme", "--print-config shows the resolved org");
+    const asJson = captureIO();
+    await runCli(["run", "--json", ...RUN], asJson.io);
+    assertEqual(JSON.parse(asJson.out[0]).org, "acme", "--json: the org is the created job's own field, no extra line");
+    assertEqual(asJson.out.length, 1, "--json stays one document");
+
+    console.log("  [dataset publish --org]");
+    const pub = captureIO();
+    assertEqual(await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", ...AUTH], pub.io), 0, "publish exits 0");
+    let form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "acme", "the config default is the org part");
+    await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", "--org", "other", ...AUTH], captureIO().io);
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "other", "--org wins on publish too");
+    await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", "--org", "personal", ...AUTH], captureIO().io);
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assert(!form.has("org"), "--org personal on publish sends no org part over the `use`d default");
+
+    console.log("  [use personal]");
+    const cleared = captureIO();
+    assertEqual(await runCli(["auth", "org", "use", "personal"], cleared.io), 0, "use personal exits 0");
+    assertEqual(cleared.out[0], `Default org cleared: personal (${configPath})`, "personal clears the default");
+    assertEqual(JSON.parse(readFileSync(configPath, "utf8")), {}, "the key is removed, nothing else is written");
+    const personal = captureIO();
+    await runCli(["run", ...RUN], personal.io);
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assert(!("org" in body), "no org anywhere = no org key on the wire");
+    assertEqual(personal.out[0], "org  personal", "the first line says personal");
+    await runCli(["dataset", "publish", "--from", "hub:cookbook/hello-world", ...AUTH], captureIO().io);
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assert(!form.has("org"), "no org part on publish either");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testAuthOrgVerbs() {
   console.log("\n--- runCli: auth org list / show ---");
 
@@ -9254,6 +9526,7 @@ function wireSession(overrides: Record<string, unknown> = {}): Record<string, un
     endedAt: "2026-09-01T10:05:00.000Z",
     stepCount: 12,
     toolStats: { Bash: 7, Read: 5 },
+    org: "acme",
     ...overrides,
   };
 }
@@ -9305,6 +9578,22 @@ async function testSessionListAndShow() {
     assertEqual(f.searchParams.get("pageSize"), "7", "-l is the page size");
     assertEqual(f.searchParams.get("cursor"), "sess-9", "--cursor rides the query");
 
+    // A session names an org, so the list takes the same --scope every other
+    // hosted list takes, and refuses Harbor's `all` by name.
+    const scoped = captureIO();
+    await runCli(["session", "list", "--scope", "org", ...AUTH], scoped.io);
+    assertEqual(
+      new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("scope"),
+      "org",
+      "--scope rides the query",
+    );
+    const badScope = captureIO();
+    assertEqual(
+      await runCli(["session", "list", "--scope", "all", ...AUTH], badScope.io),
+      2,
+      "Harbor's `all` is a usage error at the keyboard \u2014 nothing hosted is public",
+    );
+
     const badState = captureIO();
     assertEqual(await runCli(["session", "list", "--state", "paused", ...AUTH], badState.io), 2, "an unknown state is a usage error");
 
@@ -9330,6 +9619,7 @@ async function testSessionListAndShow() {
     );
     assert(text.includes("12"), "renders the step count");
     assert(/^effort\s+high$/m.test(text), "renders the effort the session was started with, after the model (B181)");
+    assert(/^org\s+acme$/m.test(text), "renders the owning organization");
     assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/sessions/sess-1"), "one GET on the session");
 
     // A session without an effort (a harness that has none, or one ingested before the field) shows "-".
@@ -9348,6 +9638,74 @@ async function testSessionListAndShow() {
     // The plural noun answers as the hidden alias, like every other group.
     const alias = captureIO();
     assertEqual(await runCli(["sessions", "list", ...AUTH], alias.io), 0, "sessions aliases session");
+  } finally {
+    restoreFetch();
+  }
+}
+
+async function testSessionShare() {
+  console.log("\n--- runCli: session share / unshare / shares — the job verbs on a managed-agent session ---");
+
+  assertThrowsUsage(() => parseArgs(["session", "share"]), "requires", "share needs an id");
+  assertThrowsUsage(() => parseArgs(["session", "shares", "a", "b"]), "unexpected argument", "shares takes one id");
+
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/abc789" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/sessions/sess-1/share", { status: 200, body: state });
+    setMockResponse("/api/sessions/sess-1/unshare", { status: 200, body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] } });
+    setMockResponse("/api/sessions/sess-1/shares", { status: 200, body: state });
+
+    const bare = captureIO();
+    assertEqual(await runCli(["session", "share", "sess-1", ...AUTH], bare.io), 2, "share without --link or --email exits 2");
+    assert(bare.err.some((l) => l.includes("--link") && l.includes("--email")), "the refusal names both flags");
+    assertEqual(fetchCalls.length, 0, "nothing was requested");
+
+    const link = captureIO();
+    assertEqual(await runCli(["session", "share", "sess-1", "--link", "--email", "alice@example.org", ...AUTH], link.io), 0, "share exits 0");
+    const shareCall = fetchCalls.find((c) => c.url.endsWith("/api/sessions/sess-1/share"));
+    assert(shareCall !== undefined && shareCall.init?.method === "POST", "share POSTs the session's share route");
+    assertEqual(JSON.parse(String(shareCall?.init?.body)), { link: true, emails: ["alice@example.org"] }, "--link and --email ride one body");
+    assert(link.out.some((l) => l.includes("https://dash.test/shared/abc789")), "the link is printed");
+    assert(link.out.some((l) => l.includes("alice@example.org")), "the addresses are printed");
+
+    const json = captureIO();
+    await runCli(["session", "shares", "sess-1", "--json", ...AUTH], json.io);
+    assertEqual(JSON.parse(json.out.join("\n")), state, "--json prints the JobShares wire shape verbatim");
+
+    const off = captureIO();
+    assertEqual(await runCli(["session", "unshare", "sess-1", "--link", ...AUTH], off.io), 0, "unshare exits 0");
+    const unshareCall = fetchCalls.find((c) => c.url.endsWith("/api/sessions/sess-1/unshare"));
+    assertEqual(JSON.parse(String(unshareCall?.init?.body)), { link: true }, "unshare sends the same grammar");
+    assert(off.out.some((l) => l.includes("link       off")), "a revoked link prints off");
+
+    // session show prints the visibility row; an older server's body reads as PRIVATE.
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession({ visibility: "LINK" }) });
+    const show = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], show.io);
+    assert(/^visibility\s+LINK$/m.test(show.out.join("\n")), "session show prints visibility");
+    setMockResponse("/api/sessions/sess-1", { status: 200, body: wireSession() });
+    const older = captureIO();
+    await runCli(["session", "show", "sess-1", ...AUTH], older.io);
+    assert(/^visibility\s+PRIVATE$/m.test(older.out.join("\n")), "no visibility on the wire reads as PRIVATE");
+
+    // list --scope shared asks the server for the sessions shared with the caller.
+    setMockResponse("/api/sessions?", { status: 200, body: { items: [], nextCursor: null, hasMore: false, paginationMode: "cursor" } });
+    const shared = captureIO();
+    assertEqual(await runCli(["session", "list", "--scope", "shared", ...AUTH], shared.io), 0, "list --scope shared exits 0");
+    assert(fetchCalls[fetchCalls.length - 1].url.includes("scope=shared"), "the scope rides the list request");
+    const badScope = captureIO();
+    const before = fetchCalls.length;
+    assertEqual(await runCli(["session", "list", "--scope", "all", ...AUTH], badScope.io), 2, "an unknown scope is a usage error");
+    assert(
+      badScope.err[0].includes("my") && badScope.err[0].includes("shared") && badScope.err[0].includes("Harbor"),
+      "session list refuses with the one shared scope sentence, Harbor's all explained"
+    );
+    assertEqual(fetchCalls.length, before, "no request was made");
   } finally {
     restoreFetch();
   }
@@ -9773,6 +10131,8 @@ async function main() {
   testTrialDetailAnalysisRows();
   await testCompareCancelDownload();
   await testJobDelete();
+  await testJobShare();
+  await testCheckShare();
   await testJobDownloadUnpackGuards();
   await testTrialShow();
   await testTrialShowUploaded();
@@ -9828,6 +10188,8 @@ async function main() {
   await testCheckShowDefaults();
   await testFilesVerbs();
   await testSessionListAndShow();
+  await testSessionShare();
+  await testAuthOrgTeamVerbs();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

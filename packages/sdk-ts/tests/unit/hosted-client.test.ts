@@ -230,6 +230,7 @@ import {
   orgs,
   skills,
   trials,
+  JOB_LIST_SCOPES,
   EvolveApiError,
   EvolveDigestMismatchError,
   EvolveIncompleteDownloadError,
@@ -2213,6 +2214,8 @@ async function testWatchImportFailureReReadIsBounded() {
 
 const REGISTERED_AGENT = {
   name: "acme-cli",
+  // The owning org's slug: whose members may name this agent in a job.
+  org: "acme",
   source: "install_script",
   run_command: "acme-cli --headless",
   env: { ACME_PROFILE: "bench" },
@@ -2248,6 +2251,7 @@ async function testAgentCreateInstallScript() {
     assertEqual(form.get("run_command"), "acme-cli --headless", "run_command is a named part");
     assertEqual(form.get("env"), JSON.stringify({ ACME_PROFILE: "bench" }), "env is a JSON part");
     assertEqual(form.get("archive"), null, "no archive part for the install-script source");
+    assertEqual(form.get("org"), null, "no org part when neither the call nor the client names one");
     assertEqual(created, REGISTERED_AGENT, "201 response mapped (name, source, run_command, env, timestamps)");
   } finally {
     restoreFetch();
@@ -2399,6 +2403,84 @@ async function testSkillsUploadCarriesFolderName() {
     await server.close();
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+async function testOrgAxisOnSkillsAndAgents() {
+  console.log("\n--- the org axis: `org` on the create doors, `scope` on the lists ---");
+  const server = await startCaptureServer({
+    status: 201,
+    body: {
+      skills: [
+        {
+          id: "sk_org",
+          name: "team-skill",
+          org: "acme",
+          digest: "sha256:" + "1".repeat(64),
+          size_bytes: 7,
+          description: null,
+          ref: "upload:sk_org",
+          created_at: "2026-09-18T00:00:00Z",
+        },
+      ],
+    },
+  });
+  const dir = await mkdtemp(join(tmpdir(), "evolve-skill-org-"));
+  const skillDir = join(dir, "team-skill");
+  try {
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# team\n");
+
+    // The call's own org wins; with none, the client default rides.
+    const s1 = skills({ apiKey: "test-key", baseUrl: server.base, org: "fallback" });
+    const uploaded = await s1.upload(skillDir, { org: "acme" });
+    let parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "org")?.toString(), "acme", "the call's own org is the org part");
+    assertEqual(uploaded[0]?.org, "acme", "the mapped record carries the owning org's slug");
+
+    await s1.upload(skillDir);
+    parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "org")?.toString(), "fallback", "the client default rides when the call names none");
+
+    const s2 = skills({ apiKey: "test-key", baseUrl: server.base });
+    await s2.upload(skillDir);
+    parts = multipartParts(server.calls[server.calls.length - 1]);
+    assertEqual(partData(parts, "org"), null, "no org anywhere = no org part (the server's personal default)");
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  // The lists take the same three-value scope every other hosted list takes.
+  installMockFetch();
+  try {
+    setMockResponse("/api/skills", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    await skills({ apiKey: "test-key", baseUrl: BASE }).list({ scope: "org" });
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.includes("scope=org"),
+      "skills().list({ scope }) sends the scope"
+    );
+
+    setMockResponse("/api/agents", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    await agents({ apiKey: "test-key", baseUrl: BASE }).list({ scope: "shared" });
+    assert(
+      fetchCalls[fetchCalls.length - 1].url.includes("scope=shared"),
+      "agents().list({ scope }) sends the scope"
+    );
+
+    setMockResponse("/api/agents", { status: 201, body: { ...REGISTERED_AGENT, org: "acme" } });
+    const created = await agents({ apiKey: "test-key", baseUrl: BASE, org: "acme" }).create({
+      name: "acme-cli",
+      install_script: "true",
+      run_command: "acme-cli --headless",
+    });
+    const form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "acme", "the client default is the agent's org part");
+    assertEqual(created.org, "acme", "the mapped agent carries the owning org's slug");
+  } finally {
+    restoreFetch();
+  }
+
+  assertEqual(JOB_LIST_SCOPES.join(","), "my,shared,org", "the scope vocabulary carries org");
 }
 
 async function testAgentCreateRequiresOneSource() {
@@ -4540,6 +4622,7 @@ async function testUploadProvenanceMappingEdges() {
         // Absent totals (a pre-field ingest) read null, never invented.
         reported_totals: null,
         task_links: null,
+        datasets: null,
       },
       "null originals pass through as null"
     );
@@ -4561,9 +4644,50 @@ async function testUploadProvenanceMappingEdges() {
         uploaded_at: "2026-08-28T10:00:00.000Z",
         reported_totals: null,
         task_links: null,
+        datasets: null,
       },
       "a non-string original_job_name reads null while the rest maps"
     );
+
+    // The archive's declared datasets ride as declared; a Harbor local-path
+    // entry (no name) is skipped; one nameless entry of another shape nulls the list.
+    setMockResponse("/api/jobs/eval-ds", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-ds",
+        upload: {
+          original_job_id: null,
+          original_job_name: null,
+          uploaded_at: "2026-08-28T10:00:00.000Z",
+          reported_totals: null,
+          task_links: null,
+          datasets: [{ path: "./local-bench" }, { name: "terminal-bench", version: "2.0" }, { name: "bare" }],
+        },
+      }),
+    });
+    assertEqual(
+      (await e.get("eval-ds")).upload?.datasets,
+      [
+        { name: "terminal-bench", version: "2.0" },
+        { name: "bare", version: null },
+      ],
+      "declared datasets map, the local-path entry skipped"
+    );
+    setMockResponse("/api/jobs/eval-badlist", {
+      status: 200,
+      body: uploadedJobBody({
+        id: "eval-badlist",
+        upload: {
+          original_job_id: null,
+          original_job_name: null,
+          uploaded_at: "2026-08-28T10:00:00.000Z",
+          reported_totals: null,
+          task_links: null,
+          datasets: [{ name: "ok", version: "1" }, { version: "2" }],
+        },
+      }),
+    });
+    assertEqual((await e.get("eval-badlist")).upload?.datasets, null, "a nameless entry nulls the whole list");
 
     // A fractional trial count is a malformed totals object and voids it
     // whole — the count must be a genuine integer (the Python mapper's rule).
@@ -4847,6 +4971,58 @@ async function testDeleteJob() {
       { job_id: "eval-1", trials_deleted: 0, analyses_deleted: 0 },
       "zero counts ride verbatim"
     );
+  } finally {
+    restoreFetch();
+  }
+}
+
+// =============================================================================
+// SHARE — link and email grants (POST /api/jobs/{jobId}/share, /unshare, GET /shares)
+// =============================================================================
+
+async function testShareJob() {
+  console.log("\n--- jobs().share() / unshare() / shares(): the wire body verbatim, the share state back ---");
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/abc123" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/jobs/eval-1/shares", { status: 200, body: state });
+    setMockResponse("/api/jobs/eval-1/share", { status: 200, body: state });
+    setMockResponse("/api/jobs/eval-1/unshare", {
+      status: 200,
+      body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    const shared = await e.share("eval-1", { link: true, emails: ["Alice@Example.org"] });
+    const shareCall = fetchCalls[0];
+    assert(shareCall.url.endsWith("/api/jobs/eval-1/share"), "share POSTs the share route");
+    assertEqual(shareCall.init?.method, "POST", "share uses POST");
+    assertEqual(
+      JSON.parse(String(shareCall.init?.body)),
+      { link: true, emails: ["Alice@Example.org"] },
+      "the body is the grant verbatim — the server lowercases and validates"
+    );
+    assertEqual(shared, state, "the share state comes back: visibility, the link with its url, the addresses");
+
+    const listed = await e.shares("eval-1");
+    assertEqual(fetchCalls[1].init?.method ?? "GET", "GET", "shares reads with GET");
+    assert(fetchCalls[1].url.endsWith("/api/jobs/eval-1/shares"), "shares hits the shares route");
+    assertEqual(listed.link.url, "https://dash.test/shared/abc123", "the owner can copy the link again");
+
+    const revoked = await e.unshare("eval-1", { link: true });
+    assert(fetchCalls[2].url.endsWith("/api/jobs/eval-1/unshare"), "unshare POSTs the unshare route");
+    assertEqual(JSON.parse(String(fetchCalls[2].init?.body)), { link: true }, "unshare sends the same grammar");
+    assertEqual(revoked, { visibility: "PRIVATE", link: { enabled: false }, emails: [] }, "a revoked link has no url");
+
+    // An older server that names no visibility reads as PRIVATE on the job body.
+    setMockResponse("/api/jobs/eval-2", { status: 200, body: { ...JOB_SUMMARY, id: "eval-2" } });
+    assertEqual((await e.get("eval-2")).visibility, "PRIVATE", "Job.visibility defaults to PRIVATE when the server sends none");
+    setMockResponse("/api/jobs/eval-3", { status: 200, body: { ...JOB_SUMMARY, id: "eval-3", visibility: "LINK" } });
+    assertEqual((await e.get("eval-3")).visibility, "LINK", "Job.visibility carries LINK");
   } finally {
     restoreFetch();
   }
@@ -7140,6 +7316,86 @@ async function testListAnalyses() {
 // show` extension), and the one quota refusal every job-creating door speaks
 // =============================================================================
 
+async function testOrgsTeamVerbs() {
+  console.log("\n--- orgs(): create / invite / join / members; the org default on start and publish ---");
+  installMockFetch();
+  try {
+    const ACME = { org_id: "org-1", slug: "acme", display_name: "Acme Corp", personal: false, role: "owner", created_at: "2026-08-01T00:00:00.000Z" };
+    // Specific paths first: the mock matches the first substring in insertion order.
+    setMockResponse("/api/orgs/acme/invites", {
+      status: 201,
+      body: { invite_id: "inv-1", expires_at: "2026-09-24T00:00:00.000Z", max_uses: null, uses: 0, revoked_at: null, created_at: "2026-09-17T00:00:00.000Z", token: "evi_secret" },
+    });
+    setMockResponse("/api/orgs/acme/members", {
+      status: 200,
+      body: { items: [
+        { user_id: "u1", email: "vaibhav@example.com", role: "owner", joined_at: "2026-08-01T00:00:00.000Z" },
+        { user_id: "u2", email: "tanay@example.com", role: "member", joined_at: "2026-09-17T00:00:00.000Z" },
+      ] },
+    });
+    setMockResponse("/api/orgs/invites/accept", { status: 200, body: { org: { ...ACME, role: "member" }, already_member: false } });
+    setMockResponse("/api/orgs", { status: 201, body: ACME });
+    setMockResponse("/api/jobs", { status: 202, body: { ...JOB_SUMMARY, org: "acme" } });
+    setMockResponse("/api/datasets/publish", { status: 202, body: { id: "imp-1", status: "QUEUED", name: "hello-world", version: "1", failure: null, warnings: [] } });
+
+    const client = orgs({ apiKey: "k", baseUrl: BASE });
+    const created = await client.create("acme", { displayName: "Acme Corp" });
+    let call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/orgs") && call.init?.method === "POST", "create POSTs /api/orgs");
+    assertEqual(JSON.parse(call.init?.body as string), { slug: "acme", display_name: "Acme Corp" }, "create body: the name is the slug, display_name optional");
+    assertEqual(created.slug, "acme", "create maps the Organization");
+    await client.create("bare");
+    assertEqual(JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string), { slug: "bare" }, "no display_name part when none is given");
+
+    const invite = await client.invite("acme");
+    call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/orgs/acme/invites") && call.init?.method === "POST", "invite POSTs /api/orgs/{org}/invites");
+    assertEqual(call.init?.body, undefined, "invite sends no body — the server's defaults");
+    assertEqual(invite.token, "evi_secret", "the one-time token rides the response");
+    assertEqual(invite.max_uses, null, "unlimited uses maps to null");
+
+    const joined = await client.join("evi_secret");
+    call = fetchCalls[fetchCalls.length - 1];
+    assert(call.url.endsWith("/api/orgs/invites/accept"), "join POSTs /api/orgs/invites/accept");
+    assertEqual(JSON.parse(call.init?.body as string), { token: "evi_secret" }, "join body is the token alone");
+    assertEqual([joined.org.slug, joined.already_member], ["acme", false], "join maps the org and already_member");
+
+    const members = await client.members("acme");
+    assert(fetchCalls[fetchCalls.length - 1].url.endsWith("/api/orgs/acme/members"), "members GETs /api/orgs/{org}/members");
+    assertEqual(members.map((m) => [m.email, m.role]), [["vaibhav@example.com", "owner"], ["tanay@example.com", "member"]], "members map email + role");
+
+    // The client-level org default on start: fills an absent org, never overrides a named one.
+    const job = await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    let body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "acme", "start: the config org rides the body when the call names none");
+    assertEqual(job.org, "acme", "Job.org maps the owning org's slug");
+    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: "other", datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "other", "start: the call's own org wins over the config default");
+    await jobs({ apiKey: "k", baseUrl: BASE }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assert(!("org" in body), "start: no org anywhere = no org key (the server's personal default)");
+    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: undefined, datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
+    assertEqual(body.org, "acme", "start: an explicit `org: undefined` on the call is absent, so the config default still rides");
+    const plain = await jobs({ apiKey: "k", baseUrl: BASE }).get("job-1").catch(() => null);
+    assert(plain === null || plain.org === "acme" || plain.org === null, "Job.org is null from a server that sends none");
+
+    // The same default on publish, as the multipart `org` part.
+    await datasets({ apiKey: "k", baseUrl: BASE, org: "acme" }).publish({ source: { hub_package: "cookbook/hello-world" } });
+    let form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "acme", "publish: the config org is the org part");
+    await datasets({ apiKey: "k", baseUrl: BASE, org: "acme" }).publish({ source: { hub_package: "cookbook/hello-world" }, org: "other" });
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assertEqual(form.get("org"), "other", "publish: the call's own org wins");
+    await datasets({ apiKey: "k", baseUrl: BASE }).publish({ source: { hub_package: "cookbook/hello-world" } });
+    form = fetchCalls[fetchCalls.length - 1].init?.body as FormData;
+    assert(!form.has("org"), "publish: no org anywhere = no org part");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testOrgs() {
   console.log("\n--- orgs(): list + get map the org, its quota and usage; quota_exceeded is typed ---");
   installMockFetch();
@@ -7544,6 +7800,53 @@ async function testChecksTaskReads() {
   }
 }
 
+async function testShareCheck() {
+  console.log("\n--- checks().share() / unshare() / shares(): the job verbs on a check, the same JobShares back ---");
+  installMockFetch();
+  try {
+    const state = {
+      visibility: "LINK",
+      link: { enabled: true, url: "https://dash.test/shared/def456" },
+      emails: [{ email: "alice@example.org", shared_by: "owner@example.org", created_at: "2026-09-18T00:00:00.000Z" }],
+    };
+    setMockResponse("/api/checks/chk-1/share", { status: 200, body: state });
+    setMockResponse("/api/checks/chk-1/shares", { status: 200, body: state });
+    setMockResponse("/api/checks/chk-1/unshare", {
+      status: 200,
+      body: { visibility: "PRIVATE", link: { enabled: false }, emails: [] },
+    });
+    const c = checks({ apiKey: "test-key", baseUrl: BASE });
+
+    const shared = await c.share("chk-1", { link: true, emails: ["Alice@Example.org"] });
+    assert(fetchCalls[0].url.endsWith("/api/checks/chk-1/share"), "share POSTs the check's share route");
+    assertEqual(fetchCalls[0].init?.method, "POST", "share uses POST");
+    assertEqual(
+      JSON.parse(String(fetchCalls[0].init?.body)),
+      { link: true, emails: ["Alice@Example.org"] },
+      "the body is the grant verbatim — the server lowercases and validates"
+    );
+    assertEqual(shared, state, "the share state comes back in the job's shape");
+
+    const listed = await c.shares("chk-1");
+    assertEqual(fetchCalls[1].init?.method ?? "GET", "GET", "shares reads with GET");
+    assert(fetchCalls[1].url.endsWith("/api/checks/chk-1/shares"), "shares hits the check's shares route");
+    assertEqual(listed.link.url, "https://dash.test/shared/def456", "the owner can copy the link again");
+
+    const revoked = await c.unshare("chk-1", { link: true });
+    assert(fetchCalls[2].url.endsWith("/api/checks/chk-1/unshare"), "unshare POSTs the check's unshare route");
+    assertEqual(JSON.parse(String(fetchCalls[2].init?.body)), { link: true }, "unshare sends the same grammar");
+    assertEqual(revoked, { visibility: "PRIVATE", link: { enabled: false }, emails: [] }, "a revoked link has no url");
+
+    // Check.visibility: the server's word, or PRIVATE from a server older than the field.
+    setMockResponse("/api/checks/chk-2", { status: 200, body: checkFixture({ id: "chk-2" }) });
+    assertEqual((await c.get("chk-2")).visibility, "PRIVATE", "Check.visibility defaults to PRIVATE when the server sends none");
+    setMockResponse("/api/checks/chk-3", { status: 200, body: checkFixture({ id: "chk-3", visibility: "LINK" }) });
+    assertEqual((await c.get("chk-3")).visibility, "LINK", "Check.visibility carries LINK");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testChecksReadsAndWatch() {
   console.log("\n--- checks().get()/list()/watch() ride the contract's two GETs; watch polls to completed ---");
   installMockFetch();
@@ -7668,6 +7971,7 @@ async function main() {
   await testAgentCreateTarball();
   await testAgentUpsertTarball();
   await testSkillsUploadCarriesFolderName();
+  await testOrgAxisOnSkillsAndAgents();
   await testAgentCreateRequiresOneSource();
   await testAgentListGetDelete();
   await testAgentNotFoundIsTypedError();
@@ -7717,6 +8021,7 @@ async function main() {
   await testUploadJobTypedErrors();
   await testDeleteJob();
   await testDeleteJobTypedRefusals();
+  await testShareJob();
   await testDownloadPackageBuffer();
   await testDownloadPackageToFile();
   await testDownloadPackageStream();
@@ -7762,9 +8067,11 @@ async function main() {
   await testChecksCreateDirectory();
   await testChecksCreateDataset();
   await testChecksReadsAndWatch();
+  await testShareCheck();
   await testChecksDefaults();
   await testChecksTaskReads();
   await testOrgs();
+  await testOrgsTeamVerbs();
 
   console.log(`\n${"=".repeat(60)}`);
   console.log(`  Passed: ${passed}`);

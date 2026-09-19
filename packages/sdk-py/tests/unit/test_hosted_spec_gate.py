@@ -197,6 +197,28 @@ OPERATION_TO_METHOD = {
     'listJobImports': (JobsClient, 'list_imports'),
     'getJobImport': (JobsClient, 'get_import'),
     'deleteJob': (JobsClient, 'delete'),
+    # Sharing (B190): the creator's three verbs are SDK methods; the share
+    # LINK's own doors (x-wave: 5) are the no-login viewer page's and never
+    # SDK methods — an SDK caller holds a key and reads a run it was shared
+    # through the job and trial doors, which an email share opens.
+    'shareJob': (JobsClient, 'share'),
+    'unshareJob': (JobsClient, 'unshare'),
+    'getJobShares': (JobsClient, 'shares'),
+    'getSharedJob': None,
+    'listSharedJobTrials': None,
+    'getSharedTrial': None,
+    'getSharedTrialTrace': None,
+    'listSharedTrialFiles': None,
+    'getSharedTrialFile': None,
+    'getSharedTrialFilesystem': None,
+    'listSharedTrialFilesystemFolder': None,
+    'readSharedTrialFilesystemFile': None,
+    'searchSharedTrialFilesystem': None,
+    'listSharedTrialFilesystemChanges': None,
+    'downloadSharedTrialFilesystemArchive': None,
+    'streamSharedTrialFilesystemEvents': None,
+    'getSharedTrialSandboxLog': None,
+    'streamSharedTrialSandboxLogs': None,
     'resumeJob': (JobsClient, 'resume'),
     'retryJob': (JobsClient, 'retry'),
     'regradeJob': (JobsClient, 'regrade'),
@@ -263,6 +285,27 @@ OPERATION_TO_METHOD = {
     'getTaskCheckSandboxLog': (ChecksClient, 'task_filesystem'),
     'streamTaskCheckSandboxLogs': (ChecksClient, 'task_filesystem'),
     'getTaskCheckProcs': (ChecksClient, 'task_filesystem'),
+    # A check shares as a job does: the creator's three verbs are SDK methods;
+    # the check link's archive door is the link viewer's, like the job link's doors.
+    'shareCheck': (ChecksClient, 'share'),
+    'unshareCheck': (ChecksClient, 'unshare'),
+    'getCheckShares': (ChecksClient, 'shares'),
+    'downloadSharedCheck': None,
+    # The session link's transcript door, like every other link door: no key,
+    # so no SDK wrapper (the session share verbs live on the runtime map below).
+    'getSharedSessionTranscript': None,
+    # The link's analysis doors (no key, no SDK wrapper), like the trial doors above.
+    'listSharedJobAnalyses': None,
+    'getSharedAnalysisSandboxLog': None,
+    'streamSharedAnalysisSandboxLogs': None,
+    'getSharedAnalysisFilesystem': None,
+    'listSharedAnalysisFilesystemFolder': None,
+    'readSharedAnalysisFilesystemFile': None,
+    'searchSharedAnalysisFilesystem': None,
+    'listSharedAnalysisFilesystemChanges': None,
+    'downloadSharedAnalysisFilesystemArchive': None,
+    'streamSharedAnalysisFilesystemEvents': None,
+    'downloadSharedAnalysis': None,
     # Datasets
     'listDatasets': (DatasetsClient, 'list'),
     'getDataset': (DatasetsClient, 'get'),
@@ -320,16 +363,16 @@ OPERATION_TO_METHOD = {
     # ever set one.
     'listOrgs': (OrgsClient, 'list'),
     'getOrg': (OrgsClient, 'get'),
-    'createOrg': None,
+    'createOrg': (OrgsClient, 'create'),
     'updateOrg': None,
     'deleteOrg': None,
-    'listOrgMembers': None,
+    'listOrgMembers': (OrgsClient, 'members'),
     'updateOrgMember': None,
     'removeOrgMember': None,
     'listOrgInvites': None,
-    'createOrgInvite': None,
+    'createOrgInvite': (OrgsClient, 'invite'),
     'revokeOrgInvite': None,
-    'acceptOrgInvite': None,
+    'acceptOrgInvite': (OrgsClient, 'join'),
 }
 
 
@@ -349,6 +392,11 @@ RUNTIME_OPERATION_TO_MODULE = {
     'deleteSessions': 'evolve/sessions_client.py',
     'getSession': 'evolve/sessions_client.py',
     'deleteSession': 'evolve/sessions_client.py',
+    # Sharing a managed-agent session: the creator's three verbs, the job
+    # client's shapes on the sessions client.
+    'shareSession': 'evolve/sessions_client.py',
+    'unshareSession': 'evolve/sessions_client.py',
+    'getSessionShares': 'evolve/sessions_client.py',
     'ingestSessionEvents': 'evolve/agent.py (observability push)',
     'getSessionSpend': 'evolve/sessions_client.py (cost surface)',
     'listCheckpoints': 'evolve/storage_client.py',

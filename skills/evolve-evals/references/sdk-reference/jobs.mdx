@@ -16,12 +16,13 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `n_attempts`, `n_concurrent_trials` (1 to 150), `max_trial_spend_usd`, `sandbox_provider`, `retry`, `analyze`, `system_log` (record the box's own system log stream beside `agent`, `verifier`, `setup` and `metrics`; off by default), the five `*_timeout_multiplier` fields, `verifier_env` (`REWARDKIT_JUDGE` and `REWARDKIT_MODEL` only) and `secrets`. `agent_env` is in the shape but refused by the server.
+    `JobCreate`: `datasets` (selectors: `name`, optional `version`, `task_names`, `exclude_task_names`, `n_tasks`), `agents` (arms: `name`, `model_name`, optional `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`), and optional `job_name`, `org` (the organization the job lands in; omitted, the client's `org` default, else your personal one), `n_attempts`, `n_concurrent_trials` (1 to 150), `max_trial_spend_usd`, `sandbox_provider`, `retry`, `analyze`, `system_log` (record the box's own system log stream beside `agent`, `verifier`, `setup` and `metrics`; off by default), the five `*_timeout_multiplier` fields, `verifier_env` (`REWARDKIT_JUDGE` and `REWARDKIT_MODEL` only) and `secrets`. `agent_env` is in the shape but refused by the server.
 
-    The response is the [Job](/sdk-reference/types#job), with the resolved `max_trial_spend_usd`, `worst_case_spend_usd`, `retry`, `analyze` and multipliers. `options.idempotencyKey` makes a repeated call return the same job, with `idempotent_replay` true; a different request under a used key is refused with `idempotency_key_reused`.
+    The response is the [Job](/sdk-reference/types#job), with the resolved `max_trial_spend_usd`, `worst_case_spend_usd`, `retry`, `analyze` and multipliers, and `org`, the slug of the organization it landed in. `options.idempotencyKey` makes a repeated call return the same job, with `idempotent_replay` true; a different request under a used key is refused with `idempotency_key_reused`.
 
     ```ts
     const job = await jobs().start({
+      org: "acme",
       datasets: [{ name: "terminal-bench-4", version: "4.0", n_tasks: 5 }],
       agents: [{ name: "codex", model_name: "gpt-6-astra" }],
     });
@@ -34,6 +35,7 @@ description: "Start, follow, and derive jobs."
         datasets: List[DatasetSelector | dict],
         agents: List[AgentArm | dict],
         job_name=None,
+        org=None,
         n_attempts=None,
         n_concurrent_trials=None,
         max_trial_spend_usd=None,
@@ -56,6 +58,7 @@ description: "Start, follow, and derive jobs."
 
     ```python
     job = await jobs().start(
+        org="acme",
         datasets=[{"name": "terminal-bench-4", "version": "4.0", "n_tasks": 5}],
         agents=[{"name": "codex", "model_name": "gpt-6-astra"}],
     )
@@ -95,7 +98,7 @@ description: "Start, follow, and derive jobs."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    list(options?: { search?: string; scope?: "my" | "shared"; limit?: number; cursor?: string }): JobList
+    list(options?: { search?: string; scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): JobList
     ```
 
     Your jobs, newest first. Await one page, or iterate every page.
@@ -655,6 +658,83 @@ description: "Start, follow, and derive jobs."
 
     ```python
     await jobs().delete(job.id)
+    ```
+  </Tab>
+</Tabs>
+
+## share
+
+Share a job you created by link, by email, or both. `link: true` turns on the job's unlisted link and returns it (the same link on every later call). Each address in `emails` gets an email with a link to the run and reads it after signing in with that address; an address without an account gets a sign-up link in the same email; an address already on the waitlist or holding an invite gets the share email without a sign-up link and uses that invite instead. Someone the run is shared with reads the job, its trials, traces and files and lists it under `scope: "shared"`; they cannot operate it. Only the creator may share; another member of the organization is refused with `org_forbidden`. The answer is the job's whole share state, the same shape [shares](#shares) returns.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    share(id: string, request: { link?: boolean; emails?: string[] }): Promise<JobShares>
+    ```
+
+    ```ts
+    const state = await jobs().share(job.id, { link: true, emails: ["alice@example.org"] });
+    console.log(state.link.url);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def share(id: str, *, link: bool = False, emails: list[str] | None = None) -> JobShares
+    ```
+
+    ```python
+    state = await jobs().share(job.id, link=True, emails=["alice@example.org"])
+    print(state.link.url)
+    ```
+  </Tab>
+</Tabs>
+
+## unshare
+
+Take a share back, with the same arguments as `share`. `link: true` turns the link off at once (a later `share` returns a new one); `emails` removes those addresses. Safe to repeat.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    unshare(id: string, request: { link?: boolean; emails?: string[] }): Promise<JobShares>
+    ```
+
+    ```ts
+    await jobs().unshare(job.id, { link: true });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def unshare(id: str, *, link: bool = False, emails: list[str] | None = None) -> JobShares
+    ```
+
+    ```python
+    await jobs().unshare(job.id, link=True)
+    ```
+  </Tab>
+</Tabs>
+
+## shares
+
+Who the job is shared with: `visibility` (`PRIVATE` or `LINK`), `link` (`enabled`, and `url` while it is on), and `emails` (each with `email`, `shared_by` and `created_at`). Creator only.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    shares(id: string): Promise<JobShares>
+    ```
+
+    ```ts
+    const { link, emails } = await jobs().shares(job.id);
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def shares(id: str) -> JobShares
+    ```
+
+    ```python
+    state = await jobs().shares(job.id)
     ```
   </Tab>
 </Tabs>

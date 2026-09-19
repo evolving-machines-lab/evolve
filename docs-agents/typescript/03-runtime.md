@@ -758,6 +758,24 @@ console.log(evolve.getSessionTimestamp()); // Timestamp for second log file
   current file, so you always have the full timeline.
 - Logging is buffered inside the SDK, so it never blocks streaming output.
 
+The managed session a run registers belongs to an organization, the way a job
+does. Name one with `.withOrg()` (a slug or id; you must be a member) and every
+member of that organization can read the session; omit it and the session lands
+in your personal organization:
+
+```ts
+const evolve = new Evolve()
+  .withAgent({...})
+  .withOrg("acme");
+```
+
+The organization is checked before the run starts: a name that does not exist,
+or one you are not a member of, makes `run()` throw an `EvolveConfigError` on
+the `org` field, so a mistyped slug never becomes a run whose trace the
+dashboard silently refuses. Should the dashboard still refuse a batch of trace
+events, the SDK warns once with the server's error code instead of dropping it
+quietly.
+
 Use the tag together with the sandbox id to correlate logs with files saved in
 `/output/`.
 
@@ -777,6 +795,7 @@ const page = await session.list({
   agent: "claude",
   tagPrefix: "my-proj",
   sort: "cost",
+  scope: "org",
 });
 const page2 = await session.list({ cursor: page.nextCursor });
 const info = await session.get(page.items[0].id);
@@ -784,14 +803,17 @@ const events = await session.events(info.id, { since: 50 });
 const { gatewayCalls, total } = await session.transcript(info.id);
 const path = await session.download(info.id, { to: "./traces" });
 const replay = await session.browserReplay(info.id);
+await session.share(info.id, { link: true, emails: ["alice@example.org"] });
 ```
 
 - `list()` returns `SessionPage { items: SessionInfo[], nextCursor, hasMore }`
-- `get()` returns `SessionInfo` with `sandboxId`, `reasoningEffort` (the effort the session was started with; `null` when the harness has none or the session predates the field), `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
+- `list()` takes `scope`: `"my"` (yours, the default), `"shared"` (your organizations' other members' and the ones shared with your address) or `"org"` (every session in your organizations, yours included). A session belongs to an organization the way a job does — the one `.withOrg()` named when it was started, else your personal one — and its members read it; stopping and deleting stay with whoever ran it.
+- `get()` returns `SessionInfo` with `org` (the owning organization's slug), `sandboxId`, `reasoningEffort` (the effort the session was started with; `null` when the harness has none or the session predates the field), `runtimeStatus`, `cost`, `stepCount`, `toolStats`, etc. — plus `usage`, the one-home reading (spend so far + token breakdown from the same gateway records, `provisional` marking numbers that can still grow); it carries the same keys a trial's `usage` does, and `null` means the meter never answered.
 - `events()` returns parsed JSONL objects; pass `since` for delta fetching
 - `transcript()` is the same read whole: `SessionTranscript { session, events, total, gatewayCalls, storedAt? }` — `total` counts every stored event (the next delta's `since`), and `gatewayCalls` are the gateway meter's per-call lines (`GatewayUsageEvent`: `update.usage.promptTokens`, `completionTokens`, `cachedTokens`, `costUsd`), in time order, the same line a trial's trace carries; they ride beside `events`, never inside them, and are the only per-call tokens and money a client should show. `storedAt` is the server's write instant of each event's row, one per entry of `events` and index-aligned: present on every row-served page (an empty page carries an empty list), absent when the transcript was served from its file. It places the gateway meter's calls under the harness's steps for harnesses whose lines carry no clock of their own (codex, kimi, qwen); a reader that does not place calls needs nothing from it. The session's total stays on `session.usage` / `session.cost`.
 - `download()` streams the raw `.jsonl` trace to disk and returns the file path
-- The CLI wraps the same client headless: `evolve session list` (`--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page) and `evolve session show <id>`
+- `share()`, `unshare()` and `shares()` share a session you started the way a job shares. `share(id, { link: true })` turns on its unlisted link and returns it — anyone holding the link reads the session, its transcript and its trace file, without signing in, and nothing else of it: no file system and no browser replay, because a session's box holds whatever you put in it. `share(id, { emails: [...] })` shares it with people by address: each new address gets an email with a link and reads the session after signing in with that address (a person without an account gets a sign-up link in the same email). Both may ride one call. All three answer the session's whole share state — `visibility` (`PRIVATE` or `LINK`, also on every `SessionInfo`), the link, and every email share. `unshare(id, { link: true })` kills the link at once; a later share mints a new one. Sharing is read-only: neither the link nor an address can stop the session. Only the account that started the session may share it
+- The CLI wraps the same client headless: `evolve session list` (`--scope my|shared|org`, `--state live|ended`, `--agent`, `--tag-prefix`, paged with `--limit`/`--cursor`, `-q` for ids, `--json` for the page), `evolve session show <id>`, and `evolve session share|unshare|shares <id>` (`--link`, `--email <address>`)
 - `browserReplay()` waits for the managed browser replay and returns `replayUrl` plus `downloadUrl`
   - Use `replayUrl` in your UI for browser playback
   - Use `downloadUrl` when users need the raw `.mp4` file

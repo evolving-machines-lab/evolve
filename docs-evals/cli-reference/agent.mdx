@@ -16,7 +16,11 @@ evolve agent <command> [options]
 evolve agent list [options]
 ```
 
-List your registered agents.
+List registered agents.
+
+<ParamField path="--scope" type="my | shared | org">
+  Visibility scope: `my`, your own registrations (the default); `shared`, your organizations' other members'; or `org`, every registration in your organizations.
+</ParamField>
 
 <ListFlags />
 
@@ -26,7 +30,7 @@ List your registered agents.
 evolve agent show <name>
 ```
 
-Show one registered agent.
+Show a registered agent: your own of that name first, else the oldest of that name across the organizations you belong to. A name outside your organizations answers `agent_not_found`.
 
 ## agent add
 
@@ -35,6 +39,14 @@ evolve agent add <name> [options]
 ```
 
 Register an agent from an install script or a local directory.
+
+The registration belongs to you and to an organization: its members may name the agent in their own jobs, and only you can change or delete it. A name stays unique per person, so two teammates may each register their own `acme-cli`.
+
+A registration that cannot be built — the script exits non-zero, or installs nothing executable (see [Registered agents](/core-concepts/agents)) — fails its trials as the agent's own error (`failure_phase` `agent_source`; the trial's stderr stream holds the install's output), never retried: `agent remove` it, `agent add` it again, and resume the job.
+
+<ParamField path="--org" type="name">
+  Organization the registration belongs to. Default: the organization from `evolve auth org use`, else your personal one. It is fixed once set.
+</ParamField>
 
 <ParamField path="--install-script" type="path">
   Install script file. Its contents are uploaded.
