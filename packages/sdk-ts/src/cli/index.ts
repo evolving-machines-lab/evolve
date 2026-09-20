@@ -3921,7 +3921,7 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   ]);
   // Scored = the tally's SCORED count (required on every job body, regrades
   // included); completed minus errored overcounts an unscored upload.
-  const scored = e.trials.byStatus.SCORED ?? 0;
+  const scored = e.trials.byStatus.SCORED;
   rows.push(["scored", `${scored} of ${e.n_total_trials} trial(s)`]);
   if (e.upload && e.n_total_trials > 0 && scored === 0) {
     rows.push([
