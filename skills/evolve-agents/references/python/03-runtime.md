@@ -218,13 +218,13 @@ Calling `run` or `execute_command` for the first time provisions a sandbox with 
 ├── scripts/     # Your code goes here
 ├── temp/        # Scratch space
 ├── output/      # Final deliverables
-└── CLAUDE.md    # System prompt (or AGENT.md, GEMINI.md, QWEN.md depending on agent)
+└── CLAUDE.md    # System prompt (or AGENTS.md, GEMINI.md, QWEN.md depending on agent)
 ```
 
 Files passed to `context` are uploaded to `context/`. Files passed to `files` are uploaded relative to the working directory.
 
 ## Filesystem Instructions
-Evolve writes a default filesystem instructions to the agent's config file in the workspace (`CLAUDE.md`, `AGENT.md`, `GEMINI.md`, or `QWEN.md`):
+Evolve writes a default filesystem instructions to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`):
 
 ```
 ## FILESYSTEM INSTRUCTIONS
@@ -243,7 +243,7 @@ IMPORTANT - Directory structure:
 ## OUTPUT RESULTS (DELIVERABLES) MUST BE SAVED to `output/` as files.
 ```
 
-Any string passed to `system_prompt` is automatically appended to the agent's config file in the workspace (`CLAUDE.md`, `AGENT.md`, `GEMINI.md`, or `QWEN.md`) after this default.
+Any string passed to `system_prompt` is automatically appended to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`) after this default.
 
 ## Structured Output
 
@@ -282,7 +282,7 @@ else:
     print(output.raw_data)            # Raw JSON for debugging
 ```
 
-The SDK automatically appends the following to the agent's config file in the workspace (`CLAUDE.md`, `AGENT.md`, `GEMINI.md`, or `QWEN.md`):
+The SDK automatically appends the following to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`):
 
 ~~~
 ## STRUCTURED OUTPUT
@@ -744,6 +744,9 @@ Each file contains three entry types:
 - `_meta` – exactly one line per file (sandbox, agent, timestamp)
 - `_prompt` – one line per `run()` call with the prompt text
 - Raw JSON – every streamed payload (ACP notifications, stdout, etc.)
+
+
+Runs made without `EVOLVE_API_KEY` exist only in these files. To bring them onto the dashboard, pack them as a job and upload it — one trial folder per run, the header's agent and model in `result.json`, the raw lines as the transcript, your score in `verifier_result.rewards`: `evolve skills get evals core-concepts/upload`.
 
 Attach your own prefix to make logs easy to search:
 

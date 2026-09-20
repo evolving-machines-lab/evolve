@@ -1,6 +1,6 @@
 ---
 name: publish
-description: Publish a dataset of Harbor-format tasks to Evolve, or upload a finished job directory. Use when the user wants to publish, upload, or share tasks, datasets/benchmarks, or job results on Evolve.
+description: Publish a dataset of Harbor-format tasks to Evolve, or upload a finished job folder — a Harbor job, or Evolve SDK runs packed as one. Use when the user wants to publish, upload, or share tasks, datasets/benchmarks, or job results on Evolve.
 metadata:
   internal: true
 ---
@@ -122,7 +122,11 @@ evolve dataset download "<dataset>@1.0" -o corpora/
 ## Uploading a job you ran elsewhere
 
 A job run elsewhere, in the Harbor job layout, uploads as a finished job. Its trials,
-traces and rewards become a job you read like any other.
+traces and rewards become a job you read like any other. Before packing a folder by
+hand — runs made with the Evolve SDK, or any other runner — read what a trial folder
+and its `result.json` must hold: `evolve skills get evals core-concepts/upload`. The
+score lives in `result.json` as `verifier_result.rewards`; without it a trial arrives
+with no score.
 
 ```bash
 evolve upload "<path/to/job-dir>" -d "<dataset>@1.0"

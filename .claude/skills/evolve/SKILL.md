@@ -30,7 +30,7 @@ Read the index first, then the page for your topic, then write the command. Ever
 evolve skills get create-task      # write a new task in the Harbor format, verifier included
 evolve skills get rewardkit        # write a task's verifier with Reward Kit
 evolve skills get create-adapter   # convert an existing benchmark into a folder of Harbor-format tasks
-evolve skills get publish          # publish a dataset of tasks, or upload a job you ran elsewhere
+evolve skills get publish          # publish a dataset of tasks, or upload a job you ran elsewhere (a Harbor job, or SDK runs packed as one)
 ```
 
 `evolve skills list` names everything the installed version serves; `--full` on any skill adds its pages. The SDK skill (run agents in sandboxes from TypeScript or Python) is not served by the command; install it from the repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`.

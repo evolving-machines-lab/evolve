@@ -1986,7 +1986,8 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     summary: "Upload a Harbor job directory as a finished job",
     notes:
       "Takes the directory, its .tar.gz, or with --from a public URL of one, and follows " +
-      "the upload to the job it becomes.",
+      "the upload to the job it becomes. What a trial folder must hold, the score included: " +
+      "evolve skills get evals core-concepts/upload",
     flags: {
       dataset: {
         kind: "string",
@@ -3918,6 +3919,16 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
     "size",
     `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.n_total_trials} trial(s)`,
   ]);
+  // Scored = the tally's SCORED count (required on every job body, regrades
+  // included); completed minus errored overcounts an unscored upload.
+  const scored = e.trials.byStatus.SCORED;
+  rows.push(["scored", `${scored} of ${e.n_total_trials} trial(s)`]);
+  if (e.upload && e.n_total_trials > 0 && scored === 0) {
+    rows.push([
+      "warning",
+      "no uploaded trial carries verifier_result.rewards; see: evolve skills get evals core-concepts/upload",
+    ]);
+  }
   // THE RESULTS-HONESTY LABEL (partial-publish model): a whole-dataset (or
   // glob) run over a partially built version runs the READY tasks, and this
   // row is where the job says so plainly — "ran N of M tasks — K failed to
