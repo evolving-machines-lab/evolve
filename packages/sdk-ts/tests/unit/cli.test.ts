@@ -2783,20 +2783,35 @@ async function testJobShowScoredRow() {
   try {
     setMockResponse("/api/jobs/eval-1", {
       status: 200,
-      body: wireJob({ n_total_trials: 3, stats: { cost_usd: null, n_completed_trials: 3, n_errored_trials: 1 } }),
+      body: wireJob({
+        n_total_trials: 3,
+        stats: {
+          cost_usd: null,
+          n_completed_trials: 3,
+          n_errored_trials: 1,
+          evals: { "codex__gpt-5.5__deep-swe@1.1": { n_trials: 2, n_errors: 1 } },
+        },
+      }),
     });
     const native = captureIO();
     await runCli(["job", "show", "eval-1", ...AUTH], native.io);
     const nativeText = native.out.join("\n");
-    assert(/scored\s+2 of 3 trial\(s\)/.test(nativeText), "scored = completed minus errored");
+    assert(/scored\s+2 of 3 trial\(s\)/.test(nativeText), "scored = the rewarded count of every eval");
     assert(!nativeText.includes("verifier_result.rewards"), "a scored job carries no warning");
 
+    // An upload with no rewards and no exception is completed but not errored,
+    // so completed minus errored would call it scored; the rewarded count says zero.
     setMockResponse("/api/jobs/eval-2", {
       status: 200,
       body: wireJob({
         id: "eval-2",
         n_total_trials: 2,
-        stats: { cost_usd: null, n_completed_trials: 2, n_errored_trials: 2 },
+        stats: {
+          cost_usd: null,
+          n_completed_trials: 2,
+          n_errored_trials: 0,
+          evals: { "codex__gpt-5.5__deep-swe@1.1": { n_trials: 0, n_errors: 0 } },
+        },
         upload: { original_job_id: "orig-2", original_job_name: "ported", uploaded_at: "2026-09-16T05:54:01Z", reported_totals: null, task_links: [] },
       }),
     });
