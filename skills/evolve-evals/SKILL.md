@@ -46,7 +46,7 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 | [Check](references/core-concepts/check.mdx) | Check the quality of tasks against a rubric before you spend a job on them. |
 | [Skills](references/core-concepts/skills.mdx) | Mount skills into every agent run, from a git source or from your uploads. |
 | [Secrets](references/core-concepts/secrets.mdx) | Store env secrets once and attach them to jobs by name. |
-| [Upload a job](references/core-concepts/upload.mdx) | Bring a job you ran elsewhere onto the platform as a finished job. |
+| [Upload a job](references/core-concepts/upload.mdx) | Bring a job you ran elsewhere onto the platform: a Harbor job folder, or Evolve SDK runs packed as one. |
 
 ### Dashboard
 
@@ -75,7 +75,7 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 | [evolve run](references/cli-reference/run.mdx) | Start a job, and optionally follow it to the end. |
 | [evolve analyze](references/cli-reference/analyze.mdx) | Analyze a finished job's trial traces against a rubric, on the platform. |
 | [evolve check](references/cli-reference/check.mdx) | Check task quality against a rubric, and read checks back. |
-| [evolve upload](references/cli-reference/upload.mdx) | Upload a job directory as a finished job. |
+| [evolve upload](references/cli-reference/upload.mdx) | Upload a job folder as a finished job. |
 
 ### Command groups
 

@@ -745,6 +745,9 @@ Each file contains three entry types:
 - `_prompt` – one line per `run()` call with the prompt text
 - Raw JSON – every streamed payload (ACP notifications, stdout, etc.)
 
+
+Runs made without `EVOLVE_API_KEY` exist only in these files. To bring them onto the dashboard, pack them as a job and upload it — one trial folder per run, the header's agent and model in `result.json`, the raw lines as the transcript, your score in `verifier_result.rewards`: `evolve skills get evals core-concepts/upload`.
+
 Attach your own prefix to make logs easy to search:
 
 ```python
