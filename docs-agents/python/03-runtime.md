@@ -218,13 +218,13 @@ Calling `run` or `execute_command` for the first time provisions a sandbox with 
 ├── scripts/     # Your code goes here
 ├── temp/        # Scratch space
 ├── output/      # Final deliverables
-└── CLAUDE.md    # System prompt (or AGENT.md, GEMINI.md, QWEN.md depending on agent)
+└── CLAUDE.md    # System prompt (or AGENTS.md, GEMINI.md, QWEN.md depending on agent)
 ```
 
 Files passed to `context` are uploaded to `context/`. Files passed to `files` are uploaded relative to the working directory.
 
 ## Filesystem Instructions
-Evolve writes a default filesystem instructions to the agent's config file in the workspace (`CLAUDE.md`, `AGENT.md`, `GEMINI.md`, or `QWEN.md`):
+Evolve writes a default filesystem instructions to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`):
 
 ```
 ## FILESYSTEM INSTRUCTIONS
@@ -243,7 +243,7 @@ IMPORTANT - Directory structure:
 ## OUTPUT RESULTS (DELIVERABLES) MUST BE SAVED to `output/` as files.
 ```
 
-Any string passed to `system_prompt` is automatically appended to the agent's config file in the workspace (`CLAUDE.md`, `AGENT.md`, `GEMINI.md`, or `QWEN.md`) after this default.
+Any string passed to `system_prompt` is automatically appended to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`) after this default.
 
 ## Structured Output
 
@@ -282,7 +282,7 @@ else:
     print(output.raw_data)            # Raw JSON for debugging
 ```
 
-The SDK automatically appends the following to the agent's config file in the workspace (`CLAUDE.md`, `AGENT.md`, `GEMINI.md`, or `QWEN.md`):
+The SDK automatically appends the following to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`):
 
 ~~~
 ## STRUCTURED OUTPUT
