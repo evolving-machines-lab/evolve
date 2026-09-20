@@ -22,8 +22,8 @@ The Harbor job layout, exactly what `evolve job download` and `harbor job downlo
 
 ```text
 job/
-├── config.json                   the job record
-├── result.json
+├── config.json                   REQUIRED — the job record
+├── result.json                   REQUIRED
 └── <trial>/                      one folder per trial
     ├── result.json               REQUIRED — the trial's facts (below)
     ├── agent/
@@ -36,7 +36,7 @@ job/
     └── trial.log, exception.txt
 ```
 
-Every file but `result.json` is optional. What is absent stays absent: a trial without a trace shows no trace, a trial without a home shows no files.
+The job root needs both record files; inside a trial only `result.json` is required. What is absent stays absent: a trial without a trace shows no trace, a trial without a home shows no files.
 
 ## What `result.json` must hold
 
@@ -80,7 +80,7 @@ Each trial's `lock.json` names its task by content hash; a task the platform hol
 ## Bounds and duplicates
 
 - One limit: the archive ceiling `limits.uploads.job_archive_bytes` (`upload_too_large`).
-- A trial with a file over 5 GiB, or a trajectory too large to parse, is skipped (`trial_too_large`); the rest lands.
+- A trial with a file over 5 GiB, or a trajectory too large to parse, is skipped (`trial_too_large`); the rest lands. A `job.log` over that size refuses the job (`upload_too_large`).
 - A `result.json` that cannot be read fails the import (`invalid_trial`).
 - The same job twice: `job_already_uploaded`. Delete it, then upload again.
 
