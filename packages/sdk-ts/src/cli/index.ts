@@ -3919,9 +3919,9 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
     "size",
     `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.n_total_trials} trial(s)`,
   ]);
-  // Scored = Harbor's rewarded count per eval; completed minus errored overcounts
-  // because an unscored upload is completed without being errored.
-  const scored = Object.values(e.stats.evals ?? {}).reduce((sum, arm) => sum + (arm.n_trials ?? 0), 0);
+  // Scored = the tally's SCORED count (required on every job body, regrades
+  // included); completed minus errored overcounts an unscored upload.
+  const scored = e.trials.byStatus.SCORED ?? 0;
   rows.push(["scored", `${scored} of ${e.n_total_trials} trial(s)`]);
   if (e.upload && e.n_total_trials > 0 && scored === 0) {
     rows.push([
