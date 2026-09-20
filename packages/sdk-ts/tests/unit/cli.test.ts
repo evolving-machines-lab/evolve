@@ -2773,6 +2773,43 @@ async function testJobShowUnmeasuredTotal() {
   }
 }
 
+/**
+ * SCORED ROW on the job card: completed minus errored (the wire's cumulative
+ * counters), and an uploaded job with nothing scored says where the score goes.
+ */
+async function testJobShowScoredRow() {
+  console.log("\n--- job show: scored row + the no-rewards warning on an upload ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs/eval-1", {
+      status: 200,
+      body: wireJob({ n_total_trials: 3, stats: { cost_usd: null, n_completed_trials: 3, n_errored_trials: 1 } }),
+    });
+    const native = captureIO();
+    await runCli(["job", "show", "eval-1", ...AUTH], native.io);
+    const nativeText = native.out.join("\n");
+    assert(/scored\s+2 of 3 trial\(s\)/.test(nativeText), "scored = completed minus errored");
+    assert(!nativeText.includes("verifier_result.rewards"), "a scored job carries no warning");
+
+    setMockResponse("/api/jobs/eval-2", {
+      status: 200,
+      body: wireJob({
+        id: "eval-2",
+        n_total_trials: 2,
+        stats: { cost_usd: null, n_completed_trials: 2, n_errored_trials: 2 },
+        upload: { original_job_id: "orig-2", original_job_name: "ported", uploaded_at: "2026-09-16T05:54:01Z", reported_totals: null, task_links: [] },
+      }),
+    });
+    const uploaded = captureIO();
+    await runCli(["job", "show", "eval-2", ...AUTH], uploaded.io);
+    const uploadedText = uploaded.out.join("\n");
+    assert(/scored\s+0 of 2 trial\(s\)/.test(uploadedText), "an upload with no rewards scores zero");
+    assert(uploadedText.includes("evolve skills get evals core-concepts/upload"), "and names the page that says where the score goes");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testJobShowGpuCost() {
   console.log("\n--- runCli: job show renders the GPU compute estimate separately ---");
   installMockFetch();
@@ -10105,6 +10142,7 @@ async function main() {
   await testJobShowMultiId();
   await testJobShowUnmeasuredTotal();
   await testJobShowGpuCost();
+  await testJobShowScoredRow();
   await testJobShowPassAtK();
   await testJobShowJudgeSplit();
   await testJobTrialsAndTasks();

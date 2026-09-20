@@ -1,6 +1,6 @@
 ---
 title: "evolve upload"
-description: "Upload a job directory as a finished job."
+description: "Upload a job folder as a finished job."
 ---
 
 import GlobalOptions from '/snippets/global-options.mdx';
@@ -9,7 +9,7 @@ import GlobalOptions from '/snippets/global-options.mdx';
 evolve upload <job_dir> [options]
 ```
 
-Upload a job directory in the Harbor job layout, its `.tar.gz`, or a public URL of one, as a terminal job. The command follows the import to the job, prints the record with the task linkage (`linked N of M trials to <dataset>` and the not-linked tasks with their reasons), names any skipped trials, and ends with the analyze hint.
+Upload a job folder in the Harbor job layout, its `.tar.gz`, or a public URL of one, as a terminal job. What the folder and each trial's `result.json` must hold is on [Upload a job](/core-concepts/upload). The command follows the import to the job, prints the record with the task linkage (`linked N of M trials to <dataset>` and the not-linked tasks with their reasons), names any skipped trials, and ends with the analyze hint.
 
 ```bash
 evolve upload ./job-2026-08-27__12-00-00 -d terminal-bench-4@4.0
