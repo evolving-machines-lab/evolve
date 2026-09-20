@@ -3919,9 +3919,9 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
     "size",
     `${e.counts.agents} agent(s) x ${e.counts.tasks} task(s) = ${e.n_total_trials} trial(s)`,
   ]);
-  // Scored = completed minus the ones carrying an exception (Harbor's cumulative
-  // counters, the wire's own definitions) — an upload with no rewards must say so.
-  const scored = Math.max(0, (e.stats.n_completed_trials ?? 0) - (e.stats.n_errored_trials ?? 0));
+  // Scored = the tally's SCORED count (required on every job body, regrades
+  // included); completed minus errored overcounts an unscored upload.
+  const scored = e.trials.byStatus.SCORED;
   rows.push(["scored", `${scored} of ${e.n_total_trials} trial(s)`]);
   if (e.upload && e.n_total_trials > 0 && scored === 0) {
     rows.push([

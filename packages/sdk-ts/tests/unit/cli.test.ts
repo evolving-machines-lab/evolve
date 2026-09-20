@@ -2783,20 +2783,27 @@ async function testJobShowScoredRow() {
   try {
     setMockResponse("/api/jobs/eval-1", {
       status: 200,
-      body: wireJob({ n_total_trials: 3, stats: { cost_usd: null, n_completed_trials: 3, n_errored_trials: 1 } }),
+      body: wireJob({
+        n_total_trials: 3,
+        trials: { total: 3, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2, INFRASTRUCTURE_ERROR: 1 } },
+        stats: { cost_usd: null, n_completed_trials: 3, n_errored_trials: 1 },
+      }),
     });
     const native = captureIO();
     await runCli(["job", "show", "eval-1", ...AUTH], native.io);
     const nativeText = native.out.join("\n");
-    assert(/scored\s+2 of 3 trial\(s\)/.test(nativeText), "scored = completed minus errored");
+    assert(/scored\s+2 of 3 trial\(s\)/.test(nativeText), "scored = the tally's SCORED count");
     assert(!nativeText.includes("verifier_result.rewards"), "a scored job carries no warning");
 
+    // An upload with no rewards and no exception is completed but not errored,
+    // so completed minus errored would call it scored; the tally says zero.
     setMockResponse("/api/jobs/eval-2", {
       status: 200,
       body: wireJob({
         id: "eval-2",
         n_total_trials: 2,
-        stats: { cost_usd: null, n_completed_trials: 2, n_errored_trials: 2 },
+        trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, INDETERMINATE: 2 } },
+        stats: { cost_usd: null, n_completed_trials: 2, n_errored_trials: 0 },
         upload: { original_job_id: "orig-2", original_job_name: "ported", uploaded_at: "2026-09-16T05:54:01Z", reported_totals: null, task_links: [] },
       }),
     });
@@ -2805,6 +2812,22 @@ async function testJobShowScoredRow() {
     const uploadedText = uploaded.out.join("\n");
     assert(/scored\s+0 of 2 trial\(s\)/.test(uploadedText), "an upload with no rewards scores zero");
     assert(uploadedText.includes("evolve skills get evals core-concepts/upload"), "and names the page that says where the score goes");
+
+    // A regrade body serves evals as {} (its stats are the counters alone), so a
+    // reader summing evals would print zero for a fully scored regrade.
+    setMockResponse("/api/jobs/eval-3", {
+      status: 200,
+      body: wireJob({
+        id: "eval-3",
+        n_total_trials: 2,
+        trials: { total: 2, byStatus: { ...ZERO_TRIAL_STATUSES, SCORED: 2 } },
+        stats: { cost_usd: null, n_completed_trials: 2, n_errored_trials: 0, evals: {} },
+        is_regrade: true,
+      }),
+    });
+    const regrade = captureIO();
+    await runCli(["job", "show", "eval-3", ...AUTH], regrade.io);
+    assert(/scored\s+2 of 2 trial\(s\)/.test(regrade.out.join("\n")), "a regrade with two SCORED results scores two");
   } finally {
     restoreFetch();
   }
