@@ -61,6 +61,8 @@ The first seven keys are required. `verifier_result.rewards` is the score: names
 
 Every SDK run is logged to a local file under `~/.evolve-sdk/observability/sessions/`. Its header line names the agent and model, and its raw lines are the transcript. To bring such runs onto the platform, pack one trial folder per run: the header's agent and model into `agent_info`, the raw lines at the harness's own transcript path under `agent/` (for codex `agent/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<id>.jsonl`, for claude `agent/.claude/projects/<project>/<session>.jsonl`), and the score, when you have one, in `verifier_result.rewards`. Raw transcripts anywhere else under `agent/` are stored as files but not read as the trace.
 
+The system prompt the SDK wrote for the run (`systemPrompt`, an `AGENTS.md` or `CLAUDE.md` in the sandbox) is not in the session file. To show it, write `agent/trajectory.json` with it as a step whose `source` is `system`: a `system` step is drawn as the system prompt, never as an error.
+
 ## What lands
 
 - Rewards → `SCORED`, rewards untouched.
