@@ -1,0 +1,36 @@
+---
+title: "Teams"
+description: "Create a team, invite people, run under it, and see each other's work."
+---
+
+Every account has a personal organization from the start. A team is an organization you create and invite people into: jobs, checks, sessions, datasets, agents and skills belong to one organization, and every member sees them.
+
+```bash
+evolve auth org create acme --display-name "Acme Lab"
+evolve auth org invite acme
+```
+
+`invite` prints a token once. Whoever runs `evolve auth org join <token>` while signed in joins as a member. Owners manage members and invites; members run and read.
+
+## Run under a team
+
+```bash
+evolve run -d terminal-bench-4@4.0 -a claude -m haiku -l 5 --org acme
+evolve job list --scope org
+```
+
+`--org` names the organization a job lands in. Without it, the job goes to your default organization (`evolve auth org use acme` sets one, `evolve auth org use personal` clears it) or to your personal one. `dataset publish --org` places a new dataset the same way; a new version of an existing dataset stays where that dataset is. The public catalog is visible to every organization. `job list --scope` picks what you see: `my` (yours), `shared` (what teammates created, and runs shared with you by email) or `org` (everything in your organizations, yours included).
+
+In the SDK the same choice is `org: "acme"` on `jobs().start()` and `datasets().publish()`, or once for a client with `hosted({ apiKey, org: "acme" })`.
+
+## In the dashboard
+
+The box under your account in the sidebar is the team switcher. On Jobs, Datasets and Settings it names the team you are in; on Traces and Skills it names none. Its menu lists your teams and Personal, **Manage members** while a team is open, and **Create team**. Pick a team and the pages under it show that team's work.
+
+Team settings has three tabs. GENERAL holds the name, and DELETE TEAM for an owner. MEMBERS lists people with their role: an owner has MAKE OWNER, DEMOTE and REMOVE on every other row, and everyone has LEAVE on their own. INVITES has NEW INVITE LINK, shown once, and REVOKE. A person who opens an invite link signs in, or signs up, and joins.
+
+Traces and Skills are not under a team. Their tabs are MINE (yours, in any team), TEAM (everything in every team you belong to, yours included) and SHARED WITH ME (what teammates made, plus runs shared with you by email).
+
+<Card title="auth reference" icon="terminal" href="/cli-reference/auth">
+  Every `evolve auth org` command.
+</Card>

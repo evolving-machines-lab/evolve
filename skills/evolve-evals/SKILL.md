@@ -47,6 +47,8 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 | [Skills](references/core-concepts/skills.mdx) | Mount skills into every agent run, from a git source or from your uploads. |
 | [Secrets](references/core-concepts/secrets.mdx) | Store env secrets once and attach them to jobs by name. |
 | [Upload a job](references/core-concepts/upload.mdx) | Bring a job you ran elsewhere onto the platform: a Harbor job folder, or Evolve SDK runs packed as one. |
+| [Teams](references/core-concepts/teams.mdx) | Create a team, invite people, run under it, and see each other's work. |
+| [Sharing](references/core-concepts/sharing.mdx) | Share a run with people by email, or with anyone by link. |
 
 ### Dashboard
 
