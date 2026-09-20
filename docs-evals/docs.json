@@ -102,7 +102,9 @@
               "core-concepts/check",
               "core-concepts/skills",
               "core-concepts/secrets",
-              "core-concepts/upload"
+              "core-concepts/upload",
+              "core-concepts/teams",
+              "core-concepts/sharing"
             ]
           },
           {
