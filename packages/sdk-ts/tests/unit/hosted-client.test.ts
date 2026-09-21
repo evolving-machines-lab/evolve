@@ -3645,6 +3645,7 @@ async function testAnalyzeJob() {
       failing: true,
       n_trials: 20,
       n_concurrent: 2,
+      trial_ids: ["run-2", "run-1"],
     });
     const call = fetchCalls[fetchCalls.length - 1];
     assertEqual(call.init?.method, "POST", "uses POST");
@@ -3660,8 +3661,9 @@ async function testAnalyzeJob() {
         failing: true,
         n_trials: 20,
         n_concurrent: 2,
+        trial_ids: ["run-2", "run-1"],
       },
-      "the config rides the body verbatim — prompt (Harbor's -p file as TEXT), sandbox_provider, reasoning_effort and Harbor's selection knobs (failing / n_trials / n_concurrent) included"
+      "the config rides the body verbatim — prompt (Harbor's -p file as TEXT), sandbox_provider, reasoning_effort, Harbor's selection knobs (failing / n_trials / n_concurrent) and the trial list included"
     );
     // THE RESPONSE IS THE JOB — analyses are not a separate resource.
     assertEqual(job.id, "eval-1", "returns the job body");
@@ -5023,6 +5025,12 @@ async function testShareJob() {
     assertEqual((await e.get("eval-2")).visibility, "PRIVATE", "Job.visibility defaults to PRIVATE when the server sends none");
     setMockResponse("/api/jobs/eval-3", { status: 200, body: { ...JOB_SUMMARY, id: "eval-3", visibility: "LINK" } });
     assertEqual((await e.get("eval-3")).visibility, "LINK", "Job.visibility carries LINK");
+    // The read relation: the wire's word verbatim; none, or a word outside the vocabulary, reads as null.
+    assertEqual((await e.get("eval-2")).viewer, null, "Job.viewer is null when the server sends none");
+    setMockResponse("/api/jobs/eval-4", { status: 200, body: { ...JOB_SUMMARY, id: "eval-4", viewer: "shared" } });
+    assertEqual((await e.get("eval-4")).viewer, "shared", "Job.viewer carries shared");
+    setMockResponse("/api/jobs/eval-5", { status: 200, body: { ...JOB_SUMMARY, id: "eval-5", viewer: "owner" } });
+    assertEqual((await e.get("eval-5")).viewer, null, "an off-vocabulary viewer reads as null, never passed through");
   } finally {
     restoreFetch();
   }
@@ -7903,6 +7911,30 @@ async function testChecksReadsAndWatch() {
   }
 }
 
+async function testAnalysesDefaults() {
+  console.log("\n--- analyses().defaults() reads GET /api/analyses/defaults and pins the wire ---");
+  installMockFetch();
+  try {
+    const defaults = {
+      model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+      rubric: { criteria: [{ name: "score_is_earned", description: "d", guidance: "g" }] },
+      prompt: "Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}",
+      reasoning_effort: "high",
+      sandbox_provider: "daytona",
+    };
+    // Registered BEFORE the list door: the mock matches by substring, in order.
+    setMockResponse("/api/analyses/defaults", { status: 200, body: defaults });
+    setMockResponse("/api/analyses", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const got = await analyses({ apiKey: "test-key", baseUrl: BASE }).defaults();
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/analyses/defaults", "one GET on the defaults door");
+    assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
+    assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testChecksDefaults() {
   console.log("\n--- checks().defaults() reads GET /api/checks/defaults and pins the wire ---");
   installMockFetch();
@@ -8052,6 +8084,7 @@ async function main() {
   await testSystemLogSwitch();
   await testTrialArtifact();
   await testAnalysisGet();
+  await testAnalysesDefaults();
   await testAnalysisGetMalformedFailsClosed();
   await testAnalysisTranscript();
   await testAnalysisTranscriptRefusesOtherSpecies();

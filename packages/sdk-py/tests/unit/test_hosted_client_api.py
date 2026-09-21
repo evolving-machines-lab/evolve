@@ -2610,6 +2610,7 @@ class TestJobs:
             'updated_at',
             'upload',
             'verifier_timeout_multiplier',
+            'viewer',
             'visibility',
             'worst_case_spend_usd',
         ]
@@ -3199,6 +3200,24 @@ class TestJobs:
         assert exc.value.code == 'regrade_source_ineligible'
 
     @pytest.mark.asyncio
+    async def test_get_maps_viewer_or_defaults_it_to_none(self):
+        """``Job.viewer`` is the wire's word verbatim; none (an acting verb's
+        echo, or an older server) and a word outside the vocabulary both
+        read None — never passed through."""
+        fake = FakeUrlopen([('/api/jobs/job-1', {**JOB_SUMMARY, 'viewer': 'shared'})])
+        with patch('evolve._http.urlopen', fake):
+            shared = await jobs_factory(CONFIG).get('job-1')
+        assert shared.viewer == 'shared'
+        fake = FakeUrlopen([('/api/jobs/job-1', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake):
+            bare = await jobs_factory(CONFIG).get('job-1')
+        assert bare.viewer is None
+        fake = FakeUrlopen([('/api/jobs/job-1', {**JOB_SUMMARY, 'viewer': 'owner'})])
+        with patch('evolve._http.urlopen', fake):
+            off = await jobs_factory(CONFIG).get('job-1')
+        assert off.viewer is None
+
+    @pytest.mark.asyncio
     async def test_analyze_posts_config_and_returns_the_job(self):
         """The config rides the body verbatim and THE RESPONSE IS THE JOB —
         analyses are not a separate resource. The resolved embedded policy
@@ -3215,6 +3234,7 @@ class TestJobs:
                 failing=True,
                 n_trials=20,
                 n_concurrent=2,
+                trial_ids=['run-2', 'run-1'],
             )
 
         assert fake.requests[0].get_method() == 'POST'
@@ -3232,6 +3252,7 @@ class TestJobs:
             'failing': True,
             'n_trials': 20,
             'n_concurrent': 2,
+            'trial_ids': ['run-2', 'run-1'],
         }
         assert job.id == 'job-1'
         # The resolved echo maps verbatim — the provider echo and the prompt
@@ -4523,6 +4544,25 @@ ANALYSIS_ROW = {
 
 
 class TestAnalyses:
+    @pytest.mark.asyncio
+    async def test_defaults_reads_the_resolved_policy(self):
+        """``analyses().defaults()`` — GET /api/analyses/defaults, the policy
+        an empty config resolves to; the five keys ride verbatim."""
+        defaults = {
+            'model_name': 'openrouter/deepseek/deepseek-v4.1-flash',
+            'rubric': {'criteria': [{'name': 'score_is_earned', 'description': 'd', 'guidance': 'g'}]},
+            'prompt': 'Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'daytona',
+        }
+        # Listed BEFORE the list door: the fake matches by substring, in order.
+        fake = FakeUrlopen([('/api/analyses/defaults', defaults), ('/api/analyses', {})])
+        with patch('evolve._http.urlopen', fake):
+            got = await analyses_factory(CONFIG).defaults()
+        assert fake.requests[0].full_url.endswith('/api/analyses/defaults')
+        assert fake.requests[0].get_method() == 'GET'
+        assert got == defaults
+
     @pytest.mark.asyncio
     async def test_download_rides_the_contract_door_and_verifies_the_bytes(self, tmp_path):
         """analyses().download() — GET /api/analyses/{analysisId}/download,

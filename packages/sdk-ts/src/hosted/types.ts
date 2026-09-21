@@ -655,6 +655,19 @@ export interface AnalyzeConfigInput {
    * anything else is refused `invalid_input` naming `analyze.n_trials`.
    */
   n_trials?: number;
+  /**
+   * Analyze only these trials of the job — Harbor's `harbor analyze <trial
+   * directory>` for one trial (their cli/analyze.py:242-245), given as ids
+   * here; combinable with `passing`/`failing` (a listed trial on the other
+   * side of the filter is skipped) and applied before `n_trials`. An id that
+   * is not a trial of this job is refused `invalid_input` naming
+   * `analyze.trial_ids` with the unknown ids in `details.unknown_trial_ids`;
+   * a list that leaves nothing analyzable is the 409 `no_analyzable_trials`;
+   * an empty list, a duplicate, an empty string or a non-string is refused
+   * `invalid_input`. Only `jobs().analyze()` takes it: on `start({ analyze })`
+   * (the embedded trigger) it is refused — the trials do not exist yet.
+   */
+  trial_ids?: string[];
 }
 
 /**
@@ -699,6 +712,8 @@ export interface AnalyzeConfig {
   failing: boolean;
   /** The trial cap as stored (`AnalyzeConfigInput.n_trials`); null = no cap. */
   n_trials: number | null;
+  /** The trials named as stored (`AnalyzeConfigInput.trial_ids`); null = none named, the whole job. */
+  trial_ids: string[] | null;
 }
 
 /** The job-creation body — POST /api/jobs. */
@@ -1400,6 +1415,14 @@ export interface JobBuildExclusion {
 }
 
 /**
+ * The caller's relation to a job on a read (Job.viewer): `creator` made it,
+ * `member` belongs to its organization, `shared` reads it through an email
+ * share, `link` through its unlisted link. Acting verbs (cancel, resume,
+ * retry, regrade) are open to `creator` and `member` only.
+ */
+export type JobViewer = "creator" | "member" | "shared" | "link";
+
+/**
  * THE job body — the same shape from create, get, list items, cancel, resume,
  * and regrade responses; no field appears on some responses and not others.
  */
@@ -1489,6 +1512,14 @@ export interface Job {
   source_jobs: SourceJob[];
   /** Derived: any source_jobs entry with action "regrade". */
   is_regrade: boolean;
+  /**
+   * The caller's relation on a read (JobViewer). Null on the responses that
+   * echo a job the caller just acted on (create, analyze, cancel, resume,
+   * retry, regrade, upload), where the caller is the creator or a member by
+   * construction, and on list rows (batched; read one job to learn it);
+   * null too from a server older than the field.
+   */
+  viewer: JobViewer | null;
   /**
    * The upload provenance echo — null for every job this platform executed,
    * non-null only on a job ingested by jobs().upload(). See UploadProvenance.
@@ -4814,6 +4845,8 @@ export interface AnalysesClient {
    * feed's species-blind events door, which answers `trial_not_found`.
    */
   list(options?: ListAnalysesOptions): AnalysisList;
+  /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): model, effort, provider, rubric and the unrendered prompt template. */
+  defaults(): Promise<AnalyzeDefaults>;
   /**
    * The verdict document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same
@@ -5051,6 +5084,22 @@ export interface Check {
   created_at: string;
   /** When the last task settled; null until every task has. */
   finished_at: string | null;
+}
+
+/**
+ * The policy an empty analyze config resolves to (GET /api/analyses/defaults):
+ * each key the value `AnalyzeConfig` echoes for a job created with
+ * `analyze: {}`, except `prompt`, which `AnalyzeConfig` serves as null and
+ * this serves as the template text.
+ */
+export interface AnalyzeDefaults {
+  model_name: string;
+  rubric: Rubric;
+  /** The built-in analyze prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
+  prompt: string;
+  /** The effort the default model runs at when the config names none. */
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
 }
 
 /**

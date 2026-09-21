@@ -4021,6 +4021,16 @@ async function testAnalyzeVerbReturnsAtOnce() {
       1,
       "one job read — the task-folder pre-flight — and no follow of the wave"
     );
+    // -t/--trial, repeatable: Harbor's PATH as one trial directory, by id — rides as trial_ids.
+    fetchCalls.length = 0;
+    await runCli(["analyze", "eval-1", "-t", "run-1", "--trial", "run-2", "--failing", ...AUTH], captureIO().io);
+    assertEqual(
+      JSON.parse(
+        fetchCalls.find((c) => c.url.endsWith("/api/jobs/eval-1/analyze"))?.init?.body as string
+      ),
+      { failing: true, trial_ids: ["run-1", "run-2"] },
+      "-t / --trial ride as trial_ids in the order given, beside the reward filter"
+    );
     assert(
       !fetchCalls.some((c) => c.url.includes("/api/jobs/eval-1/trials")),
       "no trials read: the per-trial table is --watch's, not the return's"
@@ -10090,6 +10100,43 @@ async function testCheckReadVerbs() {
   }
 }
 
+async function testAnalyzeShowDefaults() {
+  console.log("\n--- runCli: analyze --show-defaults prints the platform's analyze policy and exits without a job ---");
+  assertEqual(parseArgs(["analyze", "--show-defaults"]).flags["show-defaults"], true, "--show-defaults is a flag of the top-level verb");
+  installMockFetch();
+  try {
+    const defaults = {
+      model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+      rubric: { criteria: [{ name: "score_is_earned", description: "d", guidance: "g" }, { name: "reward_hacking", description: "d", guidance: "g" }] },
+      prompt: "Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}",
+      reasoning_effort: "high",
+      sandbox_provider: "daytona",
+    };
+    setMockResponse("/api/analyses/defaults", { status: 200, body: defaults });
+    const json = captureIO();
+    assertEqual(await runCli(["analyze", "--show-defaults", "--json", ...AUTH], json.io), 0, "--show-defaults --json exits 0 with no job id");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).pathname, "/api/analyses/defaults", "one GET on the defaults door, nothing enqueued");
+    const parsed = JSON.parse(json.out[0]) as Record<string, unknown>;
+    assertEqual(parsed.prompt, defaults.prompt, "--json prints the wire object, the prompt template inside");
+    assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
+    const human = captureIO();
+    assertEqual(await runCli(["analyze", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
+    assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
+    assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
+    assert(human.out.some((l) => l.startsWith("rubric") && l.includes("2 criteria")), "the rubric row counts the criteria");
+    assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
+    assert(human.out.some((l) => l === "Read the trial at {trial_path}"), "the prompt template prints unrendered, line by line");
+    assert(human.out.some((l) => l.includes("reward_hacking")), "every criterion is named under RUBRIC");
+    assertEqual(await runCli(["analyze", "eval-1", "--show-defaults", ...AUTH], captureIO().io), 2, "--show-defaults with a <job-id> is a usage error");
+    assertEqual(await runCli(["analyze", "--show-defaults", "--model", "x", "--watch", ...AUTH], captureIO().io), 2, "--show-defaults with an analyzer or output flag is a usage error, never silently ignored");
+    assertEqual(await runCli(["analyze", ...AUTH], captureIO().io), 2, "a bare analyze without a job id and without --show-defaults is a usage error");
+    assert(!fetchCalls.some((c) => c.url.includes("/analyze")), "no wave was enqueued by any refused form");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testCheckShowDefaults() {
   console.log("\n--- runCli: check --show-defaults prints the platform's check policy and exits without a source ---");
   assertEqual(parseArgs(["check", "--show-defaults"]).flags["show-defaults"], true, "--show-defaults is a flag of the top-level verb");
@@ -10188,6 +10235,7 @@ async function main() {
   await testAnalyzeVerbWatchFollows();
   await testAnalyzeVerbJsonAndFailure();
   await testAnalyzeRefusalSurfacesVerbatim();
+  await testAnalyzeShowDefaults();
   await testJobShowAnalysisRows();
   testTrialDetailAnalysisRows();
   await testCompareCancelDownload();

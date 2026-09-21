@@ -504,11 +504,13 @@ export {
   type AnalysisLabel,
   type CheckLabel,
   type CheckDefaults,
+  type AnalyzeDefaults,
   type JudgeResult,
   type AgentDatasetStats,
   type PassAtKGroup,
   type PassAtKPoint,
   type JobStatus,
+  type JobViewer,
   type EvalSandboxProvider,
   type Trial,
   // Trial.gpu_cost's own type — nameable now that the mapper actually hands

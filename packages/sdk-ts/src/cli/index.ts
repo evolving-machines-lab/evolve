@@ -82,6 +82,7 @@ import type {
   AnalysisStatus,
   Check,
   CheckConfigInput,
+  AnalyzeDefaults,
   CheckDefaults,
   CheckStatus,
   TaskCheck,
@@ -1787,7 +1788,9 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // server-side.
   analyze: {
     summary: "Judge a finished job's trial traces against a rubric",
-    notes: "Each trial gets its own analysis run; `analysis list --job <id>` finds them again.",
+    notes:
+      "Each trial gets its own analysis run; `analysis list --job <id>` finds them again. " +
+      "--show-defaults prints the platform's analyze defaults and exits.",
     flags: {
       model: {
         kind: "string",
@@ -1832,10 +1835,24 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         default: "the analysis default",
         group: "Analyzer",
       },
+      "show-defaults": {
+        kind: "boolean",
+        help: "Print the built-in prompt, rubric, model, effort and provider, then exit",
+        group: "Analyzer",
+      },
       // Harbor's selection and width options, their exact spellings
       // (cli/analyze.py:278-290): -n/--n-concurrent, --passing, --failing,
-      // -l/--n-trials. Each rides the body verbatim; the server owns the
-      // domains and the both-filters refusal (Harbor's own).
+      // -l/--n-trials — and --trial, their PATH given as one trial directory
+      // (cli/analyze.py:242-245), by id. Each rides the body verbatim; the
+      // server owns the domains, the membership and the both-filters
+      // refusal (Harbor's own).
+      trial: {
+        kind: "repeat",
+        short: "t",
+        value: "<trial-id>",
+        help: "Analyze only this trial; repeatable",
+        group: "Selection",
+      },
       "n-concurrent": {
         kind: "number",
         short: "n",
@@ -1856,12 +1873,13 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       watch: { kind: "boolean", help: "Poll until every analysis settles", group: "Output" },
       quiet: { kind: "boolean", short: "q", help: "With --watch, print only the final block", group: "Output" },
     },
-    minPositionals: 1,
+    minPositionals: 0,
     maxPositionals: 1,
-    positionalUsage: "<job-id>",
+    positionalUsage: "[<job-id>]",
     examples: [
       "evolve analyze 3e1f9a2c --watch",
       "evolve analyze 3e1f9a2c \\\n-r rubric.toml -p prompt.txt \\\n--failing -l 20 -n 2 \\\n--watch",
+      "evolve analyze 3e1f9a2c -t d1a10c4e -t d1a10f72",
     ],
   },
   // Harbor's `check` is a top-level command too (their cli/main.py:163
@@ -5710,6 +5728,26 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
+  if (inv.flags["show-defaults"] === true) {
+    // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
+    const stray = Object.keys(inv.flags).filter((k) => !["show-defaults", "json", "api-key", "base-url"].includes(k));
+    if (inv.positionals[0] !== undefined || stray.length > 0) {
+      throw new CliUsageError(
+        "--show-defaults prints the platform's analyze defaults and takes no <job-id> and no other analyze flag" +
+          (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
+      );
+    }
+    const defaults = await analyses(clientConfig(inv)).defaults();
+    if (json) {
+      io.out(JSON.stringify(defaults));
+    } else {
+      for (const line of rubricDefaultsLines(defaults)) io.out(line);
+    }
+    return 0;
+  }
+  if (inv.positionals[0] === undefined) {
+    throw new CliUsageError("analyze takes a <job-id> (or --show-defaults)");
+  }
   const client = jobs(clientConfig(inv));
   const id = await resolveId(inv, "job", inv.positionals[0]);
   // The config, parsed at the keyboard ({} = Harbor's defaults); the server
@@ -5737,6 +5775,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   if (inv.flags.passing === true) req.passing = true;
   if (inv.flags.failing === true) req.failing = true;
   if (inv.flags["n-trials"] !== undefined) req.n_trials = inv.flags["n-trials"] as number;
+  if (inv.flags.trial !== undefined) req.trial_ids = inv.flags.trial as string[];
   // The 202 IS the queued batch — the job body, `stats.analysis` counting
   // the enqueued rows as pending — and the verb returns with it, the shape
   // of `job start` / `run`: Harbor's hosted launch prints the accepted job
@@ -5933,8 +5972,8 @@ export function checkDetailLines(check: Check): string[] {
   return [...table(rows), "", ...checkResultLines(check)];
 }
 
-/** `check --show-defaults`: the policy head as `check show` prints it, then the prompt template and every criterion in full. */
-function checkDefaultsLines(defaults: CheckDefaults): string[] {
+/** `analyze --show-defaults` / `check --show-defaults`: the policy head, then the prompt template and every criterion in full. */
+function rubricDefaultsLines(defaults: AnalyzeDefaults | CheckDefaults): string[] {
   const criteria = defaults.rubric.criteria.length;
   const lines = table([
     ["model", defaults.model_name],
@@ -5978,7 +6017,7 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
     if (json) {
       io.out(JSON.stringify(defaults));
     } else {
-      for (const line of checkDefaultsLines(defaults)) io.out(line);
+      for (const line of rubricDefaultsLines(defaults)) io.out(line);
     }
     return 0;
   }

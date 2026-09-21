@@ -253,6 +253,7 @@ OPERATION_TO_METHOD = {
     'listAnalyses': (AnalysesClient, 'list'),
     # The one per-analysis door ON the contract: the run as Harbor's
     # wrapper-trial folder (B121).
+    'getAnalyzeDefaults': (AnalysesClient, 'defaults'),
     'downloadAnalysis': (AnalysesClient, 'download'),
     'getAnalysisFilesystem': (AnalysesClient, 'filesystem'),
     'listAnalysisFilesystemFolder': (AnalysesClient, 'filesystem'),

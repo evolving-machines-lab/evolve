@@ -571,6 +571,12 @@ EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 #: it (``invalid_input``).
 JobListScope = Literal['my', 'shared', 'org']
 
+#: The caller's relation to a job on a read (``Job.viewer``): ``creator`` made
+#: it, ``member`` belongs to its organization, ``shared`` reads it through an
+#: email share, ``link`` through its unlisted link. Acting verbs (cancel,
+#: resume, retry, regrade) are open to ``creator`` and ``member`` only.
+JobViewer = Literal['creator', 'member', 'shared', 'link']
+
 #: An analysis's own lifecycle ladder — lowercase, the object's Harbor
 #: dialect (spec ``TrialAnalysis.status``).
 AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
@@ -1743,6 +1749,18 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``n_trials`` matching trials to settle. An integer of at least 1;
     #: anything else is refused ``invalid_input`` naming ``analyze.n_trials``.
     n_trials: int
+    #: Analyze only these trials of the job — Harbor's ``harbor analyze
+    #: <trial directory>`` for one trial (their cli/analyze.py:242-245), given
+    #: as ids here; combinable with ``passing``/``failing`` (a listed trial on
+    #: the other side of the filter is skipped) and applied before
+    #: ``n_trials``. An id that is not a trial of this job is refused
+    #: ``invalid_input`` naming ``analyze.trial_ids`` with the unknown ids in
+    #: ``details['unknown_trial_ids']``; a list that leaves nothing analyzable
+    #: is the 409 ``no_analyzable_trials``; an empty list, a duplicate, an
+    #: empty string or a non-string is refused ``invalid_input``. Only
+    #: :meth:`JobsClient.analyze` takes it: on ``start(analyze=...)`` (the
+    #: embedded trigger) it is refused — the trials do not exist yet.
+    trial_ids: List[str]
 
 
 class AnalyzeConfig(TypedDict):
@@ -1785,6 +1803,9 @@ class AnalyzeConfig(TypedDict):
     #: The trial cap as stored (``AnalyzeConfigInput['n_trials']``); None =
     #: no cap.
     n_trials: Optional[int]
+    #: The trials named as stored (``AnalyzeConfigInput['trial_ids']``);
+    #: None = none named, the whole job.
+    trial_ids: Optional[List[str]]
 
 
 class AnalysisEvidence(TypedDict):
@@ -2088,6 +2109,22 @@ class Check(TypedDict):
     finished_at: Optional[str]
 
 
+class AnalyzeDefaults(TypedDict):
+    """The policy an empty analyze config resolves to (``GET
+    /api/analyses/defaults``): each key the value :class:`AnalyzeConfig`
+    echoes for a job created with ``analyze={}``, except ``prompt``, which
+    ``AnalyzeConfig`` serves as None and this serves as the template text. A
+    plain wire dict at runtime.
+    """
+    model_name: str
+    rubric: Rubric
+    #: The built-in analyze prompt template, unrendered — pass it as ``prompt`` to run the default body explicitly, or edit it from here.
+    prompt: str
+    #: The effort the default model runs at when the config names none.
+    reasoning_effort: str
+    sandbox_provider: EvalSandboxProvider
+
+
 class CheckDefaults(TypedDict):
     """The policy an empty check config resolves to (``GET
     /api/checks/defaults``): each key the value :class:`Check` echoes for a
@@ -2259,6 +2296,12 @@ class Job:
     #: ``jobs().shares(id)`` lists them. Always ``'PRIVATE'`` on a regrade job;
     #: a server older than the field reads as ``'PRIVATE'``.
     visibility: str = field(default='PRIVATE', kw_only=True)
+    #: The caller's relation on a read (:data:`JobViewer`). None on the
+    #: responses that echo a job the caller just acted on (create, analyze,
+    #: cancel, resume, retry, regrade, upload), where the caller is the
+    #: creator or a member by construction, and on list rows (batched; read
+    #: one job to learn it); None too from a server older than the field.
+    viewer: Optional[JobViewer] = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -4440,6 +4483,12 @@ def _map_job(data: Dict[str, Any]) -> Job:
         finished_at=data.get('finished_at'),
         org=data['org'] if isinstance(data.get('org'), str) else None,
         visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        # The read relation; None from an acting verb's echo and from an older server alike.
+        viewer=(
+            cast(JobViewer, data['viewer'])
+            if data.get('viewer') in ('creator', 'member', 'shared', 'link')
+            else None
+        ),
     )
 
 
@@ -8144,6 +8193,7 @@ class JobsClient:
         passing: Optional[bool] = None,
         failing: Optional[bool] = None,
         n_trials: Optional[int] = None,
+        trial_ids: Optional[List[str]] = None,
     ) -> Job:
         """Analyze a terminal job's trial traces (rubric-driven, Harbor's
         ``harbor analyze``), server-side.
@@ -8188,7 +8238,11 @@ class JobsClient:
         beneath the organization's ``max_concurrent_analyses`` (Harbor's
         ``-n/--n-concurrent``; omitted = the ceiling alone). ``passing`` and
         ``failing`` together are refused ``invalid_input`` — Harbor's own
-        "Cannot use both --passing and --failing".
+        "Cannot use both --passing and --failing". ``trial_ids`` names the
+        trials to analyze (Harbor's ``harbor analyze <trial directory>``,
+        by id), applied with the filter and before the cap; an id that is
+        not this job's is refused ``invalid_input`` naming
+        ``analyze.trial_ids`` with the unknown ids in the details.
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
@@ -8222,6 +8276,8 @@ class JobsClient:
             body['failing'] = failing
         if n_trials is not None:
             body['n_trials'] = n_trials
+        if trial_ids is not None:
+            body['trial_ids'] = list(trial_ids)
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}/analyze', method='POST', body=body
         )
@@ -9351,6 +9407,13 @@ class AnalysesClient:
         return _PaginatedList(
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
+
+    async def defaults(self) -> AnalyzeDefaults:
+        """The defaults an analysis runs under when its config names nothing
+        (``GET /api/analyses/defaults``): model, effort, provider, rubric and
+        the unrendered prompt template (:class:`AnalyzeDefaults`)."""
+        raw = await self._http.request_json('/api/analyses/defaults')
+        return cast(AnalyzeDefaults, raw)
 
     async def download(
         self,
