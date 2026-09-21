@@ -571,13 +571,8 @@ EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 #: it (``invalid_input``).
 JobListScope = Literal['my', 'shared', 'org']
 
-#: The jobs list's ``kind`` (spec ``JobListKind``): ``'job'`` — jobs, the
-#: server's default and exactly what an absent value always listed;
-#: ``'check'`` — task quality checks only; ``'all'`` — both, merged newest
-#: first under one cursor. A check is a job in Harbor (``harbor check`` runs
-#: its wrapper tasks as a single Harbor job under the same jobs/ directory as
-#: ``harbor run``, analyze/checker.py:1-8); the hosted list needs the filter
-#: so ``jobs().list()`` keeps its meaning.
+#: The jobs list's ``kind``: a check is a job, so ``'all'`` lists both (the ruling and the
+#: Harbor lines live on the spec's ``JobListKind`` parameter).
 JobListKind = Literal['job', 'check', 'all']
 
 #: An analysis's own lifecycle ladder — lowercase, the object's Harbor
@@ -2114,11 +2109,8 @@ class CheckDefaults(TypedDict):
 
 
 class CheckTaskTally(TypedDict):
-    """The "how many" shape of a check's task checks (spec ``CheckTaskTally``):
-    a total plus the four task check statuses and ``stopped``, zeros
-    included. A stopped task check is stored ``failed`` with the stop phase;
-    the tally counts it under ``stopped``, never ``failed``. A plain wire
-    dict at runtime (``byStatus`` keeps the wire's frozen camelCase key).
+    """Spec ``CheckTaskTally``. A stopped task check is stored ``failed`` with the stop phase; the tally
+    counts it under ``stopped``, never ``failed``. ``byStatus`` keeps the wire's frozen camelCase key.
     """
     total: int
     byStatus: Dict[str, int]
@@ -2126,21 +2118,13 @@ class CheckTaskTally(TypedDict):
 
 @dataclass
 class CheckRow:
-    """A task quality check as one row of the jobs list (spec ``CheckRow``;
-    ``jobs().list(kind='check' | 'all')``): the Check body's own facts without
-    its per-task results, rubric and prompt (``checks().get()`` serves those),
-    plus the tally the list needs. In Harbor a check IS a job (its wrapper
-    tasks run as one Harbor job, analyze/checker.py:1-8), so it lists beside
-    jobs. Not a :class:`Job`: a check has no arms, attempts, caps, retry
-    policy, trials or upload provenance, so those fields are absent rather
-    than faked. A dataclass like :class:`Job`, so every row of one list is
-    read the same way (``row.kind``, ``row.id``).
+    """Spec ``CheckRow``, one row of ``jobs().list(kind='check' | 'all')``: a check is a job, so it lists beside them.
+    Not a :class:`Job` (no arms, attempts, caps, retry policy, trials, upload provenance), so those fields are absent, never faked.
     """
     id: str
     #: Check.name — Harbor's ``--job-name``: the caller's, or the accept stamp.
     name: str
-    #: ``'queued'`` | ``'running'`` | ``'completed'`` (:data:`CheckStatus`).
-    status: str
+    status: CheckStatus
     source: CheckSource
     #: The checker's model.
     model_name: str

@@ -4145,9 +4145,7 @@ function fmtCheckSource(check: CheckRow): string {
   return check.source.dataset ?? `archive ${check.source.sha256.slice(0, 12)}`;
 }
 
-// The jobs list's rows are Jobs and, under --kind check|all, check rows (a
-// check is a job: Harbor runs `harbor check` as one Harbor job): each cell
-// reads the check's own fact where a job's would be.
+// A check is a job (Harbor), so under --kind check|all each cell reads the check's own fact where a job's would be.
 const JOB_COLUMNS: ListColumn<JobListItem>[] = [
   { key: "id", header: "ID", cell: (e) => e.id },
   { key: "kind", header: "KIND", cell: (e) => e.kind },

@@ -3254,27 +3254,13 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     return mapJobImport((await res.json()) as Record<string, unknown>);
   }
 
-  /**
-   * One row of GET /api/jobs (spec JobListItem): a CheckRow when the server
-   * says `kind: "check"` — the check's own facts, verbatim, with its tally
-   * and money read defensively — else the Job body.
-   */
+  /** One row of GET /api/jobs (spec JobListItem): `kind` tells the CheckRow from the Job body. */
   function mapJobListItem(raw: Record<string, unknown>): JobListItem {
     if (raw.kind !== "check") return mapJob(raw);
-    const tasks = (raw.tasks ?? {}) as Record<string, unknown>;
     return {
       ...(raw as unknown as CheckRow),
       kind: "check",
       visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
-      tasks: {
-        total: (tasks.total as number) ?? 0,
-        byStatus: (tasks.byStatus as CheckTaskTally["byStatus"]) ?? {
-          queued: 0,
-          running: 0,
-          completed: 0,
-          failed: 0,
-        },
-      },
       cost_usd: optionalNumber(raw.cost_usd),
       finished_at: (raw.finished_at as string | null) ?? null,
     };
@@ -3470,11 +3456,8 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     get: getJob,
 
     list(options?: ListJobsOptions) {
-      // Await for one page (honoring options); for-await to walk every
-      // row across cursor pages. The search, scope and kind ride along on
-      // every page fetch — makePaginated forwards only limit/cursor. The
-      // rows are what `kind` asked for; JobsClient's overloads state which,
-      // so the one handle is cast to every shape they name.
+      // The search, scope and kind ride along on every page fetch (makePaginated forwards only limit/cursor);
+      // the one handle is cast to every row shape JobsClient's overloads name.
       return makePaginated(
         (opts) =>
           listPage({ ...opts, search: options?.search, scope: options?.scope, kind: options?.kind }),

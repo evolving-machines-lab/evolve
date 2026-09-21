@@ -143,13 +143,8 @@ export const JOB_LIST_SCOPES = ["my", "shared", "org"] as const;
 export type JobListScope = (typeof JOB_LIST_SCOPES)[number];
 
 /**
- * The jobs list's `kind` (spec JobListKind): `job` — jobs, the server's
- * default and exactly what an absent value always listed; `check` — task
- * quality checks only; `all` — both, merged newest first under one cursor.
- * A check is a job in Harbor (`harbor check` runs its wrapper tasks as a
- * single Harbor job under the same jobs/ directory as `harbor run`,
- * analyze/checker.py:1-8); the hosted list needs the filter so `job list`
- * keeps its meaning. A runtime value so the CLI validates `--kind` against it.
+ * A check is a job, so the list takes a `kind` (the ruling and the Harbor lines live on the spec's
+ * JobListKind parameter). A runtime value so the CLI validates `--kind` against it.
  */
 export const JOB_LIST_KINDS = ["job", "check", "all"] as const;
 
@@ -2464,10 +2459,8 @@ export type CheckPage = Page<Check>;
 export interface CheckList extends Awaitable<CheckPage>, AsyncIterable<Check> {}
 
 /**
- * The "how many" shape of a check's task checks (spec CheckTaskTally): a
- * total plus the four task check statuses and `stopped`, zeros included. A
- * stopped task check is stored `failed` with the stop phase; the tally
- * counts it under `stopped`, never `failed`.
+ * Spec CheckTaskTally. A stopped task check is stored `failed` with the stop phase; the tally counts it
+ * under `stopped`, never `failed`, so a stop never reads as a failure.
  */
 export interface CheckTaskTally {
   total: number;
@@ -2475,13 +2468,8 @@ export interface CheckTaskTally {
 }
 
 /**
- * A task quality check as one row of the jobs list (spec CheckRow;
- * `jobs().list({ kind: "check" | "all" })`): the Check body's own facts
- * without its per-task results, rubric and prompt (`checks().get()` serves
- * those), plus the tally the list needs. In Harbor a check IS a job (its
- * wrapper tasks run as one Harbor job, analyze/checker.py:1-8), so it lists
- * beside jobs. Not a Job: a check has no arms, attempts, caps, retry policy,
- * trials or upload provenance, so those fields are absent rather than faked.
+ * Spec CheckRow, one row of `jobs().list({ kind: "check" | "all" })`: a check is a job, so it lists beside them.
+ * Not a Job (no arms, attempts, caps, retry policy, trials or upload provenance), so those fields are absent, never faked.
  */
 export interface CheckRow {
   kind: "check";
@@ -3515,12 +3503,7 @@ export interface ListJobsOptions extends PageOptions {
    * See JOB_LIST_SCOPES.
    */
   scope?: JobListScope;
-  /**
-   * Which run kinds the page lists: `job` (the server's default), `check`
-   * (task quality checks only) or `all` (both, merged newest first under one
-   * cursor, each row a JobListItem told apart by its `kind`). See
-   * JOB_LIST_KINDS.
-   */
+  /** `job` (the server's default), `check` or `all`; see JOB_LIST_KINDS. */
   kind?: JobListKind;
 }
 
@@ -4163,11 +4146,8 @@ export interface JobsClient {
   /** Get one job */
   get(id: string): Promise<Job>;
   /**
-   * List the caller's jobs, newest first (cursor-paged). Await the
-   * result for one page, or `for await` it to walk every job across
-   * cursor pages transparently. `kind: "check"` lists task quality checks
-   * instead (each row a CheckRow), `kind: "all"` both merged (each row a
-   * JobListItem, told apart by `kind`); without it every row is a Job.
+   * List the caller's jobs, newest first (cursor-paged): await one page, or `for await` every page.
+   * One overload per `kind`, so the rows are typed as what was asked for.
    */
   list(options?: ListJobsOptions & { kind?: "job" }): JobList;
   list(options: ListJobsOptions & { kind: "check" }): CheckRowList;

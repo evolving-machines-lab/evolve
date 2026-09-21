@@ -39,7 +39,7 @@ List jobs, newest first: yours, `--scope shared` for what teammates created, `--
 </ParamField>
 
 <ParamField path="--kind" type="job | check | all">
-  Which rows to list: `job` (the default), `check` for task quality checks, or `all` for both merged newest first. With `check` or `all` a `KIND` column leads each row; a check row reads its name, status, dataset or archive, checker model and effort, task count and cost.
+  Which rows to list: `job` (the default), `check` for task quality checks, or `all` for both merged newest first. With `check` or `all` a `KIND` column leads each row; a check row reads its id, status, dataset or archive, task check count, cost and accept time, and under `--columns` its `name` and its checker's model and effort (`agents`).
 </ParamField>
 
 ```bash
