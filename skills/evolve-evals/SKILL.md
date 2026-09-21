@@ -57,7 +57,7 @@ The pages under `references/` are the documentation site's pages, byte for byte,
 | [Datasets](references/dashboard/datasets.mdx) | Browse the catalog, and each dataset's tasks and versions, in the dashboard. |
 | [Jobs](references/dashboard/jobs.mdx) | Start a job from the browser, follow it, and read its results. |
 | [Trial viewer](references/dashboard/trial-viewer.mdx) | Read one trial's trace event by event, its tool calls, its spend, and download its artifacts. |
-| [Checks](references/dashboard/checks.mdx) | Read a job's task quality checks in the dashboard. |
+| [Checks](references/dashboard/checks.mdx) | Read task quality checks in the dashboard, on a job's CHECK tab or on the check's own page. |
 | [Traces](references/dashboard/traces.mdx) | Every recorded run in one list. |
 
 ### SDK
