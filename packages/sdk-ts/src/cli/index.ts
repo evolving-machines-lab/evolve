@@ -39,6 +39,7 @@ import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
   ImportSettleError,
+  JOB_LIST_KINDS,
   JOB_LIST_SCOPES,
   SANDBOX_LOG_STREAMS,
   TRIAL_ARTIFACT_STREAMS,
@@ -66,6 +67,9 @@ import {
   trials,
 } from "../hosted/index";
 import type {
+  CheckRow,
+  JobListItem,
+  JobListKind,
   FilesystemEntry,
   FilesystemSource,
   FilesystemStatus,
@@ -594,10 +598,17 @@ const GROUPS: Record<string, GroupSpec> = {
           ...LIST_FLAGS,
           search: { kind: "string", value: "<text>", help: "Free-text filter over job name and dataset names", group: "Filter" },
           scope: SCOPE_FLAG,
+          kind: {
+            kind: "string",
+            value: "<job|check|all>",
+            help: "Jobs, task quality checks, or both in one list",
+            default: "job",
+            group: "Filter",
+          },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: ["evolve job list", "evolve job list --scope shared --search deep-swe", "evolve job list -l 20 -q"],
+        examples: ["evolve job list", "evolve job list --kind all --search deep-swe", "evolve job list -l 20 -q"],
       },
       show: {
         summary: "Show one or more jobs in full",
@@ -4129,22 +4140,40 @@ function passAtKLines(e: Job): string[] {
   return ["", "pass@k", ...table(rows)];
 }
 
-const JOB_COLUMNS: ListColumn<Job>[] = [
+/** A check row's DATASETS word (the dashboard's spelling): the dataset form's `name@version`; the archive form has no name, so its sha256 stands in. */
+function fmtCheckSource(check: CheckRow): string {
+  return check.source.dataset ?? `archive ${check.source.sha256.slice(0, 12)}`;
+}
+
+// A check is a job (Harbor), so under --kind check|all each cell reads the check's own fact where a job's would be.
+const JOB_COLUMNS: ListColumn<JobListItem>[] = [
   { key: "id", header: "ID", cell: (e) => e.id },
-  { key: "name", header: "NAME", cell: (e) => e.job_name ?? "-" },
+  { key: "kind", header: "KIND", cell: (e) => e.kind },
+  { key: "name", header: "NAME", cell: (e) => (e.kind === "check" ? e.name : e.job_name ?? "-") },
   { key: "status", header: "STATUS", cell: (e) => e.status },
-  { key: "datasets", header: "DATASETS", cell: (e) => fmtDatasets(e.datasets) },
-  { key: "agents", header: "AGENTS", cell: (e) => e.agents.map(fmtAgent).join(", ") },
-  { key: "trials", header: "TRIALS", cell: (e) => String(e.trials.total) },
+  {
+    key: "datasets",
+    header: "DATASETS",
+    cell: (e) => (e.kind === "check" ? fmtCheckSource(e) : fmtDatasets(e.datasets)),
+  },
+  {
+    key: "agents",
+    header: "AGENTS",
+    cell: (e) =>
+      e.kind === "check" ? `${e.model_name} (${e.reasoning_effort})` : e.agents.map(fmtAgent).join(", "),
+  },
+  { key: "trials", header: "TRIALS", cell: (e) => String(e.kind === "check" ? e.tasks.total : e.trials.total) },
   {
     key: "spent",
     header: "SPENT",
-    // One law with the detail row: an uploaded job's cell carries the
-    // archive's REPORTED figure, labeled; a native job the metered lane.
+    // One law with the detail row: an uploaded job's cell carries the archive's REPORTED figure, labeled;
+    // a native job the metered lane; a check its measured checker total, or "-" when nothing was measured.
     cell: (e) =>
-      reportedSpent(e, false) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+      e.kind === "check"
+        ? fmtUsd(e.cost_usd)
+        : reportedSpent(e, false) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
   },
-  { key: "started", header: "STARTED", cell: (e) => e.started_at },
+  { key: "started", header: "STARTED", cell: (e) => (e.kind === "check" ? e.created_at : e.started_at) },
 ];
 const JOB_DEFAULT_COLUMNS = ["id", "status", "datasets", "trials", "spent", "started"];
 
@@ -5084,6 +5113,16 @@ function parseScopeFlag(inv: Invocation): JobListScope | undefined {
   return scope as JobListScope;
 }
 
+/** --kind on `job list`: the SDK's own vocabulary, refused at the keyboard rather than spending a request. */
+function parseKindFlag(inv: Invocation): JobListKind | undefined {
+  if (inv.flags.kind === undefined) return undefined;
+  const kind = String(inv.flags.kind);
+  if (!(JOB_LIST_KINDS as readonly string[]).includes(kind)) {
+    throw new CliUsageError(`--kind must be one of: ${JOB_LIST_KINDS.join(", ")}; got: ${kind}`);
+  }
+  return kind as JobListKind;
+}
+
 /** --status on `analysis list`: the analysis object's own lowercase ladder. */
 function parseAnalysisStatusFilter(inv: Invocation): AnalysisStatus[] | undefined {
   if (inv.flags.status === undefined) return undefined;
@@ -5230,21 +5269,26 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdJobList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, JOB_COLUMNS)) return 0;
   const scope = parseScopeFlag(inv);
+  const kind = parseKindFlag(inv);
   const client = jobs(clientConfig(inv));
   const page = await client.list({
     ...pageOptions(inv),
     ...(inv.flags.search !== undefined ? { search: String(inv.flags.search) } : {}),
     ...(scope !== undefined ? { scope } : {}),
+    ...(kind !== undefined ? { kind } : {}),
   });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
     return 0;
   }
   if (page.items.length === 0) {
-    if (inv.flags.quiet !== true) io.out("No jobs.");
+    // A check is a job, so an empty `all` answers as the Jobs page does.
+    if (inv.flags.quiet !== true) io.out(kind === "check" ? "No checks." : "No jobs.");
     return 0;
   }
-  renderList(inv, io, page.items, JOB_COLUMNS, JOB_DEFAULT_COLUMNS, (e) => e.id);
+  // The KIND column is on by default only once a row can be either kind.
+  const defaults = kind === undefined || kind === "job" ? JOB_DEFAULT_COLUMNS : ["kind", ...JOB_DEFAULT_COLUMNS];
+  renderList(inv, io, page.items, JOB_COLUMNS, defaults, (e) => e.id);
   if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
     io.out(`\nMore: evolve job list --cursor ${page.nextCursor}`);
   }

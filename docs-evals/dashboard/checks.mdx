@@ -1,6 +1,6 @@
 ---
 title: "Checks"
-description: "Read a job's task quality checks in the dashboard."
+description: "Read task quality checks in the dashboard, on a job's CHECK tab or on the check's own page."
 ---
 
 A job's CHECK tab lists the task quality checks run on the job's datasets.
@@ -13,3 +13,9 @@ A job's CHECK tab lists the task quality checks run on the job's datasets.
 Until a check exists, the tab shows the command that would start one, `evolve check -d <dataset@version>`, with the job's dataset filled in. Checks start from the command line; see [check](/core-concepts/check).
 
 Once a dataset has been checked, the tab lists one row per task with its dataset and its result. Click a row to open the check in the [trial viewer](/dashboard/trial-viewer): the events are the checker's own trace, and its result document is on the DOWNLOAD menu.
+
+## The check page
+
+A check is a job, so it sits in the [Jobs](/dashboard/jobs) list with KIND `CHECK`, and its row opens the check's own page. The band names the check, its status, what was checked, the checker's model and effort, its cost and when it started. SHARE is the creator's and opens the share dialog; STOP, for the creator, ends every task check still queued or running while any is live. DOWNLOAD saves a completed check as a `.tar.gz` in the standard check layout.
+
+Under the band, one row per task check with its dataset and its result, the same table as a job's CHECK tab. Click a row to open it in the [trial viewer](/dashboard/trial-viewer).

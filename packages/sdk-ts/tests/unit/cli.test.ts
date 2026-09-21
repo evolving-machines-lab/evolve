@@ -4048,7 +4048,8 @@ async function testAnalyzeVerbReturnsAtOnce() {
       stats: { analysis: { n_pending: number } };
     };
     assertEqual(body.id, "eval-1", "the line is the job body");
-    assert(!("kind" in body), "no envelope: the bare job, like job start --json");
+    // A Job body says `kind: "job"` (the jobs list's own word); --watch's NDJSON envelope says "event".
+    assertEqual(body.kind, "job", "no envelope: the bare job, like job start --json");
     assertEqual(body.stats.analysis.n_pending, 3, "the queued batch rides stats.analysis");
     assertEqual(
       fetchCalls.filter((c) => c.url === `${BASE}/api/jobs/eval-1`).length,
@@ -9438,6 +9439,84 @@ async function testJobListScope() {
   }
 }
 
+/** One CheckRow as GET /api/jobs?kind=check|all serves it (spec CheckRow). */
+function wireCheckRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "check",
+    id: "chk-1",
+    name: "nightly check",
+    status: "running",
+    source: { type: "dataset", sha256: "ab".repeat(32), bytes: null, dataset: "deep-swe@1.1" },
+    model_name: "claude-opus-4-6",
+    reasoning_effort: "high",
+    sandbox_provider: "e2b",
+    org: "acme",
+    visibility: "PRIVATE",
+    tasks: { total: 3, byStatus: { queued: 0, running: 1, completed: 1, failed: 1, stopped: 0 } },
+    cost_usd: 0.03,
+    created_at: "2026-09-20T11:00:00.000Z",
+    finished_at: null,
+    ...overrides,
+  };
+}
+
+async function testJobListKind() {
+  console.log("\n--- runCli: job list --kind rides the query; a check row renders beside the jobs; an off-vocabulary kind is a usage error ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireCheckRow(), wireJob()], nextCursor: null, hasMore: false },
+    });
+    const all = captureIO(false);
+    assertEqual(await runCli(["job", "list", "--kind", "all", ...AUTH], all.io), 0, "--kind all exits 0");
+    assertEqual(
+      new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("kind"),
+      "all",
+      "--kind rides the query string verbatim"
+    );
+    assert(all.out[0].startsWith("KIND\tID\t"), "the KIND column leads once a row can be either kind");
+    assert(all.out[1].startsWith("check\tchk-1\t"), "a check row says check");
+    assert(all.out[1].includes("deep-swe@1.1"), "the check's source is its DATASETS cell");
+    assert(all.out[1].includes("$0.03"), "the check's cost is its SPENT cell");
+    assert(all.out[2].startsWith("job\teval-1\t"), "a job row says job");
+
+    const bare = captureIO(false);
+    await runCli(["job", "list", ...AUTH], bare.io);
+    assert(
+      !new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("kind"),
+      "no --kind sends no kind parameter (the server's default is job)"
+    );
+    assert(bare.out[0].startsWith("ID\tSTATUS"), "the default columns are unchanged without --kind");
+
+    const cols = captureIO(false);
+    await runCli(["job", "list", "--kind", "check", "--columns", "kind,name,agents,trials", ...AUTH], cols.io);
+    assertEqual(cols.out[1], "check\tnightly check\tclaude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+
+    // One spelling for one answer: the Jobs page asks kind=all and says "No jobs".
+    setMockResponse("/api/jobs", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const emptyAll = captureIO(false);
+    await runCli(["job", "list", "--kind", "all", ...AUTH], emptyAll.io);
+    assertEqual(emptyAll.out[0], "No jobs.", "an empty --kind all answers as the Jobs page does: a check is a job");
+    const emptyChecks = captureIO(false);
+    await runCli(["job", "list", "--kind", "check", ...AUTH], emptyChecks.io);
+    assertEqual(emptyChecks.out[0], "No checks.", "an empty --kind check names checks");
+    const emptyJobs = captureIO(false);
+    await runCli(["job", "list", ...AUTH], emptyJobs.io);
+    assertEqual(emptyJobs.out[0], "No jobs.", "an empty default names jobs");
+
+    // Refused at the keyboard against the SDK's own vocabulary — exit 2, the
+    // legal values named — rather than spending a request to be told.
+    const before = fetchCalls.length;
+    const bad = captureIO();
+    assertEqual(await runCli(["job", "list", "--kind", "everything", ...AUTH], bad.io), 2, "--kind everything is a usage error");
+    assert(bad.err[0].includes("job") && bad.err[0].includes("check") && bad.err[0].includes("all"), "the refusal names the legal kinds");
+    assertEqual(fetchCalls.length, before, "no request was made");
+  } finally {
+    restoreFetch();
+  }
+}
+
 /** One wire TrialAnalysis as GET /api/analyses lists it (provenance included). */
 function analysisListRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -10243,6 +10322,7 @@ async function main() {
   await testQuotaRefusalExitsTwo();
   await testSecretsVerbs();
   await testJobListScope();
+  await testJobListKind();
   await testAnalysisList();
   await testCheckVerb();
   await testCheckReadVerbs();

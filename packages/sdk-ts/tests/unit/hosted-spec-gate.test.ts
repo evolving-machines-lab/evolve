@@ -81,6 +81,7 @@ import {
   CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
+  JOB_LIST_KINDS,
   JOB_LIST_SCOPES,
   TASK_LINKED_BY,
   TASK_LINK_REASONS,
@@ -766,6 +767,16 @@ assert(
   JSON.stringify([...JOB_LIST_SCOPES]) === JSON.stringify(specListScopes)
     ? `JOB_LIST_SCOPES is the spec's ListScope enum, byte-exactly (${specListScopes.join(", ")})`
     : `list scopes drifted: SDK [${JOB_LIST_SCOPES.join(", ")}] vs spec [${specListScopes.join(", ")}]`
+);
+
+// The jobs list's `kind` (a check is a job): the CLI validates --kind against JOB_LIST_KINDS.
+const specListKinds = parameterEnum("JobListKind");
+assert(specListKinds.length >= 3, `the spec's JobListKind parameter enum parsed (${specListKinds.length} members)`);
+assert(
+  JSON.stringify([...JOB_LIST_KINDS]) === JSON.stringify(specListKinds),
+  JSON.stringify([...JOB_LIST_KINDS]) === JSON.stringify(specListKinds)
+    ? `JOB_LIST_KINDS is the spec's JobListKind enum, byte-exactly (${specListKinds.join(", ")})`
+    : `list kinds drifted: SDK [${JOB_LIST_KINDS.join(", ")}] vs spec [${specListKinds.join(", ")}]`
 );
 
 const specAnalysisStatuses = propertyEnum("TrialAnalysis", "status");

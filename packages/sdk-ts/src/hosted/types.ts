@@ -143,6 +143,15 @@ export const JOB_LIST_SCOPES = ["my", "shared", "org"] as const;
 export type JobListScope = (typeof JOB_LIST_SCOPES)[number];
 
 /**
+ * A check is a job, so the list takes a `kind` (the ruling and the Harbor lines live on the spec's
+ * JobListKind parameter). A runtime value so the CLI validates `--kind` against it.
+ */
+export const JOB_LIST_KINDS = ["job", "check", "all"] as const;
+
+/** One list kind — see JOB_LIST_KINDS. */
+export type JobListKind = (typeof JOB_LIST_KINDS)[number];
+
+/**
  * An analysis's own lifecycle ladder — lowercase, the object's Harbor
  * dialect (spec TrialAnalysis.status). A runtime value so the CLI validates
  * `analysis list --status` against it instead of a second copy.
@@ -1404,6 +1413,8 @@ export interface JobBuildExclusion {
  * and regrade responses; no field appears on some responses and not others.
  */
 export interface Job {
+  /** The row's kind on the jobs list (JobListItem): always `job` on a Job body; a CheckRow says `check`. */
+  kind: "job";
   id: string;
   /** User-facing label. */
   job_name: string;
@@ -2448,6 +2459,59 @@ export type CheckPage = Page<Check>;
 export interface CheckList extends Awaitable<CheckPage>, AsyncIterable<Check> {}
 
 /**
+ * Spec CheckTaskTally. A stopped task check is stored `failed` with the stop phase; the tally counts it
+ * under `stopped`, never `failed`, so a stop never reads as a failure.
+ */
+export interface CheckTaskTally {
+  total: number;
+  byStatus: Record<AnalysisStatus | "stopped", number>;
+}
+
+/**
+ * Spec CheckRow, one row of `jobs().list({ kind: "check" | "all" })`: a check is a job, so it lists beside them.
+ * Not a Job (no arms, attempts, caps, retry policy, trials or upload provenance), so those fields are absent, never faked.
+ */
+export interface CheckRow {
+  kind: "check";
+  id: string;
+  /** Check.name — Harbor's `--job-name`: the caller's, or the accept stamp. */
+  name: string;
+  status: CheckStatus;
+  source: CheckSource;
+  /** The checker's model. */
+  model_name: string;
+  /** The effort every task's checker ran at. */
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
+  /** The owning organization's slug (every check has one). */
+  org: string;
+  visibility: JobVisibility;
+  /** How many task checks, and how they break down; done = completed + failed + stopped. */
+  tasks: CheckTaskTally;
+  /** The sum of the measured task costs; null when none was measured. */
+  cost_usd: number | null;
+  /** The accept instant; the list orders it with the jobs' `started_at`. */
+  created_at: string;
+  /** When the last task settled; null until every task has. */
+  finished_at: string | null;
+}
+
+/** One row of the jobs list, told apart by `kind` (spec JobListItem). */
+export type JobListItem = Job | CheckRow;
+
+/** Cursor page of check rows (newest first) — `jobs().list({ kind: "check" })`. */
+export type CheckRowPage = Page<CheckRow>;
+
+/** The handle returned by `jobs().list({ kind: "check" })`. */
+export interface CheckRowList extends Awaitable<CheckRowPage>, AsyncIterable<CheckRow> {}
+
+/** Cursor page of jobs and check rows (newest first) — `jobs().list({ kind: "all" })`. */
+export type JobListItemPage = Page<JobListItem>;
+
+/** The handle returned by `jobs().list({ kind: "all" })`. */
+export interface JobListItemList extends Awaitable<JobListItemPage>, AsyncIterable<JobListItem> {}
+
+/**
  * One task's rollup within a job: its trial tally, mean reward over SCORED
  * trials, and measured cost. Sits between the job body and the trial list so
  * a caller need not fetch every trial to see which tasks are dragging.
@@ -3439,6 +3503,8 @@ export interface ListJobsOptions extends PageOptions {
    * See JOB_LIST_SCOPES.
    */
   scope?: JobListScope;
+  /** `job` (the server's default), `check` or `all`; see JOB_LIST_KINDS. */
+  kind?: JobListKind;
 }
 
 /** Options for analyses().list() (default page 50, max 200) */
@@ -4080,11 +4146,13 @@ export interface JobsClient {
   /** Get one job */
   get(id: string): Promise<Job>;
   /**
-   * List the caller's jobs, newest first (cursor-paged). Await the
-   * result for one page, or `for await` it to walk every job across
-   * cursor pages transparently.
+   * List the caller's jobs, newest first (cursor-paged): await one page, or `for await` every page.
+   * One overload per `kind`, so the rows are typed as what was asked for.
    */
-  list(options?: ListJobsOptions): JobList;
+  list(options?: ListJobsOptions & { kind?: "job" }): JobList;
+  list(options: ListJobsOptions & { kind: "check" }): CheckRowList;
+  list(options: ListJobsOptions & { kind: "all" }): JobListItemList;
+  list(options: ListJobsOptions): JobListItemList;
   /**
    * List a job's trials (cursor-paged; { status } filters, e.g. to
    * the failed trials). Await the result for one page, or `for await` it to

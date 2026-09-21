@@ -26,7 +26,7 @@ Start a job; add `--watch` to follow it. Exactly the options of [`evolve run`](/
 evolve job list [options]
 ```
 
-List jobs, newest first: yours, `--scope shared` for what teammates created, `--scope org` for everything in your organizations.
+List jobs, newest first: yours, `--scope shared` for what teammates created, `--scope org` for everything in your organizations. A task quality check is a job too (Harbor runs `harbor check` as one job): `--kind all` lists jobs and checks in one list, each row marked by its kind, and `--kind check` lists checks alone.
 
 <ListFlags />
 
@@ -38,8 +38,13 @@ List jobs, newest first: yours, `--scope shared` for what teammates created, `--
   Visibility scope: `my`, what you created (the default); `shared`, your organizations' rows that teammates created; or `org`, every row in your organizations, your own included.
 </ParamField>
 
+<ParamField path="--kind" type="job | check | all">
+  Which rows to list: `job` (the default), `check` for task quality checks, or `all` for both merged newest first. With `check` or `all` a `KIND` column leads each row; a check row reads its id, status, dataset or archive, task check count, cost and accept time, and under `--columns` its `name` and its checker's model and effort (`agents`).
+</ParamField>
+
 ```bash
 evolve job list --limit 20 -q
+evolve job list --kind all
 ```
 
 ## job show

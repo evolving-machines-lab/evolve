@@ -3,14 +3,14 @@ title: "Jobs"
 description: "Start a job from the browser, follow it, and read its results."
 ---
 
-The Jobs page lists your jobs, newest first.
+The Jobs page lists your jobs, newest first. A task quality check is a job too, so the list holds both: the KIND column tells them apart, and a check row opens the [check's page](/dashboard/checks#the-check-page).
 
 {/* retake after the UI pass, from a non-admin account */}
 <Frame caption="The jobs list">
-  <img src="/images/jobs.png" alt="The Jobs page: a NEW JOB button, a search box, a status filter, and a table of jobs with status, datasets, agents, trials, cost and creation time." />
+  <img src="/images/jobs.png" alt="The Jobs page: a NEW JOB button, a search box, a status filter, and a table of jobs and checks with kind, status, datasets, agents, trials, cost and creation time." />
 </Frame>
 
-Search by name, and filter by status: ALL, QUEUED, RUNNING, CANCELLING, COMPLETED, CANCELLED or FAILED. Each row shows the job's datasets, its agents with their models, how many trials have settled out of the total, what it has spent, and when it started. Tick rows to cancel live jobs or delete finished ones.
+Search by name, and filter by status: ALL, QUEUED, RUNNING, CANCELLING, COMPLETED, CANCELLED or FAILED. A job row shows its datasets, its agents with their models, how many trials have settled out of the total, what it has spent, and when it started; a check row shows what was checked, the checker's model and effort, how many task checks have settled out of the total, the checker's cost, and when it started. Tick rows to cancel live jobs or delete finished ones; a check row cannot be ticked, its verbs live on its page.
 
 ## New job
 
