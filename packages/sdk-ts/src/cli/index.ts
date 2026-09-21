@@ -39,6 +39,7 @@ import {
   EVAL_SANDBOX_PROVIDERS,
   EvolveApiError,
   ImportSettleError,
+  JOB_LIST_KINDS,
   JOB_LIST_SCOPES,
   SANDBOX_LOG_STREAMS,
   TRIAL_ARTIFACT_STREAMS,
@@ -66,6 +67,9 @@ import {
   trials,
 } from "../hosted/index";
 import type {
+  CheckRow,
+  JobListItem,
+  JobListKind,
   FilesystemEntry,
   FilesystemSource,
   FilesystemStatus,
@@ -82,6 +86,7 @@ import type {
   AnalysisStatus,
   Check,
   CheckConfigInput,
+  AnalyzeDefaults,
   CheckDefaults,
   CheckStatus,
   TaskCheck,
@@ -198,7 +203,7 @@ interface CommandSpec {
 }
 
 /**
- * The four global flags, valid on every command. -q is NOT global: it means
+ * The three global flags, valid on every command. -q is NOT global: it means
  * "ids only" on lists and "suppress the event log" on start, so each command
  * that has a quiet behavior declares it.
  */
@@ -594,10 +599,17 @@ const GROUPS: Record<string, GroupSpec> = {
           ...LIST_FLAGS,
           search: { kind: "string", value: "<text>", help: "Free-text filter over job name and dataset names", group: "Filter" },
           scope: SCOPE_FLAG,
+          kind: {
+            kind: "string",
+            value: "<job|check|all>",
+            help: "Jobs, task quality checks, or both in one list",
+            default: "job",
+            group: "Filter",
+          },
         },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: ["evolve job list", "evolve job list --scope shared --search deep-swe", "evolve job list -l 20 -q"],
+        examples: ["evolve job list", "evolve job list --kind all --search deep-swe", "evolve job list -l 20 -q"],
       },
       show: {
         summary: "Show one or more jobs in full",
@@ -1787,7 +1799,9 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // server-side.
   analyze: {
     summary: "Judge a finished job's trial traces against a rubric",
-    notes: "Each trial gets its own analysis run; `analysis list --job <id>` finds them again.",
+    notes:
+      "Each trial gets its own analysis run; `analysis list --job <id>` finds them again. " +
+      "--show-defaults prints the platform's analyze defaults and exits.",
     flags: {
       model: {
         kind: "string",
@@ -1832,10 +1846,24 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         default: "the analysis default",
         group: "Analyzer",
       },
+      "show-defaults": {
+        kind: "boolean",
+        help: "Print the built-in prompt, rubric, model, effort and provider, then exit",
+        group: "Analyzer",
+      },
       // Harbor's selection and width options, their exact spellings
       // (cli/analyze.py:278-290): -n/--n-concurrent, --passing, --failing,
-      // -l/--n-trials. Each rides the body verbatim; the server owns the
-      // domains and the both-filters refusal (Harbor's own).
+      // -l/--n-trials — and --trial, their PATH given as one trial directory
+      // (cli/analyze.py:242-245), by id. Each rides the body verbatim; the
+      // server owns the domains, the membership and the both-filters
+      // refusal (Harbor's own).
+      trial: {
+        kind: "repeat",
+        short: "t",
+        value: "<trial-id>",
+        help: "Analyze only this trial; repeatable",
+        group: "Selection",
+      },
       "n-concurrent": {
         kind: "number",
         short: "n",
@@ -1856,12 +1884,13 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       watch: { kind: "boolean", help: "Poll until every analysis settles", group: "Output" },
       quiet: { kind: "boolean", short: "q", help: "With --watch, print only the final block", group: "Output" },
     },
-    minPositionals: 1,
+    minPositionals: 0,
     maxPositionals: 1,
-    positionalUsage: "<job-id>",
+    positionalUsage: "[<job-id>]",
     examples: [
       "evolve analyze 3e1f9a2c --watch",
       "evolve analyze 3e1f9a2c \\\n-r rubric.toml -p prompt.txt \\\n--failing -l 20 -n 2 \\\n--watch",
+      "evolve analyze 3e1f9a2c -t d1a10c4e -t d1a10f72",
     ],
   },
   // Harbor's `check` is a top-level command too (their cli/main.py:163
@@ -4129,22 +4158,40 @@ function passAtKLines(e: Job): string[] {
   return ["", "pass@k", ...table(rows)];
 }
 
-const JOB_COLUMNS: ListColumn<Job>[] = [
+/** A check row's DATASETS word (the dashboard's spelling): the dataset form's `name@version`; the archive form has no name, so its sha256 stands in. */
+function fmtCheckSource(check: CheckRow): string {
+  return check.source.dataset ?? `archive ${check.source.sha256.slice(0, 12)}`;
+}
+
+// A check is a job (Harbor), so under --kind check|all each cell reads the check's own fact where a job's would be.
+const JOB_COLUMNS: ListColumn<JobListItem>[] = [
   { key: "id", header: "ID", cell: (e) => e.id },
-  { key: "name", header: "NAME", cell: (e) => e.job_name ?? "-" },
+  { key: "kind", header: "KIND", cell: (e) => e.kind },
+  { key: "name", header: "NAME", cell: (e) => (e.kind === "check" ? e.name : e.job_name ?? "-") },
   { key: "status", header: "STATUS", cell: (e) => e.status },
-  { key: "datasets", header: "DATASETS", cell: (e) => fmtDatasets(e.datasets) },
-  { key: "agents", header: "AGENTS", cell: (e) => e.agents.map(fmtAgent).join(", ") },
-  { key: "trials", header: "TRIALS", cell: (e) => String(e.trials.total) },
+  {
+    key: "datasets",
+    header: "DATASETS",
+    cell: (e) => (e.kind === "check" ? fmtCheckSource(e) : fmtDatasets(e.datasets)),
+  },
+  {
+    key: "agents",
+    header: "AGENTS",
+    cell: (e) =>
+      e.kind === "check" ? `${e.model_name} (${e.reasoning_effort})` : e.agents.map(fmtAgent).join(", "),
+  },
+  { key: "trials", header: "TRIALS", cell: (e) => String(e.kind === "check" ? e.tasks.total : e.trials.total) },
   {
     key: "spent",
     header: "SPENT",
-    // One law with the detail row: an uploaded job's cell carries the
-    // archive's REPORTED figure, labeled; a native job the metered lane.
+    // One law with the detail row: an uploaded job's cell carries the archive's REPORTED figure, labeled;
+    // a native job the metered lane; a check its measured checker total, or "-" when nothing was measured.
     cell: (e) =>
-      reportedSpent(e, false) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
+      e.kind === "check"
+        ? fmtUsd(e.cost_usd)
+        : reportedSpent(e, false) ?? fmtSpend(jobSpend(e.stats.cost_usd, e.stats.n_unmeasured_trials)),
   },
-  { key: "started", header: "STARTED", cell: (e) => e.started_at },
+  { key: "started", header: "STARTED", cell: (e) => (e.kind === "check" ? e.created_at : e.started_at) },
 ];
 const JOB_DEFAULT_COLUMNS = ["id", "status", "datasets", "trials", "spent", "started"];
 
@@ -5084,6 +5131,16 @@ function parseScopeFlag(inv: Invocation): JobListScope | undefined {
   return scope as JobListScope;
 }
 
+/** --kind on `job list`: the SDK's own vocabulary, refused at the keyboard rather than spending a request. */
+function parseKindFlag(inv: Invocation): JobListKind | undefined {
+  if (inv.flags.kind === undefined) return undefined;
+  const kind = String(inv.flags.kind);
+  if (!(JOB_LIST_KINDS as readonly string[]).includes(kind)) {
+    throw new CliUsageError(`--kind must be one of: ${JOB_LIST_KINDS.join(", ")}; got: ${kind}`);
+  }
+  return kind as JobListKind;
+}
+
 /** --status on `analysis list`: the analysis object's own lowercase ladder. */
 function parseAnalysisStatusFilter(inv: Invocation): AnalysisStatus[] | undefined {
   if (inv.flags.status === undefined) return undefined;
@@ -5230,21 +5287,26 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
 async function cmdJobList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, JOB_COLUMNS)) return 0;
   const scope = parseScopeFlag(inv);
+  const kind = parseKindFlag(inv);
   const client = jobs(clientConfig(inv));
   const page = await client.list({
     ...pageOptions(inv),
     ...(inv.flags.search !== undefined ? { search: String(inv.flags.search) } : {}),
     ...(scope !== undefined ? { scope } : {}),
+    ...(kind !== undefined ? { kind } : {}),
   });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(page));
     return 0;
   }
   if (page.items.length === 0) {
-    if (inv.flags.quiet !== true) io.out("No jobs.");
+    // A check is a job, so an empty `all` answers as the Jobs page does.
+    if (inv.flags.quiet !== true) io.out(kind === "check" ? "No checks." : "No jobs.");
     return 0;
   }
-  renderList(inv, io, page.items, JOB_COLUMNS, JOB_DEFAULT_COLUMNS, (e) => e.id);
+  // The KIND column is on by default only once a row can be either kind.
+  const defaults = kind === undefined || kind === "job" ? JOB_DEFAULT_COLUMNS : ["kind", ...JOB_DEFAULT_COLUMNS];
+  renderList(inv, io, page.items, JOB_COLUMNS, defaults, (e) => e.id);
   if (page.nextCursor && io.tty === true && inv.flags.quiet !== true) {
     io.out(`\nMore: evolve job list --cursor ${page.nextCursor}`);
   }
@@ -5710,6 +5772,12 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
+  if (inv.flags["show-defaults"] === true) {
+    return printDefaults(inv, io, () => analyses(clientConfig(inv)).defaults(), "analyze", "<job-id>");
+  }
+  if (inv.positionals[0] === undefined) {
+    throw new CliUsageError("analyze takes a <job-id> (or --show-defaults)");
+  }
   const client = jobs(clientConfig(inv));
   const id = await resolveId(inv, "job", inv.positionals[0]);
   // The config, parsed at the keyboard ({} = Harbor's defaults); the server
@@ -5737,6 +5805,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   if (inv.flags.passing === true) req.passing = true;
   if (inv.flags.failing === true) req.failing = true;
   if (inv.flags["n-trials"] !== undefined) req.n_trials = inv.flags["n-trials"] as number;
+  if (inv.flags.trial !== undefined) req.trial_ids = inv.flags.trial as string[];
   // The 202 IS the queued batch — the job body, `stats.analysis` counting
   // the enqueued rows as pending — and the verb returns with it, the shape
   // of `job start` / `run`: Harbor's hosted launch prints the accepted job
@@ -5933,8 +6002,34 @@ export function checkDetailLines(check: Check): string[] {
   return [...table(rows), "", ...checkResultLines(check)];
 }
 
-/** `check --show-defaults`: the policy head as `check show` prints it, then the prompt template and every criterion in full. */
-function checkDefaultsLines(defaults: CheckDefaults): string[] {
+/** `analyze --show-defaults` and `check --show-defaults`: one door, so the two verbs cannot drift. */
+async function printDefaults(
+  inv: Invocation,
+  io: CliIO,
+  read: () => Promise<AnalyzeDefaults | CheckDefaults>,
+  verb: "analyze" | "check",
+  positional: "<job-id>" | "<path>",
+): Promise<number> {
+  // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
+  const allowed = new Set(["show-defaults", ...Object.keys(GLOBAL_FLAGS)]);
+  const stray = Object.keys(inv.flags).filter((k) => !allowed.has(k));
+  if (inv.positionals[0] !== undefined || stray.length > 0) {
+    throw new CliUsageError(
+      `--show-defaults prints the platform's ${verb} defaults and takes no ${positional} and no other ${verb} flag` +
+        (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
+    );
+  }
+  const defaults = await read();
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(defaults));
+  } else {
+    for (const line of rubricDefaultsLines(defaults)) io.out(line);
+  }
+  return 0;
+}
+
+/** The policy head, then the prompt template and every criterion in full. */
+function rubricDefaultsLines(defaults: AnalyzeDefaults | CheckDefaults): string[] {
   const criteria = defaults.rubric.criteria.length;
   const lines = table([
     ["model", defaults.model_name],
@@ -5966,21 +6061,7 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   const quiet = inv.flags.quiet === true;
   const client = checks(clientConfig(inv));
   if (inv.flags["show-defaults"] === true) {
-    // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
-    const stray = Object.keys(inv.flags).filter((k) => !["show-defaults", "json", "api-key", "base-url"].includes(k));
-    if (inv.positionals[0] !== undefined || stray.length > 0) {
-      throw new CliUsageError(
-        "--show-defaults prints the platform's check defaults and takes no <path> and no other check flag" +
-          (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
-      );
-    }
-    const defaults = await client.defaults();
-    if (json) {
-      io.out(JSON.stringify(defaults));
-    } else {
-      for (const line of checkDefaultsLines(defaults)) io.out(line);
-    }
-    return 0;
+    return printDefaults(inv, io, () => client.defaults(), "check", "<path>");
   }
   const knobs: CheckConfigInput = {};
   if (inv.flags.name !== undefined) knobs.name = String(inv.flags.name);

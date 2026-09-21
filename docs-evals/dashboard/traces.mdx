@@ -3,14 +3,14 @@ title: "Traces"
 description: "Every recorded run in one list."
 ---
 
-The Traces page lists every run the platform recorded for you, newest first: the trials of your jobs, their regrades, analyses and checks, and the managed-agent sessions the platform recorded, which these pages do not cover.
+The Traces page lists every run of the workspace you are in, newest first: the trials of its jobs, their regrades, analyses and checks, and the managed-agent sessions the platform recorded, which these pages do not cover. In a team it is one list of every member's runs, with a CREATED BY column after the trace tag. In your personal workspace it has two tabs: MINE, your own runs in any team, and SHARED WITH ME, what teammates made plus runs shared with you by email.
 
 {/* retake after the UI pass, from a non-admin account */}
 <Frame caption="The traces list">
   <img src="/images/traces.png" alt="The Traces page: a search box and a table of runs with a trace tag, the sandbox provider, the sandbox id, the agent and model, the start time, the cost and the status." />
 </Frame>
 
-Each row carries a tag naming the kind of run (EVAL for a trial, AGENT for a managed-agent session, REGRADE, ANALYZE, or CHECK), the task or session name, the dataset, the reward when there is one, the sandbox provider and sandbox id, the agent and model, when it started, what it spent, and its status. Search by name. Tick rows to stop running ones or delete finished ones.
+Each row carries a tag naming the kind of run (EVAL for a trial, AGENT for a managed-agent session, REGRADE, ANALYZE, or CHECK), the task or session name, the dataset, the reward when there is one, the sandbox provider and sandbox id, the agent and model, when it started, what it spent, and its status. Search by name. Tick rows to stop running ones or delete finished ones; in a team's list and under SHARED WITH ME only the rows you created can be ticked, since stop and delete are the creator's.
 
 Click a row to open it in the [trial viewer](/dashboard/trial-viewer).
 

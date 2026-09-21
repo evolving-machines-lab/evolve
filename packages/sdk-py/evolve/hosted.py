@@ -571,6 +571,15 @@ EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 #: it (``invalid_input``).
 JobListScope = Literal['my', 'shared', 'org']
 
+#: The jobs list's ``kind``: a check is a job, so ``'all'`` lists both (the ruling and the
+#: Harbor lines live on the spec's ``JobListKind`` parameter).
+JobListKind = Literal['job', 'check', 'all']
+#: The caller's relation to a job on a read (``Job.viewer``): ``creator`` made
+#: it, ``member`` belongs to its organization, ``shared`` reads it through an
+#: email share, ``link`` through its unlisted link. Acting verbs (analyze,
+#: cancel, resume, retry, regrade) are open to ``creator`` and ``member`` only.
+JobViewer = Literal['creator', 'member', 'shared', 'link']
+
 #: An analysis's own lifecycle ladder — lowercase, the object's Harbor
 #: dialect (spec ``TrialAnalysis.status``).
 AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
@@ -1743,6 +1752,21 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``n_trials`` matching trials to settle. An integer of at least 1;
     #: anything else is refused ``invalid_input`` naming ``analyze.n_trials``.
     n_trials: int
+    #: Analyze only these trials of the job — Harbor's ``harbor analyze
+    #: <trial directory>`` for one trial (their cli/analyze.py:242-245), given
+    #: as ids here; combinable with ``passing``/``failing`` (a listed trial on
+    #: the other side of the filter is skipped) and applied before
+    #: ``n_trials`` (Harbor's one-trial path skips its filter and cap,
+    #: analyzer.py:180-181 before :189-191; hosted, both apply to the named
+    #: trials too). An id that is not a trial of this job is refused
+    #: ``invalid_input`` naming ``analyze.trial_ids`` with the unknown ids
+    #: named in the message and in ``details['unknown_trial_ids']``; a list
+    #: that leaves nothing analyzable is the 409 ``no_analyzable_trials``; an
+    #: empty list, a duplicate, an empty string or a non-string is refused
+    #: ``invalid_input``. Only :meth:`JobsClient.analyze` takes it: on
+    #: ``start(analyze=...)`` (the embedded trigger) it is refused — the
+    #: trials do not exist yet.
+    trial_ids: List[str]
 
 
 class AnalyzeConfig(TypedDict):
@@ -1785,6 +1809,10 @@ class AnalyzeConfig(TypedDict):
     #: The trial cap as stored (``AnalyzeConfigInput['n_trials']``); None =
     #: no cap.
     n_trials: Optional[int]
+    #: Always None on the job body today: the stored policy is the
+    #: create-time one, which refuses ``trial_ids``; a manual wave's named
+    #: trials are the analysis rows it enqueues.
+    trial_ids: Optional[List[str]]
 
 
 class AnalysisEvidence(TypedDict):
@@ -2088,6 +2116,22 @@ class Check(TypedDict):
     finished_at: Optional[str]
 
 
+class AnalyzeDefaults(TypedDict):
+    """The policy an empty analyze config resolves to (``GET
+    /api/analyses/defaults``): each key the value :class:`AnalyzeConfig`
+    echoes for a job created with ``analyze={}``, except ``prompt``, which
+    ``AnalyzeConfig`` serves as None and this serves as the template text. A
+    plain wire dict at runtime.
+    """
+    model_name: str
+    rubric: Rubric
+    #: The built-in analyze prompt template, unrendered — pass it as ``prompt`` to run the default body explicitly, or edit it from here.
+    prompt: str
+    #: The effort the default model runs at when the config names none.
+    reasoning_effort: str
+    sandbox_provider: EvalSandboxProvider
+
+
 class CheckDefaults(TypedDict):
     """The policy an empty check config resolves to (``GET
     /api/checks/defaults``): each key the value :class:`Check` echoes for a
@@ -2102,6 +2146,42 @@ class CheckDefaults(TypedDict):
     #: The effort the default model runs at when the config names none.
     reasoning_effort: str
     sandbox_provider: EvalSandboxProvider
+
+
+class CheckTaskTally(TypedDict):
+    """Spec ``CheckTaskTally``. A stopped task check is stored ``failed`` with the stop phase; the tally
+    counts it under ``stopped``, never ``failed``. ``byStatus`` keeps the wire's frozen camelCase key."""
+    total: int
+    byStatus: Dict[str, int]
+
+
+@dataclass
+class CheckRow:
+    """Spec ``CheckRow``, one row of ``jobs().list(kind='check' | 'all')``: a check is a job, so it lists beside them.
+    Not a :class:`Job` (no arms, attempts, caps, retry policy, trials, upload provenance), so those fields are absent, never faked."""
+    id: str
+    #: Check.name — Harbor's ``--job-name``: the caller's, or the accept stamp.
+    name: str
+    status: CheckStatus
+    source: CheckSource
+    #: The checker's model.
+    model_name: str
+    #: The effort every task's checker ran at.
+    reasoning_effort: str
+    sandbox_provider: EvalSandboxProvider
+    #: The owning organization's slug (every check has one).
+    org: str
+    visibility: str
+    #: How many task checks, and how they break down; done = completed + failed + stopped.
+    tasks: CheckTaskTally
+    #: The sum of the measured task costs; None when none was measured.
+    cost_usd: Optional[float]
+    #: The accept instant; the list orders it with the jobs' ``started_at``.
+    created_at: str
+    #: When the last task settled; None until every task has.
+    finished_at: Optional[str]
+    #: ``'check'`` — tells the row from a :class:`Job` (whose ``kind`` is ``'job'``).
+    kind: str = field(default='check', kw_only=True)
 
 
 class JobRetryConfig(TypedDict):
@@ -2259,6 +2339,15 @@ class Job:
     #: ``jobs().shares(id)`` lists them. Always ``'PRIVATE'`` on a regrade job;
     #: a server older than the field reads as ``'PRIVATE'``.
     visibility: str = field(default='PRIVATE', kw_only=True)
+    #: The row's kind on the jobs list (:data:`JobListItem`): always ``'job'``
+    #: on a Job body, a regrade included; a :class:`CheckRow` says ``'check'``.
+    kind: str = field(default='job', kw_only=True)
+    #: The caller's relation on a read (:data:`JobViewer`). None on the
+    #: responses that echo a job the caller just acted on (create, analyze,
+    #: cancel, resume, retry, regrade), where the caller is the
+    #: creator or a member by construction, and on list rows (batched; read
+    #: one job to learn it); None too from a server older than the field.
+    viewer: Optional[JobViewer] = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -3536,9 +3625,14 @@ class OrgJoined:
 # (On the wire the envelope keys are the frozen items/nextCursor/hasMore.)
 
 
+#: One row of the jobs list (spec ``JobListItem``): a :class:`Job`, or a :class:`CheckRow` when
+#: ``jobs().list()`` asked for ``kind='check'`` or ``'all'``; ``row.kind`` tells them apart.
+JobListItem = Union[Job, CheckRow]
+
+
 @dataclass
 class JobPage:
-    items: List[Job]
+    items: List[JobListItem]
     next_cursor: Optional[str]
     has_more: bool
 
@@ -4440,6 +4534,14 @@ def _map_job(data: Dict[str, Any]) -> Job:
         finished_at=data.get('finished_at'),
         org=data['org'] if isinstance(data.get('org'), str) else None,
         visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        # A Job body always says job; an older server that sends no kind is one.
+        kind='job',
+        # The read relation; None from an acting verb's echo and from an older server alike.
+        viewer=(
+            cast(JobViewer, data['viewer'])
+            if data.get('viewer') in ('creator', 'member', 'shared', 'link')
+            else None
+        ),
     )
 
 
@@ -4638,6 +4740,33 @@ def _map_check(data: Any) -> Check:
             'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else [],
         },
     )
+
+
+def _map_check_row(data: Dict[str, Any]) -> CheckRow:
+    """The jobs list's CheckRow: the wire's source and tally verbatim (the spec
+    requires both, every count included; a count nobody sent is never 0), money read as the Job's."""
+    return CheckRow(
+        id=str(data.get('id', '')),
+        name=str(data.get('name', '')),
+        status=cast(CheckStatus, data.get('status')),
+        source=cast(CheckSource, data['source']),
+        model_name=str(data.get('model_name', '')),
+        reasoning_effort=str(data.get('reasoning_effort', '')),
+        sandbox_provider=cast(EvalSandboxProvider, data.get('sandbox_provider')),
+        org=str(data.get('org', '')),
+        # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        tasks=cast(CheckTaskTally, data['tasks']),
+        cost_usd=_optional_float(data.get('cost_usd')),
+        created_at=str(data.get('created_at', '')),
+        finished_at=data.get('finished_at'),
+    )
+
+
+def _map_job_list_item(data: Dict[str, Any]) -> 'JobListItem':
+    """One row of GET /api/jobs (spec ``JobListItem``): a CheckRow when the
+    server says ``kind: "check"``, else the Job body."""
+    return _map_check_row(data) if data.get('kind') == 'check' else _map_job(data)
 
 
 def _map_timing(data: Any) -> Optional[TimingInfo]:
@@ -7671,6 +7800,7 @@ class JobsClient:
         *,
         search: Optional[str] = None,
         scope: Optional[JobListScope] = None,
+        kind: Optional[JobListKind] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
@@ -7682,15 +7812,17 @@ class JobsClient:
         ``scope`` is Harbor's ``--scope`` — ``'my'`` (yours, the server's
         default), ``'shared'`` (your organizations' jobs that teammates
         created) or ``'org'`` (every job in your organizations, yours
-        included). Both are sent on every page fetch.
+        included); ``kind`` lists checks alone (``'check'``) or jobs and checks
+        merged (``'all'``, rows told apart by ``kind``) — a check is a job.
+        All three ride every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(
-                f'/api/jobs{_page_query(page_limit, page_cursor, search=search, scope=scope)}'
+                f'/api/jobs{_page_query(page_limit, page_cursor, search=search, scope=scope, kind=kind)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return JobPage(
-                items=[_map_job(item) for item in items],
+                items=[_map_job_list_item(item) for item in items],
                 next_cursor=next_cursor,
                 has_more=has_more,
             )
@@ -8144,6 +8276,7 @@ class JobsClient:
         passing: Optional[bool] = None,
         failing: Optional[bool] = None,
         n_trials: Optional[int] = None,
+        trial_ids: Optional[List[str]] = None,
     ) -> Job:
         """Analyze a terminal job's trial traces (rubric-driven, Harbor's
         ``harbor analyze``), server-side.
@@ -8188,7 +8321,11 @@ class JobsClient:
         beneath the organization's ``max_concurrent_analyses`` (Harbor's
         ``-n/--n-concurrent``; omitted = the ceiling alone). ``passing`` and
         ``failing`` together are refused ``invalid_input`` — Harbor's own
-        "Cannot use both --passing and --failing".
+        "Cannot use both --passing and --failing". ``trial_ids`` names the
+        trials to analyze (Harbor's ``harbor analyze <trial directory>``,
+        by id), applied with the filter and before the cap; an id that is
+        not this job's is refused ``invalid_input`` naming
+        ``analyze.trial_ids`` with the unknown ids in the details.
 
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
@@ -8222,6 +8359,8 @@ class JobsClient:
             body['failing'] = failing
         if n_trials is not None:
             body['n_trials'] = n_trials
+        if trial_ids is not None:
+            body['trial_ids'] = list(trial_ids)
         raw = await self._http.request_json(
             f'/api/jobs/{urllib.parse.quote(id)}/analyze', method='POST', body=body
         )
@@ -9351,6 +9490,13 @@ class AnalysesClient:
         return _PaginatedList(
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
+
+    async def defaults(self) -> AnalyzeDefaults:
+        """The defaults an analysis runs under when its config names nothing
+        (``GET /api/analyses/defaults``): model, effort, provider, rubric and
+        the unrendered prompt template (:class:`AnalyzeDefaults`)."""
+        raw = await self._http.request_json('/api/analyses/defaults')
+        return cast(AnalyzeDefaults, raw)
 
     async def download(
         self,

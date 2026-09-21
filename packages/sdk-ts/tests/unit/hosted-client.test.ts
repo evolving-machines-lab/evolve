@@ -3049,6 +3049,67 @@ async function testListJobs() {
   }
 }
 
+/** One CheckRow as GET /api/jobs?kind=check|all serves it (spec CheckRow). */
+const CHECK_ROW = {
+  kind: "check",
+  id: "chk-1",
+  name: "nightly check",
+  status: "running",
+  source: { type: "dataset", sha256: "ab".repeat(32), bytes: null, dataset: "deep-swe@1.1" },
+  model_name: "claude-opus-4-6",
+  reasoning_effort: "high",
+  sandbox_provider: "e2b",
+  org: "acme",
+  visibility: "PRIVATE",
+  tasks: { total: 3, byStatus: { queued: 0, running: 1, completed: 1, failed: 1, stopped: 0 } },
+  cost_usd: 0.03,
+  created_at: "2026-09-20T11:00:00.000Z",
+  finished_at: null,
+};
+
+async function testListJobsKind() {
+  console.log("\n--- jobs().list({ kind }) rides the query and maps a check row beside the jobs (a check is a job) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [CHECK_ROW, JOB_SUMMARY], nextCursor: null, hasMore: false },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    const page = await e.list({ kind: "all" });
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.searchParams.get("kind"), "all", "kind rides the query string verbatim");
+    assertEqual(page.items.length, 2, "both rows arrive");
+    const row = page.items[0];
+    assertEqual(row.kind, "check", "the check row is told by its kind");
+    if (row.kind === "check") {
+      assertEqual(row.name, "nightly check", "the check's own name rides the row");
+      assertEqual(row.tasks.byStatus.completed, 1, "the task tally maps");
+      assertEqual(row.tasks.byStatus.stopped, 0, "the tally carries the stopped count");
+      assertEqual(row.cost_usd, 0.03, "the check's cost maps");
+      assertEqual(row.source.dataset, "deep-swe@1.1", "the source rides verbatim");
+      assert(!("agents" in row), "no Job field is faked onto a check row");
+    }
+    const job = page.items[1];
+    assertEqual(job.kind, "job", "a Job body says job");
+    if (job.kind === "job") assertEqual(job.job_name, "deep-swe sweep", "the Job maps as before");
+
+    await e.list();
+    assert(
+      !new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("kind"),
+      "no kind sends no kind parameter (the server's default is job)"
+    );
+
+    await e.list({ kind: "check", scope: "shared" });
+    const both = new URL(fetchCalls[fetchCalls.length - 1].url).searchParams;
+    assertEqual(both.get("kind"), "check", "kind=check rides");
+    assertEqual(both.get("scope"), "shared", "scope rides beside it");
+  } finally {
+    restoreFetch();
+  }
+}
+
 /** One trial in the contract's wire shape. */
 function wireTrial(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -3645,6 +3706,7 @@ async function testAnalyzeJob() {
       failing: true,
       n_trials: 20,
       n_concurrent: 2,
+      trial_ids: ["run-2", "run-1"],
     });
     const call = fetchCalls[fetchCalls.length - 1];
     assertEqual(call.init?.method, "POST", "uses POST");
@@ -3660,8 +3722,9 @@ async function testAnalyzeJob() {
         failing: true,
         n_trials: 20,
         n_concurrent: 2,
+        trial_ids: ["run-2", "run-1"],
       },
-      "the config rides the body verbatim — prompt (Harbor's -p file as TEXT), sandbox_provider, reasoning_effort and Harbor's selection knobs (failing / n_trials / n_concurrent) included"
+      "the config rides the body verbatim — prompt (Harbor's -p file as TEXT), sandbox_provider, reasoning_effort, Harbor's selection knobs (failing / n_trials / n_concurrent) and the trial list included"
     );
     // THE RESPONSE IS THE JOB — analyses are not a separate resource.
     assertEqual(job.id, "eval-1", "returns the job body");
@@ -5023,6 +5086,12 @@ async function testShareJob() {
     assertEqual((await e.get("eval-2")).visibility, "PRIVATE", "Job.visibility defaults to PRIVATE when the server sends none");
     setMockResponse("/api/jobs/eval-3", { status: 200, body: { ...JOB_SUMMARY, id: "eval-3", visibility: "LINK" } });
     assertEqual((await e.get("eval-3")).visibility, "LINK", "Job.visibility carries LINK");
+    // The read relation: the wire's word verbatim; none, or a word outside the vocabulary, reads as null.
+    assertEqual((await e.get("eval-2")).viewer, null, "Job.viewer is null when the server sends none");
+    setMockResponse("/api/jobs/eval-4", { status: 200, body: { ...JOB_SUMMARY, id: "eval-4", viewer: "shared" } });
+    assertEqual((await e.get("eval-4")).viewer, "shared", "Job.viewer carries shared");
+    setMockResponse("/api/jobs/eval-5", { status: 200, body: { ...JOB_SUMMARY, id: "eval-5", viewer: "owner" } });
+    assertEqual((await e.get("eval-5")).viewer, null, "an off-vocabulary viewer reads as null, never passed through");
   } finally {
     restoreFetch();
   }
@@ -7903,6 +7972,30 @@ async function testChecksReadsAndWatch() {
   }
 }
 
+async function testAnalysesDefaults() {
+  console.log("\n--- analyses().defaults() reads GET /api/analyses/defaults and pins the wire ---");
+  installMockFetch();
+  try {
+    const defaults = {
+      model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+      rubric: { criteria: [{ name: "score_is_earned", description: "d", guidance: "g" }] },
+      prompt: "Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}",
+      reasoning_effort: "high",
+      sandbox_provider: "daytona",
+    };
+    // Registered BEFORE the list door: the mock matches by substring, in order.
+    setMockResponse("/api/analyses/defaults", { status: 200, body: defaults });
+    setMockResponse("/api/analyses", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const got = await analyses({ apiKey: "test-key", baseUrl: BASE }).defaults();
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.pathname, "/api/analyses/defaults", "one GET on the defaults door");
+    assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
+    assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
+  } finally {
+    restoreFetch();
+  }
+}
+
 async function testChecksDefaults() {
   console.log("\n--- checks().defaults() reads GET /api/checks/defaults and pins the wire ---");
   installMockFetch();
@@ -7984,6 +8077,7 @@ async function main() {
   await testStartNonExactVersionIsTypedError();
   await testGetJobDetail();
   await testListJobs();
+  await testListJobsKind();
   await testListAutoPagination();
   await testTrials();
   await testTrialsAutoPagination();
@@ -8052,6 +8146,7 @@ async function main() {
   await testSystemLogSwitch();
   await testTrialArtifact();
   await testAnalysisGet();
+  await testAnalysesDefaults();
   await testAnalysisGetMalformedFailsClosed();
   await testAnalysisTranscript();
   await testAnalysisTranscriptRefusesOtherSpecies();
