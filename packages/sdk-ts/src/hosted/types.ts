@@ -659,13 +659,16 @@ export interface AnalyzeConfigInput {
    * Analyze only these trials of the job — Harbor's `harbor analyze <trial
    * directory>` for one trial (their cli/analyze.py:242-245), given as ids
    * here; combinable with `passing`/`failing` (a listed trial on the other
-   * side of the filter is skipped) and applied before `n_trials`. An id that
-   * is not a trial of this job is refused `invalid_input` naming
-   * `analyze.trial_ids` with the unknown ids in `details.unknown_trial_ids`;
-   * a list that leaves nothing analyzable is the 409 `no_analyzable_trials`;
-   * an empty list, a duplicate, an empty string or a non-string is refused
-   * `invalid_input`. Only `jobs().analyze()` takes it: on `start({ analyze })`
-   * (the embedded trigger) it is refused — the trials do not exist yet.
+   * side of the filter is skipped) and applied before `n_trials` (Harbor's
+   * one-trial path skips its filter and cap, analyzer.py:180-181 before
+   * :189-191; hosted, both apply to the named trials too). An id that is not
+   * a trial of this job is refused `invalid_input` naming `analyze.trial_ids`
+   * with the unknown ids named in the message and in
+   * `details.unknown_trial_ids`; a list that leaves nothing analyzable is the
+   * 409 `no_analyzable_trials`; an empty list, a duplicate, an empty string
+   * or a non-string is refused `invalid_input`. Only `jobs().analyze()` takes
+   * it: on `start({ analyze })` (the embedded trigger) it is refused — the
+   * trials do not exist yet.
    */
   trial_ids?: string[];
 }
@@ -1420,8 +1423,8 @@ export interface JobBuildExclusion {
 /**
  * The caller's relation to a job on a read (Job.viewer): `creator` made it,
  * `member` belongs to its organization, `shared` reads it through an email
- * share, `link` through its unlisted link. Acting verbs (cancel, resume,
- * retry, regrade) are open to `creator` and `member` only.
+ * share, `link` through its unlisted link. Acting verbs (analyze, cancel,
+ * resume, retry, regrade) are open to `creator` and `member` only.
  */
 export type JobViewer = "creator" | "member" | "shared" | "link";
 

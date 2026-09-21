@@ -199,7 +199,7 @@ interface CommandSpec {
 }
 
 /**
- * The four global flags, valid on every command. -q is NOT global: it means
+ * The three global flags, valid on every command. -q is NOT global: it means
  * "ids only" on lists and "suppress the event log" on start, so each command
  * that has a quiet behavior declares it.
  */
