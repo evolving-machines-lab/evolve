@@ -63,7 +63,7 @@ One shape from `start`, `get`, `list`, `cancel`, `resume`, `retry` and `regrade`
 
 ### AnalyzeConfig
 
-`model_name`, `rubric` (`{ criteria: [{ name, description, guidance }] }`), `prompt` (string or null for the default body), `reasoning_effort`, `sandbox_provider`, `n_concurrent` (number or null for the organization's ceiling alone), `passing`, `failing` (both false means every analyzable trial), `n_trials` (number or null for no cap), `trial_ids` (string[] or null for none named). The input shape takes every field as optional.
+`model_name`, `rubric` (`{ criteria: [{ name, description, guidance }] }`), `prompt` (string or null for the default body), `reasoning_effort`, `sandbox_provider`, `n_concurrent` (number or null for the organization's ceiling alone), `passing`, `failing` (both false means every analyzable trial), `n_trials` (number or null for no cap), `trial_ids` (always null on the job body today: the stored policy is the create-time one, which refuses the field; the trials a manual wave names are the analyses it enqueues). The input shape takes every field as optional.
 
 ### JobStats
 

@@ -712,7 +712,10 @@ export interface AnalyzeConfig {
   failing: boolean;
   /** The trial cap as stored (`AnalyzeConfigInput.n_trials`); null = no cap. */
   n_trials: number | null;
-  /** The trials named as stored (`AnalyzeConfigInput.trial_ids`); null = none named, the whole job. */
+  /**
+   * Always null on the job body today: the stored policy is the create-time
+   * one, which refuses `trial_ids`; a manual wave's named trials are the rows it enqueues.
+   */
   trial_ids: string[] | null;
 }
 

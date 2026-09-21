@@ -1803,8 +1803,9 @@ class AnalyzeConfig(TypedDict):
     #: The trial cap as stored (``AnalyzeConfigInput['n_trials']``); None =
     #: no cap.
     n_trials: Optional[int]
-    #: The trials named as stored (``AnalyzeConfigInput['trial_ids']``);
-    #: None = none named, the whole job.
+    #: Always None on the job body today: the stored policy is the
+    #: create-time one, which refuses ``trial_ids``; a manual wave's named
+    #: trials are the analysis rows it enqueues.
     trial_ids: Optional[List[str]]
 
 
