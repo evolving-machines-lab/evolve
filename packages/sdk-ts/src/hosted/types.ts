@@ -143,6 +143,15 @@ export const JOB_LIST_SCOPES = ["my", "shared", "org"] as const;
 export type JobListScope = (typeof JOB_LIST_SCOPES)[number];
 
 /**
+ * A check is a job, so the list takes a `kind` (the ruling and the Harbor lines live on the spec's
+ * JobListKind parameter). A runtime value so the CLI validates `--kind` against it.
+ */
+export const JOB_LIST_KINDS = ["job", "check", "all"] as const;
+
+/** One list kind — see JOB_LIST_KINDS. */
+export type JobListKind = (typeof JOB_LIST_KINDS)[number];
+
+/**
  * An analysis's own lifecycle ladder — lowercase, the object's Harbor
  * dialect (spec TrialAnalysis.status). A runtime value so the CLI validates
  * `analysis list --status` against it instead of a second copy.
@@ -655,6 +664,22 @@ export interface AnalyzeConfigInput {
    * anything else is refused `invalid_input` naming `analyze.n_trials`.
    */
   n_trials?: number;
+  /**
+   * Analyze only these trials of the job — Harbor's `harbor analyze <trial
+   * directory>` for one trial (their cli/analyze.py:242-245), given as ids
+   * here; combinable with `passing`/`failing` (a listed trial on the other
+   * side of the filter is skipped) and applied before `n_trials` (Harbor's
+   * one-trial path skips its filter and cap, analyzer.py:180-181 before
+   * :189-191; hosted, both apply to the named trials too). An id that is not
+   * a trial of this job is refused `invalid_input` naming `analyze.trial_ids`
+   * with the unknown ids named in the message and in
+   * `details.unknown_trial_ids`; a list that leaves nothing analyzable is the
+   * 409 `no_analyzable_trials`; an empty list, a duplicate, an empty string
+   * or a non-string is refused `invalid_input`. Only `jobs().analyze()` takes
+   * it: on `start({ analyze })` (the embedded trigger) it is refused — the
+   * trials do not exist yet.
+   */
+  trial_ids?: string[];
 }
 
 /**
@@ -699,6 +724,11 @@ export interface AnalyzeConfig {
   failing: boolean;
   /** The trial cap as stored (`AnalyzeConfigInput.n_trials`); null = no cap. */
   n_trials: number | null;
+  /**
+   * Always null on the job body today: the stored policy is the create-time
+   * one, which refuses `trial_ids`; a manual wave's named trials are the rows it enqueues.
+   */
+  trial_ids: string[] | null;
 }
 
 /** The job-creation body — POST /api/jobs. */
@@ -1400,10 +1430,20 @@ export interface JobBuildExclusion {
 }
 
 /**
+ * The caller's relation to a job on a read (Job.viewer): `creator` made it,
+ * `member` belongs to its organization, `shared` reads it through an email
+ * share, `link` through its unlisted link. Acting verbs (analyze, cancel,
+ * resume, retry, regrade) are open to `creator` and `member` only.
+ */
+export type JobViewer = "creator" | "member" | "shared" | "link";
+
+/**
  * THE job body — the same shape from create, get, list items, cancel, resume,
  * and regrade responses; no field appears on some responses and not others.
  */
 export interface Job {
+  /** The row's kind on the jobs list (JobListItem): always `job` on a Job body; a CheckRow says `check`. */
+  kind: "job";
   id: string;
   /** User-facing label. */
   job_name: string;
@@ -1489,6 +1529,14 @@ export interface Job {
   source_jobs: SourceJob[];
   /** Derived: any source_jobs entry with action "regrade". */
   is_regrade: boolean;
+  /**
+   * The caller's relation on a read (JobViewer). Null on the responses that
+   * echo a job the caller just acted on (create, analyze, cancel, resume,
+   * retry, regrade), where the caller is the creator or a member by
+   * construction, and on list rows (batched; read one job to learn it);
+   * null too from a server older than the field.
+   */
+  viewer: JobViewer | null;
   /**
    * The upload provenance echo — null for every job this platform executed,
    * non-null only on a job ingested by jobs().upload(). See UploadProvenance.
@@ -2446,6 +2494,59 @@ export type CheckPage = Page<Check>;
 
 /** The handle returned by checks().list() — one page on await, every page on for-await. */
 export interface CheckList extends Awaitable<CheckPage>, AsyncIterable<Check> {}
+
+/**
+ * Spec CheckTaskTally. A stopped task check is stored `failed` with the stop phase; the tally counts it
+ * under `stopped`, never `failed`, so a stop never reads as a failure.
+ */
+export interface CheckTaskTally {
+  total: number;
+  byStatus: Record<AnalysisStatus | "stopped", number>;
+}
+
+/**
+ * Spec CheckRow, one row of `jobs().list({ kind: "check" | "all" })`: a check is a job, so it lists beside them.
+ * Not a Job (no arms, attempts, caps, retry policy, trials or upload provenance), so those fields are absent, never faked.
+ */
+export interface CheckRow {
+  kind: "check";
+  id: string;
+  /** Check.name — Harbor's `--job-name`: the caller's, or the accept stamp. */
+  name: string;
+  status: CheckStatus;
+  source: CheckSource;
+  /** The checker's model. */
+  model_name: string;
+  /** The effort every task's checker ran at. */
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
+  /** The owning organization's slug (every check has one). */
+  org: string;
+  visibility: JobVisibility;
+  /** How many task checks, and how they break down; done = completed + failed + stopped. */
+  tasks: CheckTaskTally;
+  /** The sum of the measured task costs; null when none was measured. */
+  cost_usd: number | null;
+  /** The accept instant; the list orders it with the jobs' `started_at`. */
+  created_at: string;
+  /** When the last task settled; null until every task has. */
+  finished_at: string | null;
+}
+
+/** One row of the jobs list, told apart by `kind` (spec JobListItem). */
+export type JobListItem = Job | CheckRow;
+
+/** Cursor page of check rows (newest first) — `jobs().list({ kind: "check" })`. */
+export type CheckRowPage = Page<CheckRow>;
+
+/** The handle returned by `jobs().list({ kind: "check" })`. */
+export interface CheckRowList extends Awaitable<CheckRowPage>, AsyncIterable<CheckRow> {}
+
+/** Cursor page of jobs and check rows (newest first) — `jobs().list({ kind: "all" })`. */
+export type JobListItemPage = Page<JobListItem>;
+
+/** The handle returned by `jobs().list({ kind: "all" })`. */
+export interface JobListItemList extends Awaitable<JobListItemPage>, AsyncIterable<JobListItem> {}
 
 /**
  * One task's rollup within a job: its trial tally, mean reward over SCORED
@@ -3439,6 +3540,8 @@ export interface ListJobsOptions extends PageOptions {
    * See JOB_LIST_SCOPES.
    */
   scope?: JobListScope;
+  /** `job` (the server's default), `check` or `all`; see JOB_LIST_KINDS. */
+  kind?: JobListKind;
 }
 
 /** Options for analyses().list() (default page 50, max 200) */
@@ -4080,11 +4183,13 @@ export interface JobsClient {
   /** Get one job */
   get(id: string): Promise<Job>;
   /**
-   * List the caller's jobs, newest first (cursor-paged). Await the
-   * result for one page, or `for await` it to walk every job across
-   * cursor pages transparently.
+   * List the caller's jobs, newest first (cursor-paged): await one page, or `for await` every page.
+   * One overload per `kind`, so the rows are typed as what was asked for.
    */
-  list(options?: ListJobsOptions): JobList;
+  list(options?: ListJobsOptions & { kind?: "job" }): JobList;
+  list(options: ListJobsOptions & { kind: "check" }): CheckRowList;
+  list(options: ListJobsOptions & { kind: "all" }): JobListItemList;
+  list(options: ListJobsOptions): JobListItemList;
   /**
    * List a job's trials (cursor-paged; { status } filters, e.g. to
    * the failed trials). Await the result for one page, or `for await` it to
@@ -4814,6 +4919,8 @@ export interface AnalysesClient {
    * feed's species-blind events door, which answers `trial_not_found`.
    */
   list(options?: ListAnalysesOptions): AnalysisList;
+  /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): model, effort, provider, rubric and the unrendered prompt template. */
+  defaults(): Promise<AnalyzeDefaults>;
   /**
    * The verdict document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same
@@ -5051,6 +5158,22 @@ export interface Check {
   created_at: string;
   /** When the last task settled; null until every task has. */
   finished_at: string | null;
+}
+
+/**
+ * The policy an empty analyze config resolves to (GET /api/analyses/defaults):
+ * each key the value `AnalyzeConfig` echoes for a job created with
+ * `analyze: {}`, except `prompt`, which `AnalyzeConfig` serves as null and
+ * this serves as the template text.
+ */
+export interface AnalyzeDefaults {
+  model_name: string;
+  rubric: Rubric;
+  /** The built-in analyze prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
+  prompt: string;
+  /** The effort the default model runs at when the config names none. */
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
 }
 
 /**

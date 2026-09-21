@@ -7,6 +7,7 @@ import GlobalOptions from '/snippets/global-options.mdx';
 
 ```bash
 evolve analyze <job-id> [options]
+evolve analyze --show-defaults
 ```
 
 Analyze a terminal job's trial traces against a rubric, server-side. Without `--watch` the command returns at once with the job block and the hint `Follow it with: evolve job show <id>`; `--json` prints the accepted job body. Exit 0 on an accepted wave; with `--watch`, exit 1 when any analysis failed.
@@ -19,6 +20,7 @@ evolve analyze 3e1f9a2c-… \
   -l 20 \
   -n 2 \
   --watch
+evolve analyze 3e1f9a2c-… -t d1a10c4e-… -t d1a10f72-…
 ```
 
 ## Options
@@ -43,6 +45,10 @@ evolve analyze 3e1f9a2c-… \
   Sandbox provider the analyzer runs on. Defaults to `daytona`.
 </ParamField>
 
+<ParamField path="--show-defaults">
+  Print the defaults an analysis runs under when you name none: model, effort, provider, the rubric's criteria and the built-in prompt template, then exit. With `--json`, one object. Takes no job id and no other analyze flag.
+</ParamField>
+
 <ParamField path="-n, --n-concurrent" type="n">
   Max concurrent trial analyses, 1 to 150, beneath the organization's `max_concurrent_analyses` (fleet default 60). Defaults to the ceiling.
 </ParamField>
@@ -55,8 +61,12 @@ evolve analyze 3e1f9a2c-… \
   Only analyze failing trials (reward below 1.0, or an exception).
 </ParamField>
 
+<ParamField path="-t, --trial" type="trial-id">
+  Analyze only this trial; repeatable. Combines with `--passing` or `--failing` (a named trial on the other side is skipped) and comes before `-l`. An id that is not a trial of this job is refused, with the unknown ids named.
+</ParamField>
+
 <ParamField path="-l, --n-trials" type="n">
-  Max trials to analyze, after `--passing` or `--failing`, in the job's trial order.
+  Max trials to analyze, after `--passing`, `--failing` or `--trial`, in the job's trial order.
 </ParamField>
 
 <ParamField path="--watch">

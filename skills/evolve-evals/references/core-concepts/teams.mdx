@@ -25,11 +25,11 @@ In the SDK the same choice is `org: "acme"` on `jobs().start()` and `datasets().
 
 ## In the dashboard
 
-The box under your account in the sidebar is the team switcher. On Jobs, Datasets and Settings it names the team you are in; on Traces and Skills it names none. Its menu lists your teams and Personal, **Manage members** while a team is open, and **Create team**. Pick a team and the pages under it show that team's work.
+The box under your account in the sidebar is the workspace switcher. It always names one workspace: the one in the page's URL, otherwise the one you last opened in this tab, otherwise Personal. Its menu lists Personal and every team you belong to, each with your role, and **Create team**. Pick a workspace and Datasets, Jobs, Traces, Members and Settings show that workspace's work; on a page that is yours alone (Skills, Integrations, Secrets, API Keys, Usage, Billing) the pick is remembered for the next one.
 
-Team settings has three tabs. GENERAL holds the name, and DELETE TEAM for an owner. MEMBERS lists people with their role: an owner has MAKE OWNER, DEMOTE and REMOVE on every other row, and everyone has LEAVE on their own. INVITES has NEW INVITE LINK, shown once, and REVOKE. A person who opens an invite link signs in, or signs up, and joins.
+TEAM in the sidebar has two pages. Members lists people with their role: an owner has MAKE OWNER, DEMOTE and REMOVE on every other row, and everyone has LEAVE on their own; below the list, an owner has NEW INVITE LINK, shown once, and REVOKE. A person who opens an invite link signs in, or signs up, and joins. Settings holds the team's name, and DELETE TEAM for an owner. In Personal, Members lists only you and Settings shows your workspace's name.
 
-Traces and Skills are not under a team. Their tabs are MINE (yours, in any team), TEAM (everything in every team you belong to, yours included) and SHARED WITH ME (what teammates made, plus runs shared with you by email).
+Traces is under the workspace too. In a team it is one list of every run in that team, with a CREATED BY column naming who ran each. In Personal it has two tabs: MINE (yours, in any team) and SHARED WITH ME (what teammates made, plus runs shared with you by email). Skills lists your own uploads.
 
 <Card title="auth reference" icon="terminal" href="/cli-reference/auth">
   Every `evolve auth org` command.

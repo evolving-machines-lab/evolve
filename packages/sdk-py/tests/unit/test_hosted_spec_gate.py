@@ -77,6 +77,7 @@ from evolve import (
     ChecksClient,
     DatasetsClient,
     EvalSandboxProvider,
+    JobListKind,
     JobListScope,
     JobStatus,
     JobsClient,
@@ -251,6 +252,7 @@ OPERATION_TO_METHOD = {
     # (verdict, transcript, artifacts) ride the traces feed, which the
     # contract does not declare; this SDK speaks the contract's one door.
     'listAnalyses': (AnalysesClient, 'list'),
+    'getAnalyzeDefaults': (AnalysesClient, 'defaults'),
     # The one per-analysis door ON the contract: the run as Harbor's
     # wrapper-trial folder (B121).
     'downloadAnalysis': (AnalysesClient, 'download'),
@@ -617,6 +619,11 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     scopes = _spec_parameter_enum('ListScope')
     assert len(scopes) >= 2, 'the ListScope parse found too few — spec moved?'
     assert list(typing.get_args(JobListScope)) == scopes
+
+    # The jobs list's ``kind`` (a check is a job): what ``jobs().list(kind=)`` accepts.
+    kinds = _spec_parameter_enum('JobListKind')
+    assert len(kinds) >= 3, 'the JobListKind parse found too few — spec moved?'
+    assert list(typing.get_args(JobListKind)) == kinds
 
     statuses = _spec_property_enum('TrialAnalysis', 'status')
     assert len(statuses) >= 4, 'the TrialAnalysis.status parse found too few — spec moved?'

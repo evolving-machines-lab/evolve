@@ -50,6 +50,8 @@ import pytest
 
 from evolve import (
     AgentArm,
+    CheckRow,
+    Job,
     DatasetFailedTask,
     DatasetRef,
     DatasetSelector,
@@ -2593,6 +2595,7 @@ class TestJobs:
             'idempotent_replay',
             'is_regrade',
             'job_name',
+            'kind',
             'max_trial_spend_usd',
             'n_attempts',
             'n_concurrent_trials',
@@ -2610,6 +2613,7 @@ class TestJobs:
             'updated_at',
             'upload',
             'verifier_timeout_multiplier',
+            'viewer',
             'visibility',
             'worst_case_spend_usd',
         ]
@@ -3199,6 +3203,24 @@ class TestJobs:
         assert exc.value.code == 'regrade_source_ineligible'
 
     @pytest.mark.asyncio
+    async def test_get_maps_viewer_or_defaults_it_to_none(self):
+        """``Job.viewer`` is the wire's word verbatim; none (an acting verb's
+        echo, or an older server) and a word outside the vocabulary both
+        read None — never passed through."""
+        fake = FakeUrlopen([('/api/jobs/job-1', {**JOB_SUMMARY, 'viewer': 'shared'})])
+        with patch('evolve._http.urlopen', fake):
+            shared = await jobs_factory(CONFIG).get('job-1')
+        assert shared.viewer == 'shared'
+        fake = FakeUrlopen([('/api/jobs/job-1', JOB_SUMMARY)])
+        with patch('evolve._http.urlopen', fake):
+            bare = await jobs_factory(CONFIG).get('job-1')
+        assert bare.viewer is None
+        fake = FakeUrlopen([('/api/jobs/job-1', {**JOB_SUMMARY, 'viewer': 'owner'})])
+        with patch('evolve._http.urlopen', fake):
+            off = await jobs_factory(CONFIG).get('job-1')
+        assert off.viewer is None
+
+    @pytest.mark.asyncio
     async def test_analyze_posts_config_and_returns_the_job(self):
         """The config rides the body verbatim and THE RESPONSE IS THE JOB —
         analyses are not a separate resource. The resolved embedded policy
@@ -3215,6 +3237,7 @@ class TestJobs:
                 failing=True,
                 n_trials=20,
                 n_concurrent=2,
+                trial_ids=['run-2', 'run-1'],
             )
 
         assert fake.requests[0].get_method() == 'POST'
@@ -3232,6 +3255,7 @@ class TestJobs:
             'failing': True,
             'n_trials': 20,
             'n_concurrent': 2,
+            'trial_ids': ['run-2', 'run-1'],
         }
         assert job.id == 'job-1'
         # The resolved echo maps verbatim — the provider echo and the prompt
@@ -4447,6 +4471,92 @@ class TestJobs:
         assert 'scope=' not in fake.requests[1].full_url
 
     @pytest.mark.asyncio
+    async def test_list_kind_rides_every_page_fetch(self):
+        """The jobs list's ``kind`` rides every page fetch verbatim and is absent when not asked:
+        the server's default (``job``) is the server's to state."""
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).list(kind='all', scope='shared')
+            await jobs_factory(CONFIG).list()
+
+        assert 'kind=all' in fake.requests[0].full_url
+        assert 'scope=shared' in fake.requests[0].full_url
+        assert 'kind=' not in fake.requests[1].full_url
+
+    @pytest.mark.asyncio
+    async def test_list_maps_a_check_row_beside_the_jobs(self):
+        """Under ``kind='all'`` a row that says ``kind: check`` is the CheckRow, never a faked Job;
+        a Job body says ``kind == 'job'``."""
+        check_row = {
+            'kind': 'check',
+            'id': 'chk-1',
+            'name': 'nightly check',
+            'status': 'running',
+            'source': {'type': 'dataset', 'sha256': 'ab' * 32, 'bytes': None, 'dataset': 'deep-swe@1.1'},
+            'model_name': 'claude-opus-4-6',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'e2b',
+            'org': 'acme',
+            'visibility': 'PRIVATE',
+            'tasks': {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1, 'stopped': 0}},
+            'cost_usd': 0.03,
+            'created_at': '2026-09-20T11:00:00.000Z',
+            'finished_at': None,
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [check_row, JOB_SUMMARY], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).list(kind='all')
+
+        row = page.items[0]
+        # One access style for every row of one list: a CheckRow is a dataclass like Job.
+        assert isinstance(row, CheckRow) and row.kind == 'check'
+        assert row.name == 'nightly check'
+        assert row.source['dataset'] == 'deep-swe@1.1'
+        assert row.tasks == check_row['tasks']
+        assert row.cost_usd == 0.03
+        assert not hasattr(row, 'agents')
+        # A Job body is the dataclass, never the wire dict, and says its kind.
+        job = page.items[1]
+        assert isinstance(job, Job)
+        assert job.kind == 'job'
+        assert job.id == 'job-1'
+        assert [item.kind for item in page.items] == ['check', 'job']
+
+    @pytest.mark.asyncio
+    async def test_list_carries_the_check_tally_verbatim(self):
+        """A count nobody sent is not 0: the row carries the wire's tally as sent, no key invented."""
+        check_row = {
+            'kind': 'check',
+            'id': 'chk-2',
+            'name': 'partial tally',
+            'status': 'completed',
+            'source': {'type': 'archive', 'sha256': 'cd' * 32, 'bytes': 4096, 'dataset': None},
+            'model_name': 'claude-opus-4-6',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'e2b',
+            'org': 'acme',
+            'visibility': 'PRIVATE',
+            'tasks': {'total': 2, 'byStatus': {'queued': 0, 'running': 0, 'completed': 2, 'failed': 0}},
+            'cost_usd': None,
+            'created_at': '2026-09-20T11:00:00.000Z',
+            'finished_at': '2026-09-20T11:05:00.000Z',
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [check_row], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).list(kind='check')
+
+        row = page.items[0]
+        assert row.tasks == check_row['tasks']
+        assert 'stopped' not in row.tasks['byStatus']
+        assert row.status == 'completed'
+
+    @pytest.mark.asyncio
     async def test_tasks_maps_the_per_task_rollup(self):
         fake = FakeUrlopen([
             ('/api/jobs/job-1/tasks', {
@@ -4523,6 +4633,25 @@ ANALYSIS_ROW = {
 
 
 class TestAnalyses:
+    @pytest.mark.asyncio
+    async def test_defaults_reads_the_resolved_policy(self):
+        """``analyses().defaults()`` — GET /api/analyses/defaults, the policy
+        an empty config resolves to; the five keys ride verbatim."""
+        defaults = {
+            'model_name': 'openrouter/deepseek/deepseek-v4.1-flash',
+            'rubric': {'criteria': [{'name': 'score_is_earned', 'description': 'd', 'guidance': 'g'}]},
+            'prompt': 'Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'daytona',
+        }
+        # Listed BEFORE the list door: the fake matches by substring, in order.
+        fake = FakeUrlopen([('/api/analyses/defaults', defaults), ('/api/analyses', {})])
+        with patch('evolve._http.urlopen', fake):
+            got = await analyses_factory(CONFIG).defaults()
+        assert fake.requests[0].full_url.endswith('/api/analyses/defaults')
+        assert fake.requests[0].get_method() == 'GET'
+        assert got == defaults
+
     @pytest.mark.asyncio
     async def test_download_rides_the_contract_door_and_verifies_the_bytes(self, tmp_path):
         """analyses().download() — GET /api/analyses/{analysisId}/download,

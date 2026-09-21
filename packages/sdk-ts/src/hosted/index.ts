@@ -38,6 +38,7 @@ import type {
   AnalysisTranscriptOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
+  AnalyzeDefaults,
   AttemptPhase,
   AuthClient,
   AuthStatus,
@@ -99,6 +100,7 @@ import type {
   JobPage,
   JobStats,
   JobStatus,
+  JobViewer,
   JobTaskRollup,
   JobTaskRollupList,
   JobWatch,
@@ -205,6 +207,12 @@ import type {
   SandboxProcs,
   TaskPackageFiles,
   TaskPackageFilesystemStatus,
+  CheckRow,
+  CheckRowList,
+  CheckTaskTally,
+  JobListItem,
+  JobListItemList,
+  JobListItemPage,
 } from "./types";
 
 // Re-exported from the hosted barrel so the package root can hand them on.
@@ -215,6 +223,7 @@ export {
   CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
+  JOB_LIST_KINDS,
   JOB_LIST_SCOPES,
   SANDBOX_LOG_STREAMS,
   TRIAL_ARTIFACT_STREAMS,
@@ -273,6 +282,7 @@ export type {
   WatchCheckOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
+  AnalyzeDefaults,
   ApiKey,
   AttemptPhase,
   AuthClient,
@@ -349,6 +359,7 @@ export type {
   JobSecretRef,
   JobSecretInline,
   JobStatus,
+  JobViewer,
   JobTaskRollup,
   JobTaskRollupList,
   JobTaskRollupPage,
@@ -476,6 +487,14 @@ export type {
   SandboxProcs,
   TaskPackageFiles,
   TaskPackageFilesystemStatus,
+  CheckRow,
+  CheckRowList,
+  CheckRowPage,
+  CheckTaskTally,
+  JobListItem,
+  JobListItemList,
+  JobListItemPage,
+  JobListKind,
 } from "./types";
 import {
   GATEWAY_TRACE_SEQ_BASE,
@@ -1195,9 +1214,16 @@ function mapTrialTaskLink(raw: unknown): TrialTaskLink | null {
   };
 }
 
+const JOB_VIEWERS: readonly JobViewer[] = ["creator", "member", "shared", "link"];
+function isJobViewer(value: unknown): value is JobViewer {
+  return typeof value === "string" && (JOB_VIEWERS as readonly string[]).includes(value);
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
+    // A Job body always says job; an older server that sends no kind is one.
+    kind: "job",
     id: raw.id as string,
     job_name: raw.job_name as string,
     status: raw.status as JobStatus,
@@ -1234,6 +1260,8 @@ function mapJob(raw: Record<string, unknown>): Job {
     // The share link's switch; an older server that sends none reads as
     // PRIVATE, exactly how such a server behaves.
     visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+    // The read relation; null from an acting verb's echo and from an older server alike.
+    viewer: isJobViewer(raw.viewer) ? raw.viewer : null,
     // The system log switch — an older server that sends nothing reads as
     // off, exactly how such a server behaves.
     system_log: raw.system_log === true,
@@ -3237,12 +3265,24 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     return mapJobImport((await res.json()) as Record<string, unknown>);
   }
 
-  async function listPage(options?: ListJobsOptions): Promise<JobPage> {
+  /** One row of GET /api/jobs (spec JobListItem): `kind` tells the CheckRow from the Job body. */
+  function mapJobListItem(raw: Record<string, unknown>): JobListItem {
+    if (raw.kind !== "check") return mapJob(raw);
+    return {
+      ...(raw as unknown as CheckRow),
+      kind: "check",
+      visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+      cost_usd: optionalNumber(raw.cost_usd),
+      finished_at: (raw.finished_at as string | null) ?? null,
+    };
+  }
+
+  async function listPage(options?: ListJobsOptions): Promise<JobListItemPage> {
     const res = await request(
       cfg,
-      `/api/jobs${pageQuery(options, { search: options?.search, scope: options?.scope })}`
+      `/api/jobs${pageQuery(options, { search: options?.search, scope: options?.scope, kind: options?.kind })}`
     );
-    return mapPage((await res.json()) as Record<string, unknown>, mapJob);
+    return mapPage((await res.json()) as Record<string, unknown>, mapJobListItem);
   }
 
   function mapJobTaskRollup(raw: Record<string, unknown>): JobTaskRollup {
@@ -3426,14 +3466,14 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     get: getJob,
 
-    list(options?: ListJobsOptions): JobList {
-      // Await for one page (honoring options); for-await to walk every
-      // job across cursor pages. The search filter and the scope ride along
-      // on every page fetch — makePaginated forwards only limit/cursor.
+    list(options?: ListJobsOptions) {
+      // The search, scope and kind ride along on every page fetch (makePaginated forwards only limit/cursor);
+      // the one handle is cast to every row shape JobsClient's overloads name.
       return makePaginated(
-        (opts) => listPage({ ...opts, search: options?.search, scope: options?.scope }),
+        (opts) =>
+          listPage({ ...opts, search: options?.search, scope: options?.scope, kind: options?.kind }),
         options
-      );
+      ) as unknown as JobList & CheckRowList & JobListItemList;
     },
 
     trials(id: string, options?: ListTrialsOptions): TrialList {
@@ -4191,6 +4231,11 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
         options,
         `analysis-${analysisId}.tar.gz`
       )) as AnalysesClient["download"],
+
+    async defaults(): Promise<AnalyzeDefaults> {
+      const res = await request(cfg, "/api/analyses/defaults");
+      return (await res.json()) as AnalyzeDefaults;
+    },
 
     filesystem: (analysisId: string): RunFilesystem =>
       runFilesystem(cfg, `/api/analyses/${encodeURIComponent(analysisId)}`),
