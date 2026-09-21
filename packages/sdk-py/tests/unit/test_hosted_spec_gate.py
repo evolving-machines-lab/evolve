@@ -252,6 +252,7 @@ OPERATION_TO_METHOD = {
     # (verdict, transcript, artifacts) ride the traces feed, which the
     # contract does not declare; this SDK speaks the contract's one door.
     'listAnalyses': (AnalysesClient, 'list'),
+    'getAnalyzeDefaults': (AnalysesClient, 'defaults'),
     # The one per-analysis door ON the contract: the run as Harbor's
     # wrapper-trial folder (B121).
     'downloadAnalysis': (AnalysesClient, 'download'),

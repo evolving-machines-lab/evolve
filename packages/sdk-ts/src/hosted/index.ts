@@ -38,6 +38,7 @@ import type {
   AnalysisTranscriptOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
+  AnalyzeDefaults,
   AttemptPhase,
   AuthClient,
   AuthStatus,
@@ -99,6 +100,7 @@ import type {
   JobPage,
   JobStats,
   JobStatus,
+  JobViewer,
   JobTaskRollup,
   JobTaskRollupList,
   JobWatch,
@@ -280,6 +282,7 @@ export type {
   WatchCheckOptions,
   AnalyzeConfig,
   AnalyzeConfigInput,
+  AnalyzeDefaults,
   ApiKey,
   AttemptPhase,
   AuthClient,
@@ -356,6 +359,7 @@ export type {
   JobSecretRef,
   JobSecretInline,
   JobStatus,
+  JobViewer,
   JobTaskRollup,
   JobTaskRollupList,
   JobTaskRollupPage,
@@ -1210,6 +1214,11 @@ function mapTrialTaskLink(raw: unknown): TrialTaskLink | null {
   };
 }
 
+const JOB_VIEWERS: readonly JobViewer[] = ["creator", "member", "shared", "link"];
+function isJobViewer(value: unknown): value is JobViewer {
+  return typeof value === "string" && (JOB_VIEWERS as readonly string[]).includes(value);
+}
+
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
@@ -1251,6 +1260,8 @@ function mapJob(raw: Record<string, unknown>): Job {
     // The share link's switch; an older server that sends none reads as
     // PRIVATE, exactly how such a server behaves.
     visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+    // The read relation; null from an acting verb's echo and from an older server alike.
+    viewer: isJobViewer(raw.viewer) ? raw.viewer : null,
     // The system log switch — an older server that sends nothing reads as
     // off, exactly how such a server behaves.
     system_log: raw.system_log === true,
@@ -4220,6 +4231,11 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
         options,
         `analysis-${analysisId}.tar.gz`
       )) as AnalysesClient["download"],
+
+    async defaults(): Promise<AnalyzeDefaults> {
+      const res = await request(cfg, "/api/analyses/defaults");
+      return (await res.json()) as AnalyzeDefaults;
+    },
 
     filesystem: (analysisId: string): RunFilesystem =>
       runFilesystem(cfg, `/api/analyses/${encodeURIComponent(analysisId)}`),

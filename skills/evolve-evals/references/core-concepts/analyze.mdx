@@ -42,9 +42,9 @@ evolve analyze <job-id> \
   --watch
 ```
 
-`-r` is the rubric file, `-p` the prompt file. `--passing` and `--failing` restrict the batch of analyses to trials with reward 1.0, or below it; both together is refused. `-l` caps the number of trials, `-n` how many analyses run at once, beneath the organization's `max_concurrent_analyses` (fleet default 60). `-m` picks the analyzer's model, `--effort` its reasoning effort, `-e` its sandbox provider.
+`-r` is the rubric file, `-p` the prompt file. `--passing` and `--failing` restrict the batch of analyses to trials with reward 1.0, or below it; both together is refused. `-t` names one trial to analyze, repeatable, applied with the filter and before `-l`. `-l` caps the number of trials, `-n` how many analyses run at once, beneath the organization's `max_concurrent_analyses` (fleet default 60). `-m` picks the analyzer's model, `--effort` its reasoning effort, `-e` its sandbox provider. `--show-defaults` prints the defaults a bare `evolve analyze` runs under and exits.
 
-A result that misses or invents a criterion is a failed analysis, never a partial pass. A rubric with unknown keys, empty or duplicate criteria, or a length bound exceeded is refused with `invalid_rubric`; an off-roster model or an unknown effort or provider with `invalid_input`; a job with no analyzable trial, or a `--passing` or `--failing` filter that selects none, with `no_analyzable_trials`; a job still running with `job_not_terminal`.
+A result that misses or invents a criterion is a failed analysis, never a partial pass. A rubric with unknown keys, empty or duplicate criteria, or a length bound exceeded is refused with `invalid_rubric`; an off-roster model, an unknown effort or provider, or a `-t` id that is not a trial of the job with `invalid_input`; a job with no analyzable trial, or a `--passing`, `--failing` or `-t` selection that leaves none, with `no_analyzable_trials`; a job still running with `job_not_terminal`.
 
 On `evolve run` the same knobs are `--analyze-model`, `--analyze-rubric`, `--analyze-prompt`, `--analyze-effort` and `--analyze-provider`. Each of them implies `--analyze`.
 

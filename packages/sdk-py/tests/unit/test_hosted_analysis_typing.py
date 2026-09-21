@@ -31,9 +31,11 @@ from evolve import (
     AnalysisFailure,
     AnalyzeConfig,
     AnalyzeConfigInput,
+    AnalyzeDefaults,
     Job,
     JobAnalysisStats,
     JobStats,
+    JobViewer,
     Rubric,
     RubricCriterion,
     StopResponse,
@@ -82,6 +84,7 @@ def test_every_analysis_shape_equals_its_spec_schema() -> None:
         (Rubric, 'Rubric'),
         (AnalyzeConfigInput, 'AnalyzeConfigInput'),
         (AnalyzeConfig, 'AnalyzeConfig'),
+        (AnalyzeDefaults, 'AnalyzeDefaults'),
         (AnalysisEvidence, 'AnalysisEvidence'),
         (AnalysisCheck, 'AnalysisCheck'),
         (AnalysisFailure, 'AnalysisFailure'),
@@ -111,14 +114,15 @@ def test_input_is_optional_and_resolved_is_required() -> None:
     # required lists.
     assert AnalyzeConfigInput.__total__ is False
     assert not AnalyzeConfigInput.__required_keys__
-    for typed_dict in (AnalyzeConfig, Rubric, RubricCriterion, AnalysisEvidence, AnalysisCheck,
-                       AnalysisFailure, TrialAnalysis, JobAnalysisStats):
+    for typed_dict in (AnalyzeConfig, AnalyzeDefaults, Rubric, RubricCriterion, AnalysisEvidence,
+                       AnalysisCheck, AnalysisFailure, TrialAnalysis, JobAnalysisStats):
         assert typed_dict.__total__ is True, typed_dict.__name__
 
 
 def test_annotations_point_at_the_typed_models() -> None:
     job_hints = typing.get_type_hints(Job)
     assert job_hints['analyze'] == Optional[AnalyzeConfig]
+    assert job_hints['viewer'] == Optional[JobViewer]
     trial_hints = typing.get_type_hints(Trial)
     assert trial_hints['analysis'] == Optional[TrialAnalysis]
     stats_hints = typing.get_type_hints(JobStats)

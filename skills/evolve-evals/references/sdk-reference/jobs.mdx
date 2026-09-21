@@ -414,7 +414,7 @@ description: "Start, follow, and derive jobs."
     ): Promise<Job>
     ```
 
-    Enqueue one trace analysis per trial and return at once with the job, its `stats.analysis.n_pending` counting the batch. `AnalyzeConfigInput`: `model_name`, `rubric`, `prompt`, `sandbox_provider`, `reasoning_effort`, `n_concurrent`, `passing`, `failing`, `n_trials`, all optional; `{}` is every default. Calling it again is the re-analysis path, one wave at a time. The same object on `start()` as `analyze` arms the embedded trigger.
+    Enqueue one trace analysis per trial and return at once with the job, its `stats.analysis.n_pending` counting the batch. `AnalyzeConfigInput`: `model_name`, `rubric`, `prompt`, `sandbox_provider`, `reasoning_effort`, `n_concurrent`, `passing`, `failing`, `n_trials`, `trial_ids`, all optional; `{}` is every default. `trial_ids` names the trials to analyze; it combines with `passing` or `failing` and comes before `n_trials`, and an id that is not this job's is refused with `invalid_input` naming the unknown ids. Calling it again is the re-analysis path, one wave at a time. The same object on `start()` as `analyze` arms the embedded trigger, where `trial_ids` is refused because the trials do not exist yet.
 
     ```ts
     await jobs().analyze(
@@ -424,6 +424,7 @@ description: "Start, follow, and derive jobs."
         n_trials: 20,
       },
     );
+    await jobs().analyze(job.id, { trial_ids: [trial.id] });
     ```
   </Tab>
   <Tab title="Python">
@@ -440,10 +441,11 @@ description: "Start, follow, and derive jobs."
         passing=None,
         failing=None,
         n_trials=None,
+        trial_ids=None,
     ) -> Job
     ```
 
-    Enqueue one trace analysis per trial and return at once.
+    Enqueue one trace analysis per trial and return at once. `trial_ids` names the trials to analyze; an id that is not this job's is refused with `invalid_input` naming the unknown ids.
 
     ```python
     await jobs().analyze(
@@ -451,6 +453,7 @@ description: "Start, follow, and derive jobs."
         failing=True,
         n_trials=20,
     )
+    await jobs().analyze(job.id, trial_ids=[trial.id])
     ```
   </Tab>
 </Tabs>

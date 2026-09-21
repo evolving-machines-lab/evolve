@@ -79,6 +79,33 @@ description: "Read trace-analysis runs."
   </Tab>
 </Tabs>
 
+## defaults
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```ts
+    defaults(): Promise<AnalyzeDefaults>
+    ```
+
+    The defaults an analysis runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in analyze prompt as a template with `{trial_path}`, `{task_section}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `jobs().analyze()`; passed back unchanged, they run exactly as the defaults do, and the analysis records them as named, so a later change of the platform default does not move it.
+
+    ```ts
+    const { rubric } = await analyses().defaults();
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    async def defaults() -> AnalyzeDefaults
+    ```
+
+    The defaults an analysis runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in analyze prompt as a template with `{trial_path}`, `{task_section}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `jobs().analyze()`; passed back unchanged, they run exactly as the defaults do, and the analysis records them as named, so a later change of the platform default does not move it.
+
+    ```python
+    rubric = (await analyses().defaults())["rubric"]
+    ```
+  </Tab>
+</Tabs>
+
 ## download
 
 <Tabs>
