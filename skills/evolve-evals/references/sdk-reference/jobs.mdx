@@ -98,14 +98,17 @@ description: "Start, follow, and derive jobs."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    list(options?: { search?: string; scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): JobList
+    list(options?: { search?: string; scope?: "my" | "shared" | "org"; kind?: "job" | "check" | "all"; limit?: number; cursor?: string }): JobList
     ```
 
-    Your jobs, newest first. Await one page, or iterate every page.
+    Your jobs, newest first. Await one page, or iterate every page. A task quality check is a job too: `kind: "check"` lists checks alone (each row a `CheckRow`), `kind: "all"` lists jobs and checks together (each row a `JobListItem`, told apart by its `kind`); without `kind` every row is a `Job`.
 
     ```ts
     for await (const job of jobs().list({ search: "nightly" })) {
       console.log(job.id, job.status);
+    }
+    for await (const row of jobs().list({ kind: "all" })) {
+      console.log(row.kind, row.id, row.status);
     }
     ```
   </Tab>
@@ -115,15 +118,18 @@ description: "Start, follow, and derive jobs."
         *,
         search: Optional[str] = None,
         scope: Optional[JobListScope] = None,
+        kind: Optional[JobListKind] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     )
     ```
 
-    Your jobs, newest first. Await one page, or iterate every page.
+    Your jobs, newest first. Await one page, or iterate every page. A task quality check is a job too: `kind='check'` lists checks alone (each row a `CheckRow` dict), `kind='all'` lists jobs and checks together (each row a `Job` or a `CheckRow`, told apart by its `kind`); without `kind` every row is a `Job`.
 
     ```python
     async for job in jobs().list(search="nightly"): print(job.id, job.status)
+    async for row in jobs().list(kind="all"):
+        print(row["kind"] if isinstance(row, dict) else row.kind)
     ```
   </Tab>
 </Tabs>

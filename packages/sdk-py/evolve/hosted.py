@@ -571,6 +571,15 @@ EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 #: it (``invalid_input``).
 JobListScope = Literal['my', 'shared', 'org']
 
+#: The jobs list's ``kind`` (spec ``JobListKind``): ``'job'`` — jobs, the
+#: server's default and exactly what an absent value always listed;
+#: ``'check'`` — task quality checks only; ``'all'`` — both, merged newest
+#: first under one cursor. A check is a job in Harbor (``harbor check`` runs
+#: its wrapper tasks as a single Harbor job under the same jobs/ directory as
+#: ``harbor run``, analyze/checker.py:1-8); the hosted list needs the filter
+#: so ``jobs().list()`` keeps its meaning.
+JobListKind = Literal['job', 'check', 'all']
+
 #: An analysis's own lifecycle ladder — lowercase, the object's Harbor
 #: dialect (spec ``TrialAnalysis.status``).
 AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
@@ -2104,6 +2113,52 @@ class CheckDefaults(TypedDict):
     sandbox_provider: EvalSandboxProvider
 
 
+class CheckTaskTally(TypedDict):
+    """The "how many" shape of a check's task checks (spec ``CheckTaskTally``):
+    a total plus the four task check statuses, zeros included — the trial
+    tally's twin on the check's own ladder. A plain wire dict at runtime
+    (``byStatus`` keeps the wire's frozen camelCase key).
+    """
+    total: int
+    byStatus: Dict[str, int]
+
+
+class CheckRow(TypedDict):
+    """A task quality check as one row of the jobs list (spec ``CheckRow``;
+    ``jobs().list(kind='check' | 'all')``): the Check body's own facts without
+    its per-task results, rubric and prompt (``checks().get()`` serves those),
+    plus the tally the list needs. In Harbor a check IS a job (its wrapper
+    tasks run as one Harbor job, analyze/checker.py:1-8), so it lists beside
+    jobs. Not a :class:`Job`: a check has no arms, attempts, caps, retry
+    policy, trials or upload provenance, so those keys are absent rather
+    than faked. A plain wire dict at runtime.
+    """
+    #: ``'check'`` — tells the row from a :class:`Job` (whose ``kind`` is ``'job'``).
+    kind: str
+    id: str
+    #: Check.name — Harbor's ``--job-name``: the caller's, or the accept stamp.
+    name: str
+    #: ``'queued'`` | ``'running'`` | ``'completed'`` (:data:`CheckStatus`).
+    status: str
+    source: CheckSource
+    #: The checker's model.
+    model_name: str
+    #: The effort every task's checker ran at.
+    reasoning_effort: str
+    sandbox_provider: EvalSandboxProvider
+    #: The owning organization's slug (every check has one).
+    org: str
+    visibility: str
+    #: How many task checks, and how they break down; done = completed + failed.
+    tasks: CheckTaskTally
+    #: The sum of the measured task costs; None when none was measured.
+    cost_usd: Optional[float]
+    #: The accept instant; the list orders it with the jobs' ``started_at``.
+    created_at: str
+    #: When the last task settled; None until every task has.
+    finished_at: Optional[str]
+
+
 class JobRetryConfig(TypedDict):
     """The RESOLVED auto-retry policy a job runs under — the spec's
     ``RetryConfig`` schema, echoed on every job body as ``Job.retry``: the
@@ -2259,6 +2314,9 @@ class Job:
     #: ``jobs().shares(id)`` lists them. Always ``'PRIVATE'`` on a regrade job;
     #: a server older than the field reads as ``'PRIVATE'``.
     visibility: str = field(default='PRIVATE', kw_only=True)
+    #: The row's kind on the jobs list (:data:`JobListItem`): always ``'job'``
+    #: on a Job body, a regrade included; a :class:`CheckRow` says ``'check'``.
+    kind: str = field(default='job', kw_only=True)
 
 
 @dataclass
@@ -3536,9 +3594,15 @@ class OrgJoined:
 # (On the wire the envelope keys are the frozen items/nextCursor/hasMore.)
 
 
+#: One row of the jobs list (spec ``JobListItem``): a :class:`Job` (``kind ==
+#: 'job'``), or a :class:`CheckRow` (``kind == 'check'``) when ``jobs().list()``
+#: asked for ``kind='check'`` or ``'all'``; without ``kind`` every row is a Job.
+JobListItem = Union[Job, CheckRow]
+
+
 @dataclass
 class JobPage:
-    items: List[Job]
+    items: List[JobListItem]
     next_cursor: Optional[str]
     has_more: bool
 
@@ -4440,6 +4504,8 @@ def _map_job(data: Dict[str, Any]) -> Job:
         finished_at=data.get('finished_at'),
         org=data['org'] if isinstance(data.get('org'), str) else None,
         visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        # A Job body always says job; an older server that sends no kind is one.
+        kind='job',
     )
 
 
@@ -4638,6 +4704,38 @@ def _map_check(data: Any) -> Check:
             'results': [row for row in results if isinstance(row, dict)] if isinstance(results, list) else [],
         },
     )
+
+
+def _map_check_row(data: Dict[str, Any]) -> CheckRow:
+    """The jobs list's CheckRow, verbatim, with its tally and money read
+    defensively (an older or partial body reads as zeros and None, never a
+    fabricated figure)."""
+    tasks = data.get('tasks') if isinstance(data.get('tasks'), dict) else {}
+    by_status = tasks.get('byStatus') if isinstance(tasks.get('byStatus'), dict) else {}
+    return cast(
+        CheckRow,
+        {
+            **data,
+            'kind': 'check',
+            # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
+            'visibility': 'LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+            'tasks': {
+                'total': int(tasks.get('total', 0)),
+                'byStatus': {
+                    status: int(by_status.get(status, 0))
+                    for status in ('queued', 'running', 'completed', 'failed')
+                },
+            },
+            'cost_usd': _optional_float(data.get('cost_usd')),
+            'finished_at': data.get('finished_at'),
+        },
+    )
+
+
+def _map_job_list_item(data: Dict[str, Any]) -> 'JobListItem':
+    """One row of GET /api/jobs (spec ``JobListItem``): a CheckRow when the
+    server says ``kind: "check"``, else the Job body."""
+    return _map_check_row(data) if data.get('kind') == 'check' else _map_job(data)
 
 
 def _map_timing(data: Any) -> Optional[TimingInfo]:
@@ -7671,6 +7769,7 @@ class JobsClient:
         *,
         search: Optional[str] = None,
         scope: Optional[JobListScope] = None,
+        kind: Optional[JobListKind] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> _PaginatedList:
@@ -7682,15 +7781,18 @@ class JobsClient:
         ``scope`` is Harbor's ``--scope`` — ``'my'`` (yours, the server's
         default), ``'shared'`` (your organizations' jobs that teammates
         created) or ``'org'`` (every job in your organizations, yours
-        included). Both are sent on every page fetch.
+        included); ``kind`` lists task quality checks instead (``'check'``,
+        each row a :class:`CheckRow`) or both merged (``'all'``, each row a
+        :data:`JobListItem` told apart by its ``kind``) — a check is a job.
+        All three are sent on every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(
-                f'/api/jobs{_page_query(page_limit, page_cursor, search=search, scope=scope)}'
+                f'/api/jobs{_page_query(page_limit, page_cursor, search=search, scope=scope, kind=kind)}'
             )
             items, next_cursor, has_more = _page_parts(raw)
             return JobPage(
-                items=[_map_job(item) for item in items],
+                items=[_map_job_list_item(item) for item in items],
                 next_cursor=next_cursor,
                 has_more=has_more,
             )

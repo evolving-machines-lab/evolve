@@ -205,6 +205,12 @@ import type {
   SandboxProcs,
   TaskPackageFiles,
   TaskPackageFilesystemStatus,
+  CheckRow,
+  CheckRowList,
+  CheckTaskTally,
+  JobListItem,
+  JobListItemList,
+  JobListItemPage,
 } from "./types";
 
 // Re-exported from the hosted barrel so the package root can hand them on.
@@ -215,6 +221,7 @@ export {
   CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
   HOSTED_ERROR_CODES,
+  JOB_LIST_KINDS,
   JOB_LIST_SCOPES,
   SANDBOX_LOG_STREAMS,
   TRIAL_ARTIFACT_STREAMS,
@@ -476,6 +483,14 @@ export type {
   SandboxProcs,
   TaskPackageFiles,
   TaskPackageFilesystemStatus,
+  CheckRow,
+  CheckRowList,
+  CheckRowPage,
+  CheckTaskTally,
+  JobListItem,
+  JobListItemList,
+  JobListItemPage,
+  JobListKind,
 } from "./types";
 import {
   GATEWAY_TRACE_SEQ_BASE,
@@ -1198,6 +1213,8 @@ function mapTrialTaskLink(raw: unknown): TrialTaskLink | null {
 function mapJob(raw: Record<string, unknown>): Job {
   const trials = (raw.trials ?? {}) as Record<string, unknown>;
   return {
+    // A Job body always says job; an older server that sends no kind is one.
+    kind: "job",
     id: raw.id as string,
     job_name: raw.job_name as string,
     status: raw.status as JobStatus,
@@ -3237,12 +3254,38 @@ export function jobs(config?: HostedClientConfig): JobsClient {
     return mapJobImport((await res.json()) as Record<string, unknown>);
   }
 
-  async function listPage(options?: ListJobsOptions): Promise<JobPage> {
+  /**
+   * One row of GET /api/jobs (spec JobListItem): a CheckRow when the server
+   * says `kind: "check"` — the check's own facts, verbatim, with its tally
+   * and money read defensively — else the Job body.
+   */
+  function mapJobListItem(raw: Record<string, unknown>): JobListItem {
+    if (raw.kind !== "check") return mapJob(raw);
+    const tasks = (raw.tasks ?? {}) as Record<string, unknown>;
+    return {
+      ...(raw as unknown as CheckRow),
+      kind: "check",
+      visibility: raw.visibility === "LINK" ? "LINK" : "PRIVATE",
+      tasks: {
+        total: (tasks.total as number) ?? 0,
+        byStatus: (tasks.byStatus as CheckTaskTally["byStatus"]) ?? {
+          queued: 0,
+          running: 0,
+          completed: 0,
+          failed: 0,
+        },
+      },
+      cost_usd: optionalNumber(raw.cost_usd),
+      finished_at: (raw.finished_at as string | null) ?? null,
+    };
+  }
+
+  async function listPage(options?: ListJobsOptions): Promise<JobListItemPage> {
     const res = await request(
       cfg,
-      `/api/jobs${pageQuery(options, { search: options?.search, scope: options?.scope })}`
+      `/api/jobs${pageQuery(options, { search: options?.search, scope: options?.scope, kind: options?.kind })}`
     );
-    return mapPage((await res.json()) as Record<string, unknown>, mapJob);
+    return mapPage((await res.json()) as Record<string, unknown>, mapJobListItem);
   }
 
   function mapJobTaskRollup(raw: Record<string, unknown>): JobTaskRollup {
@@ -3426,14 +3469,17 @@ export function jobs(config?: HostedClientConfig): JobsClient {
 
     get: getJob,
 
-    list(options?: ListJobsOptions): JobList {
+    list(options?: ListJobsOptions) {
       // Await for one page (honoring options); for-await to walk every
-      // job across cursor pages. The search filter and the scope ride along
-      // on every page fetch — makePaginated forwards only limit/cursor.
+      // row across cursor pages. The search, scope and kind ride along on
+      // every page fetch — makePaginated forwards only limit/cursor. The
+      // rows are what `kind` asked for; JobsClient's overloads state which,
+      // so the one handle is cast to every shape they name.
       return makePaginated(
-        (opts) => listPage({ ...opts, search: options?.search, scope: options?.scope }),
+        (opts) =>
+          listPage({ ...opts, search: options?.search, scope: options?.scope, kind: options?.kind }),
         options
-      );
+      ) as unknown as JobList & CheckRowList & JobListItemList;
     },
 
     trials(id: string, options?: ListTrialsOptions): TrialList {

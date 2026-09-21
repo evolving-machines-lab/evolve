@@ -3049,6 +3049,66 @@ async function testListJobs() {
   }
 }
 
+/** One CheckRow as GET /api/jobs?kind=check|all serves it (spec CheckRow). */
+const CHECK_ROW = {
+  kind: "check",
+  id: "chk-1",
+  name: "nightly check",
+  status: "running",
+  source: { type: "dataset", sha256: "ab".repeat(32), bytes: null, dataset: "deep-swe@1.1" },
+  model_name: "claude-opus-4-6",
+  reasoning_effort: "high",
+  sandbox_provider: "e2b",
+  org: "acme",
+  visibility: "PRIVATE",
+  tasks: { total: 3, byStatus: { queued: 0, running: 1, completed: 1, failed: 1 } },
+  cost_usd: 0.03,
+  created_at: "2026-09-20T11:00:00.000Z",
+  finished_at: null,
+};
+
+async function testListJobsKind() {
+  console.log("\n--- jobs().list({ kind }) rides the query and maps a check row beside the jobs (a check is a job) ---");
+  installMockFetch();
+  try {
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [CHECK_ROW, JOB_SUMMARY], nextCursor: null, hasMore: false },
+    });
+    const e = jobs({ apiKey: "test-key", baseUrl: BASE });
+
+    const page = await e.list({ kind: "all" });
+    const url = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(url.searchParams.get("kind"), "all", "kind rides the query string verbatim");
+    assertEqual(page.items.length, 2, "both rows arrive");
+    const row = page.items[0];
+    assertEqual(row.kind, "check", "the check row is told by its kind");
+    if (row.kind === "check") {
+      assertEqual(row.name, "nightly check", "the check's own name rides the row");
+      assertEqual(row.tasks.byStatus.completed, 1, "the task tally maps");
+      assertEqual(row.cost_usd, 0.03, "the check's cost maps");
+      assertEqual(row.source.dataset, "deep-swe@1.1", "the source rides verbatim");
+      assert(!("agents" in row), "no Job field is faked onto a check row");
+    }
+    const job = page.items[1];
+    assertEqual(job.kind, "job", "a Job body says job");
+    if (job.kind === "job") assertEqual(job.job_name, "deep-swe sweep", "the Job maps as before");
+
+    await e.list();
+    assert(
+      !new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.has("kind"),
+      "no kind sends no kind parameter (the server's default is job)"
+    );
+
+    await e.list({ kind: "check", scope: "shared" });
+    const both = new URL(fetchCalls[fetchCalls.length - 1].url).searchParams;
+    assertEqual(both.get("kind"), "check", "kind=check rides");
+    assertEqual(both.get("scope"), "shared", "scope rides beside it");
+  } finally {
+    restoreFetch();
+  }
+}
+
 /** One trial in the contract's wire shape. */
 function wireTrial(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -7984,6 +8044,7 @@ async function main() {
   await testStartNonExactVersionIsTypedError();
   await testGetJobDetail();
   await testListJobs();
+  await testListJobsKind();
   await testListAutoPagination();
   await testTrials();
   await testTrialsAutoPagination();

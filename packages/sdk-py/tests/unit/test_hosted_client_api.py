@@ -2593,6 +2593,7 @@ class TestJobs:
             'idempotent_replay',
             'is_regrade',
             'job_name',
+            'kind',
             'max_trial_spend_usd',
             'n_attempts',
             'n_concurrent_trials',
@@ -4445,6 +4446,61 @@ class TestJobs:
 
         assert 'scope=shared' in fake.requests[0].full_url
         assert 'scope=' not in fake.requests[1].full_url
+
+    @pytest.mark.asyncio
+    async def test_list_kind_rides_every_page_fetch(self):
+        """The jobs list's ``kind`` (a check is a job; spec JobListKind):
+        forwarded verbatim on every page, absent when not asked — the
+        server's default (``job``) is the server's to state."""
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            await jobs_factory(CONFIG).list(kind='all', scope='shared')
+            await jobs_factory(CONFIG).list()
+
+        assert 'kind=all' in fake.requests[0].full_url
+        assert 'scope=shared' in fake.requests[0].full_url
+        assert 'kind=' not in fake.requests[1].full_url
+
+    @pytest.mark.asyncio
+    async def test_list_maps_a_check_row_beside_the_jobs(self):
+        """Under ``kind='all'`` a row that says ``kind: check`` is the
+        CheckRow (the check's own facts, its tally and money read
+        defensively), never a faked Job; a Job body says ``kind == 'job'``."""
+        check_row = {
+            'kind': 'check',
+            'id': 'chk-1',
+            'name': 'nightly check',
+            'status': 'running',
+            'source': {'type': 'dataset', 'sha256': 'ab' * 32, 'bytes': None, 'dataset': 'deep-swe@1.1'},
+            'model_name': 'claude-opus-4-6',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'e2b',
+            'org': 'acme',
+            'visibility': 'PRIVATE',
+            'tasks': {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1}},
+            'cost_usd': 0.03,
+            'created_at': '2026-09-20T11:00:00.000Z',
+            'finished_at': None,
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [check_row, JOB_SUMMARY], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).list(kind='all')
+
+        row = page.items[0]
+        assert isinstance(row, dict) and row['kind'] == 'check'
+        assert row['name'] == 'nightly check'
+        assert row['tasks'] == {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1}}
+        assert row['cost_usd'] == 0.03
+        assert 'agents' not in row
+        # A Job body is the dataclass, never the wire dict, and says its kind.
+        job = page.items[1]
+        assert not isinstance(job, dict)
+        assert job.kind == 'job'
+        assert job.id == 'job-1'
 
     @pytest.mark.asyncio
     async def test_tasks_maps_the_per_task_rollup(self):
