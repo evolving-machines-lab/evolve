@@ -2110,8 +2110,7 @@ class CheckDefaults(TypedDict):
 
 class CheckTaskTally(TypedDict):
     """Spec ``CheckTaskTally``. A stopped task check is stored ``failed`` with the stop phase; the tally
-    counts it under ``stopped``, never ``failed``. ``byStatus`` keeps the wire's frozen camelCase key.
-    """
+    counts it under ``stopped``, never ``failed``. ``byStatus`` keeps the wire's frozen camelCase key."""
     total: int
     byStatus: Dict[str, int]
 
@@ -2119,8 +2118,7 @@ class CheckTaskTally(TypedDict):
 @dataclass
 class CheckRow:
     """Spec ``CheckRow``, one row of ``jobs().list(kind='check' | 'all')``: a check is a job, so it lists beside them.
-    Not a :class:`Job` (no arms, attempts, caps, retry policy, trials, upload provenance), so those fields are absent, never faked.
-    """
+    Not a :class:`Job` (no arms, attempts, caps, retry policy, trials, upload provenance), so those fields are absent, never faked."""
     id: str
     #: Check.name — Harbor's ``--job-name``: the caller's, or the accept stamp.
     name: str
@@ -3581,9 +3579,8 @@ class OrgJoined:
 # (On the wire the envelope keys are the frozen items/nextCursor/hasMore.)
 
 
-#: One row of the jobs list (spec ``JobListItem``): a :class:`Job` (``kind ==
-#: 'job'``), or a :class:`CheckRow` (``kind == 'check'``) when ``jobs().list()``
-#: asked for ``kind='check'`` or ``'all'``; without ``kind`` every row is a Job.
+#: One row of the jobs list (spec ``JobListItem``): a :class:`Job`, or a :class:`CheckRow` when
+#: ``jobs().list()`` asked for ``kind='check'`` or ``'all'``; ``row.kind`` tells them apart.
 JobListItem = Union[Job, CheckRow]
 
 
@@ -7772,10 +7769,9 @@ class JobsClient:
         ``scope`` is Harbor's ``--scope`` — ``'my'`` (yours, the server's
         default), ``'shared'`` (your organizations' jobs that teammates
         created) or ``'org'`` (every job in your organizations, yours
-        included); ``kind`` lists task quality checks instead (``'check'``,
-        each row a :class:`CheckRow`) or both merged (``'all'``, each row a
-        :data:`JobListItem` told apart by its ``kind``) — a check is a job.
-        All three are sent on every page fetch.
+        included); ``kind`` lists checks alone (``'check'``) or jobs and checks
+        merged (``'all'``, rows told apart by ``kind``) — a check is a job.
+        All three ride every page fetch.
         """
         async def fetch_page(page_limit, page_cursor) -> JobPage:
             raw = await self._http.request_json(

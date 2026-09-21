@@ -4166,9 +4166,8 @@ const JOB_COLUMNS: ListColumn<JobListItem>[] = [
   {
     key: "spent",
     header: "SPENT",
-    // One law with the detail row: an uploaded job's cell carries the
-    // archive's REPORTED figure, labeled; a native job the metered lane; a
-    // check its measured checker total, or "-" when nothing was measured.
+    // One law with the detail row: an uploaded job's cell carries the archive's REPORTED figure, labeled;
+    // a native job the metered lane; a check its measured checker total, or "-" when nothing was measured.
     cell: (e) =>
       e.kind === "check"
         ? fmtUsd(e.cost_usd)

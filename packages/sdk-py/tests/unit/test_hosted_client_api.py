@@ -4451,9 +4451,8 @@ class TestJobs:
 
     @pytest.mark.asyncio
     async def test_list_kind_rides_every_page_fetch(self):
-        """The jobs list's ``kind`` (a check is a job; spec JobListKind):
-        forwarded verbatim on every page, absent when not asked — the
-        server's default (``job``) is the server's to state."""
+        """The jobs list's ``kind`` rides every page fetch verbatim and is absent when not asked:
+        the server's default (``job``) is the server's to state."""
         fake = FakeUrlopen([
             ('/api/jobs', {'items': [], 'nextCursor': None, 'hasMore': False}),
         ])
@@ -4467,9 +4466,8 @@ class TestJobs:
 
     @pytest.mark.asyncio
     async def test_list_maps_a_check_row_beside_the_jobs(self):
-        """Under ``kind='all'`` a row that says ``kind: check`` is the
-        CheckRow (the check's own facts, its tally and money read
-        defensively), never a faked Job; a Job body says ``kind == 'job'``."""
+        """Under ``kind='all'`` a row that says ``kind: check`` is the CheckRow, never a faked Job;
+        a Job body says ``kind == 'job'``."""
         check_row = {
             'kind': 'check',
             'id': 'chk-1',
