@@ -1521,7 +1521,7 @@ export interface Job {
   /**
    * The caller's relation on a read (JobViewer). Null on the responses that
    * echo a job the caller just acted on (create, analyze, cancel, resume,
-   * retry, regrade, upload), where the caller is the creator or a member by
+   * retry, regrade), where the caller is the creator or a member by
    * construction, and on list rows (batched; read one job to learn it);
    * null too from a server older than the field.
    */

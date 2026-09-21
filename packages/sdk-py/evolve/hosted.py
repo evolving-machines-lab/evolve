@@ -2302,7 +2302,7 @@ class Job:
     visibility: str = field(default='PRIVATE', kw_only=True)
     #: The caller's relation on a read (:data:`JobViewer`). None on the
     #: responses that echo a job the caller just acted on (create, analyze,
-    #: cancel, resume, retry, regrade, upload), where the caller is the
+    #: cancel, resume, retry, regrade), where the caller is the
     #: creator or a member by construction, and on list rows (batched; read
     #: one job to learn it); None too from a server older than the field.
     viewer: Optional[JobViewer] = field(default=None, kw_only=True)

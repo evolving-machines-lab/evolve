@@ -39,7 +39,7 @@ One shape from `start`, `get`, `list`, `cancel`, `resume`, `retry` and `regrade`
 | `failure` | `{ code, message } \| null` | Why the job FAILED. Null on every job today; `FAILED` is reserved. |
 | `source_jobs` | `{ action, type, job_id }[]` | `action` is `regrade`, `resume` or `retry`; `type` is always `hub`. Empty on an original job. |
 | `is_regrade` | boolean | Any `source_jobs` entry with `action: "regrade"`. |
-| `viewer` | `creator` `member` `shared` `link` \| null | How you can read this job: you made it, you belong to its organization, it was shared with your address, or you hold its link. Null on the body an acting call returns (create, analyze, cancel, resume, retry, regrade, upload) and on list rows; `get` tells you. Analyze, cancel, resume, retry and regrade are open to `creator` and `member` only. |
+| `viewer` | `creator` `member` `shared` `link` \| null | How you can read this job: you made it, you belong to its organization, it was shared with your address, or you hold its link. Null on the body an acting call returns (create, analyze, cancel, resume, retry, regrade) and on list rows; `get` tells you. Analyze, cancel, resume, retry and regrade are open to `creator` and `member` only. |
 | `upload` | `UploadProvenance \| null` | Null on every job this platform ran. See [upload](/core-concepts/upload). |
 | `idempotent_replay` | boolean | True only on a response that replayed an existing job for an idempotency key. |
 | `started_at`, `updated_at` | string | |
