@@ -5729,21 +5729,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   if (inv.flags["show-defaults"] === true) {
-    // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
-    const stray = Object.keys(inv.flags).filter((k) => !["show-defaults", "json", "api-key", "base-url"].includes(k));
-    if (inv.positionals[0] !== undefined || stray.length > 0) {
-      throw new CliUsageError(
-        "--show-defaults prints the platform's analyze defaults and takes no <job-id> and no other analyze flag" +
-          (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
-      );
-    }
-    const defaults = await analyses(clientConfig(inv)).defaults();
-    if (json) {
-      io.out(JSON.stringify(defaults));
-    } else {
-      for (const line of rubricDefaultsLines(defaults)) io.out(line);
-    }
-    return 0;
+    return printDefaults(inv, io, () => analyses(clientConfig(inv)).defaults(), "analyze", "<job-id>");
   }
   if (inv.positionals[0] === undefined) {
     throw new CliUsageError("analyze takes a <job-id> (or --show-defaults)");
@@ -5972,7 +5958,33 @@ export function checkDetailLines(check: Check): string[] {
   return [...table(rows), "", ...checkResultLines(check)];
 }
 
-/** `analyze --show-defaults` / `check --show-defaults`: the policy head, then the prompt template and every criterion in full. */
+/** `analyze --show-defaults` and `check --show-defaults`: one door, so the two verbs cannot drift. */
+async function printDefaults(
+  inv: Invocation,
+  io: CliIO,
+  read: () => Promise<AnalyzeDefaults | CheckDefaults>,
+  verb: "analyze" | "check",
+  positional: "<job-id>" | "<path>",
+): Promise<number> {
+  // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
+  const allowed = new Set(["show-defaults", ...Object.keys(GLOBAL_FLAGS)]);
+  const stray = Object.keys(inv.flags).filter((k) => !allowed.has(k));
+  if (inv.positionals[0] !== undefined || stray.length > 0) {
+    throw new CliUsageError(
+      `--show-defaults prints the platform's ${verb} defaults and takes no ${positional} and no other ${verb} flag` +
+        (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
+    );
+  }
+  const defaults = await read();
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(defaults));
+  } else {
+    for (const line of rubricDefaultsLines(defaults)) io.out(line);
+  }
+  return 0;
+}
+
+/** The policy head, then the prompt template and every criterion in full. */
 function rubricDefaultsLines(defaults: AnalyzeDefaults | CheckDefaults): string[] {
   const criteria = defaults.rubric.criteria.length;
   const lines = table([
@@ -6005,21 +6017,7 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   const quiet = inv.flags.quiet === true;
   const client = checks(clientConfig(inv));
   if (inv.flags["show-defaults"] === true) {
-    // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
-    const stray = Object.keys(inv.flags).filter((k) => !["show-defaults", "json", "api-key", "base-url"].includes(k));
-    if (inv.positionals[0] !== undefined || stray.length > 0) {
-      throw new CliUsageError(
-        "--show-defaults prints the platform's check defaults and takes no <path> and no other check flag" +
-          (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
-      );
-    }
-    const defaults = await client.defaults();
-    if (json) {
-      io.out(JSON.stringify(defaults));
-    } else {
-      for (const line of rubricDefaultsLines(defaults)) io.out(line);
-    }
-    return 0;
+    return printDefaults(inv, io, () => client.defaults(), "check", "<path>");
   }
   const knobs: CheckConfigInput = {};
   if (inv.flags.name !== undefined) knobs.name = String(inv.flags.name);
