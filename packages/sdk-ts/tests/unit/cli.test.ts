@@ -9493,11 +9493,11 @@ async function testJobListKind() {
     await runCli(["job", "list", "--kind", "check", "--columns", "kind,name,agents,trials", ...AUTH], cols.io);
     assertEqual(cols.out[1], "check\tnightly check\tclaude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
 
-    // The empty answer names what was asked for.
+    // One spelling for one answer: the Jobs page asks kind=all and says "No jobs".
     setMockResponse("/api/jobs", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
     const emptyAll = captureIO(false);
     await runCli(["job", "list", "--kind", "all", ...AUTH], emptyAll.io);
-    assertEqual(emptyAll.out[0], "No jobs or checks.", "an empty --kind all names both kinds");
+    assertEqual(emptyAll.out[0], "No jobs.", "an empty --kind all answers as the Jobs page does: a check is a job");
     const emptyChecks = captureIO(false);
     await runCli(["job", "list", "--kind", "check", ...AUTH], emptyChecks.io);
     assertEqual(emptyChecks.out[0], "No checks.", "an empty --kind check names checks");

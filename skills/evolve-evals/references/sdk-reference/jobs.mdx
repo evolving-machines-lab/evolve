@@ -98,7 +98,9 @@ description: "Start, follow, and derive jobs."
 <Tabs>
   <Tab title="TypeScript">
     ```ts
-    list(options?: { search?: string; scope?: "my" | "shared" | "org"; kind?: "job" | "check" | "all"; limit?: number; cursor?: string }): JobList
+    list(options?: { search?: string; scope?: "my" | "shared" | "org"; kind?: "job"; limit?: number; cursor?: string }): JobList
+    list(options: { kind: "check"; search?: string; scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): CheckRowList
+    list(options: { kind: "all"; search?: string; scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): JobListItemList
     ```
 
     Your jobs, newest first. Await one page, or iterate every page. A task quality check is a job too: `kind: "check"` lists checks alone (each row a `CheckRow`), `kind: "all"` lists jobs and checks together (each row a `JobListItem`, told apart by its `kind`); without `kind` every row is a `Job`.

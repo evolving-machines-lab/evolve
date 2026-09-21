@@ -4691,29 +4691,20 @@ def _map_check(data: Any) -> Check:
 
 
 def _map_check_row(data: Dict[str, Any]) -> CheckRow:
-    """The jobs list's CheckRow, its tally and money read defensively (an
-    older or partial body reads as zeros and None, never a fabricated figure)."""
-    tasks = data.get('tasks') if isinstance(data.get('tasks'), dict) else {}
-    by_status = tasks.get('byStatus') if isinstance(tasks.get('byStatus'), dict) else {}
-    source = data.get('source') if isinstance(data.get('source'), dict) else {}
+    """The jobs list's CheckRow: the wire's source and tally verbatim (the spec
+    requires both, every count included; a count nobody sent is never 0), money read as the Job's."""
     return CheckRow(
         id=str(data.get('id', '')),
         name=str(data.get('name', '')),
-        status=str(data.get('status', '')),
-        source=cast(CheckSource, dict(source)),
+        status=cast(CheckStatus, data.get('status')),
+        source=cast(CheckSource, data['source']),
         model_name=str(data.get('model_name', '')),
         reasoning_effort=str(data.get('reasoning_effort', '')),
         sandbox_provider=cast(EvalSandboxProvider, data.get('sandbox_provider')),
         org=str(data.get('org', '')),
         # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
         visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
-        tasks={
-            'total': int(tasks.get('total', 0)),
-            'byStatus': {
-                status: int(by_status.get(status, 0))
-                for status in ('queued', 'running', 'completed', 'failed', 'stopped')
-            },
-        },
+        tasks=cast(CheckTaskTally, data['tasks']),
         cost_usd=_optional_float(data.get('cost_usd')),
         created_at=str(data.get('created_at', '')),
         finished_at=data.get('finished_at'),

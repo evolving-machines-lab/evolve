@@ -4479,7 +4479,7 @@ class TestJobs:
             'sandbox_provider': 'e2b',
             'org': 'acme',
             'visibility': 'PRIVATE',
-            'tasks': {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1}},
+            'tasks': {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1, 'stopped': 0}},
             'cost_usd': 0.03,
             'created_at': '2026-09-20T11:00:00.000Z',
             'finished_at': None,
@@ -4495,8 +4495,7 @@ class TestJobs:
         assert isinstance(row, CheckRow) and row.kind == 'check'
         assert row.name == 'nightly check'
         assert row.source['dataset'] == 'deep-swe@1.1'
-        # An older server that sends no stopped count reads as zero.
-        assert row.tasks == {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1, 'stopped': 0}}
+        assert row.tasks == check_row['tasks']
         assert row.cost_usd == 0.03
         assert not hasattr(row, 'agents')
         # A Job body is the dataclass, never the wire dict, and says its kind.
@@ -4505,6 +4504,36 @@ class TestJobs:
         assert job.kind == 'job'
         assert job.id == 'job-1'
         assert [item.kind for item in page.items] == ['check', 'job']
+
+    @pytest.mark.asyncio
+    async def test_list_carries_the_check_tally_verbatim(self):
+        """A count nobody sent is not 0: the row carries the wire's tally as sent, no key invented."""
+        check_row = {
+            'kind': 'check',
+            'id': 'chk-2',
+            'name': 'partial tally',
+            'status': 'completed',
+            'source': {'type': 'archive', 'sha256': 'cd' * 32, 'bytes': 4096, 'dataset': None},
+            'model_name': 'claude-opus-4-6',
+            'reasoning_effort': 'high',
+            'sandbox_provider': 'e2b',
+            'org': 'acme',
+            'visibility': 'PRIVATE',
+            'tasks': {'total': 2, 'byStatus': {'queued': 0, 'running': 0, 'completed': 2, 'failed': 0}},
+            'cost_usd': None,
+            'created_at': '2026-09-20T11:00:00.000Z',
+            'finished_at': '2026-09-20T11:05:00.000Z',
+        }
+        fake = FakeUrlopen([
+            ('/api/jobs', {'items': [check_row], 'nextCursor': None, 'hasMore': False}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            page = await jobs_factory(CONFIG).list(kind='check')
+
+        row = page.items[0]
+        assert row.tasks == check_row['tasks']
+        assert 'stopped' not in row.tasks['byStatus']
+        assert row.status == 'completed'
 
     @pytest.mark.asyncio
     async def test_tasks_maps_the_per_task_rollup(self):

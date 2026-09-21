@@ -5282,7 +5282,8 @@ async function cmdJobList(inv: Invocation, io: CliIO): Promise<number> {
     return 0;
   }
   if (page.items.length === 0) {
-    if (inv.flags.quiet !== true) io.out(kind === "check" ? "No checks." : kind === "all" ? "No jobs or checks." : "No jobs.");
+    // A check is a job, so an empty `all` answers as the Jobs page does.
+    if (inv.flags.quiet !== true) io.out(kind === "check" ? "No checks." : "No jobs.");
     return 0;
   }
   // The KIND column is on by default only once a row can be either kind.
