@@ -3061,7 +3061,7 @@ const CHECK_ROW = {
   sandbox_provider: "e2b",
   org: "acme",
   visibility: "PRIVATE",
-  tasks: { total: 3, byStatus: { queued: 0, running: 1, completed: 1, failed: 1 } },
+  tasks: { total: 3, byStatus: { queued: 0, running: 1, completed: 1, failed: 1, stopped: 0 } },
   cost_usd: 0.03,
   created_at: "2026-09-20T11:00:00.000Z",
   finished_at: null,
@@ -3086,6 +3086,7 @@ async function testListJobsKind() {
     if (row.kind === "check") {
       assertEqual(row.name, "nightly check", "the check's own name rides the row");
       assertEqual(row.tasks.byStatus.completed, 1, "the task tally maps");
+      assertEqual(row.tasks.byStatus.stopped, 0, "the tally carries the stopped count");
       assertEqual(row.cost_usd, 0.03, "the check's cost maps");
       assertEqual(row.source.dataset, "deep-swe@1.1", "the source rides verbatim");
       assert(!("agents" in row), "no Job field is faked onto a check row");

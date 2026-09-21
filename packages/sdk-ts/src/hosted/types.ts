@@ -2465,12 +2465,13 @@ export interface CheckList extends Awaitable<CheckPage>, AsyncIterable<Check> {}
 
 /**
  * The "how many" shape of a check's task checks (spec CheckTaskTally): a
- * total plus the four task check statuses, zeros included —
- * TrialStatusTally's twin on the check's own ladder.
+ * total plus the four task check statuses and `stopped`, zeros included. A
+ * stopped task check is stored `failed` with the stop phase; the tally
+ * counts it under `stopped`, never `failed`.
  */
 export interface CheckTaskTally {
   total: number;
-  byStatus: Record<AnalysisStatus, number>;
+  byStatus: Record<AnalysisStatus | "stopped", number>;
 }
 
 /**
@@ -2497,7 +2498,7 @@ export interface CheckRow {
   /** The owning organization's slug (every check has one). */
   org: string;
   visibility: JobVisibility;
-  /** How many task checks, and how they break down; done = completed + failed. */
+  /** How many task checks, and how they break down; done = completed + failed + stopped. */
   tasks: CheckTaskTally;
   /** The sum of the measured task costs; null when none was measured. */
   cost_usd: number | null;

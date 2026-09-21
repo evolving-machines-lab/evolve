@@ -9452,7 +9452,7 @@ function wireCheckRow(overrides: Record<string, unknown> = {}): Record<string, u
     sandbox_provider: "e2b",
     org: "acme",
     visibility: "PRIVATE",
-    tasks: { total: 3, byStatus: { queued: 0, running: 1, completed: 1, failed: 1 } },
+    tasks: { total: 3, byStatus: { queued: 0, running: 1, completed: 1, failed: 1, stopped: 0 } },
     cost_usd: 0.03,
     created_at: "2026-09-20T11:00:00.000Z",
     finished_at: null,
@@ -9492,6 +9492,18 @@ async function testJobListKind() {
     const cols = captureIO(false);
     await runCli(["job", "list", "--kind", "check", "--columns", "kind,name,agents,trials", ...AUTH], cols.io);
     assertEqual(cols.out[1], "check\tnightly check\tclaude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+
+    // The empty answer names what was asked for.
+    setMockResponse("/api/jobs", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
+    const emptyAll = captureIO(false);
+    await runCli(["job", "list", "--kind", "all", ...AUTH], emptyAll.io);
+    assertEqual(emptyAll.out[0], "No jobs or checks.", "an empty --kind all names both kinds");
+    const emptyChecks = captureIO(false);
+    await runCli(["job", "list", "--kind", "check", ...AUTH], emptyChecks.io);
+    assertEqual(emptyChecks.out[0], "No checks.", "an empty --kind check names checks");
+    const emptyJobs = captureIO(false);
+    await runCli(["job", "list", ...AUTH], emptyJobs.io);
+    assertEqual(emptyJobs.out[0], "No jobs.", "an empty default names jobs");
 
     // Refused at the keyboard against the SDK's own vocabulary — exit 2, the
     // legal values named — rather than spending a request to be told.

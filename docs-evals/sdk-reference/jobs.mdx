@@ -124,12 +124,12 @@ description: "Start, follow, and derive jobs."
     )
     ```
 
-    Your jobs, newest first. Await one page, or iterate every page. A task quality check is a job too: `kind='check'` lists checks alone (each row a `CheckRow` dict), `kind='all'` lists jobs and checks together (each row a `Job` or a `CheckRow`, told apart by its `kind`); without `kind` every row is a `Job`.
+    Your jobs, newest first. Await one page, or iterate every page. A task quality check is a job too: `kind='check'` lists checks alone (each row a `CheckRow`), `kind='all'` lists jobs and checks together (each row a `Job` or a `CheckRow`, told apart by its `kind`); without `kind` every row is a `Job`. Both are dataclasses, so every row reads the same way.
 
     ```python
     async for job in jobs().list(search="nightly"): print(job.id, job.status)
     async for row in jobs().list(kind="all"):
-        print(row["kind"] if isinstance(row, dict) else row.kind)
+        print(row.kind, row.id, row.status)
     ```
   </Tab>
 </Tabs>

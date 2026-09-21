@@ -2115,26 +2115,27 @@ class CheckDefaults(TypedDict):
 
 class CheckTaskTally(TypedDict):
     """The "how many" shape of a check's task checks (spec ``CheckTaskTally``):
-    a total plus the four task check statuses, zeros included — the trial
-    tally's twin on the check's own ladder. A plain wire dict at runtime
-    (``byStatus`` keeps the wire's frozen camelCase key).
+    a total plus the four task check statuses and ``stopped``, zeros
+    included. A stopped task check is stored ``failed`` with the stop phase;
+    the tally counts it under ``stopped``, never ``failed``. A plain wire
+    dict at runtime (``byStatus`` keeps the wire's frozen camelCase key).
     """
     total: int
     byStatus: Dict[str, int]
 
 
-class CheckRow(TypedDict):
+@dataclass
+class CheckRow:
     """A task quality check as one row of the jobs list (spec ``CheckRow``;
     ``jobs().list(kind='check' | 'all')``): the Check body's own facts without
     its per-task results, rubric and prompt (``checks().get()`` serves those),
     plus the tally the list needs. In Harbor a check IS a job (its wrapper
     tasks run as one Harbor job, analyze/checker.py:1-8), so it lists beside
     jobs. Not a :class:`Job`: a check has no arms, attempts, caps, retry
-    policy, trials or upload provenance, so those keys are absent rather
-    than faked. A plain wire dict at runtime.
+    policy, trials or upload provenance, so those fields are absent rather
+    than faked. A dataclass like :class:`Job`, so every row of one list is
+    read the same way (``row.kind``, ``row.id``).
     """
-    #: ``'check'`` — tells the row from a :class:`Job` (whose ``kind`` is ``'job'``).
-    kind: str
     id: str
     #: Check.name — Harbor's ``--job-name``: the caller's, or the accept stamp.
     name: str
@@ -2149,7 +2150,7 @@ class CheckRow(TypedDict):
     #: The owning organization's slug (every check has one).
     org: str
     visibility: str
-    #: How many task checks, and how they break down; done = completed + failed.
+    #: How many task checks, and how they break down; done = completed + failed + stopped.
     tasks: CheckTaskTally
     #: The sum of the measured task costs; None when none was measured.
     cost_usd: Optional[float]
@@ -2157,6 +2158,8 @@ class CheckRow(TypedDict):
     created_at: str
     #: When the last task settled; None until every task has.
     finished_at: Optional[str]
+    #: ``'check'`` — tells the row from a :class:`Job` (whose ``kind`` is ``'job'``).
+    kind: str = field(default='check', kw_only=True)
 
 
 class JobRetryConfig(TypedDict):
@@ -4707,28 +4710,32 @@ def _map_check(data: Any) -> Check:
 
 
 def _map_check_row(data: Dict[str, Any]) -> CheckRow:
-    """The jobs list's CheckRow, verbatim, with its tally and money read
-    defensively (an older or partial body reads as zeros and None, never a
-    fabricated figure)."""
+    """The jobs list's CheckRow, its tally and money read defensively (an
+    older or partial body reads as zeros and None, never a fabricated figure)."""
     tasks = data.get('tasks') if isinstance(data.get('tasks'), dict) else {}
     by_status = tasks.get('byStatus') if isinstance(tasks.get('byStatus'), dict) else {}
-    return cast(
-        CheckRow,
-        {
-            **data,
-            'kind': 'check',
-            # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
-            'visibility': 'LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
-            'tasks': {
-                'total': int(tasks.get('total', 0)),
-                'byStatus': {
-                    status: int(by_status.get(status, 0))
-                    for status in ('queued', 'running', 'completed', 'failed')
-                },
+    source = data.get('source') if isinstance(data.get('source'), dict) else {}
+    return CheckRow(
+        id=str(data.get('id', '')),
+        name=str(data.get('name', '')),
+        status=str(data.get('status', '')),
+        source=cast(CheckSource, dict(source)),
+        model_name=str(data.get('model_name', '')),
+        reasoning_effort=str(data.get('reasoning_effort', '')),
+        sandbox_provider=cast(EvalSandboxProvider, data.get('sandbox_provider')),
+        org=str(data.get('org', '')),
+        # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
+        visibility='LINK' if data.get('visibility') == 'LINK' else 'PRIVATE',
+        tasks={
+            'total': int(tasks.get('total', 0)),
+            'byStatus': {
+                status: int(by_status.get(status, 0))
+                for status in ('queued', 'running', 'completed', 'failed', 'stopped')
             },
-            'cost_usd': _optional_float(data.get('cost_usd')),
-            'finished_at': data.get('finished_at'),
         },
+        cost_usd=_optional_float(data.get('cost_usd')),
+        created_at=str(data.get('created_at', '')),
+        finished_at=data.get('finished_at'),
     )
 
 

@@ -50,6 +50,8 @@ import pytest
 
 from evolve import (
     AgentArm,
+    CheckRow,
+    Job,
     DatasetFailedTask,
     DatasetRef,
     DatasetSelector,
@@ -4491,16 +4493,20 @@ class TestJobs:
             page = await jobs_factory(CONFIG).list(kind='all')
 
         row = page.items[0]
-        assert isinstance(row, dict) and row['kind'] == 'check'
-        assert row['name'] == 'nightly check'
-        assert row['tasks'] == {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1}}
-        assert row['cost_usd'] == 0.03
-        assert 'agents' not in row
+        # One access style for every row of one list: a CheckRow is a dataclass like Job.
+        assert isinstance(row, CheckRow) and row.kind == 'check'
+        assert row.name == 'nightly check'
+        assert row.source['dataset'] == 'deep-swe@1.1'
+        # An older server that sends no stopped count reads as zero.
+        assert row.tasks == {'total': 3, 'byStatus': {'queued': 0, 'running': 1, 'completed': 1, 'failed': 1, 'stopped': 0}}
+        assert row.cost_usd == 0.03
+        assert not hasattr(row, 'agents')
         # A Job body is the dataclass, never the wire dict, and says its kind.
         job = page.items[1]
-        assert not isinstance(job, dict)
+        assert isinstance(job, Job)
         assert job.kind == 'job'
         assert job.id == 'job-1'
+        assert [item.kind for item in page.items] == ['check', 'job']
 
     @pytest.mark.asyncio
     async def test_tasks_maps_the_per_task_rollup(self):

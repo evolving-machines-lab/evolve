@@ -608,12 +608,7 @@ const GROUPS: Record<string, GroupSpec> = {
         },
         minPositionals: 0,
         maxPositionals: 0,
-        examples: [
-          "evolve job list",
-          "evolve job list --scope shared --search deep-swe",
-          "evolve job list --kind all",
-          "evolve job list -l 20 -q",
-        ],
+        examples: ["evolve job list", "evolve job list --kind all --search deep-swe", "evolve job list -l 20 -q"],
       },
       show: {
         summary: "Show one or more jobs in full",
@@ -4145,9 +4140,9 @@ function passAtKLines(e: Job): string[] {
   return ["", "pass@k", ...table(rows)];
 }
 
-/** A check row's DATASETS word: the dataset form's `name@version`; the archive form has no name, so its sha256 stands in. */
+/** A check row's DATASETS word (the dashboard's spelling): the dataset form's `name@version`; the archive form has no name, so its sha256 stands in. */
 function fmtCheckSource(check: CheckRow): string {
-  return check.source.dataset ?? `archive:${check.source.sha256.slice(0, 12)}`;
+  return check.source.dataset ?? `archive ${check.source.sha256.slice(0, 12)}`;
 }
 
 // The jobs list's rows are Jobs and, under --kind check|all, check rows (a
@@ -5290,7 +5285,7 @@ async function cmdJobList(inv: Invocation, io: CliIO): Promise<number> {
     return 0;
   }
   if (page.items.length === 0) {
-    if (inv.flags.quiet !== true) io.out(kind === "check" ? "No checks." : "No jobs.");
+    if (inv.flags.quiet !== true) io.out(kind === "check" ? "No checks." : kind === "all" ? "No jobs or checks." : "No jobs.");
     return 0;
   }
   // The KIND column is on by default only once a row can be either kind.
