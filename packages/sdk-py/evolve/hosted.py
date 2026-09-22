@@ -1625,7 +1625,7 @@ class RubricCriterion(TypedDict):
     """
     #: Criterion identifier, snake_case (it keys the result's ``checks``).
     #: The platform's default rubrics name seven criteria for analyze and
-    #: eleven for check.
+    #: thirteen for check.
     name: str
     #: What the criterion evaluates, one sentence.
     description: str
@@ -1982,7 +1982,7 @@ class CheckConfigInput(TypedDict, total=False):
     ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
     for both rubric agents, a
     recorded deviation), ``rubric`` (default: the platform's check rubric,
-    eleven criteria) and
+    thirteen criteria) and
     ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing the
     platform's default check body; rendered with ``{task_path}``, ``{file_tree}``,
     ``{criteria_guidance}``; the output contract appended after it exactly
@@ -9618,7 +9618,7 @@ class ChecksClient:
         first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at its
-        per-model effort over the platform's default check rubric (eleven
+        per-model effort over the platform's default check rubric (thirteen
         criteria), on the platform's analysis default provider.
 
         THE RESPONSE IS THE ACCEPTED CHECK (202): one ``results`` entry per
