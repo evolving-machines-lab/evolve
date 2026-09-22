@@ -1,52 +1,56 @@
 ---
-title: "meta"
-description: "The platform's capability document, no key needed."
+title: "Platform capabilities"
+description: "Discover available harnesses, models, providers, and current limits."
 ---
 
-`meta()` fetches the capability document, `GET /api/meta`: everything a client would otherwise hardcode. It needs no API key.
+[Method reference: calls, parameters, and response fields](/sdk-reference/methods/meta).
 
-- `agents`: every built-in, with `runnable` and `reason`, `default_model` and `models` (the picker's list; a job still requires an explicit model), `effort_support` (`level`, `binary` or `none`) and `default_effort`, `version_pinnable` and `latest_version` (null means not known right now), `supports_config` and `presets`.
-- `agent_registration`: the rules a registration must satisfy: `name_pattern`, the length and size caps, `max_per_user`, `reserved_names`, `reserved_env_keys`.
-- `sandbox_providers`: each provider's `sizing` ceilings, its `gpus` block, and its `refuses` list; `platform_constraints` beside it holds what no provider runs. `gpu_concurrency_cap` is the fleet's cap on GPU trials in flight.
-- `managed_providers`: the managed sandbox doors this deployment serves, a managed-agents fact.
-- `network_modes`: the three modes a task may declare.
-- `statuses`: the `job`, `trial`, `import` and `dataset_version` vocabularies, each with its `terminal` members.
-- `analyze`: the analyzer's `default_model`, its `reasoning_efforts`, and each roster model's `default_reasoning_effort`.
-- `limits`: `job` (`n_concurrent_trials` default and max, `default_max_trial_spend_usd`, `default_max_retries`, `default_sandbox_provider`, `default_sizing`, `model_required`, `default_agent_timeout_sec`, `default_verifier_timeout_sec`, `default_timeout_multiplier`, the effort vocabulary), `compare` (`min_ids`, `max_ids`), `pagination` (a default and max per collection kind), `uploads` (the one physical ceiling per archive kind with `archive_bytes_source`, the agent tarball and skill caps), `dataset_names`, and `max_items_named_in_error_message`, which is why `details` exists.
-- `error_codes` and `import_warning_codes`: the closed lists.
+`meta()` returns the platform's capability document. It needs no API key.
 
-`schema_version` moves when a field changes meaning, never when a value changes. The response carries an `ETag` and `Cache-Control: public, max-age=300, stale-while-revalidate=300`; send the ETag back as `If-None-Match` and an unchanged document answers 304.
+<CodeGroup>
+```ts TypeScript
+import { meta } from "@evolvingmachines/evolve";
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    import { meta } from "@evolvingmachines/evolve";
+const capabilities = await meta();
+for (const agent of capabilities.agents) {
+  console.log(agent.name, agent.runnable, agent.models.map((m) => m.alias));
+}
+```
 
-    function meta(config?: HostedClientConfig): Promise<CapabilityDocument>
-    ```
+```python Python
+from evolve import meta
 
-    Also `hosted().meta()`.
+capabilities = await meta()
+for agent in capabilities.agents:
+    print(agent.name, agent.runnable, [m.alias for m in agent.models])
+```
+</CodeGroup>
 
-    ```ts
-    const doc = await meta();
-    for (const agent of doc.agents) console.log(agent.name, agent.models.map((m) => m.alias));
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    from evolve import meta
+Also available as `hosted().meta()` in both languages.
 
-    async def meta(config: Optional[HostedClientConfig] = None) -> CapabilityDocument
-    ```
+## What to read
 
-    Also `await hosted().meta()`.
+| Field | Use it to answer |
+| --- | --- |
+| `agents` | Which harnesses run? Which models, efforts, versions, kwargs, and presets do they support? |
+| `sandbox_providers` | Which providers support the task's resources and features? |
+| `platform_constraints` | Which requirements cannot run on this deployment? |
+| `network_modes` | Which network modes can a task declare? |
+| `analyze` | Which analyzer models and reasoning efforts are available? |
+| `limits` | What are the current defaults and bounds for jobs, pages, uploads, and comparisons? |
+| `statuses` | Which states exist, and which are terminal? |
+| `agent_registration` | Which names, environment keys, and upload sizes can a custom agent use? |
+| `error_codes`, `import_warning_codes` | Which failure and warning codes does this deployment publish? |
+| `managed_providers` | Which providers are available to the separate managed-agent runtime? |
 
-    ```python
-    doc = await meta()
-    for agent in doc.agents: print(
-        agent.name,
-        [m.alias for m in agent.models],
-    )
-    ```
-  </Tab>
-</Tabs>
+<Tip>
+Read capabilities when building a picker or validating a saved configuration. A documented example is useful; a fixed copy of the platform's model catalog becomes stale.
+</Tip>
+
+## Configuration
+
+`meta(config?)` accepts the usual [hosted configuration](/sdk-reference/index#configure-once). Only the API origin matters; credentials are not sent.
+
+The result includes `schema_version`. Treat it as the document's schema version, not the SDK package version.
+
+Read the full editable analyzer policy through [analysis defaults](/sdk-reference/analyses#read-current-defaults) or [check defaults](/sdk-reference/checks#read-current-defaults).

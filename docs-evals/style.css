@@ -22,11 +22,86 @@ samp {
   color: #f7f6f5;
 }
 
+/* Maple uses spans for paragraphs, including inside the catalog wrapper. */
+.error-code-catalog > span[data-as="p"] {
+  display: block;
+  margin-block: 1.25rem;
+}
+
 /* On a phone a long chip wraps at its spaces rather than widening the page. */
 @media (max-width: 640px) {
   :not(pre) > code {
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  /* Error identifiers need their full width; put their explanation below. */
+  .error-code-catalog table,
+  .error-code-catalog tbody,
+  .error-code-catalog tr,
+  .error-code-catalog td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .error-code-catalog thead {
+    display: none;
+  }
+
+  .error-code-catalog td:first-child {
+    padding-top: 1rem;
+    padding-bottom: 0.25rem;
+  }
+
+  .error-code-catalog td:last-child {
+    padding-top: 0.25rem;
+    padding-bottom: 1rem;
+  }
+
+  .error-code-catalog td:first-child code {
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  /* Keep both language examples visible without a sideways scroll. */
+  .language-comparison table,
+  .language-comparison tbody,
+  .language-comparison tr,
+  .language-comparison td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .language-comparison thead {
+    display: none;
+  }
+
+  .language-comparison td {
+    padding-block: 0.25rem;
+  }
+
+  .language-comparison td:first-child {
+    padding-top: 1rem;
+    font-weight: 600;
+  }
+
+  .language-comparison td:last-child {
+    padding-bottom: 1rem;
+  }
+
+  .language-comparison td:nth-child(2)::before {
+    content: "TypeScript: ";
+    font-weight: 500;
+  }
+
+  .language-comparison td:nth-child(3)::before {
+    content: "Python: ";
+    font-weight: 500;
   }
 }
 
@@ -44,8 +119,13 @@ samp {
 /* Links: the accent, no underline, in both modes and on hover. */
 #content-area a.link,
 #content-area a.link:hover {
-  color: #b026ff;
+  color: #9d20e8;
   text-decoration: none;
+}
+
+.dark #content-area a.link,
+.dark #content-area a.link:hover {
+  color: #c36bff;
 }
 
 /* Square corners: the owner's rule. */

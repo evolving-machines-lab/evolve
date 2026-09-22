@@ -1,17 +1,52 @@
 ---
 title: "Traces"
-description: "Every recorded run in one list."
+description: "Find evaluation trials, analyses, checks, regrades, and agent sessions in one place."
 ---
 
-The Traces page lists every run of the workspace you are in, newest first: the trials of its jobs, their regrades, analyses and checks, and the managed-agent sessions the platform recorded, which these pages do not cover. In a team it is one list of every member's runs, with a CREATED BY column after the trace tag. In your personal workspace it has two tabs: MINE, your own runs in any team, and SHARED WITH ME, what teammates made plus runs shared with you by email.
+**Traces** lists individual runs. **Jobs** groups evaluation trials; Traces lets you inspect each run directly.
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="The traces list">
-  <img src="/images/traces.png" alt="The Traces page: a search box and a table of runs with a trace tag, the sandbox provider, the sandbox id, the agent and model, the start time, the cost and the status." />
+<Frame caption="Run tags distinguish the evaluated agent from the reviewer.">
+  <img src="/images/dashboard-traces.png" alt="Individual evaluation and analysis runs with models, providers, costs, and status." />
 </Frame>
 
-Each row carries a tag naming the kind of run (EVAL for a trial, AGENT for a managed-agent session, REGRADE, ANALYZE, or CHECK), the task or session name, the dataset, the reward when there is one, the sandbox provider and sandbox id, the agent and model, when it started, what it spent, and its status. Search by name. Tick rows to stop running ones or delete finished ones; in a team's list and under SHARED WITH ME only the rows you created can be ticked, since stop and delete are the creator's.
+| Tag | Run |
+| --- | --- |
+| **Eval** | One evaluation trial. |
+| **Regrade** | A verifier-only rerun. |
+| **Analyze** | A trial-review run. |
+| **Check** | A task-quality review. |
+| **Agent** | A managed-agent session. |
 
-Click a row to open it in the [trial viewer](/dashboard/trial-viewer).
+## Choose the workspace
 
-A managed-agent session shares the two ways a [job](/core-concepts/jobs#share) does: `evolve session share <id> --link` turns on an unlisted link that opens the session, its transcript and its trace file without signing in, and `--email alice@example.org` shares it with a person by address. `evolve session shares <id>` prints the link and the addresses again, `evolve session unshare <id> --link` kills the link at once, and a session shared with you appears under `evolve session list --scope shared`. Sharing is read-only: neither the link nor an address can stop the session, and a link never reaches the session's file system or its browser replay.
+<Tabs>
+  <Tab title="Personal">
+    **Mine** shows runs you created, including those in teams.
+
+    **Shared with me** shows teammates' runs and runs shared with your email address.
+  </Tab>
+  <Tab title="Team">
+    The list shows runs in that team. **Created by** identifies who started each one.
+  </Tab>
+</Tabs>
+
+## Find and inspect a run
+
+<Steps>
+  <Step title="Search by name">
+    Read the kind, task or session name, model, provider, status, and cost to identify the run.
+  </Step>
+  <Step title="Open its row">
+    The viewer shows that run's transcript. An Analyze row opens the analyzer's work; an Eval row opens the evaluated agent's work.
+  </Step>
+  <Step title="Inspect or act">
+    Read events and downloads. Stop live runs or delete finished records only where your creator permissions allow it.
+  </Step>
+</Steps>
+
+Sharing lets someone inspect a run. It does not transfer ownership or grant stop/delete permission.
+
+<CardGroup cols={2}>
+  <Card title="Trial viewer" icon="search" href="/dashboard/trial-viewer">Follow messages, tools, and gateway usage.</Card>
+  <Card title="Sharing" icon="share-2" href="/core-concepts/sharing">Email access and unlisted links.</Card>
+</CardGroup>

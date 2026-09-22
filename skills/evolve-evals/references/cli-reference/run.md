@@ -1,0 +1,187 @@
+---
+title: "evolve run"
+description: "Choose tasks and agents, set limits, and launch an evaluation."
+---
+
+Start a hosted job. `evolve job start` accepts exactly the same options.
+
+```bash
+evolve run \
+  -d harbor-examples@1.0 \
+  -i hello-world \
+  -a codex -m gpt-5.6-luna \
+  --max-trial-spend 0.30 \
+  --max-retries 0 \
+  --watch
+```
+
+```text
+  Selected tasks
+× Agent/model combinations
+× Attempts
+= Trials
+```
+
+Without `--watch`, the command returns after the job is accepted. Keep the printed job ID to [inspect results](/cli-reference/job).
+
+## Select the work
+
+| Option | Meaning | Default |
+| --- | --- | --- |
+| `-d`, `--dataset <name[@version]>` | Dataset to evaluate. Repeat for more datasets. | Required, unless in config. |
+| `-a`, `--agent <name[@version]>` | Built-in or registered agent harness. | Required, unless in config. |
+| `-m`, `--model <name>` | Model for the harness. Repeat for one combination per model. | Required, unless in config. |
+| `-i`, `--include-task-name <glob>` | Include matching tasks in every dataset. Repeatable. | All tasks. |
+| `-x`, `--exclude-task-name <glob>` | Exclude matching tasks after inclusion. Repeatable. | None. |
+| `-l`, `--n-tasks <n>` | Cap tasks per dataset, after filters. | No cap. |
+| `-k`, `--n-attempts <n>` | Attempts per task and agent/model combination. | `1` |
+| `-n`, `--n-concurrent <n>` | Parallel trials, from `1` to `150`. | `4` |
+
+A bare dataset name selects its active version. Pin `name@version` for a repeatable selection.
+
+## Save a configuration
+
+Use a YAML or JSON file when a job has several agents or per-dataset settings.
+
+```yaml job.yaml
+job_name: hello-world-check
+datasets:
+  - name: harbor-examples
+    version: "1.0"
+    task_names: [hello-world]
+agents:
+  - name: codex
+    model_name: gpt-5.6-luna
+n_attempts: 1
+n_concurrent_trials: 4
+max_trial_spend_usd: 0.30
+retry:
+  max_retries: 0
+```
+
+```bash Run or inspect
+evolve run -c job.yaml --print-config
+evolve run -c job.yaml --watch
+```
+
+`--print-config` prints the request without creating a job or uploading local skills. It does not resolve catalog names or fill every server default. Inline secret values appear in this output.
+
+### How flags override the file
+
+| Flag | What it replaces |
+| --- | --- |
+| `-d` | The entire dataset list. |
+| `-a` and `-m` | The entire agent list. Supply both. |
+| `-i`, `-x`, `-l` | That field on every dataset selector. |
+| `--effort`, `--preset` | That field on every agent combination. |
+| `--ak` | Matching keys inside each agent's `kwargs`. |
+| `--skill` | Every agent's skills list. |
+| `--secret` / `--secret-inline` | The complete secret attachment list. |
+| Retry or analysis options | Only the named field inside `retry` or `analyze`. |
+
+Other flags override their matching field. Use `--org` or `auth org use` for organization selection; the current CLI does not retain `org` from the job file.
+
+Quote version strings in YAML, for example `version: "1.10"`. Config validation rejects unknown fields and duplicate keys before submission.
+
+## All other options
+
+### Job, organization, and sandbox
+
+| Option | Meaning |
+| --- | --- |
+| `--job-name <name>` | Job label. Generated when omitted. |
+| `--org <name>` | Organization to use. Otherwise use the saved CLI default, then your personal organization. `--org personal` overrides a saved team default. |
+| `-e`, `--env <provider>` | Requested sandbox provider: `daytona` (default), `e2b`, or `modal`. |
+| `--system-log` | Record the sandbox's system log. Off by default. |
+
+Evolve checks each task's requirements. A task may run on another compatible provider; inspect its trial for the provider actually used. See [Sandboxes](/core-concepts/sandboxes).
+
+### Agent settings and skills
+
+These options apply to every agent combination.
+
+| Option | Meaning |
+| --- | --- |
+| `--effort <value>` | Reasoning effort supported by the selected harness and model. |
+| `--preset <name>` | Supported settings preset: `no-internet` or `pinned-context`. |
+| `--ak <key=value>`, `--agent-kwarg <key=value>` | Agent setting. Repeatable. `config` accepts a local JSON/TOML file or inline JSON object. |
+| `--skill <ref>`, `--skills <ref>` | Skill reference or local directory. Repeatable. |
+
+```bash
+evolve run -c job.yaml --effort high --ak config=./codex.toml
+evolve run -c job.yaml --skill ./my-skill
+```
+
+Skills accept `skills.sh/owner/repo[/skill]`, `org/repo[@ref]`, a Git URL, `upload:<id>`, or `name:<skill-name>`. Local directories upload before the job starts.
+
+Unsupported effort, presets, or settings are refused. See [Agents](/core-concepts/agents) and [Skills](/core-concepts/skills).
+
+### Secrets and verifier environment
+
+| Option | Meaning |
+| --- | --- |
+| `--secret <NAME[@LABEL][=ENVNAME]>` | Attach a stored secret to agent runs. Repeatable. `@LABEL` selects a row; `=ENVNAME` renames the environment variable. |
+| `--secret-inline <NAME[@LABEL]:DELIVERY=VALUE>` | Store a secret and attach it. Evaluation jobs require `direct` delivery. Repeatable. |
+| `--verifier-env <KEY=VALUE>`, `--ve <KEY=VALUE>` | Verifier overrides: `REWARDKIT_JUDGE` and `REWARDKIT_MODEL`. Repeatable. |
+
+Store sensitive values with [`evolve secrets set`](/cli-reference/secrets), then attach them by name.
+
+```bash
+evolve run -c job.yaml --secret GITHUB_TOKEN
+```
+
+### Spend and automatic retries
+
+| Option | Meaning | Default |
+| --- | --- | --- |
+| `--max-trial-spend <usd>` | Agent model-spend cap per trial attempt. Must be greater than zero. | Platform default, normally `$200`. |
+| `-r`, `--max-retries <n>` | Additional attempts after eligible infrastructure errors. `0` disables these retries. | Platform default, normally `2`. |
+| `--retry-include <exception>` | Retry only these exception types. Repeatable. | Any type not excluded. |
+| `--retry-exclude <exception>` | Never retry these exception types. Repeatable; takes priority over include. | Built-in exclusions. |
+
+A low score does not trigger an infrastructure retry. Each retry has the full trial cap. Capacity waits are separate from this retry setting.
+
+See [Jobs](/core-concepts/jobs) for the retry and spend rules.
+
+### Analyze traces as trials finish
+
+| Option | Meaning |
+| --- | --- |
+| `--analyze` | Enable analysis with the platform defaults. |
+| `--analyze-model <name>` | Analyzer model. |
+| `--analyze-rubric <path>` | TOML, YAML, or JSON rubric. |
+| `--analyze-prompt <path>` | Replacement prompt file. |
+| `--analyze-provider <provider>` | Analyzer sandbox provider. |
+| `--analyze-effort <value>` | Analyzer reasoning effort. |
+
+Any `--analyze-*` option enables analysis. Read the current defaults with `evolve analyze --show-defaults`.
+
+To analyze an existing job, use [`evolve analyze`](/cli-reference/analyze).
+
+### Timeouts
+
+Every multiplier must be greater than zero. A phase-specific value overrides the general multiplier for that phase.
+
+| Option | Timeout affected |
+| --- | --- |
+| `--timeout-multiplier <x>` | All task timeouts. Default `1.0`. |
+| `--agent-timeout-multiplier <x>` | Agent execution. |
+| `--verifier-timeout-multiplier <x>` | Verifier execution. |
+| `--agent-setup-timeout-multiplier <x>` | Agent installation/setup. |
+| `--environment-build-timeout-multiplier <x>` | Environment preparation. |
+
+Values below `1` shorten a timeout. The task definition is unchanged.
+
+### Configuration and output
+
+| Option | Meaning |
+| --- | --- |
+| `-c`, `--config <path>` | Load YAML or JSON job configuration. |
+| `--print-config` | Print the constructed request and exit. |
+| `--watch` | Follow events until the job settles. |
+| `-q`, `--quiet` | With watch, suppress intermediate events. |
+| `-y`, `--yes` | Accepted for compatibility; no effect. |
+
+With `--watch --json`, output is one JSON record per line: `job.created`, events, then `job.final`. Quiet mode keeps the initial and final records.
+
+[Global options](/cli-reference/index#global-options) apply. Next, [inspect the job](/cli-reference/job).

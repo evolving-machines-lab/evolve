@@ -1,151 +1,153 @@
 ---
 title: "evolve dataset"
-description: "Browse and publish the dataset catalog."
+description: "Find tasks, validate a corpus, and publish a version for evaluation."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
-import ListFlags from '/snippets/list-flags.mdx';
+A dataset version is a named collection of tasks. Jobs select `name@version`, or the active version when only the name is given.
 
 ```bash
-evolve dataset <command> [options]
+evolve dataset list --search harbor-examples
+evolve dataset show harbor-examples@1.0
 ```
 
-## dataset list
+## Browse the catalog
+
+| Command | Options |
+| --- | --- |
+| `dataset list` | `--search <text>` matches names and descriptions; all shared [list options](/cli-reference/index#list-options). |
+| `dataset show <name[@version]>` | `-l, --limit <n>` and `--cursor <cursor>` page the task list. |
+
+The detail view includes versions, tasks, build failures, and provider information.
+
+## Check before publishing
 
 ```bash
-evolve dataset list [options]
+evolve dataset check ./tasks
 ```
 
-List the dataset catalog.
+This reads local task metadata and sends it to Evolve for validation. It does not publish the corpus or run the tasks.
 
-<ListFlags />
+For an agent-based quality check, use [`evolve check`](/cli-reference/check).
 
-<ParamField path="--search" type="text">
-  Free-text filter over name and description.
-</ParamField>
+## Publish a version
 
-## dataset show
+Choose one source.
+
+<Tabs>
+  <Tab title="Local directory">
+    ```bash
+    evolve dataset publish \
+      --dir ./tasks \
+      --name my-benchmark \
+      --version 1.0 \
+      --watch
+    ```
+
+    A `dataset.toml` manifest can supply the name and version. Local publishing runs metadata preflight before uploading.
+  </Tab>
+  <Tab title="Git repository">
+    ```bash
+    evolve dataset publish \
+      --git https://github.com/acme/tasks.git \
+      --ref v1.0.0 \
+      --path benchmark \
+      --name my-benchmark \
+      --version 1.0 \
+      --watch
+    ```
+
+    Pin a tag or full commit SHA. Branch names are refused. Omit `--path` to use the repository root.
+  </Tab>
+  <Tab title="Public archive">
+    ```bash
+    evolve dataset publish \
+      --from https://example.com/tasks.tar.gz \
+      --name my-benchmark \
+      --version 1.0 \
+      --watch
+    ```
+
+    Evolve fetches the HTTPS archive. Supply both name and version.
+  </Tab>
+  <Tab title="Harbor package">
+    ```bash
+    evolve dataset publish --from hub:cookbook/hello-world --watch
+    ```
+
+    Import a public Harbor Hub package using `hub:org/name[@ref]`. Name and version may come from the package.
+  </Tab>
+</Tabs>
+
+### Publish options
+
+| Option | Meaning |
+| --- | --- |
+| `--dir <path>` | Local corpus directory. |
+| `--git <url>` | Git repository URL. Requires `--ref`. |
+| `--ref <tag\|sha>` | Pinned Git revision. |
+| `--path <subfolder>` | Corpus folder within the Git repository. |
+| `--from <source>` | Public HTTPS tarball or `hub:org/name[@ref]`. |
+| `--name <name>` | Dataset name. Required for Git and HTTPS sources. |
+| `--version <version>` | Version label. Required for Git and HTTPS sources. |
+| `--org <name>` | Organization for a new dataset; otherwise the saved CLI default, then personal. |
+| `--skip-preflight` | Skip metadata preflight for a local directory. |
+| `--watch` | Follow the import and version build to completion. |
+
+Do not combine source types. `--skip-preflight` skips the early check; it does not remove import validation.
+
+## Follow the build
+
+```text
+1. Upload or fetch the corpus
+                 ↓
+2. Validate tasks and build environments
+                 ↓
+3. Settle the version
+   ├── At least one task built → READY
+   └── No task built          → FAILED
+```
+
+A `READY` version can contain failed tasks. The final report shows how many built and which failed. On your own dataset, the new ready version becomes active.
+
+To reconnect while an import is running:
 
 ```bash
-evolve dataset show <name[@version]> [options]
+evolve dataset watch my-benchmark
 ```
 
-Show one dataset: its versions, its manifest identity, its tasks with a NOTES column, the providers each task can run on, and the failed tasks of the shown version with their reasons. One line reports a git dataset whose upstream ref has moved; it never appears in `--json`, where the same fact is the `upstream` field.
-
-<ParamField path="-l, --limit" type="n">
-  Task-list page size.
-</ParamField>
-
-<ParamField path="--cursor" type="c">
-  Resume the task list from a cursor.
-</ParamField>
+To inspect a specific import, including one that has already settled, use its full ID:
 
 ```bash
-evolve dataset show terminal-bench-4@4.0
+evolve dataset watch "$IMPORT_ID"
 ```
 
-## dataset check
+`$IMPORT_ID` is printed during publishing. Watching by dataset name selects a live import; when none exists, the command returns `nothing_to_watch`.
+
+With `--json`, watching prints progress records followed by `import.final`.
+
+## Change the active version
 
 ```bash
-evolve dataset check <dir>
+evolve dataset activate my-benchmark 1.0
 ```
 
-Pre-flight a local corpus. A dry run: nothing is uploaded, nothing is written. Prints a verdict per task and exits 1 on any refusal.
+The chosen version must be `READY`. This changes what a bare `my-benchmark` selects; version-pinned jobs still use their selected version.
 
-## dataset publish
+## Download the corpus
 
 ```bash
-evolve dataset publish [options]
+evolve dataset download my-benchmark@1.0 -o corpora/
 ```
 
-Publish a dataset version from a git source, a local directory, or a fetchable source: a public tarball URL, or a public hub package. A name owned by someone else is refused before the bytes move, and an archive over the published ceiling is refused with `import_too_large`.
+`-o, --output-dir <dir>` sets the destination; the default is the current directory. This downloads the original stored corpus package. Access is limited to the dataset owner.
 
-A directory upload prints `upload <sent>/<total> (P%)` once per 10% of the archive; with `--json --watch` the same steps are `upload.progress` events (`sent_bytes`, `total_bytes`, `elapsed_sec`). A large upload prints `Registered import <id>` early and reads `QUEUED (receiving)` until the corpus has arrived. Once the build settles, `--watch` prints every task's outcome and ends with `built N of M tasks`.
-
-<ParamField path="--git" type="url">
-  Git repository URL. With `--ref`.
-</ParamField>
-
-<ParamField path="--ref" type="ref">
-  Pinned git ref: a full 40-hex commit sha, or a tag, resolved to its commit at publish and verified at import. Branch names are refused as `unpinned_git_ref`. With `--git`.
-</ParamField>
-
-<ParamField path="--path" type="subfolder">
-  Repository subfolder holding the corpus. With `--git`; only that folder is imported.
-</ParamField>
-
-<ParamField path="--dir" type="path">
-  Local corpus directory, tarred and uploaded. Pre-flighted first; see `--skip-preflight`.
-</ParamField>
-
-<ParamField path="--from" type="url | hub:org/name[@ref]">
-  Fetchable source the server pulls itself, with no local bytes: a public https tarball URL, or `hub:org/name[@ref]`, a public Harbor hub package. The ref is the latest tag by default, a revision number, or `sha256:<digest>`; it is resolved and digest-pinned when the publish is accepted.
-</ParamField>
-
-<ParamField path="--name" type="dataset">
-  Catalog dataset name to create or extend. Optional with `--dir` when the corpus carries a `dataset.toml` manifest, and with `--from hub:…`, which defaults to the package's short name. Required with `--git` and `--from <url>`.
-</ParamField>
-
-<ParamField path="--version" type="v">
-  Version label for the published version. Optional with `--dir` when `dataset.toml` declares one, and with `--from hub:…`, which defaults to the resolved revision. Required with `--git` and `--from <url>`.
-</ParamField>
-
-<ParamField path="--org" type="name">
-  Organization a new dataset lands in, so your teammates can run it. Omitted, the default set with `evolve auth org use`, else your personal organization; `--org personal` picks your personal organization for this one publish over that default. An existing dataset stays where it is; naming a different organization for it is refused.
-</ParamField>
-
-<ParamField path="--watch">
-  Poll until the publish settles: the version `READY` (built and active) or `FAILED`.
-</ParamField>
-
-<ParamField path="--skip-preflight">
-  Upload without the pre-flight check. A refused task then lands `FAILED` at import instead of being caught here.
-</ParamField>
+## Read one task's files
 
 ```bash
-evolve dataset publish --from hub:cookbook/hello-world --watch
-evolve dataset publish --dir ./corpus --name my-swe --version 1.0 --org acme
+evolve dataset files list harbor-examples@1.0 hello-world /
+evolve dataset files cat harbor-examples@1.0 hello-world /instruction.md
 ```
 
-## dataset watch
+Use [`dataset files status/list/cat`](/cli-reference/filesystem#published-task-files) for package metadata, folder pagination, and byte ranges. These commands require an explicit dataset version.
 
-```bash
-evolve dataset watch <name | import-id>
-```
-
-Re-attach to a publish and follow it to `READY` or `FAILED`, the same follow `dataset publish --watch` renders. Works after the CLI exited, or from another machine. A name with no live publish is refused, naming the newest settled import. With `--json` the same events stream, opened with `import.attached`; the transfer's own `upload.progress` lines belong to the publishing process and never appear here.
-
-## dataset download
-
-```bash
-evolve dataset download <name[@version]> [options]
-```
-
-Download the original corpus package. Owner only.
-
-<ParamField path="-o, --output-dir" type="dir">
-  Directory to save into. Defaults to the current directory.
-</ParamField>
-
-## dataset files
-
-```bash
-evolve dataset files <status|ls|cat> <name@version> <task> [path] [options]
-```
-
-A published task's files, exactly as the platform stored them and as every trial ran against them: `files ls` lists one folder of the task directory (default `/`: `instruction.md`, `task.toml`, `environment/`, `tests/`), `files cat` prints one file's bytes (`--range bytes=a-b` reads a slice), `files status` says whether the version keeps its package (`package_retained`). A version imported before packages were kept is refused with `task_package_not_retained`. The version must be named: `name@version`.
-
-```bash
-evolve dataset files ls my-swe@1.0 abs-1 /tests
-evolve dataset files cat my-swe@1.0 abs-1 /tests/test.sh
-```
-
-## dataset activate
-
-```bash
-evolve dataset activate <name> <version>
-```
-
-Make a `READY` version the dataset's active version.
-
-<GlobalOptions />
+[Global options](/cli-reference/index#global-options) apply. Next, [run a job](/cli-reference/run) against the published version.

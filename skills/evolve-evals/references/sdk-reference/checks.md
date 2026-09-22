@@ -1,0 +1,148 @@
+---
+title: "Checks"
+description: "Review task quality before spending a benchmark run."
+---
+
+**Note:**
+
+For every method’s inputs, return values, and language differences, see the [checks method reference](/sdk-reference/methods/checks).
+
+A check asks an agent to inspect tasks against a quality rubric. It can read a local directory or an existing dataset version.
+
+## Create and wait
+
+```ts TypeScript
+import { checks } from "@evolvingmachines/evolve";
+
+const client = checks();
+const check = await client.create({ source: { directory: "./tasks" } });
+const finished = await client.watch(check.id);
+for (const task of finished.results) {
+  console.log(task.task_name, task.label, task.executed);
+}
+```
+
+```python Python
+from evolve import checks
+
+client = checks()
+check = await client.create("./tasks")
+finished = await client.watch(check["id"])
+for task in finished["results"]:
+    print(task["task_name"], task["label"], task["executed"])
+```
+
+For a published dataset:
+
+```ts TypeScript
+const check = await client.create({
+  source: { dataset: "harbor-examples@1.0" },
+  include_task_names: ["hello-world"],
+});
+```
+
+```python Python
+check = await client.create(
+    dataset="harbor-examples@1.0",
+    include_task_names=["hello-world"],
+)
+```
+
+Choose one source. A local check does not first publish a dataset.
+
+## Configuration
+
+| Option | Purpose |
+| --- | --- |
+| `name` | Check label; defaults to an acceptance timestamp |
+| `model_name` | Checker model |
+| `reasoning_effort` | Supported reasoning effort |
+| `sandbox_provider` | Checker sandbox provider |
+| `rubric` | `{criteria: [{name, description, guidance}, ...]}` |
+| `prompt` | Replacement prompt template |
+| `n_concurrent` | Requested parallel task checks; 1–150, bounded by team quota |
+| `include_task_names` | Task-name include globs |
+| `exclude_task_names` | Task-name exclude globs |
+| `n_tasks` | Positive cap after filters |
+| `onUploadProgress` / `on_upload_progress` | Local archive progress callback: sent/total bytes |
+
+TypeScript places these alongside `source` in the input object. Python takes keyword arguments.
+
+## Read current defaults
+
+```ts TypeScript
+const defaults = await client.defaults();
+console.log(defaults.rubric, defaults.prompt);
+```
+
+```python Python
+defaults = await client.defaults()
+print(defaults["rubric"], defaults["prompt"])
+```
+
+Defaults include model, rubric, prompt, effort, and provider. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
+
+## Understand the result
+
+```text
+Check
+├── status
+│   queued → running → completed
+└── results[]
+    ├── task_name, status
+    ├── checks
+    │   └── criterion
+    │       ├── outcome
+    │       ├── explanation
+    │       └── evidence
+    ├── label, executed
+    └── failure, cost_usd
+```
+
+Each task can be `queued`, `running`, `completed`, or `failed`. The check becomes `completed` once every task settles, even if a task failed.
+
+| Field | Read it as |
+| --- | --- |
+| `checks` | Criterion outcomes: `pass`, `fail`, `not_applicable`, `unknown` |
+| `label` | `has_a_problem`, `unclear`, `no_problem_found`, or null |
+| `executed` | Whether execution-based criteria were resolved; inspect it beside the label |
+| `failure` | Why that task check could not produce a result |
+
+**Note:**
+
+`no_problem_found` alone does not prove the task environment ran. Read `executed` and the criterion evidence. Custom rubrics may have no derived label.
+
+## Read and follow checks
+
+| Method | Options/result |
+| --- | --- |
+| `get(id)` | Full check and its task results |
+| `list(...)` | `scope`, `status` list, `dataset`, `limit`, `cursor`; paginated handle |
+| `watch(id, ...)` | Wait until completed; callback on changes |
+| `defaults()` | Current policy and editable prompt |
+
+Watch options are `onProgress`, `pollIntervalMs`, `signal` in TypeScript; `on_progress`, `poll_interval_s`, `timeout_s` in Python. Polling starts at 2 seconds and slows to 30 seconds while unchanged.
+
+## Inspect files and transcripts
+
+| Need | TypeScript | Python |
+| --- | --- | --- |
+| Download whole check or one task check | `download(id, { to })` | `download(id, to=...)` |
+| Browse a task check's sandbox | `taskFilesystem(checkId, taskCheckId)` | `task_filesystem(check_id, task_check_id)` |
+| Read one task verdict | `task(taskCheckId)` | Read the entry in `check["results"]` |
+| Read checker transcript | `transcript(taskCheckId, { since })` | Not exposed |
+| Read checker artifact | `artifact(taskCheckId, stream)` | Not exposed |
+
+For TypeScript transcripts, `since` is an inclusive nonnegative event index. Artifact selectors are `trace-stdout`, `trace-stderr`, and `agent-home`; the last returns a file map, the others text. Missing content is null.
+
+[Filesystem methods](/sdk-reference/filesystem) and [download options](/sdk-reference/filesystem#download-options) are shared with trials and analyses.
+
+## Share a check
+
+| Action | TypeScript | Python |
+| --- | --- | --- |
+| Share by link/email | `share(id, { link, emails })` | `share(id, link=..., emails=...)` |
+| Revoke link/email access | `unshare(id, { link, emails })` | `unshare(id, link=..., emails=...)` |
+| Read current shares | `shares(id)` | `shares(id)` |
+
+Only the creator can manage shares. Sharing by email can send invitations. See [sharing](/core-concepts/sharing).

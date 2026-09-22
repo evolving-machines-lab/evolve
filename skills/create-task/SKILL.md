@@ -12,8 +12,16 @@ Guide the user through creating a new task end-to-end. Don't just dump commands 
 walk them through each decision, especially around the verifier (which is usually the 
 hardest part).
 
-The task format is Harbor's, and Evolve runs it unchanged. The full specification is at 
-https://docs.harborframework.com/core-concepts/tasks/overview.
+Evolve accepts Harbor-format tasks subject to managed-platform support. Read
+`evolve skills get evals core-concepts/tasks` and
+`evolve skills get evals core-concepts/task-config` for supported behavior. The upstream
+format specification is at https://docs.harborframework.com/core-concepts/tasks/overview.
+
+Before the hosted check or publish steps, confirm `evolve --version` and
+`evolve auth status` succeed. If needed, install the CLI with
+`npm install -g @evolvingmachines/evolve` and set `EVOLVE_API_KEY` from the
+dashboard's API keys page. Read `evolve skills get evals getting-started/installation`
+for setup.
 
 ## Step 1: Create the task directory
 
@@ -35,9 +43,6 @@ The files to write, one per step below:
 
 The directory name is the task's name on the platform: letters, digits, `.`, `_` and `-`, 
 at most 128 characters, starting with a letter or digit; use lowercase (Harbor's convention).
-
-Where Harbor is installed, `harbor task init "<org>/<task-name>"` produces the same layout 
-(optional).
 
 If the user wants a **multi-step task** (ordered steps with per-step
 instructions, tests, and early stopping against a shared container), write
@@ -68,7 +73,7 @@ Edit `environment/Dockerfile` to install dependencies the task needs. The agent 
 inside this container.
 
 ```dockerfile
-FROM ubuntu:24.04
+FROM python:3.12-slim
 WORKDIR /app
 
 # Install what the task requires — NOT the solution
@@ -77,7 +82,8 @@ RUN apt-get update && apt-get install -y openssh-client && rm -rf /var/lib/apt/l
 
 For multi-container setups, use `environment/docker-compose.yaml` instead. After 
 publishing, `evolve dataset show "<dataset>@<version>"` prints which sandbox providers can 
-run each task.
+run each task. Read `evolve skills get evals core-concepts/compose` for Evolve's
+supported Compose layout and limits.
 
 **Test the environment interactively** before writing the solution or tests:
 ```bash
@@ -105,17 +111,22 @@ For a separate verifier container with no pinned `[verifier.environment] docker_
 `tests/` is the verifier image's build context and its `tests/Dockerfile` must provide
 `/tests/test.sh`. A verifier that pins the task's own image gets `tests/` uploaded to
 `/tests`; one that pins a distinct image boots as it is with nothing uploaded, so that
-image must carry `/tests/test.sh` itself. A separate verifier judges only what the task
-lists under a top-level `artifacts = ["/app/out.json"]` in `task.toml`, never the agent's
-whole workspace.
+image must carry `/tests/test.sh` itself. Declare the files the verifier needs under
+top-level `artifacts`; Evolve also transfers `/logs/artifacts/` and the collection
+script's patch file, but not the agent's whole workspace.
 
 ```toml
+artifacts = ["/app/out.json"]
+
 [verifier]
 environment_mode = "separate"
 
 [verifier.environment]
-docker_image = "ubuntu:24.04"
+workdir = "/app"
 ```
+
+This configuration builds `tests/Dockerfile`. Read
+`evolve skills get evals core-concepts/task-verifiers` for the complete setup.
 
 ### Option A: Reward Kit (recommended for most cases)
 
@@ -128,15 +139,25 @@ Good fit signals:
 - Want partial credit rather than pass/fail
 - Want to compose built-ins like `file_contains`, `command_succeeds`, `json_key_equals`
 
-`tests/test.sh`:
-```bash
-#!/bin/bash
-uvx --from 'harbor-rewardkit==0.2.*' rewardkit /tests
+Install Reward Kit in the image that runs verification: the task image for shared
+mode, or the verifier image for separate mode. It requires Python 3.12 or newer.
+
+```dockerfile
+RUN pip install --no-cache-dir 'harbor-rewardkit==0.2.1'
 ```
 
-Note: the package is named `harbor-rewardkit` but the executable is `rewardkit`,
-hence `--from 'harbor-rewardkit==0.2.*' rewardkit`. Running
-`uvx harbor-rewardkit` directly will fail.
+`tests/test.sh` (for a workspace at `/app`):
+```bash
+#!/bin/bash
+set -euo pipefail
+python3 -m rewardkit /tests \
+  --workspace /app \
+  --output /logs/verifier/reward.json
+```
+
+The package name remains `harbor-rewardkit`; the Python module is `rewardkit`.
+Install any required extras in that image too. Read
+`evolve skills get evals core-concepts/rewardkit` for dependencies and managed judges.
 
 Then add `tests/checks.py` and/or `tests/judge.toml`. Read `evolve skills get rewardkit` to 
 design the criteria.
@@ -145,16 +166,20 @@ design the criteria.
 
 Use when the verification is straightforward assertion-style Python.
 
+Install pytest in the image that runs verification, rather than downloading it
+in `test.sh`. For a Python image:
+
+```dockerfile
+RUN pip install --no-cache-dir 'pytest==8.4.1'
+```
+
 `tests/test.sh`:
 ```bash
 #!/bin/bash
-apt-get update && apt-get install -y curl
-curl -LsSf https://astral.sh/uv/0.9.7/install.sh | sh
-source $HOME/.local/bin/env
+set -uo pipefail
+mkdir -p /logs/verifier
 
-uvx --with pytest==8.4.1 pytest /tests/test_outputs.py
-
-if [ $? -eq 0 ]; then
+if python3 -m pytest /tests/test_outputs.py; then
   echo 1 > /logs/verifier/reward.txt
 else
   echo 0 > /logs/verifier/reward.txt
@@ -183,21 +208,25 @@ fi
 
 ### Reward file format (all options)
 
-- `/logs/verifier/reward.txt` — single number (usually `0` or `1`)
-- `/logs/verifier/reward.json` — `{"accuracy": 0.95, "runtime_sec": 1.2}` for multiple metrics
+- `/logs/verifier/reward.txt` — one finite number from `0` to `1`
+- `/logs/verifier/reward.json` — `{"reward": 0.95, "runtime_sec": 1.2}` for multiple metrics
 
-When both exist, `reward.json` wins. Everything the script prints is kept as the verifier log.
+A nonempty `reward.json` wins when both exist. Its primary score is the `reward`
+key, or the only key in a one-key object, and must be in `[0, 1]`. Multiple keys
+without `reward` produce metrics but no primary score. Everything the script
+prints is kept as the verifier log.
 
 **Always use absolute paths in `test.sh`.**
 
 ## Step 5: Write the solution
 
-Write `solution/solve.sh` — a script that actually solves the task. `evolve check` runs 
-it to confirm the task is solvable and the tests pass on a correct solution. The agent is 
-never given it.
+Write `solution/solve.sh` — a script that actually solves the task. The checker
+reviews it and can run it when its sandbox supports the task's environment.
+Evolve does not give it to the evaluated agent.
 
 ```bash
 #!/bin/bash
+mkdir -p ~/.ssh
 ssh-keygen -t rsa -f ~/.ssh/id_rsa -N ""
 ```
 
@@ -215,8 +244,8 @@ description = "One-line description"
 keywords = ["jax", "mnist", "rewardkit"]  # 3–8 lowercase tokens: domain, verifier style, hardware
 
 [metadata]
-difficulty = "easy" | "medium" | "hard"
-category = "programming" | "machine-learning" | "gpu" | ...
+difficulty = "easy"
+category = "programming"
 tags = ["..."]
 
 [agent]
@@ -247,8 +276,8 @@ Network access has two layers:
 | --- | --- | --- |
 | `[environment].network_mode` | Baseline | Agent env start; shared verifier uses this too |
 | `[verifier.environment].network_mode` | Baseline | Separate verifier env start |
-| `[agent].network_mode`, `[steps.agent].network_mode` | Override | During matching `agent.run()` |
-| `[verifier].network_mode`, `[steps.verifier].network_mode` | Override | During matching `verify()` |
+| `[agent].network_mode` | Override | During the agent phase |
+| `[verifier].network_mode` | Override | Separate verifier policy; shared mode must match the baseline |
 
 Modes: `public`, `no-network`, or `allowlist` with `allowed_hosts = ["pypi.org"]`
 (exact hostnames, IPv4/IPv6 address literals or CIDR ranges, or leading wildcard hostnames, when supported by the selected environment; not URLs,
@@ -288,7 +317,9 @@ environment_mode = "separate"
 network_mode = "public"   # Verifier baseline — not a phase override
 ```
 
-Full reference: https://docs.harborframework.com/core-concepts/tasks/network-policies.
+Evolve rejects per-step network overrides. Read
+`evolve skills get evals core-concepts/task-config` for network access and
+`evolve skills get evals core-concepts/compatibility` for supported task features.
 
 For Reward Kit judges needing API keys:
 ```toml
@@ -301,19 +332,38 @@ the whole value, and the judge's credential is supplied at run time.
 
 ## Step 7: Check the task
 
+First validate the task metadata, then request the hosted rubric review:
+
 ```bash
+evolve dataset check "<task-path>"
 evolve check "<task-path>" --watch
 ```
 
-The check reads the task and, when it can, runs the environment, `solution/solve.sh` and
-the verifier, then rules on every criterion of a rubric (eleven by default); `executed` in
-the result says whether it ran the task. `evolve check show <check-id>` prints one entry
-per criterion, with an `outcome`, an `explanation` and `evidence`, and one label per task:
-`has_a_problem`, `unclear` or `no_problem_found`.
+Set `CHECK_ID` to the parent check ID returned by `evolve check`, then read it:
 
-Where Harbor is installed, `harbor run -p "<task-path>" -a oracle` runs the solution and 
-the verifier locally (optional). Its reward should be `1.0`. If it's not, debug in this order:
-1. Does `solve.sh` actually solve it? (run it by hand inside `docker run --rm -it "<task-name>" bash`)
+```bash
+evolve check show "$CHECK_ID"
+```
+
+`evolve dataset check` sends `task.toml` and any `dataset.toml` to the API for
+validation. It does not upload the full task package or execute the task.
+`evolve check` runs a paid checker agent. It reviews the files against eleven
+default criteria and can run the environment, solution, and verifier when its
+sandbox supports them. It is not a dedicated reference-solution runner; the
+Evolve CLI has no standalone oracle command.
+
+Read each criterion's `outcome`, `explanation`, and `evidence`. The default rubric
+also produces `has_a_problem`, `unclear`, or `no_problem_found`. Its `executed`
+flag is derived from the findings: true when none of the five execution criteria
+is `unknown`. It is not independent proof that the solution or verifier ran.
+Inspect the evidence and checker trace; unresolved execution needs a test in an
+environment that can run the task.
+
+Read `evolve skills get evals core-concepts/check` and
+`evolve skills get evals cli-reference/check` for results, traces, and custom rubrics.
+
+When a solution or verifier fails, debug in this order:
+1. Does `solve.sh` actually solve it in the task's intended environment?
 2. Does the verifier correctly detect success? (check `/logs/verifier/` output)
 3. Are paths correct? (absolute vs relative)
 4. Are dependencies installed in the Dockerfile?
@@ -329,7 +379,12 @@ evolve run -d "<dataset>@1.0" -a codex -m gpt-5.5 --watch
 ```
 
 If the task is too easy (every model 1.0) or impossible (every model 0.0), consider 
-adjusting difficulty. `evolve skills get publish` covers every publish option.
+adjusting difficulty. `evolve skills get publish` explains the workflow;
+`evolve skills get evals cli-reference/dataset` covers every dataset publish option.
+For TypeScript or Python automation, load
+`evolve skills get evals sdk-reference/methods/datasets`,
+`evolve skills get evals sdk-reference/methods/checks`, and
+`evolve skills get evals sdk-reference/methods/jobs`.
 
 ## Step 9: Write README.md (always the final step)
 
@@ -362,12 +417,10 @@ persist across steps.
 Replace the task-root `instruction.md`, `tests/`, and `solution/` with a
 `steps/` directory containing one sub-directory per step:
 
-Each `[[steps]].name` must match one directory name of at most 255 UTF-8 bytes,
-unique after case folding and Unicode normalization. Avoid path separators,
-control characters, Windows-reserved characters/device names, and trailing dots
-or spaces. Keep all task inputs and linked contents within the task directory;
-validation permits shared links inside the task. Use regular files and directories
-for shared inputs when publishing tasks.
+Each `[[steps]].name` must match a directory under `steps/`. Names must be unique
+and use 1–128 ASCII letters, digits, `.`, `_`, or `-`, starting with a letter or
+digit. Keep task inputs inside the task directory as regular files and
+directories. Copy shared inputs into it; Evolve's importer rejects symbolic links.
 
 ```
 <task-name>/
@@ -401,14 +454,14 @@ with cwd = WORKDIR. Non-zero exit aborts the step and the trial. Have it
 ```toml
 schema_version = "1.4"
 
-[task]
-name = "<org>/<task-name>"
-version = "1.0.0"
-
 # How per-step rewards roll up into the trial-level verifier_result.
 # "mean" (default): per-key mean across steps that produced a result.
 # "final": the last step's verifier_result verbatim.
 multi_step_reward_strategy = "mean"
+
+[task]
+name = "<org>/<task-name>"
+version = "1.0.0"
 
 [[steps]]
 name = "scaffold"              # Must match the directory under steps/
@@ -435,11 +488,12 @@ timeout_sec = 60.0
 timeout_sec = 30.0
 ```
 
-Per-step overrides available: `agent.timeout_sec`, `agent.user`,
-`agent.network_mode`, `verifier.timeout_sec`, `verifier.env`, `verifier.user`,
-`verifier.network_mode`, `verifier.environment_mode`, `verifier.environment`,
-`steps.verifier.environment.network_mode`, `healthcheck.*`, `artifacts`. Unset
-fields fall back to the task-level values.
+Evolve supports per-step agent and verifier timeouts, `verifier.env`, and
+healthchecks. Timeouts and verifier variables fall back to task-level values.
+Set the environment, agent user, and network policies once for the task.
+Multi-step tasks require shared verification. Compose, per-step agent users,
+network policies, verifier environments, and collection hooks are rejected.
+Step verifiers run as root; a different verifier user is rejected.
 
 ### Choosing a reward strategy
 
@@ -452,20 +506,25 @@ fields fall back to the task-level values.
 
 ### Artifacts
 
-Step-level `artifacts` are collected into `steps/{name}/artifacts/` after that
-step's verification. Task-level and trial-level artifacts are collected at
-every step in addition to the step-level ones.
+Evolve accepts step-level `artifacts` in the task configuration, but does not
+currently collect per-step artifact snapshots. Do not rely on
+`steps/{name}/artifacts/` being present. Step results and verifier logs are
+recorded separately; see `evolve skills get evals core-concepts/multi-step`.
 
 ### Checking a multi-step task
 
-Where Harbor is installed, `harbor run -p "<task-path>" -a oracle` runs each step's
-`solution/solve.sh`, then each step's verifier, in order (optional). Trial reward
-should be `1.0` across the aggregation strategy. Then publish and run it (Step 8).
+Use the metadata check and hosted review in Step 7. Inspect evidence for each
+step's solution and verifier; the review does not guarantee their execution.
+Then publish and run with an evaluated agent (Step 8). Inspect `step_results`
+and per-step verifier logs, including any threshold that stopped later steps.
 
 ### Full reference + worked example
 
-- Docs: https://docs.harborframework.com/core-concepts/tasks/multi-step
-- Example task: https://github.com/laude-institute/harbor/tree/main/examples/tasks/hello-multi-step-advanced
+- Evolve behavior: `evolve skills get evals core-concepts/multi-step`
+- Optional upstream example: https://github.com/laude-institute/harbor/tree/main/examples/tasks/hello-multi-step-advanced
+
+The upstream example illustrates the format. Apply Evolve's supported options
+above; upstream execution commands do not define the managed workflow.
 
 ## Special features (mention if relevant)
 
@@ -479,7 +538,7 @@ should be `1.0` across the aggregation strategy. Then publish and run it (Step 8
 
 ## Common pitfalls
 
-- Forgetting to write the reward file → task "passes" silently with reward 0
+- Forgetting to write the reward file → trial is `INDETERMINATE`, with no score
 - Using relative paths in `test.sh` → breaks when the verifier runs it from a different cwd
 - Installing the solution into the Dockerfile → agent already gets the answer
 - Test script leaks into `instruction.md` → agent sees the rubric and gaming becomes trivial

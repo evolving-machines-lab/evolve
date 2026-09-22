@@ -1,146 +1,170 @@
 ---
 name: publish
-description: Publish a dataset of Harbor-format tasks to Evolve, or upload a finished job folder — a Harbor job, or Evolve SDK runs packed as one. Use when the user wants to publish, upload, or share tasks, datasets/benchmarks, or job results on Evolve.
+description: Publish Harbor-format task datasets or upload existing results to Evolve, including recorded Evolve SDK runs packaged as jobs. Use when the user wants to publish a benchmark, upload tasks, or turn an SDK session into an evaluation job.
 metadata:
   internal: true
 ---
 
-Help the user publish a dataset of tasks to Evolve, or upload a job they ran elsewhere.
-Walk them through each step, checking prerequisites and confirming before running
-commands that upload.
+# Publish to Evolve
 
-## Prerequisites
+Publish tasks for future evaluations, or import results from a run that already happened. Both workflows use Evolve.
 
-1. **The CLI**: `npm install -g @evolvingmachines/evolve`; `evolve --version` succeeds.
+| What the user has | Start here |
+| --- | --- |
+| A folder or repository of tasks | Publish a dataset below. For the task layout, read `evolve skills get create-task`. |
+| A completed job folder or archive | Import results below. |
+| A recorded Evolve SDK session | Read `evolve skills get evals core-concepts/upload-sdk-session` before packaging it. |
 
-2. **API key**: create a key on the dashboard's API keys page
-   (https://dashboard.evolvingmachines.ai/api-keys) and export it. Every command reads
-   `EVOLVE_API_KEY`.
-   ```bash
-   export EVOLVE_API_KEY="<your key>"
-   evolve auth status
-   ```
-   `auth status` prints who the platform thinks you are and which key is in use.
+## Setup, when needed
 
-3. **Task layout**: a dataset is a folder of task directories, each with `task.toml`,
-   `instruction.md`, `tests/test.sh`, and an `environment/` folder unless `task.toml`
-   names a prebuilt `docker_image` (`evolve skills get create-task` has the format). The
-   directory name is the task's name: letters, digits, `.`, `_` and `-`, at most 128
-   characters, starting with a letter or digit; use lowercase (Harbor's convention). A
-   `dataset.toml` manifest at the root is optional.
+Use the installed CLI; install only if missing: `npm install -g @evolvingmachines/evolve`. Confirm authentication with `evolve auth status`. If needed, set `EVOLVE_API_KEY` using a key from https://dashboard.evolvingmachines.ai/api-keys.
 
-## Publishing a dataset
+Publishing or importing is a remote mutation. Proceed when the user's request authorizes it; otherwise prepare the exact command and explain what it uploads. An upload request does not authorize emailing or sharing results. For explicit sharing requests, read `evolve skills get evals core-concepts/sharing`.
 
-What you publish is private to your organization. There are no tags and no visibility
-flag.
+## Publish a dataset
 
-### 1. Check the folder first
+### 1. Check the tasks
+
+Inspect the task directories and any `dataset.toml`, then validate their metadata:
 
 ```bash
-evolve dataset check "<path/to/tasks>"
+evolve dataset check ./tasks
 ```
 
-A dry run: the pre-flight sends each task's `task.toml`, and the `dataset.toml` if there
-is one, to the server, which answers with a verdict per task and writes nothing. A refused
-task names the field to fix. `evolve check "<path/to/tasks>" --watch` goes further: it
-reads each task and, when it can, runs its environment, reference solution and verifier,
-then rules on a rubric.
+This sends each `task.toml` and the optional manifest to Evolve. It does not publish the corpus or run the tasks. Fix refused fields before continuing.
 
-### 2. Publish
+For an agent-based quality review, use `evolve check ./tasks --watch`. This uploads tasks and incurs agent usage. Read the findings and trace: a rubric verdict is not proof that the reference solution and verifier were executed successfully. See `evolve skills get evals core-concepts/check`.
 
-From a local directory:
+### 2. Choose one source and publish
+
+**Local directory**
 
 ```bash
 evolve dataset publish \
-  --dir "<path/to/tasks>" \
-  --name "<dataset>" \
+  --dir ./tasks \
+  --name my-benchmark \
   --version 1.0 \
   --watch
 ```
 
-When the folder carries a `dataset.toml` manifest, `--name` and `--version` come from it
-and may be omitted. The pre-flight runs automatically before the upload;
-`--skip-preflight` uploads without it, and a task the check would have refused then fails
-at import instead.
+A `dataset.toml` can supply the name and version. Local publishing runs metadata preflight automatically; `--skip-preflight` skips that early check, not import validation.
 
-From a git repository:
+**Git repository**
 
 ```bash
 evolve dataset publish \
-  --git https://github.com/acme/my-swe.git \
+  --git https://github.com/acme/tasks.git \
   --ref v1.0.0 \
-  --name "<dataset>" \
+  --path benchmark \
+  --name my-benchmark \
   --version 1.0 \
   --watch
 ```
 
-`--ref` must be pinned: a tag, or a full 40-character commit sha. A branch name is
-refused. `--path <subfolder>` imports one folder of a larger repository.
+Pin a tag or a full 40-character commit SHA. Branch names are refused. Omit `--path` to use the repository root.
 
-From a source the server fetches itself:
-
-```bash
-evolve dataset publish --from hub:cookbook/hello-world --watch
-```
-
-`--from` takes a public https tarball URL, or `hub:org/name[@ref]` for a public package on
-the Harbor hub. For a hub package the name and version default to the package's own.
-
-### 3. Follow the publish
-
-`--watch` follows the publish until the version is `READY` or `FAILED`. Each task builds
-on its own, so one broken task does not block the others; `--watch` ends with how many
-built. If the terminal is gone, re-attach from any machine:
+**Public HTTPS archive**
 
 ```bash
-evolve dataset watch "<dataset>"
+evolve dataset publish \
+  --from https://example.com/tasks.tar.gz \
+  --name my-benchmark \
+  --version 1.0 \
+  --watch
 ```
 
-The version lands `READY` when at least one task built, and `FAILED` only when none did.
-On your own dataset, `READY` also makes the version active, so the bare name runs it.
+Evolve fetches the archive. Both Git and HTTPS sources require an explicit name and version.
 
-## After publishing
+**Optional: import a public Harbor Hub package into Evolve**
 
 ```bash
-evolve dataset show "<dataset>@1.0"                       # versions, tasks, timeouts, providers per task
-evolve run -d "<dataset>@1.0" -a codex -m gpt-5.5 --watch   # run a job on it
+evolve dataset publish \
+  --from hub:cookbook/hello-world \
+  --watch
 ```
 
-Each publish creates a version, named `<dataset>@<version>`; a bare name means the active
-version. To point the bare name at a different `READY` version:
+`hub:org/name[@ref]` is an accepted source; the destination is Evolve. Name and version may come from the package. Keep this syntax when importing an actual Harbor package.
+
+For a new dataset, add `--org <organization>` to select an organization. Otherwise, Evolve uses the saved `evolve auth org use` default, then your personal organization. An existing dataset keeps its organization; an explicit or saved default that conflicts is refused. See `evolve skills get evals cli-reference/dataset` for all options.
+
+### 3. Follow the import and inspect the result
+
+`--watch` follows the import and build. To reconnect, use the complete import ID printed by publishing:
 
 ```bash
-evolve dataset activate "<dataset>" 1.0
+evolve dataset watch "$IMPORT_ID"
+evolve dataset show my-benchmark@1.0
 ```
 
-The owner of a dataset can download the original package back:
+`evolve dataset watch my-benchmark` also finds a live import. Use the import ID after it has settled.
+
+A `READY` version needs at least one built task, but can contain failed tasks. Report the final state, name, version, built and failed counts, and failure reasons. A new ready version on your own dataset becomes active; a bare dataset name selects that active version.
+
+### 4. Run or manage the version
+
+When the user wants an evaluation, select the harness and model, then run the pinned version:
 
 ```bash
-evolve dataset download "<dataset>@1.0" -o corpora/
+evolve run \
+  --dataset my-benchmark@1.0 \
+  --agent codex \
+  --model "<model>" \
+  --watch
 ```
 
-## Uploading a job you ran elsewhere
+Replace `<model>` with the selected model. Read `evolve skills get evals cli-reference/run` for job settings.
 
-A job run elsewhere, in the Harbor job layout, uploads as a finished job. Its trials,
-traces and rewards become a job you read like any other. Before packing a folder by
-hand — runs made with the Evolve SDK, or any other runner — read what a trial folder
-and its `result.json` must hold: `evolve skills get evals core-concepts/upload`. The
-score lives in `result.json` as `verifier_result.rewards`; without it a trial arrives
-with no score.
+| Need | Command |
+| --- | --- |
+| Point the bare name at another `READY` version | `evolve dataset activate my-benchmark 1.0` |
+| Download the original corpus package as its owner | `evolve dataset download my-benchmark@1.0 -o corpora/` |
+| Fix tasks after a partial build | Publish the corrected corpus under a new version. |
+
+## Import results
+
+### 1. Prepare the job folder
+
+An existing Harbor-format job folder can be uploaded directly. Before packaging another runner's files, read `evolve skills get evals core-concepts/upload` for the required layout and fields. The root needs `config.json` and `result.json`; each trial has its own `result.json`.
+
+For an SDK session, read `evolve skills get evals core-concepts/upload-sdk-session` first. It shows the local log location, field mapping, and packaging script. A session can contain several runs or commands; do not assume one file is one trial. The example script supports one successful Codex or Claude run; the guide covers other cases.
+
+Preserve recorded rewards in each trial's `verifier_result.rewards`. Without recorded rewards, the import has no score. Do not infer a score from agent completion.
+
+### 2. Upload and follow
 
 ```bash
-evolve upload "<path/to/job-dir>" -d "<dataset>@1.0"
+evolve upload ./completed-job -d my-benchmark@1.0
 ```
 
-`upload` takes the job directory, or its `.tar.gz`. With `--from <url>` it takes instead
-a public https URL of the archive, which the server fetches itself. `-d name[@version]`
-links the uploaded trials to a published dataset version by task name. The command
-follows the import until the job exists; `--no-wait` returns at once with the import id.
+Use the job directory or its `.tar.gz`. Alternatively, use `evolve upload --from <public-https-archive-url>`. Omit `-d` if no published dataset should be linked; when supplied, it links trial tasks by name.
+
+The CLI waits for the import by default. `--no-wait` returns the import record instead. Reconnect with:
 
 ```bash
 evolve job imports --status RUNNING
-evolve job import <import-id> --watch
+evolve job import "$IMPORT_ID" --watch
 ```
 
-`job imports` lists your uploads, newest first. `job import --watch` re-attaches to one and
-follows it to the job, or to its typed failure.
+### 3. Inspect the imported job
+
+Use the job ID from the completed import:
+
+```bash
+evolve job show "$JOB_ID"
+evolve job trials "$JOB_ID"
+```
+
+Choose a trial ID from the listing, then read its transcript with `evolve trial trace "$TRIAL_ID"`. Check the task, harness, model, prompt, agent activity, and recorded scores. Report skipped trial folders and missing task links.
+
+Imported jobs support analysis, but cannot be resumed, retried, or regraded. Read `evolve skills get evals cli-reference/upload` for all upload options.
+
+## Use Python or TypeScript instead
+
+Read `evolve skills get evals sdk-reference/index` for client setup, then the matching method reference:
+
+| Operation | Read |
+| --- | --- |
+| Validate, publish, follow, activate, or download datasets | `evolve skills get evals sdk-reference/methods/datasets` |
+| Upload a job and follow its import | `evolve skills get evals sdk-reference/methods/jobs` |
+
+Both SDKs expose `datasets().preflight()` and `datasets().publish()`, plus `jobs().upload()`. Call preflight separately when publishing through an SDK. Publishing and uploading return import records; follow with `watchImport` in TypeScript or `watch_import` in Python. These calls do not convert SDK session logs into job folders; package the session first.

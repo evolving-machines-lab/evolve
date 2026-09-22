@@ -1,108 +1,77 @@
 ---
-title: "agents"
-description: "Register and manage your own agents."
+title: "Custom agents"
+description: "Register your own harness and use it in a job arm."
 ---
 
-`agents()` returns the registered-agents client. A registered agent's name works in a job's `agents[].name` like a built-in.
+[Method reference: calls, parameters, and response fields](/sdk-reference/methods/agents).
 
-## create
+Use `agents()` for your own agent registrations. To discover built-in harnesses, use [meta](/sdk-reference/meta).
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    create(input: { name: string; org?: string; run_command: string; env?: Record<string, string> } & ({ install_script: string } | { directory: string })): Promise<Agent>
-    ```
+## Register an agent
 
-    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory; what it can rely on, and the registration limit, are on [agents](/core-concepts/agents#register-your-own-agent). The registration belongs to you and to an organization (`org`, a slug or id; omitted, the client's `org` default, else your personal one): its members may name the agent in their own jobs, and only you can change or delete it. A name stays unique per person, so two teammates may each register their own `acme-cli`.
+Provide a local source directory or an install script, plus the command that runs your agent.
 
-    ```ts
-    const agent = await agents().create({
-      name: "acme-cli",
-      install_script: "curl -fsSL https://acme.dev/install.sh | sh",
-      run_command: "acme-cli --headless",
-    });
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def create(
-        *,
-        name: str,
-        install_script: Optional[str] = None,
-        directory: Optional[str] = None,
-        run_command: str,
-        env: Optional[Dict[str, str]] = None,
-        org: Optional[str] = None,
-    ) -> Agent
-    ```
+<CodeGroup>
+```ts TypeScript
+import { agents } from "@evolvingmachines/evolve";
 
-    Register an agent from an install script's text, or from a local directory. `run_command` runs with `sh -c` at the task's working directory; what it can rely on, and the registration limit, are on [agents](/core-concepts/agents#register-your-own-agent). The registration belongs to you and to an organization (`org`, a slug or id; omitted, the client's `org` default, else your personal one): its members may name the agent in their own jobs, and only you can change or delete it. A name stays unique per person, so two teammates may each register their own `acme-cli`.
+const agent = await agents().create({
+  name: "my-agent",
+  directory: "./my-agent",
+  run_command: "python agent.py",
+});
+```
 
-    ```python
-    agent = await agents().create(
-        name="acme-cli",
-        install_script="curl -fsSL https://acme.dev/install.sh | sh",
-        run_command="acme-cli --headless",
-    )
-    ```
-  </Tab>
-</Tabs>
+```python Python
+from evolve import agents
 
-## list, get, upsert, delete
+agent = await agents().create(
+    name="my-agent",
+    directory="./my-agent",
+    run_command="python agent.py",
+)
+```
+</CodeGroup>
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    list(options?: { scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): AgentList
-    get(name: string): Promise<Agent>
-    upsert(
-      name: string,
-      input: { run_command: string; env?: Record<string, string> } & ({ install_script: string } | { directory: string }),
-    ): Promise<Agent>
-    delete(name: string): Promise<void>
-    ```
+The example assumes `./my-agent` contains that runnable program. See the [custom-agent contract](/core-concepts/agents) for how it receives a task and produces output.
 
-    Registered agents, one agent, replace one without a gap, or delete one. `scope` is the lists' own vocabulary: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (every registration in your organizations, yours included); `get` takes a name, which is yours by construction. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
+| Field | Required | Purpose |
+| --- | --- | --- |
+| `name` | Create only | Registration name used by job arms |
+| `run_command` | Yes | Command that starts the agent |
+| `directory` | One source | Local source folder, archived for upload |
+| `install_script` | One source | Script used to install the agent |
+| `env` | No | Declared non-secret environment map |
+| `org` | No | Owning team; overrides the client default |
 
-    ```ts
-    await agents().upsert(
-      "acme-cli",
-      {
-        install_script: "curl -fsSL https://acme.dev/install.sh | sh",
-        run_command: "acme-cli --headless --v2",
-      },
-    );
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    def list(
-        *,
-        scope: Optional[Literal['my', 'shared', 'org']] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    )
-    async def get(name: str) -> Agent
-    async def upsert(
-        name: str,
-        *,
-        run_command: str,
-        install_script: Optional[str] = None,
-        directory: Optional[str] = None,
-        env: Optional[Dict[str, str]] = None,
-        org: Optional[str] = None,
-    ) -> Agent
-    async def delete(name: str) -> None
-    ```
+Choose exactly one of `directory` and `install_script`. Discover naming, reserved environment keys, and size limits through `meta().agent_registration`. Store credentials as [secrets](/sdk-reference/secrets).
 
-    Registered agents, one agent, replace one without a gap, or delete one. `scope` is the lists' own vocabulary: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (every registration in your organizations, yours included); `get` takes a name, which is yours by construction. Past jobs keep the agent they recorded. `upsert` creates when the name is free and replaces when it is not, consuming no new slot; it is a full replacement, so an omitted `env` becomes empty.
+## Use the registration
 
-    ```python
-    await agents().upsert(
-        "acme-cli",
-        install_script="curl -fsSL https://acme.dev/install.sh | sh",
-        run_command="acme-cli --headless --v2",
-    )
-    ```
-  </Tab>
-</Tabs>
+Name it in a job's `agents` list just like a built-in harness:
+
+```json
+{
+  "name": "my-agent",
+  "model_name": "your-model"
+}
+```
+
+Use the model your custom agent is written to run. Registration does not make every model compatible with its implementation.
+
+## Read or replace
+
+| Action | TypeScript | Python | Returns |
+| --- | --- | --- | --- |
+| List registrations | `list({scope, limit, cursor})` | `list(scope=..., limit=..., cursor=...)` | Paginated handle |
+| Read one | `get(name)` | `get(name)` | Agent registration |
+| Create or replace | `upsert(name, input)` | `upsert(name, run_command=..., ...)` | Agent registration |
+| Delete | `delete(name)` | `delete(name)` | No content |
+
+List scopes are `my`, `shared`, and `org`. Upsert accepts the same fields as create except `name`, which is its first argument.
+
+<Note>
+Upsert is a full replacement. Include every setting you want to retain; omitting `env` clears it. It avoids the gap created by deleting and then registering again.
+</Note>
+
+Deleting a registration does not rewrite the agent identity already recorded on past jobs.

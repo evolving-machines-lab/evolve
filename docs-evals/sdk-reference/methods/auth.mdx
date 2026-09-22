@@ -1,0 +1,291 @@
+---
+title: "Identity and teams: methods"
+description: "Read identity and manage organization membership."
+---
+
+Create `identity = auth()` and `teams = orgs()` for these examples. `hosted().orgs` is available; there is no `hosted().auth` property.
+
+Python examples run inside an async function.
+
+## status
+
+Identify the account and API key making the request.
+
+<CodeGroup>
+```ts TypeScript
+const user = await identity.status();
+console.log(user.user_id, user.email);
+```
+
+```python Python
+user = await identity.status()
+print(user.user_id, user.email)
+```
+</CodeGroup>
+
+**Returns:** `AuthStatus`. No arguments.
+
+<Accordion title="Parameters and behavior">
+
+Returns key metadata only, never its secret value. `auth()` has no key-creation, listing, or revocation methods; see the [identity guide](/sdk-reference/auth).
+
+</Accordion>
+
+## list
+
+List organizations you belong to, with your personal organization first.
+
+<CodeGroup>
+```ts TypeScript
+const organizations = await teams.list();
+```
+
+```python Python
+organizations = await teams.list()
+```
+</CodeGroup>
+
+**Returns:** `Organization[]` / `List[Organization]`. No arguments; this is not a paginated result.
+
+## get
+
+Read an organization’s membership, limits, and current usage.
+
+<CodeGroup>
+```ts TypeScript
+const team = await teams.get("my-team");
+console.log(team.quota, team.usage);
+```
+
+```python Python
+team = await teams.get("my-team")
+print(team.quota, team.usage)
+```
+</CodeGroup>
+
+**Returns:** `OrganizationDetail`.
+
+<Accordion title="Parameters and behavior">
+
+`org` is a required organization slug or id. Quotas are read-only through the SDK. A limit of zero pauses the corresponding enforced workload; see the quota notes below.
+
+</Accordion>
+
+## create
+
+Create a shared organization and become its owner.
+
+<CodeGroup>
+```ts TypeScript
+const team = await teams.create("my-team", {
+  displayName: "My team",
+});
+```
+
+```python Python
+team = await teams.create(
+    "my-team",
+    display_name="My team",
+)
+```
+</CodeGroup>
+
+**Returns:** `Organization`.
+
+<Accordion title="Parameters and behavior">
+
+| Parameter | Type and meaning |
+| --- | --- |
+| `name` | Required slug: 1–48 lowercase letters, digits, or hyphens. No leading or trailing hyphen. |
+| `displayName?` / `display_name?` | Non-empty string, at most 120 characters after trimming. Defaults to the slug. TypeScript passes an options object; Python uses a keyword. |
+
+A taken slug returns `org_slug_taken`.
+
+</Accordion>
+
+## invite
+
+Create an invitation for an organization you own.
+
+<CodeGroup>
+```ts TypeScript
+const invite = await teams.invite("my-team");
+// Save invite.token securely; it is returned only here.
+```
+
+```python Python
+invite = await teams.invite("my-team")
+# Save invite.token securely; it is returned only here.
+```
+</CodeGroup>
+
+**Returns:** `OrgInviteCreated`: invitation metadata plus its one-time `token`.
+
+<Accordion title="Parameters and behavior">
+
+`org` is a required slug or id. SDK calls use the server defaults: a 7-day expiry and unlimited uses. Neither SDK exposes invitation limits in this method. Personal organizations cannot issue invitations.
+
+</Accordion>
+
+## join
+
+Redeem an invitation token to join as a member.
+
+<CodeGroup>
+```ts TypeScript
+const result = await teams.join(inviteToken);
+console.log(result.org.slug, result.already_member);
+```
+
+```python Python
+result = await teams.join(invite_token)
+print(result.org.slug, result.already_member)
+```
+</CodeGroup>
+
+**Returns:** `OrgJoined`: `org: Organization` and `already_member: boolean`.
+
+<Accordion title="Parameters and behavior">
+
+`token` is required. If you already belong to the organization, `already_member` is true and no invitation use is consumed.
+
+</Accordion>
+
+## members
+
+List an organization’s members, owners first.
+
+<CodeGroup>
+```ts TypeScript
+const members = await teams.members("my-team");
+```
+
+```python Python
+members = await teams.members("my-team")
+```
+</CodeGroup>
+
+**Returns:** `OrgMember[]` / `List[OrgMember]`.
+
+<Accordion title="Parameters and behavior">
+
+`org` is a required slug or id. Any organization member can read the list; this method is not paginated.
+
+</Accordion>
+
+## Response fields
+
+Both languages use the field names below. Python returns dataclasses, with `None` for null. Optional TypeScript `role` is an optional Python value.
+
+<Accordion title="Identity and key metadata">
+
+```ts Fields
+interface AuthStatus {
+  user_id: string;
+  email: string | null;
+  key: ApiKey;
+}
+
+interface ApiKey {
+  id: string;
+  label: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+```
+
+`key.created_at` can be `null` / `None` when the credential service has no creation timestamp, despite the current SDK's string annotation. `last_used_at` is currently always null; the credential service does not record it.
+
+</Accordion>
+
+<Accordion title="Organization and members">
+
+```ts Fields
+type OrgRole = "owner" | "member";
+
+interface Organization {
+  org_id: string;
+  slug: string;
+  display_name: string;
+  personal: boolean;
+  role?: OrgRole;
+  created_at: string;
+}
+
+interface OrganizationDetail extends Organization {
+  member_count: number;
+  quota: OrgQuota;
+  usage: OrgUsage;
+}
+
+interface OrgMember {
+  user_id: string;
+  email: string;
+  role: OrgRole;
+  joined_at: string;
+}
+```
+
+</Accordion>
+
+<Accordion title="Quotas and usage">
+
+All quota values are effective limits after applying platform defaults. `monthly_budget_usd: null` means no monthly budget. `month_spend_usd: null` means no current meter copy is available; `month_spend_as_of` records when the copied meter was read.
+
+`max_concurrent_analyses` covers both trace analyses and task checks. Provider sandbox limits cover work sharing that provider. `max_concurrent_sessions` is reported but not yet enforced when creating managed sessions. `active_sessions` is zero for shared organizations because sessions carry no organization.
+
+```ts Fields
+interface OrgQuota {
+  max_concurrent_trials: number;
+  max_queued_trials: number;
+  max_concurrent_imports: number;
+  max_concurrent_analyses: number;
+  max_concurrent_sessions: number;
+  monthly_budget_usd: number | null;
+  max_concurrent_sandboxes_e2b: number;
+  max_concurrent_sandboxes_daytona: number;
+  max_concurrent_sandboxes_modal: number;
+}
+
+interface OrgUsage {
+  in_flight_trials: number;
+  queued_trials: number;
+  in_flight_imports: number;
+  in_flight_analyses: number;
+  active_sessions: number;
+  month_spend_usd: number | null;
+  month_spend_as_of: string | null;
+}
+```
+
+</Accordion>
+
+<Accordion title="Invitation and join result">
+
+`expires_at: null` means no expiry; `max_uses: null` means unlimited uses. Tokens appear only when an invitation is created.
+
+```ts Fields
+interface OrgInvite {
+  invite_id: string;
+  expires_at: string | null;
+  max_uses: number | null;
+  uses: number;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+interface OrgInviteCreated extends OrgInvite {
+  token: string;
+}
+
+interface OrgJoined {
+  org: Organization;
+  already_member: boolean;
+}
+```
+
+</Accordion>
+
+## Related operations
+
+SDK sharing methods belong to [jobs](/sdk-reference/methods/jobs) and [checks](/sdk-reference/methods/checks). Team rename/delete, role changes, and invitation revocation have no SDK methods; see [team HTTP operations](/sdk-reference/auth#manage-teams-over-http).

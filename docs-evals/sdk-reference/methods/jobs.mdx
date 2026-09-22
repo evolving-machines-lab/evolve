@@ -1,0 +1,1163 @@
+---
+title: "Jobs methods"
+description: "Every job method: inputs, results, and a small example in each SDK."
+---
+
+Examples use a configured `client`. See [client setup](/sdk-reference/index) for credentials and [returned objects](/sdk-reference/types) for result fields. Optional values are omitted unless shown. Python examples run inside an async function.
+
+Collection handles support two forms: `await` reads one page; `for await` / `async for` visits all pages. A page has `items`, `nextCursor`, and `hasMore` in TypeScript; `items`, `next_cursor`, and `has_more` in Python.
+
+| Work | Methods |
+| --- | --- |
+| Submit and follow | [start](#start), [get](#get), [list](#list), [watch](#watch) |
+| Read results | [trials](#trials), [tasks](#tasks), [compare](#compare), [grep](#grep), [download](#download) |
+| Change execution | [cancel](#cancel), [resume](#resume), [retry](#retry), [regrade](#regrade) |
+| Analyze | [analyze](#analyze), [watchAnalysis](#watchanalysis) |
+| Import | [upload](#upload), [getImport](#getimport), [watchImport](#watchimport), [listImports](#listimports) |
+| Share or remove | [share](#share), [unshare](#unshare), [shares](#shares), [delete](#delete) |
+
+## start
+
+Submit tasks and agent/model arms. Returns the accepted `Job`; execution continues in the cloud.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+start(
+  input: JobCreate,
+  options?: StartJobOptions
+): Promise<Job>;
+```
+
+```python Python signature
+async def start(
+    *,
+    datasets: List[Union[DatasetSelector, Dict[str, Any]]],
+    agents: List[Union[AgentArm, Dict[str, Any]]],
+    job_name: Optional[str] = None,
+    org: Optional[str] = None,
+    n_attempts: Optional[int] = None,
+    n_concurrent_trials: Optional[int] = None,
+    max_trial_spend_usd: Optional[float] = None,
+    sandbox_provider: Optional[str] = None,
+    retry: Optional[JobRetryConfigInput] = None,
+    analyze: Optional[AnalyzeConfigInput] = None,
+    system_log: Optional[bool] = None,
+    timeout_multiplier: Optional[float] = None,
+    agent_timeout_multiplier: Optional[float] = None,
+    verifier_timeout_multiplier: Optional[float] = None,
+    agent_setup_timeout_multiplier: Optional[float] = None,
+    environment_build_timeout_multiplier: Optional[float] = None,
+    agent_env: Optional[Dict[str, str]] = None,
+    verifier_env: Optional[Dict[str, str]] = None,
+    secrets: Optional[List[Union['JobSecretRef', 'JobSecretInline', Dict[str, Any]]]] = None,
+    idempotency_key: Optional[str] = None,
+) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const job = await client.start({
+  datasets: [
+    {
+      name: "harbor-examples",
+      version: "1.0",
+      task_names: ["hello-world"]
+    }
+  ],
+  agents: [
+    {
+      name: "codex",
+      model_name: "gpt-5.6-luna"
+    }
+  ],
+  max_trial_spend_usd: 1,
+  retry: {
+    max_retries: 0
+  },
+});
+```
+
+```python Python
+job = await client.start(
+    datasets=[
+        {
+            'name': 'harbor-examples',
+            'version': '1.0',
+            'task_names': ['hello-world'],
+        },
+    ],
+    agents=[
+        {
+            'name': 'codex',
+            'model_name': 'gpt-5.6-luna',
+        },
+    ],
+    max_trial_spend_usd=1,
+    retry={
+        'max_retries': 0,
+    },
+)
+```
+</CodeGroup>
+
+Required: nonempty `datasets` and `agents`; each selector needs `name`, and each arm needs `name` plus `model_name`. Python accepts dictionaries or the matching dataclasses.
+
+TypeScript takes one input object, then optional `{ idempotencyKey }`. Python takes keyword arguments, including `idempotency_key`.
+
+[Run settings](/sdk-reference/jobs#run-settings) explains defaults, timeout multipliers, retry policy, secrets, and accepted environment overrides. An omitted SDK option leaves the decision to the server; the returned job records the resolved settings. `agent_env` is a pass-through input that the managed platform currently refuses. `verifier_env` accepts only `REWARDKIT_JUDGE` and `REWARDKIT_MODEL`.
+
+<Accordion title="Input fields">
+
+```ts
+interface JobCreate {
+  job_name?: string;
+  org?: string;
+  datasets: DatasetSelector[];
+  agents: AgentArmInput[];
+  n_attempts?: number;
+  n_concurrent_trials?: number;
+  max_trial_spend_usd?: number;
+  sandbox_provider?: EvalSandboxProvider;
+  retry?: RetryConfigInput;
+  analyze?: AnalyzeConfigInput;
+  system_log?: boolean;
+  timeout_multiplier?: number;
+  agent_timeout_multiplier?: number;
+  verifier_timeout_multiplier?: number;
+  agent_setup_timeout_multiplier?: number;
+  environment_build_timeout_multiplier?: number;
+  agent_env?: Record<string, string>;
+  verifier_env?: Record<string, string>;
+  secrets?: Array<JobSecretRef | JobSecretInline>;
+}
+
+interface DatasetSelector {
+  name: string;
+  version?: string;
+  task_names?: string[];
+  exclude_task_names?: string[];
+  n_tasks?: number;
+}
+
+interface AgentArmInput {
+  name: string;
+  model_name: string;
+  version?: string | null;
+  reasoning_effort?: string | null;
+  kwargs?: Record<string, unknown> | null;
+  preset?: string | null;
+  skills?: string[] | null;
+}
+
+interface RetryConfigInput {
+  max_retries?: number;
+  include_exceptions?: string[] | null;
+  exclude_exceptions?: string[] | null;
+  wait_multiplier?: number;
+  min_wait_sec?: number;
+  max_wait_sec?: number;
+}
+
+interface JobSecretRef {
+  name: string;
+  label?: string;
+  as?: string;
+}
+
+interface JobSecretInline {
+  name: string;
+  value: string;
+  delivery: "brokered" | "direct";
+  label?: string;
+  as?: string;
+}
+```
+
+</Accordion>
+
+## get
+
+Read one job by id. Returns `Job`, including resolved configuration, trial counts, statistics, and provenance.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+get(id: string): Promise<Job>;
+```
+
+```python Python signature
+async def get(id: str) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const job = await client.get(jobId);
+```
+
+```python Python
+job = await client.get(job_id)
+```
+</CodeGroup>
+
+## list
+
+List jobs, check summaries, or both. Returns a page or an iterable of matching rows.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+list(
+  options?: ListJobsOptions & { kind?: "job" }
+): JobList;
+list(
+  options: ListJobsOptions & { kind: "check" }
+): CheckRowList;
+list(
+  options: ListJobsOptions & { kind: "all" }
+): JobListItemList;
+list(options: ListJobsOptions): JobListItemList;
+```
+
+```python Python signature
+def list(
+    *,
+    search: Optional[str] = None,
+    scope: Optional[JobListScope] = None,
+    kind: Optional[JobListKind] = None,
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
+) -> _PaginatedList: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const page = await client.list({
+  kind: "all",
+  scope: "org",
+  limit: 20
+});
+```
+
+```python Python
+page = await client.list(
+    kind='all',
+    scope='org',
+    limit=20,
+)
+```
+</CodeGroup>
+
+| Option | Type and default |
+| --- | --- |
+| `search` | Optional string; filters job and dataset names |
+| `scope` | `my` (default), `shared`, or `org` |
+| `kind` | `job` (default), `check`, or `all` |
+| `limit`, `cursor` | Optional page size and cursor; default 50, maximum 200 |
+
+Read `row.kind` before using a mixed row. A `check` row has task-check counts, not trial counts. See [row fields](/sdk-reference/types#job-or-check-row).
+
+## trials
+
+List a job’s attempts. Returns a page or an iterable of `Trial`.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+trials(
+  id: string,
+  options?: ListTrialsOptions
+): TrialList;
+```
+
+```python Python signature
+def trials(
+    id: str,
+    *,
+    status: Optional[List[str]] = None,
+    dataset: Optional[str] = None,
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
+) -> _PaginatedList: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const page = await client.trials(jobId, {
+  status: ["SCORING_ERROR"]
+});
+```
+
+```python Python
+page = await client.trials(
+    job_id,
+    status=['SCORING_ERROR'],
+)
+```
+</CodeGroup>
+
+Optional `status` is a list of [trial statuses](/sdk-reference/types#status-vocabulary). `dataset` matches the trial’s `source` exactly. `limit` defaults to 50 (maximum 200); `cursor` continues a page. A list row may truncate an exception message; `trials().get(id)` reads its full detail.
+
+## tasks
+
+Read one row per task and dataset source: trial tally, mean reward, measured cost, and latest task quality check. Returns a page or iterable of `JobTaskRollup`.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+tasks(
+  id: string,
+  options?: ListJobTasksOptions
+): JobTaskRollupList;
+```
+
+```python Python signature
+def tasks(
+    id: str,
+    *,
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
+) -> _PaginatedList: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const page = await client.tasks(jobId, {
+  limit: 20
+});
+```
+
+```python Python
+page = await client.tasks(
+    job_id,
+    limit=20,
+)
+```
+</CodeGroup>
+
+Optional `limit` defaults to 50 (maximum 200); `cursor` continues a page. See [task rollup fields](/sdk-reference/types#task-rollups).
+
+## watch
+
+Follow job events, or wait for the final `Job`. Use one form per handle.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+watch(id: string, options?: WatchJobOptions): JobWatch;
+```
+
+```python Python signature
+def watch(
+    id: str,
+    *,
+    on_event: Optional[Callable[[JobEvent], None]] = None,
+    timeout_s: Optional[float] = None,
+    reconnect_delay_s: float = 1.0,
+    max_reconnect_delay_s: float = 30.0,
+) -> _JobWatch: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const final = await client.watch(jobId, {
+  onEvent: e => console.log(e.type)
+});
+```
+
+```python Python
+final = await client.watch(
+    job_id,
+    on_event=lambda e: print(e.type),
+)
+```
+</CodeGroup>
+
+| TypeScript option | Python option | Default |
+| --- | --- | --- |
+| `onEvent(event)` | `on_event(event)` | No callback |
+| `reconnectDelayMs` | `reconnect_delay_s` | 1,000 ms / 1 second |
+| `maxReconnectDelayMs` | `max_reconnect_delay_s` | 30,000 ms / 30 seconds |
+| `signal` | `timeout_s` | No client cancellation signal / no timeout |
+
+Iteration returns `JobEvent`, with `seq`, `type`, and `data`. The stream replays from the beginning and resumes on reconnect. [Event payloads](/sdk-reference/types#job-events) document every event type. A `trial.settled` event can be followed by `trial.retrying`; it does not mean the job is finished.
+
+## cancel
+
+Request cancellation. Returns `Job`. Repeating it on a terminal job leaves the job unchanged.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+cancel(id: string): Promise<Job>;
+```
+
+```python Python signature
+async def cancel(id: str) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const job = await client.cancel(jobId);
+```
+
+```python Python
+job = await client.cancel(job_id)
+```
+</CodeGroup>
+
+## resume
+
+Create a new job for a terminal source’s failed and stopped work. Returns `Job`; the source remains unchanged.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+resume(
+  id: string,
+  request?: ResumeRequest,
+  options?: StartJobOptions
+): Promise<Job>;
+```
+
+```python Python signature
+async def resume(
+    id: str,
+    *,
+    filter_error_types: Optional[List[str]] = None,
+    idempotency_key: Optional[str] = None,
+) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const next = await client.resume(jobId, {}, {
+  idempotencyKey: requestId
+});
+```
+
+```python Python
+next_job = await client.resume(
+    job_id,
+    idempotency_key=request_id,
+)
+```
+</CodeGroup>
+
+Optional `filter_error_types: string[]` selects failures by `exception_info.exception_type`. Omitted, the default set includes stopped trials. The new job records `source_jobs[].action: "resume"`. Imported jobs cannot resume.
+
+## retry
+
+Create a new job for selected settled trials, including scored trials. Returns `Job`.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+retry(
+  id: string,
+  request?: RetryRequest,
+  options?: StartJobOptions
+): Promise<Job>;
+```
+
+```python Python signature
+async def retry(
+    id: str,
+    *,
+    trial_ids: Optional[List[str]] = None,
+    failed_only: Optional[bool] = None,
+    idempotency_key: Optional[str] = None,
+) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const next = await client.retry(jobId, {
+  trial_ids: [trialId]
+});
+```
+
+```python Python
+next_job = await client.retry(
+    job_id,
+    trial_ids=[trial_id],
+)
+```
+</CodeGroup>
+
+| Option | Meaning |
+| --- | --- |
+| `trial_ids` | Explicit settled trials; the source job may still be running |
+| `failed_only` | Select the terminal job’s failed trials |
+| Neither selection | Repeat every trial of the terminal source job |
+| `idempotencyKey` / `idempotency_key` | Optional stable request key; TypeScript puts it in the third argument |
+
+Do not combine `trial_ids` with `failed_only`. The new job records `action: "retry"`. Imported jobs cannot retry.
+
+## regrade
+
+Run verifiers again against eligible recorded inputs. Returns a new `Job` with `is_regrade: true`; it does not rerun the agent.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+regrade(
+  id: string,
+  request?: RegradeRequest
+): Promise<Job>;
+```
+
+```python Python signature
+async def regrade(
+    id: str,
+    *,
+    statuses: Optional[List[str]] = None,
+    task_name: Optional[str] = None,
+) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const job = await client.regrade(jobId, {
+  task_name: "hello-world"
+});
+```
+
+```python Python
+job = await client.regrade(
+    job_id,
+    task_name='hello-world',
+)
+```
+</CodeGroup>
+
+The source job must be terminal. Optional `statuses: TrialStatus[]` and `task_name: string` narrow selection. Shared-verifier, older unretained, and imported inputs may be ineligible. [Regrade requirements](/sdk-reference/jobs) explain the boundary.
+
+## analyze
+
+Queue analysis of a terminal job’s traces. Returns the `Job` immediately, with its analysis wave pending.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+analyze(
+  id: string,
+  request?: AnalyzeConfigInput
+): Promise<Job>;
+```
+
+```python Python signature
+async def analyze(
+    id: str,
+    *,
+    model_name: Optional[str] = None,
+    rubric: Optional[Rubric] = None,
+    prompt: Optional[str] = None,
+    sandbox_provider: Optional[EvalSandboxProvider] = None,
+    reasoning_effort: Optional[str] = None,
+    n_concurrent: Optional[int] = None,
+    passing: Optional[bool] = None,
+    failing: Optional[bool] = None,
+    n_trials: Optional[int] = None,
+    trial_ids: Optional[List[str]] = None,
+) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const job = await client.analyze(jobId, {
+  failing: true,
+  n_trials: 10
+});
+```
+
+```python Python
+job = await client.analyze(
+    job_id,
+    failing=True,
+    n_trials=10,
+)
+```
+</CodeGroup>
+
+All options are optional. `analyses().defaults()` reads the current model, effort, provider, rubric, and prompt defaults.
+
+| Selection | Meaning |
+| --- | --- |
+| `passing` | Only `SCORED` trials with primary reward exactly `1` |
+| `failing` | Other analyzable trials; mutually exclusive with `passing` |
+| `trial_ids` | Explicit trials from this job; combines with the reward filter |
+| `n_trials` | Positive cap after selection |
+| `n_concurrent` | Requested parallel analyses, further bounded by the organization |
+
+Cancelled trials are excluded. `trial_ids` is accepted here, but refused inside `start({ analyze })`. The [analysis guide](/sdk-reference/analyses) covers custom rubric and prompt semantics.
+
+<Accordion title="Input fields">
+
+```ts
+interface AnalyzeConfigInput {
+  model_name?: string;
+  rubric?: Rubric;
+  prompt?: string;
+  reasoning_effort?: string;
+  sandbox_provider?: EvalSandboxProvider;
+  n_concurrent?: number;
+  passing?: boolean;
+  failing?: boolean;
+  n_trials?: number;
+  trial_ids?: string[];
+}
+```
+
+</Accordion>
+
+## watchAnalysis
+
+Python: `watch_analysis`. Wait for a manually queued analysis wave to settle. Returns the final `Job`.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+watchAnalysis(
+  id: string,
+  options?: WatchAnalysisOptions
+): Promise<Job>;
+```
+
+```python Python signature
+async def watch_analysis(
+    id: str,
+    *,
+    on_stats: Optional[Callable[[Job], None]] = None,
+    poll_interval_s: float = 2.0,
+    timeout_s: Optional[float] = None,
+) -> Job: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const job = await client.watchAnalysis(jobId, {
+  pollIntervalMs: 2000
+});
+```
+
+```python Python
+job = await client.watch_analysis(
+    job_id,
+    poll_interval_s=2,
+)
+```
+</CodeGroup>
+
+Optional `onStats(job)` / `on_stats(job)` runs when the analysis tally changes. Polling starts at 2 seconds, doubles while unchanged to 30 seconds, and resets on a change. TypeScript accepts `signal`; Python accepts `timeout_s`.
+
+Call after `analyze()`. A job with no analysis tally can wait indefinitely. On a running job with embedded analysis, a temporarily empty queue can end this watch before the remaining trials settle.
+
+## compare
+
+Compare 2–10 jobs you can read. Returns per-job aggregates and a task matrix, with disagreements first.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+compare(ids: string[]): Promise<CompareResponse>;
+```
+
+```python Python signature
+async def compare(ids: List[str]) -> CompareResponse: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const comparison = await client.compare(
+  [firstId, secondId]
+);
+```
+
+```python Python
+comparison = await client.compare(
+    [first_id, second_id],
+)
+```
+</CodeGroup>
+
+Read `comparison.jobs` and `comparison.taskMatrix` / `comparison.task_matrix`. Means use scored trials with non-null rewards; `coverage.scored` counts all scored trials. See [all comparison fields](/sdk-reference/types#comparison-results).
+
+## grep
+
+Search every trial’s parsed trace in one job. Returns one page of matching trial groups.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+grep(
+  id: string,
+  q: string,
+  options?: GrepJobOptions
+): Promise<JobGrepPage>;
+```
+
+```python Python signature
+async def grep(
+    id: str,
+    q: str,
+    *,
+    type: Optional[str] = None,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> JobGrepPage: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const page = await client.grep(
+  jobId,
+  "permission denied",
+  {
+    limit: 20
+  }
+);
+```
+
+```python Python
+page = await client.grep(
+    job_id,
+    'permission denied',
+    limit=20,
+)
+```
+</CodeGroup>
+
+Required `q` is a case-insensitive POSIX regular expression. Optional `type` matches an event type exactly. `limit` defaults to 50 (maximum 200); `cursor` continues the trial groups.
+
+Each group has `trial_id`, nullable `task_name`, exact `match_count`, and up to five sampled `events`. Use `trials().trace(trialId, { grep: q })` / `trace(trial_id, grep=q)` to read all matching events for one trial.
+
+## download
+
+Download a terminal job’s results as a `.tar.gz` in the [job-directory format](/core-concepts/trial-outputs).
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+download(id: string): Promise<Buffer>;
+download(
+  id: string,
+  options: { to: string }
+): Promise<string>;
+download(
+  id: string,
+  options: { stream: true }
+): Promise<ReadableStream<Uint8Array>>;
+download(
+  id: string,
+  options?: DownloadJobOptions
+): Promise<Buffer | string | ReadableStream<Uint8Array>>;
+```
+
+```python Python signature
+async def download(
+    id: str,
+    *,
+    to: Optional[str] = None,
+) -> bytes | str: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const path = await client.download(jobId, {
+  to: "./results"
+});
+```
+
+```python Python
+path = await client.download(
+    job_id,
+    to='./results',
+)
+```
+</CodeGroup>
+
+| Delivery | TypeScript | Python |
+| --- | --- | --- |
+| Omit options | `Buffer` | `bytes` |
+| `to` directory | Saved file path (`string`) | Saved file path (`str`) |
+| `stream: true` | `ReadableStream<Uint8Array>` | Not exposed |
+
+In-memory and saved downloads verify length and any server digest. For a raw TypeScript stream, the caller owns verification. `to` saves an archive; it does not extract it.
+
+## upload
+
+Import an existing job directory or archive. Returns `JobImport`, not `Job`.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+upload(
+  source: string | { archive_url: string },
+  options?: UploadJobOptions,
+): Promise<JobImport>;
+```
+
+```python Python signature
+async def upload(
+    dir_or_archive: Optional[str] = None,
+    *,
+    archive_url: Optional[str] = None,
+    dataset: Optional[str] = None,
+    on_upload_progress: Optional[Callable[[int, int], None]] = None,
+    on_registered: Optional[Callable[[str], None]] = None,
+) -> JobImport: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const record = await client.upload("./recorded-job", {
+  dataset: "harbor-examples@1.0"
+});
+```
+
+```python Python
+record = await client.upload(
+    './recorded-job',
+    dataset='harbor-examples@1.0',
+)
+```
+</CodeGroup>
+
+| Input | TypeScript | Python |
+| --- | --- | --- |
+| Directory or `.tar.gz` | First argument: path string | First argument: `dir_or_archive` |
+| Public HTTPS archive | `{ archive_url: "https://…" }` | `archive_url="https://…"` |
+| Dataset link | `options.dataset` | `dataset=` |
+| Byte progress | `onUploadProgress(sent, total)` | `on_upload_progress(sent, total)` |
+| Early import id | `onRegistered(id)` | `on_registered(id)` |
+
+Supply one source. URL imports have no client upload progress. `onRegistered` fires only on the resumable upload path, before transfer; the single-request path returns the id when accepted. Follow the import with `watchImport` / `watch_import`, then read `job_id`.
+
+For a local agent session, use [Upload an SDK run](/core-concepts/upload-sdk-session).
+
+## getImport
+
+Python: `get_import`. Read one import owned by the caller. Returns `JobImport`, including status, progress, skipped trials, failure, and eventual `job_id`.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+getImport(id: string): Promise<JobImport>;
+```
+
+```python Python signature
+async def get_import(id: str) -> JobImport: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const record = await client.getImport(importId);
+```
+
+```python Python
+record = await client.get_import(import_id)
+```
+</CodeGroup>
+
+## watchImport
+
+Python: `watch_import`. Wait for an import to reach `COMPLETED` or `FAILED`. Returns `JobImport` in either case.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+watchImport(
+  id: string,
+  options?: WatchJobImportOptions
+): Promise<JobImport>;
+```
+
+```python Python signature
+async def watch_import(
+    id: str,
+    *,
+    on_status: Optional[Callable[[JobImport], None]] = None,
+    on_progress: Optional[Callable[[JobImportProgress, JobImport], None]] = None,
+    poll_interval_s: float = 2.0,
+    timeout_s: Optional[float] = None,
+) -> JobImport: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const record = await client.watchImport(importId, {
+  pollIntervalMs: 2000
+});
+```
+
+```python Python
+record = await client.watch_import(
+    import_id,
+    poll_interval_s=2,
+)
+```
+</CodeGroup>
+
+Optional callbacks: `onStatus(record)` / `on_status(record)` on status changes; `onProgress(progress, record)` / `on_progress(progress, record)` on progress changes. Polling defaults to 2 seconds. TypeScript accepts `signal`; Python accepts `timeout_s`.
+
+Transient 429/503 replies delay the watch. A returned `FAILED` import carries `failure`; success supplies `job_id` while the imported job still exists.
+
+## listImports
+
+Python: `list_imports`. Recover previous import ids. Returns a page or iterable of the caller’s `JobImport` records, newest first.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+listImports(
+  options?: ListJobImportsOptions
+): JobImportList;
+```
+
+```python Python signature
+def list_imports(
+    *,
+    status: Optional[str] = None,
+    limit: Optional[int] = None,
+    cursor: Optional[str] = None,
+) -> _PaginatedList: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const page = await client.listImports({
+  status: "FAILED",
+  limit: 20
+});
+```
+
+```python Python
+page = await client.list_imports(
+    status='FAILED',
+    limit=20,
+)
+```
+</CodeGroup>
+
+Optional `status` uses `QUEUED`, `RUNNING`, `COMPLETED`, or `FAILED`; `limit` defaults to 50 (maximum 200); `cursor` continues results.
+
+## share
+
+Grant read access to a job you created. Returns the whole `JobShares` state.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+share(
+  id: string,
+  request: JobShareRequest
+): Promise<JobShares>;
+```
+
+```python Python signature
+async def share(
+    id: str,
+    *,
+    link: bool = False,
+    emails: Optional[List[str]] = None,
+) -> JobShares: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const shares = await client.share(jobId, {
+  link: true
+});
+```
+
+```python Python
+shares = await client.share(
+    job_id,
+    link=True,
+)
+```
+</CodeGroup>
+
+Provide `link: true` / `link=True`, `emails: string[]` / `emails=[...]`, or both. A link is unlisted. Email sharing sends an invitation to each new address; recipients can read, not operate, the job. Up to 50 email shares per job. See [share-state fields](/sdk-reference/types#sharing-and-deletion).
+
+## unshare
+
+Revoke a link or email grants. Returns `JobShares`. Creator-only and idempotent.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+unshare(
+  id: string,
+  request: JobShareRequest
+): Promise<JobShares>;
+```
+
+```python Python signature
+async def unshare(
+    id: str,
+    *,
+    link: bool = False,
+    emails: Optional[List[str]] = None,
+) -> JobShares: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const shares = await client.unshare(jobId, {
+  link: true
+});
+```
+
+```python Python
+shares = await client.unshare(
+    job_id,
+    link=True,
+)
+```
+</CodeGroup>
+
+Accepts the same `link` and `emails` fields as `share`. A revoked link stops working; sharing again creates a new link.
+
+## shares
+
+Read current visibility, link state, and email grants. Returns `JobShares`. Creator-only.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+shares(id: string): Promise<JobShares>;
+```
+
+```python Python signature
+async def shares(id: str) -> JobShares: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const shares = await client.shares(jobId);
+```
+
+```python Python
+shares = await client.shares(job_id)
+```
+</CodeGroup>
+
+## delete
+
+Permanently remove a terminal job you created and its stored trial and analysis results. Returns `JobDeleteResult`.
+
+<Accordion title="Signature">
+
+<CodeGroup>
+```ts TypeScript signature
+delete(id: string): Promise<JobDeleteResult>;
+```
+
+```python Python signature
+async def delete(id: str) -> JobDeleteResult: ...
+```
+</CodeGroup>
+
+</Accordion>
+
+<CodeGroup>
+```ts TypeScript
+const receipt = await client.delete(jobId);
+```
+
+```python Python
+receipt = await client.delete(job_id)
+```
+</CodeGroup>
+
+The receipt has `job_id`, `trials_deleted`, and `analyses_deleted`. Active analyses or a live derived regrade prevent deletion. Regrade job ids are not deleted through this method. Deleting an imported job releases its duplicate-import lock.

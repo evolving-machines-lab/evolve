@@ -1,0 +1,127 @@
+---
+title: "Task environment"
+description: "Give the agent the tools, files, and services the task needs."
+---
+
+The environment is the Linux system where the agent works. Install dependencies and seed files here; keep hidden tests in `tests/`.
+
+## Choose an image source
+
+### Dockerfile
+
+```text
+my-task/
+└── environment/
+    ├── Dockerfile
+    └── input.csv
+```
+
+```dockerfile environment/Dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY input.csv /app/input.csv
+```
+
+Evolve builds the image when you publish the dataset. The build context is `environment/`, so `COPY` paths are relative to that directory.
+
+### Prebuilt image
+
+```toml task.toml
+[environment]
+docker_image = "python:3.12-slim"
+workdir = "/app"
+```
+
+Use a public image with an explicit tag or digest. Untagged images and `:latest` are rejected. A prebuilt image takes precedence over `environment/Dockerfile`.
+
+If neither a Dockerfile nor Compose file is present, files under `environment/` are uploaded to the working directory. These files must be UTF-8 text; put binary data inside the image.
+
+### Multiple containers
+
+```text
+my-task/
+└── environment/
+    ├── Dockerfile
+    └── docker-compose.yaml
+```
+
+The file must be named `environment/docker-compose.yaml`. The agent runs in `main`; Evolve supplies that service from the task's image or Dockerfile when you do not define it. Other services provide databases or other task dependencies.
+
+Compose runs on E2B or Daytona. Compose with `no-network`, GPUs, or multi-step tasks is not supported. Follow the [multi-container guide](/core-concepts/compose) for a complete environment example.
+
+## Working directory and user
+
+The working directory resolves in this order:
+
+```text
+1. [environment].workdir
+   If set
+   ↓ otherwise
+2. WORKDIR in the agent's Dockerfile
+   If available
+   ↓ otherwise
+3. /app
+```
+
+For a prebuilt image, set `workdir` explicitly when it needs a path other than `/app`.
+
+Use `[agent].user` to select an existing username. Otherwise, the parsed Dockerfile’s `USER` applies, with root as the fallback. Use `root` or `0` for root; other numeric UIDs and `user:group` declarations are rejected. The named user must already exist in the image, and the image must include `su`. Evolve prepares the user’s home before running the agent.
+
+```toml task.toml
+[agent]
+user = "dev"
+
+[environment]
+workdir = "/workspace"
+```
+
+## Start a service
+
+An image's `ENTRYPOINT` runs before the agent starts. `CMD` is not used as the task command; keep-alive entrypoints such as `sleep infinity` do not start a service.
+
+Add a healthcheck when the agent must wait for a service:
+
+```toml task.toml
+[environment.healthcheck]
+command = "curl -fsS http://localhost:8000/health"
+interval_sec = 5
+timeout_sec = 30
+start_period_sec = 0
+start_interval_sec = 5
+retries = 3
+```
+
+The agent starts after the check exits `0`. Exhausted retries fail the trial before the agent runs. The values above are the defaults; only `command` is required.
+
+**Note:**
+
+A separate verifier cannot reuse an agent image that starts a service. Give it its own verifier image, or use shared verification.
+
+## Add MCP tools
+
+Declare servers in `task.toml`. Evolve adds them to the harness's MCP configuration.
+
+```toml Remote server
+[[environment.mcp_servers]]
+name = "docs-search"
+transport = "streamable-http"
+url = "https://tools.example.com/mcp"
+```
+
+```toml Local process
+[[environment.mcp_servers]]
+name = "sqlite"
+transport = "stdio"
+command = "mcp-server-sqlite"
+args = ["--db-path", "/app/data.db"]
+```
+
+A remote URL must be reachable under the task's network policy. A local process must be installed in the image; downloading it with `npx` or `uvx` needs network access. `stdio` processes inherit the task environment variables and do not accept a separate `env` field.
+
+## Supported scope
+
+Evolve runs headless Linux tasks. It does not provide a desktop, display server, Windows environment, or Apptainer runtime.
+
+**[Configure the task](/core-concepts/task-config)**
+
+Set resources, timeouts, and network access.

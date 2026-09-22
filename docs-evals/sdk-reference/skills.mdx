@@ -1,69 +1,68 @@
 ---
-title: "skills"
-description: "Upload and manage platform-stored skills."
+title: "Uploaded skills"
+description: "Store skill folders and attach them to evaluation agents."
 ---
 
-`skills()` returns the skills client. An uploaded skill is referenced from a job as `upload:<id>` or `name:<skill-name>`.
+[Method reference: calls, parameters, and response fields](/sdk-reference/methods/skills).
 
-## upload
+`skills()` manages content mounted into an agent run. It is separate from `evolve skills`, which serves documentation to coding agents.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    upload(directory: string, options?: { org?: string }): Promise<SkillUpload[]>
-    ```
+## Upload and attach
 
-    Upload a skill folder. Its name becomes your moving name pointer. The record belongs to you and to an organization (`org`, a slug or id; omitted, the client's `org` default, else your personal one): its members may reference it from their own jobs, and only you can delete it.
+```text
+my-skill/
+├── SKILL.md
+├── scripts/
+└── references/
+```
 
-    ```ts
-    const [skill] = await skills().upload("./my-skill", { org: "acme" });
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def upload(directory: str, *, org: Optional[str] = None) -> List[SkillUpload]
-    ```
+<CodeGroup>
+```ts TypeScript
+import { skills, jobs } from "@evolvingmachines/evolve";
 
-    Upload a skill folder. Its name becomes your moving name pointer. The record belongs to you and to an organization (`org`, a slug or id; omitted, the client's `org` default, else your personal one): its members may reference it from their own jobs, and only you can delete it.
+const [skill] = await skills().upload("./my-skill");
+const job = await jobs().start({
+  datasets: [{ name: "harbor-examples", version: "1.0", task_names: ["hello-world"] }],
+  agents: [{ name: "codex", model_name: "gpt-5.6-luna", skills: [skill.ref] }],
+  max_trial_spend_usd: 0.50,
+  retry: { max_retries: 0 },
+});
+```
 
-    ```python
-    [skill] = await skills().upload("./my-skill", org="acme")
-    ```
-  </Tab>
-</Tabs>
+```python Python
+from evolve import skills, jobs
 
-## list, get, delete
+uploaded = await skills().upload("./my-skill")
+skill = uploaded[0]
+job = await jobs().start(
+    datasets=[{"name": "harbor-examples", "version": "1.0", "task_names": ["hello-world"]}],
+    agents=[{"name": "codex", "model_name": "gpt-5.6-luna", "skills": [skill.ref]}],
+    max_trial_spend_usd=0.50,
+    retry={"max_retries": 0},
+)
+```
+</CodeGroup>
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    list(options?: { scope?: "my" | "shared" | "org"; limit?: number; cursor?: string }): SkillUploadList
-    get(id: string): Promise<SkillUpload & { skill_md: string | null }>
-    delete(id: string): Promise<void>
-    ```
+Upload returns a list. A folder containing multiple child skill folders can create multiple records.
 
-    Uploads, one upload with its `SKILL.md`, or delete one. `scope` is the lists' own vocabulary: `"my"` (yours, the default), `"shared"` (your organizations' other members') or `"org"` (everything in your organizations, yours included). A skill a running job references cannot be deleted, and deleting stays with the owner.
+## Pick a reference
 
-    ```ts
-    const one = await skills().get(skill.id);
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    def list(
-        *,
-        scope: Optional[Literal['my', 'shared', 'org']] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    )
-    async def get(skill_id: str) -> SkillUpload
-    async def delete(skill_id: str) -> None
-    ```
+| Reference | Meaning |
+| --- | --- |
+| `upload:<id>` | This immutable uploaded content |
+| `name:<skill-name>` | The name's current uploaded version, resolved when the job is created |
 
-    Your uploads, one upload, or delete one. A skill a running job references cannot be deleted.
+Uploading identical content under the same name reuses the record. New content creates a new record and moves the name reference. Existing jobs keep their recorded skill locks.
 
-    ```python
-    one = await skills().get(skill.id)
-    ```
-  </Tab>
-</Tabs>
+## Methods
+
+| Action | TypeScript | Python | Returns |
+| --- | --- | --- | --- |
+| Upload a directory | `upload(directory, {org})` | `upload(directory, org=...)` | Skill list |
+| List uploads | `list({scope, limit, cursor})` | `list(scope=..., limit=..., cursor=...)` | Paginated handle |
+| Read content/metadata | `get(idOrNameRef)` | `get(id_or_name_ref)` | Skill metadata and `skill_md` |
+| Delete an upload | `delete(id)` | `delete(id)` | No content |
+
+`org` overrides the client default. List scopes are `my`, `shared`, and `org`. Team members can reference visible skills; only their owner can delete them. A skill used by a non-terminal job cannot be deleted.
+
+The metadata includes `id`, `name`, `org`, `digest`, `size_bytes`, `description`, `ref`, and `created_at`. See [skill concepts](/core-concepts/skills) for git-backed references and mounting behavior.

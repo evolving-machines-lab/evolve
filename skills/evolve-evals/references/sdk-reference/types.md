@@ -1,0 +1,1256 @@
+---
+title: "Returned objects"
+description: "Read jobs, trials, pages, costs, and verdicts without guessing their shape."
+---
+
+The SDK returns structured data. TypeScript uses objects. Python uses dataclasses for most entities and dictionaries for stats, analyses, checks, and rubric records.
+
+## Field access by language
+
+| Value | TypeScript | Python |
+| --- | --- | --- |
+| Job id | `job.id` | `job.id` |
+| Trial reward | `trial.reward` | `trial.reward` |
+| Job cost | `job.stats.cost_usd` | `job.stats.get("cost_usd")` |
+| Analysis label | `analysis.label` | `analysis["label"]` |
+| Check results | `check.results` | `check["results"]` |
+| Filesystem state | `status.state` | `status.state` |
+| Page cursor | `page.nextCursor` | `page.next_cursor` |
+| Trial tally | `job.trials.byStatus` | `job.trials.by_status` |
+| Compare matrix | `comparison.taskMatrix` | `comparison.task_matrix` |
+
+Most domain field names are snake_case in both languages. One deliberate Python exception is a check row's task tally: `row.tasks["byStatus"]`.
+
+## Job or check row?
+
+`jobs.list()` defaults to jobs. With `kind="all"`, discriminate before reading fields:
+
+```ts TypeScript
+import { jobs } from "@evolvingmachines/evolve";
+for await (const row of jobs().list({
+  kind: "all"
+})) {
+  if (row.kind === "job") {
+    console.log(row.job_name, row.trials.byStatus);
+  }
+  else {
+    console.log(row.name, row.tasks.byStatus);
+  }
+}
+```
+
+```python Python
+from evolve import jobs
+
+async for row in jobs().list(kind="all"):
+    if row.kind == "job":
+        print(row.job_name, row.trials.by_status)
+    else:
+        print(row.name, row.tasks["byStatus"])
+```
+
+A check row has task-check counts. It does not have job arms, attempts, trial counts, or trial spend caps.
+
+## Status vocabulary
+
+| Entity | States | Terminal |
+| --- | --- | --- |
+| Job | `QUEUED`, `RUNNING`, `CANCELLING`, `COMPLETED`, `CANCELLED`, `FAILED` | Last three |
+| Trial | `QUEUED`, `RUNNING`, `SCORING`, `SCORED`, `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`, `CANCELLED` | All except first three |
+| Analysis / task check | `queued`, `running`, `completed`, `failed` | Last two |
+| Check group | `queued`, `running`, `completed` | `completed` |
+| Import | `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED` | Last two |
+| Dataset version | `DRAFT`, `RECEIVING`, `IMPORTING`, `BUILDING`, `READY`, `FAILED`, `ARCHIVED` | Consult [meta](/sdk-reference/meta) for the published terminal set |
+
+`FAILED` remains part of the job vocabulary. Do not infer all trial outcomes from the job's status: a completed job can contain scoring, infrastructure, or budget failures.
+
+## Null is information
+
+| Value | Meaning |
+| --- | --- |
+| `reward: 0` | A real primary reward of zero |
+| `reward: null` | No primary reward is available; inspect status and the full rewards map |
+| `analysis: null` | No attached analysis result |
+| `usage: null` | No usage reading is available |
+| `finished_at: null` | Not finished, or no finish timestamp was recorded |
+| `capture: null` | No settled capture summary is available |
+
+Do not replace missing cost or reward with zero in a report.
+
+## Cost and statistics
+
+`usage` groups `spent_usd`, input/cached/cache-write/output token counts, `as_of`, and `provisional`. A provisional reading can increase.
+
+| `spend_source` | Meaning |
+| --- | --- |
+| `measured` | Final gateway reading |
+| `measured_provisional` | Measured lower bound awaiting confirmation |
+| `assumed_cap` | Spend was not measured; stored zero is a placeholder, not proof of no spend |
+
+Job `stats.cost_usd` includes trial model spend and judge spend. `judge_cost_usd` identifies the judge share. Analysis cost is separate in `stats.analysis.cost_usd`; GPU compute estimates are separate too.
+
+Job completion/error/cancellation counters overlap. Use the per-status trial tally when you need disjoint counts.
+
+`passAtK(job)` / `pass_at_k(job)` reads sorted points from the server's `stats.evals` groups. It does not recompute them locally. A single-attempt job, incomplete group, or non-binary rewards may have no pass@k points.
+
+## Name types safely
+
+TypeScript exports useful types such as `JobCreate`, `Job`, `Trial`, and `HostedClientConfig`. Some nested input/result types are inferred through methods instead of exported by name:
+
+```ts
+import { checks, type JobCreate } from "@evolvingmachines/evolve";
+
+type CheckInput = Parameters<ReturnType<typeof checks>["create"]>[0];
+type JobRetryPolicy = NonNullable<JobCreate["retry"]>;
+```
+
+The root-exported `RetryConfig` is for the separate Swarm API. Use the job's retry shape for managed evals.
+
+Python exports hosted types such as `DatasetSelector`, `AgentArm`, and `JobRetryConfigInput`. Dataclass fields use attributes; TypedDict values use dictionary keys. The schemas below name each field. A `?` marks a field that may be absent; `null` means it may be present without a value. Python uses `None` for null and normal dictionaries for nested TypedDict records.
+
+## Job fields
+
+`Job` is returned by submission, detail reads, and job actions. A returned object describes the accepted state; use `watch` to wait for execution.
+
+| Field | Read it for |
+| --- | --- |
+| `trials.total`, `trials.byStatus` | Disjoint counts by trial status; Python uses `by_status` |
+| `counts` | Selected agent and task counts |
+| `stats` | Rewards, costs, errors, and analysis totals |
+| `build_exclusions` | Tasks excluded because their build failed |
+| `source_jobs` | Parent jobs and `resume`, `retry`, or `regrade` provenance |
+| `upload` | Imported-result provenance; null for native execution |
+| `viewer` | Caller’s access: `creator`, `member`, `shared`, `link`, or null |
+
+The compact TypeScript schemas below describe data shapes. Some nested names are inferred types rather than root exports. Python fields keep the same spelling unless the language table above says otherwise.
+
+### Job: every top-level field
+
+```ts
+interface Job {
+  kind: "job";
+  id: string;
+  job_name: string;
+  status: JobStatus;
+  datasets: DatasetRef[];
+  agents: AgentArm[];
+  n_attempts: number;
+  n_concurrent_trials: number;
+  max_trial_spend_usd: number;
+  worst_case_spend_usd: number;
+  retry: RetryConfig;
+  analyze: AnalyzeConfig | null;
+  timeout_multiplier: number;
+  agent_timeout_multiplier: number | null;
+  verifier_timeout_multiplier: number | null;
+  agent_setup_timeout_multiplier: number | null;
+  environment_build_timeout_multiplier: number | null;
+  sandbox_provider: EvalSandboxProvider | null;
+  org: string | null;
+  visibility: JobVisibility;
+  system_log: boolean;
+  counts: { agents: number; tasks: number };
+  build_exclusions: JobBuildExclusion[];
+  n_total_trials: number;
+  trials: TrialStatusTally;
+  stats: JobStats;
+  failure: JobFailure | null;
+  source_jobs: SourceJob[];
+  is_regrade: boolean;
+  viewer: JobViewer | null;
+  upload: UploadProvenance | null;
+  idempotent_replay: boolean;
+  started_at: string;
+  updated_at: string;
+  finished_at: string | null;
+}
+
+interface TrialStatusTally {
+  total: number;
+  byStatus: TrialCounts;
+}
+```
+
+### Resolved datasets, agent arms, retry and analysis policy
+
+```ts
+interface DatasetRef {
+  name: string;
+  version: string;
+}
+
+interface AgentArm {
+  name: string;
+  model_name: string;
+  version: string | null;
+  reasoning_effort: string | null;
+  kwargs: Record<string, unknown> | null;
+  preset: string | null;
+  skills: string[];
+  skill_locks: SkillLock[] | null;
+}
+
+interface SkillLock {
+  name: string;
+  source: string;
+  digest: string;
+  git_url: string | null;
+  git_commit_id: string | null;
+}
+
+interface RetryConfig {
+  max_retries: number;
+  include_exceptions: string[] | null;
+  exclude_exceptions: string[];
+  wait_multiplier: number;
+  min_wait_sec: number;
+  max_wait_sec: number;
+}
+
+interface AnalyzeConfig {
+  model_name: string;
+  rubric: Rubric;
+  prompt: string | null;
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
+  n_concurrent: number | null;
+  passing: boolean;
+  failing: boolean;
+  n_trials: number | null;
+  trial_ids: string[] | null;
+}
+```
+
+### Statistics and reward groups
+
+Python stats are dictionaries. `n_completed_trials`, `n_errored_trials`, and `n_cancelled_trials` can overlap; they are not a partition of trials. `evals` groups rewards by agent, model, and dataset. Its current mean metric counts unrewarded trials as zero. [Task rollups](#task-rollups) and [comparisons](#comparison-results) use scored trials, with different handling of null rewards explained below.
+
+```ts
+interface JobStats {
+  n_completed_trials?: number;
+  n_errored_trials?: number;
+  n_running_trials?: number;
+  n_pending_trials?: number;
+  n_cancelled_trials?: number;
+  n_retries?: number;
+  evals?: Record<string, AgentDatasetStats>;
+  n_input_tokens?: number | null;
+  n_cache_tokens?: number | null;
+  n_output_tokens?: number | null;
+  cost_usd?: number | null;
+  gpu_cost_usd?: number | null;
+  judge_cost_usd?: number | null;
+  n_unmeasured_trials?: number;
+  n_unmeasured_judge_trials?: number;
+  analysis?: JobAnalysisStats | null;
+}
+
+interface AgentDatasetStats {
+  n_trials?: number;
+  n_errors?: number;
+  metrics?: Record<string, unknown>[];
+  pass_at_k?: Record<string, number>;
+  reward_stats?: Record<string, Record<string, string[]>>;
+  exception_stats?: Record<string, string[]>;
+}
+
+interface JobAnalysisStats {
+  n_completed: number;
+  n_failed: number;
+  n_pending: number;
+  cost_usd: number | null;
+  checks: Record<
+    string,
+    { n_pass: number; n_fail: number; n_not_applicable: number; n_unknown: number }
+  >;
+}
+```
+
+### Failure, build exclusions, and source jobs
+
+```ts
+interface JobFailure {
+  code: string;
+  message: string;
+}
+
+interface JobBuildExclusion {
+  dataset: DatasetRef;
+  n_tasks_ran: number;
+  n_tasks_selected: number;
+  n_tasks_failed_to_build: number;
+  failed_task_names: string[];
+  note: string;
+}
+
+interface SourceJob {
+  action: "regrade" | "resume" | "retry";
+  type: "hub";
+  job_id: string;
+}
+
+interface UploadProvenance {
+  original_job_id: string | null;
+  original_job_name: string | null;
+  uploaded_at: string;
+  reported_totals: {
+    cost_usd: number | null;
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    n_trials_reporting: number;
+  } | null;
+  task_links: JobTaskLink[] | null;
+  datasets: UploadDataset[] | null;
+}
+```
+
+### Check rows in a mixed jobs list
+
+A check row is a summary, not a full `Check`. In Python, `row.tasks` is a dictionary and its key remains `byStatus`.
+
+```ts
+interface CheckRow {
+  kind: "check";
+  id: string;
+  name: string;
+  status: CheckStatus;
+  source: CheckSource;
+  model_name: string;
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
+  org: string;
+  visibility: JobVisibility;
+  tasks: CheckTaskTally;
+  cost_usd: number | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+interface CheckTaskTally {
+  total: number;
+  byStatus: Record<AnalysisStatus | "stopped", number>;
+}
+```
+
+### Imported dataset provenance
+
+```ts
+interface UploadDataset {
+  name: string;
+  version: string | null;
+}
+```
+
+## Trial fields
+
+A `Trial` holds one attempt’s outcome and evidence. `reward` is the primary scalar; `verifier_result.rewards` preserves the complete reward map.
+
+### Trial: every top-level field
+
+```ts
+interface Trial {
+  id: string;
+  job_id: string;
+  task_name: string;
+  source: string;
+  agent_info: AgentInfo;
+  attempt: number;
+  status: TrialStatus;
+  reward: number | null;
+  verifier_result: VerifierResult | null;
+  exception_info: ExceptionInfo | null;
+  agent_result: AgentResult | null;
+  judge_result?: JudgeResult | null;
+  analysis?: TrialAnalysis | null;
+  environment_setup: TimingInfo | null;
+  agent_setup: TimingInfo | null;
+  agent_execution: TimingInfo | null;
+  verifier: TimingInfo | null;
+  queue_wait: TimingInfo | null;
+  harness_bundle: TimingInfo | null;
+  image_prepare: TimingInfo | null;
+  shared_verify_setup: TimingInfo | null;
+  harness_bundle_cache_hit: boolean | null;
+  step_results: StepResult[] | null;
+  spend_source: SpendSource | null;
+  judge_spend_source?: SpendSource | null;
+  live_spent_usd: number | null;
+  live_spend_at: string | null;
+  usage?: UsageReading | null;
+  max_trial_spend_usd: number | null;
+  sandbox_provider: EvalSandboxProvider | null;
+  sandbox_provider_degrade?: {
+    from: EvalSandboxProvider;
+    to: EvalSandboxProvider;
+    reason: string;
+  } | null;
+  gpu_cost?: TrialGpuCost | null;
+  sandbox_id: string | null;
+  verifier_sandbox_id: string | null;
+  verifier_environment_mode: VerifierEnvironmentMode | null;
+  attempt_phase: AttemptPhase | null;
+  n_retries: number;
+  retries: TrialRetry[];
+  session_ref: string | null;
+  upload: TrialUploadProvenance | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+```
+
+### Agent, scores, usage, and timing
+
+```ts
+interface AgentInfo {
+  name: string;
+  version: string | null;
+  model_info: ModelInfo;
+  reasoning_effort?: string | null;
+}
+
+interface ModelInfo {
+  name: string;
+  provider?: string | null;
+}
+
+interface VerifierResult {
+  rewards?: Record<string, number> | null;
+}
+
+interface ExceptionInfo {
+  exception_type: string;
+  exception_message: string;
+  exception_traceback?: string;
+  occurred_at: string;
+}
+
+interface AgentResult {
+  n_input_tokens?: number | null;
+  n_cache_tokens?: number | null;
+  n_output_tokens?: number | null;
+  cost_usd?: number | null;
+  rollout_details?: Record<string, unknown>[] | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+interface JudgeResult {
+  n_input_tokens?: number | null;
+  n_cache_tokens?: number | null;
+  n_output_tokens?: number | null;
+  cost_usd?: number | null;
+}
+
+interface UsageReading {
+  provisional: boolean;
+  spent_usd: number | null;
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  cache_write_tokens: number | null;
+  output_tokens: number | null;
+  as_of: string | null;
+}
+
+interface TimingInfo {
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+interface TrialGpuCost {
+  estimate_usd: number | null;
+  unpriced_reason: string | null;
+  provider: EvalSandboxProvider;
+  gpu_type: string | null;
+  declared_gpu_types: string[] | null;
+  resolved_gpu_types: string[] | null;
+  attached_gpu_type: string | null;
+  gpu_count: number;
+  duration_sec: number | null;
+  rate_usd_per_gpu_sec: number | null;
+  rate_card: { version: number; source: string | null; source_date: string | null };
+  measured_from: string | null;
+  measured_to: string | null;
+}
+```
+
+### Steps, retries, and imported provenance
+
+Each timing record has `started_at` and `finished_at`; overlapping phases must not be added as independent durations. Python `step_results`, `sandbox_provider_degrade`, and `gpu_cost` hold dictionaries.
+
+```ts
+interface StepResult {
+  step_name?: string;
+  agent_result?: AgentResult | null;
+  verifier_result?: VerifierResult | null;
+  exception_info?: ExceptionInfo | null;
+  agent_execution?: TimingInfo | null;
+  verifier?: TimingInfo | null;
+}
+
+interface TrialRetry {
+  attempt_number: number;
+  exception_info: ExceptionInfo;
+  cost_usd: number | null;
+  started_at: string | null;
+  settled_at: string | null;
+}
+
+interface TrialUploadProvenance {
+  original_trial_id: string | null;
+  original_trial_name: string;
+  original_task_name: string;
+  reported_agent_result: {
+    n_input_tokens: number | null;
+    n_cache_tokens: number | null;
+    n_output_tokens: number | null;
+    cost_usd: number | null;
+  } | null;
+  link: TrialTaskLink | null;
+}
+
+interface TrialTaskLink {
+  linked_by: TaskLinkedBy;
+  link_reason: TaskLinkReason | null;
+  dataset: string | null;
+  version: string | null;
+  task_digest: string | null;
+  candidates: string[];
+}
+```
+
+### Stop result
+
+```ts
+interface StopResponse {
+  stopped: Trial[];
+  stopped_analyses: TrialAnalysis[];
+  already_terminal: string[];
+  not_found: string[];
+}
+```
+
+Attempt phases are `prepare`, `build`, `boot`, `install`, `agent`, `verify`, and `persist`. Verifier mode is `shared` or `separate`. Sandbox provider is `e2b`, `daytona`, or `modal`.
+
+## Task rollups
+
+`jobs().tasks(id)` gives one `JobTaskRollup` per distinct `(task_name, source)` pair. It is the short route from a job summary to the tasks needing inspection.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `task_name` | `string` | Task name |
+| `source` | `string` | Dataset source |
+| `trials` | `TrialStatusTally` | `total` plus per-status counts |
+| `mean_reward` | `number \| null` | Reward sum divided by all scored trials; null if none |
+| `cost_usd` | `number \| null` | Measured spend across settled trials |
+| `check` | `TaskCheck \| null` | Latest readable quality check from a dataset version this job uses |
+
+Python returns a `JobTaskRollup` dataclass; `check` is a dictionary or `None`. A scored trial with a null reward contributes zero to this rollup’s mean.
+
+### Task rollup schema
+
+```ts
+interface JobTaskRollup {
+  task_name: string;
+  source: string;
+  trials: TrialStatusTally;
+  mean_reward: number | null;
+  cost_usd: number | null;
+  check: TaskCheck | null;
+}
+```
+
+## Comparison results
+
+`jobs().compare(ids)` returns aggregates in your id order. Each task row has one cell per requested job; disagreement rows come first.
+
+```text
+CompareResponse
+├── jobs[]                     Per-job aggregates
+└── taskMatrix[]                Python: task_matrix
+    ├── task_name
+    ├── disagreement
+    └── cells[]                Same order as requested job ids
+        ├── status             Trial status, MIXED, or MISSING
+        ├── mean_reward        Scored trials only; null if none
+        └── coverage           scored / total
+```
+
+`MIXED` means attempts have different statuses. `MISSING` means the job has no attempts for that task. Comparison means use non-null rewards on scored trials. `coverage.scored` counts every scored trial, including ones with a null reward; those trials are excluded from the comparison mean.
+
+The comparison matrix groups by task name alone, including matching names from different datasets or versions. The per-job task summary groups by both task name and source.
+
+### All comparison fields
+
+```ts
+interface CompareResponse {
+  jobs: CompareJobAggregate[];
+  taskMatrix: CompareTaskRow[];
+}
+
+interface CompareJobAggregate {
+  id: string;
+  datasets: DatasetRef[];
+  status: JobStatus;
+  mean_reward: number | null;
+  coverage: CompareCoverage;
+  cost_usd: number;
+  agents: AgentArm[];
+  started_at: string;
+}
+
+interface CompareTaskRow {
+  task_name: string;
+  disagreement: boolean;
+  cells: CompareCell[];
+}
+
+interface CompareCell {
+  job_id: string;
+  status: TrialStatus | "MIXED" | "MISSING";
+  mean_reward: number | null;
+  coverage: CompareCoverage;
+}
+
+interface CompareCoverage {
+  scored: number;
+  total: number;
+}
+```
+
+## Job events
+
+Every event has `seq: number`, `type`, and `data`. Switch on `type`: different event types can have the same payload. Python’s `JobEvent.data` is a dictionary.
+
+| Event type | Payload | When it matters |
+| --- | --- | --- |
+| `job.created` | `JobCreatedData` | Resolved creation inputs |
+| `job.running` | `{ job_id: string }` | Execution began |
+| `job.cancelling` | `JobCancellingData` | Cancellation accepted; work may still be active |
+| `job.cancelled` | `JobCancelledData` | Cancellation settled |
+| `job.completed` | `{ job_id: string }` | Job settled; inspect trial outcomes |
+| `job.failed` | `{ job_id: string }` | Reserved terminal event; no current server path emits it |
+| `trial.running` | `TrialRunningData` | Attempt began |
+| `trial.scoring` | `TrialScoringData` | Verification began |
+| `trial.spend` | `TrialSpendData` | Provisional spend sample |
+| `trial.settled` | `TrialSettledData` | Attempt settled; an automatic retry can follow |
+| `trial.retrying` | `TrialRetryingData` | Attempt requeued with delay and retry count |
+| `trial.retry_circuit_broken` | `TrialRetryCircuitBrokenData` | Repeated infrastructure failure stopped further retry |
+
+### Job lifecycle payloads
+
+A `job.created` event includes only the four agent fields shown below. Imported or older jobs can have null spend or provider metadata. These are the received fields; the current SDK declaration instead uses the full `AgentArm` type and non-null spend and provider types.
+
+```ts
+interface JobCreatedData {
+  datasets: DatasetRef[];
+  task_count: number;
+  agents: {
+    name: string | null;
+    model_name: string | null;
+    version: string | null;
+    reasoning_effort: string | null;
+  }[];
+  n_attempts: number;
+  n_concurrent_trials: number;
+  max_trial_spend_usd: number | null;
+  sandbox_provider: EvalSandboxProvider | null;
+  trial_count: number;
+  retry: RetryConfig;
+  timeout_multiplier: number;
+  agent_timeout_multiplier: number | null;
+  verifier_timeout_multiplier: number | null;
+  agent_setup_timeout_multiplier: number | null;
+  environment_build_timeout_multiplier: number | null;
+}
+
+interface JobCancellingData {
+  job_id: string;
+  cancelled_trials: number;
+  active_trials: number;
+}
+
+interface JobCancelledData {
+  job_id: string;
+  cancelled_trials: number;
+}
+```
+
+### Trial progress and outcome payloads
+
+`live_spent_usd` is a lagging lower bound. On settled events, missing `reward` means no score; zero is a score. An exception message can be absent on cancellation or older recorded events.
+
+```ts
+interface TrialRunningData {
+  trial_id: string;
+  task_name: string;
+}
+
+interface TrialScoringData {
+  trial_id: string;
+  captured_bytes?: number;
+}
+
+interface TrialSpendData {
+  trial_id: string;
+  task_name: string;
+  live_spent_usd: number;
+  n_input_tokens?: number;
+  n_cache_tokens?: number;
+  n_output_tokens?: number;
+}
+
+interface TrialSettledData {
+  trial_id: string;
+  task_name: string;
+  status: TrialStatus;
+  reward?: number | null;
+  exception_type?: string;
+  exception_message?: string;
+  attempt_phase?: AttemptPhase | null;
+}
+```
+
+### Automatic retry payloads
+
+The circuit breaker compares typed failure classes. Its event follows `trial.settled` instead of `trial.retrying`; the attempt stays terminal.
+
+```ts
+interface TrialRetryingData {
+  trial_id: string;
+  task_name: string;
+  retry: number;
+  max_retries: number;
+  delay_sec: number;
+  exception_type: string;
+}
+
+type InfraFailureSignature =
+  | "sandbox_death"
+  | "provider_create_failure"
+  | "stream_disconnect"
+  | "exec_chdir_failure";
+
+interface TrialRetryCircuitBrokenData {
+  trial_id: string;
+  task_name: string;
+  signature: InfraFailureSignature;
+  consecutive: number;
+  failure_phase: string;
+  max_retries: number;
+  retries_unused: number;
+  exception_message: string | null;
+}
+```
+
+## Analysis and check results
+
+Analysis reads a trial’s trajectory. A task check reviews the task itself. Their criterion results share the same four outcomes: `pass`, `fail`, `not_applicable`, and `unknown`.
+
+Python returns verdicts and defaults as dictionaries. `checks` maps criterion names to `{ outcome, explanation, evidence }`; evidence is a list of `{ where, quote }` records. Custom rubrics may have no derived label.
+
+### Analysis verdict and criterion evidence
+
+```ts
+interface TrialAnalysis {
+  id: string;
+  trial_id: string;
+  job_id: string;
+  task_name: string;
+  status: AnalysisStatus;
+  model_name: string;
+  reasoning_effort: string | null;
+  rubric: Rubric;
+  prompt: string | null;
+  summary: string | null;
+  checks: Record<string, AnalysisCheck> | null;
+  label: AnalysisLabel | null;
+  estimated_cost_usd: number | null;
+  usage?: UsageReading | null;
+  attempts?: number;
+  failure: AnalysisFailure | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+interface AnalysisCheck {
+  outcome: "pass" | "fail" | "not_applicable" | "unknown";
+  explanation: string;
+  evidence: AnalysisEvidence[];
+}
+
+interface AnalysisEvidence {
+  where: string;
+  quote: string;
+}
+
+interface AnalysisFailure {
+  phase: string;
+  message: string;
+}
+
+interface AnalyzeDefaults {
+  model_name: string;
+  rubric: Rubric;
+  prompt: string;
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
+}
+```
+
+### Check group and each task result
+
+`executed` distinguishes a default-rubric result with resolved execution criteria from a reading-only result. It is null when the derived label is null. A completed group may contain failed task checks; inspect every result.
+
+```ts
+interface Check {
+  id: string;
+  name: string;
+  status: CheckStatus;
+  source: CheckSource;
+  model_name: string;
+  reasoning_effort: string;
+  rubric: Rubric;
+  prompt: string | null;
+  sandbox_provider: EvalSandboxProvider;
+  n_concurrent: number | null;
+  include_task_names: string[];
+  exclude_task_names: string[];
+  n_tasks: number | null;
+  visibility: JobVisibility;
+  results: TaskCheck[];
+  cost_usd: number | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+interface CheckSource {
+  type: "archive" | "dataset";
+  sha256: string;
+  bytes: number | null;
+  dataset: string | null;
+}
+
+interface TaskCheck {
+  id: string;
+  check_id: string;
+  task_name: string;
+  status: AnalysisStatus;
+  checks: Record<string, AnalysisCheck> | null;
+  label: CheckLabel | null;
+  executed: boolean | null;
+  cost_usd: number | null;
+  attempts: number;
+  failure: AnalysisFailure | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+interface CheckDefaults {
+  model_name: string;
+  rubric: Rubric;
+  prompt: string;
+  reasoning_effort: string;
+  sandbox_provider: EvalSandboxProvider;
+}
+```
+
+### Analyzer and checker transcripts
+
+`events` contains parsed activity after `since`; `total` counts every stored activity row. `gateway_calls` is separate and returned in full. Optional `stored_at` aligns one server timestamp per returned event; it is absent when events came from the stored transcript file. Python does not expose these transcript methods.
+
+```ts
+interface AnalysisTranscript {
+  id: string;
+  analyzed_trial_id: string | null;
+  job_id: string | null;
+  task_name: string | null;
+  model_name: string | null;
+  sandbox_provider: string | null;
+  sandbox_id: string | null;
+  is_ended: boolean;
+  total: number;
+  events: TraceEvent[];
+  gateway_calls: TraceEvent[];
+  stored_at?: string[];
+}
+
+interface TaskCheckTranscript {
+  id: string;
+  check_id: string | null;
+  dataset: string | null;
+  task_name: string | null;
+  model_name: string | null;
+  sandbox_provider: string | null;
+  sandbox_id: string | null;
+  is_ended: boolean;
+  total: number;
+  events: TraceEvent[];
+  gateway_calls: TraceEvent[];
+  stored_at?: string[];
+}
+```
+
+### Rubric and derived labels
+
+```ts
+interface Rubric {
+  criteria: RubricCriterion[];
+}
+
+interface RubricCriterion {
+  name: string;
+  description: string;
+  guidance: string;
+}
+
+type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
+
+type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
+```
+
+## Filesystem results
+
+Filesystem pages keep `next_cursor` in both SDKs. Python uses dataclasses for their records, and dictionaries for event `data`.
+
+### State, live box, and retained capture
+
+`captured` state does not guarantee every file’s bytes were retained. Inspect capture `status`, `left_out`, and each entry’s `captured` field.
+
+```ts
+interface FilesystemStatus {
+  state: FilesystemState;
+  box: FilesystemBox | null;
+  watcher: "native" | "poll" | null;
+  root: string;
+  work_dir: string;
+  capture: FilesystemCapture | null;
+}
+
+interface FilesystemBox {
+  provider: EvalSandboxProvider;
+  id: string;
+  role: "agent" | "verifier" | "analyzer" | "checker";
+  since: string;
+}
+
+interface FilesystemCapture {
+  id: string;
+  at: string | null;
+  phase: "after_verifier" | "after_seal" | "after_run";
+  entries: number;
+  changed_files: number;
+  changed_bytes: number;
+  status: "ready" | "incomplete" | "failed";
+  left_out: string[];
+  failure_reason: string | null;
+}
+
+interface TaskPackageFilesystemStatus extends FilesystemStatus {
+  state: "none";
+  source: "package";
+  package_retained: boolean;
+}
+```
+
+### Directory, search, and changed-file pages
+
+On a captured entry, `captured: false` means no bytes were retained. `left_out` describes an omitted or failed capture; otherwise it may be an untouched image file. On a live entry, `captured` is null. Package entries have retained bytes.
+
+```ts
+interface FilesystemEntry {
+  name: string;
+  type: "dir" | "file" | "symlink" | "other";
+  size: number;
+  mtime: string;
+  mode: string;
+  owner: string;
+  changed: "created" | "modified" | null;
+  phase: "setup" | "agent" | "verifier" | null;
+  captured: boolean | null;
+  left_out?: string;
+  target?: string;
+}
+
+interface FilesystemListing {
+  path: string;
+  source: "live" | "capture" | "package";
+  entries: FilesystemEntry[];
+  next_cursor: string | null;
+  ms: number;
+}
+
+interface FilesystemSearchHit {
+  path: string;
+  line: number;
+  snippet: string;
+}
+
+interface FilesystemSearchResult {
+  hits: FilesystemSearchHit[];
+  truncated: boolean;
+  scope: "path" | "box";
+  source: "live" | "capture";
+  image_files_excluded?: boolean;
+  ms: number;
+}
+
+interface FilesystemChange {
+  path: string;
+  type: "dir" | "file" | "symlink" | "other";
+  changed: "created" | "modified" | "removed";
+  phase: "setup" | "agent" | "verifier";
+  size: number;
+  mtime: string;
+  left_out?: string;
+}
+
+interface FilesystemChanges {
+  source: "live" | "capture";
+  total: number;
+  changed_bytes: number;
+  items: FilesystemChange[];
+  next_cursor: string | null;
+}
+```
+
+### Watch registration and filesystem events
+
+```ts
+interface FilesystemWatchResult {
+  watcher: "native" | "poll";
+  paths: string[];
+}
+
+type FilesystemStreamEvent =
+  | { event: "state"; id?: string; data: { state: FilesystemState; box: FilesystemBox | null } }
+  | {
+      event: "fs";
+      id: string;
+      data: { seq: number; t: string; path: string; type: "create" | "write" | "remove" | "rename"; source: "watch" | "poll" };
+    }
+  | { event: "ping"; id?: string; data: Record<string, never> };
+```
+
+### Sandbox log pages, log events, and processes
+
+```ts
+interface SandboxLogLine {
+  seq: number;
+  t: string | null;
+  fd: "out" | "err";
+  line: string;
+}
+
+interface SandboxLogLines {
+  stream: SandboxLogStream;
+  lines: SandboxLogLine[];
+  next_cursor: string | null;
+  reason?: string;
+}
+
+type SandboxLogEvent =
+  | { event: "line"; id: string; data: SandboxLogLine & { stream: SandboxLogStream } }
+  | { event: "state"; id?: string; data: { state: FilesystemState; box: FilesystemBox | null } }
+  | { event: "ping"; id?: string; data: Record<string, never> };
+
+interface SandboxProcs {
+  text: string;
+  ms: number;
+}
+```
+
+## Sharing and deletion
+
+Jobs and checks use the same `JobShares` result. A link is unlisted; `PRIVATE` does not mean that email grants are absent. Read `emails` to inspect them.
+
+### Share state and deletion receipt
+
+```ts
+type JobVisibility = "PRIVATE" | "LINK";
+
+interface JobShares {
+  visibility: JobVisibility;
+  link: JobShareLink;
+  emails: JobShareEmail[];
+}
+
+interface JobShareLink {
+  enabled: boolean;
+  url?: string;
+}
+
+interface JobShareEmail {
+  email: string;
+  shared_by: string;
+  created_at: string;
+}
+
+interface JobDeleteResult {
+  job_id: string;
+  trials_deleted: number;
+  analyses_deleted: number;
+}
+```
+
+## Job imports
+
+`jobs().upload()` returns an import record. `COMPLETED` supplies `job_id` while the imported job exists; `FAILED` supplies a typed `failure`. The imported job records earlier work and does not start an agent.
+
+`receiving` reports an upload still in transit. Worker `progress` is separate: fetching, extracting, validating, or ingesting. Inspect skipped trials and task links before treating an upload as a complete benchmark.
+
+### Import record and progress
+
+The `hub` source variant is reserved in the type; current upload methods accept a local directory/archive or a public HTTPS archive URL.
+
+```ts
+interface JobImport {
+  id: string;
+  status: DatasetImportStatus;
+  receiving: boolean;
+  source: JobImportSource | null;
+  dataset: string | null;
+  job_id: string | null;
+  n_trials_uploaded: number | null;
+  n_trials_skipped: number | null;
+  skipped_trials: JobImportSkippedTrial[] | null;
+  task_links: JobTaskLink[] | null;
+  failure: JobImportFailure | null;
+  progress: JobImportProgress | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+type JobImportSource =
+  | { type: "archive"; sha256: string }
+  | { type: "archive_url"; url: string }
+  | { type: "hub"; job_id: string };
+
+interface JobImportProgress {
+  phase: JobImportPhaseName;
+  started_at: string;
+  phases: JobImportPhaseProgress[];
+}
+
+interface JobImportPhaseProgress {
+  name: JobImportPhaseName;
+  started_at: string;
+  completed_at?: string;
+}
+```
+
+### Import failures, skipped trials, and task links
+
+```ts
+interface JobImportFailure {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+interface JobImportSkippedTrial {
+  trial: string;
+  code: "trial_too_large";
+  message: string;
+  details?: { file: string; bytes: number; max_bytes: number };
+}
+
+interface JobTaskLink {
+  task_name: string;
+  n_trials: number;
+  n_linked: number;
+  n_unlinked: number;
+  linked_by: TaskLinkedBy;
+  datasets: string[];
+  link_reasons: Partial<Record<TaskLinkReason, number>>;
+  candidates: string[];
+}
+```
+
+`TaskLinkedBy` is `dataset_flag`, `job_dataset_record`, `task_hash`, or `none`. When no task is linked, `TaskLinkReason` is `hash_mismatch`, `task_not_in_dataset`, `no_dataset_named`, `dataset_ambiguous`, `no_hash_match`, or `no_task_digest`.
+
+## passAtK
+
+Python: `pass_at_k`. Read already-computed pass@k points from a job; this helper does not recompute scores. Groups without eligible points are omitted.
+
+```ts TypeScript
+import { passAtK } from "@evolvingmachines/evolve";
+for (const group of passAtK(job)) {
+  console.log(group.evals_key, group.points);
+}
+```
+
+```python Python
+from evolve import pass_at_k
+
+for group in pass_at_k(job):
+    print(group.evals_key, group.points)
+```
+
+### Helper result
+
+```ts
+interface PassAtKGroup {
+  evals_key: string;
+  points: PassAtKPoint[];
+}
+
+interface PassAtKPoint {
+  k: number;
+  value: number;
+}
+```
+
+## gatewayUsageOf
+
+Python: `gateway_usage_of`. Return the platform meter’s usage update from a trace event, or null / `None`. A harness’s own usage line has no gateway source and does not qualify.
+
+```ts TypeScript
+import { gatewayUsageOf } from "@evolvingmachines/evolve";
+const reading = gatewayUsageOf(event);
+if (reading)
+  console.log(reading.usage.costUsd);
+```
+
+```python Python
+from evolve import gateway_usage_of
+
+reading = gateway_usage_of(event)
+if reading is not None:
+    print(reading["usage"]["costUsd"])
+```
+
+Gateway payload keys stay camelCase inside Python dictionaries. `promptTokens` includes cached and cache-written input. Missing readings are not zero-cost calls.
+
+### Trace event and gateway usage
+
+```ts
+interface TraceEvent {
+  seq: number;
+  type: string;
+  data: Record<string, unknown>;
+}
+
+interface GatewayUsage {
+  sessionUpdate: "usage";
+  scope: "call";
+  source: "gateway";
+  callId: string;
+  status: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  receivedAt: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    costUsd: number;
+    extra: { cache_write_tokens: number; reasoning_tokens?: number };
+  };
+}
+
+interface GatewayUsageEvent {
+  timestamp: string | null;
+  model: string | null;
+  update: GatewayUsage;
+}
+```
