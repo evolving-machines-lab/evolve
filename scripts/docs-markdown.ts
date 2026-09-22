@@ -12,6 +12,7 @@ const containers = new Set(["CardGroup", "Tabs", "CodeGroup", "Steps", "Accordio
 // a lowercase name outside this list is a placeholder such as <id> and stays literal text.
 // Void elements close themselves (a bare <hr> or <input> is not an unclosed tag).
 const voidElements = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+const inlineElements = new Set(["a", "code", "b", "strong", "i", "em", "sup", "sub", "kbd"]);
 const htmlElements = new Set(["a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption", "cite", "code", "col", "colgroup", "data", "datalist", "dd", "del", "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map", "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output", "p", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "script", "search", "section", "select", "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup", "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track", "u", "ul", "var", "video", "wbr", "svg", "math"]);
 const titled = new Set(["Tab", "Accordion", "Expandable"]);
 const callouts = new Set(["Note", "Tip", "Warning", "Info", "Check", "Danger"]);
@@ -65,7 +66,7 @@ function attributes(tag: string, where: string): Attributes {
 }
 
 /** Find > outside quotes and JSX expression braces. */
-function tagEnd(text: string, start: number): number {
+function tagEnd(text: string, start: number, where: string): number {
   let quote = "";
   let braces = 0;
   for (let i = start; i < text.length; i++) {
@@ -78,7 +79,7 @@ function tagEnd(text: string, start: number): number {
     else if (char === "}") braces--;
     else if (char === ">" && braces === 0) return i + 1;
   }
-  throw new Error("Unterminated documentation component");
+  throw new Error(`${where}: unterminated documentation component near ${JSON.stringify(text.slice(start, start + 40))}`);
 }
 
 function component(name: string, props: Attributes, body: string, step: number, where: string): string {
@@ -96,7 +97,6 @@ function component(name: string, props: Attributes, body: string, step: number, 
   if (name === "sup") return `^${content}^`;
   if (name === "sub") return content;
   if (name === "kbd") return content;
-  if (htmlElements.has(name) && name !== "img" && name !== "br") throw new Error(`${where}: raw <${name}> has no skill rendering; write it as Markdown`);
   if (name === "Card") {
     if (!title) throw new Error(`${where}: Card needs a title`);
     const label = props.href ? `[${title}](${props.href})` : title;
@@ -123,6 +123,7 @@ function component(name: string, props: Attributes, body: string, step: number, 
     return `![${props.alt}](${props.src})`;
   }
   if (name === "br") return "\n";
+  if (htmlElements.has(name)) throw new Error(`${where}: raw <${name}> has no skill rendering; write it as Markdown`);
   throw new Error(`${where}: unsupported component <${name}>; add an explicit Markdown rendering`);
 }
 
@@ -166,7 +167,7 @@ export function renderDocsMarkdown(input: string, options: { file: string; root:
       }
       const start = position + match.index;
       output += text.slice(position, start);
-      const end = tagEnd(text, start);
+      const end = tagEnd(text, start, file);
       const tag = text.slice(start, end);
       position = end;
       const name = /^<\/?([\w.]+)/.exec(tag)![1];
@@ -175,7 +176,7 @@ export function renderDocsMarkdown(input: string, options: { file: string; root:
         return output;
       }
       const selfClosing = /\/\s*>$/.test(tag) || voidElements.has(name);
-      if (htmlElements.has(name) && !["a", "code", "b", "strong", "i", "em", "sup", "sub", "kbd", "img", "br", "div"].includes(name)) throw new Error(`${file}: raw <${name}> has no skill rendering; write it as Markdown`);
+      if (htmlElements.has(name) && !inlineElements.has(name) && !containers.has(name) && !voidElements.has(name)) throw new Error(`${file}: raw <${name}> has no skill rendering; write it as Markdown`);
       if (imports.has(name)) {
         if (!selfClosing) throw new Error(`${file}: imported snippets must be self-closing`);
         output += save(`\n\n${imports.get(name)!}\n\n`);
