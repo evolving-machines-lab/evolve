@@ -1,117 +1,226 @@
 ---
 title: "Trial outputs"
-description: "What a finished trial gives you, file by file, and in which formats."
+description: "Find the record, trace, logs, and files from an evaluation."
 ---
 
-A finished trial leaves five kinds of output: its record, its parsed trace, its trajectory, the raw streams of the agent and the verifier, and the agent's home folder. All of them download as one directory, and each can be read on its own.
+Choose the output that answers your question:
+
+| Question | Open |
+| --- | --- |
+| What score did it earn? | `result.json` and verifier output. |
+| What did the agent do? | Parsed trace or ATIF trajectory. |
+| What did the process print? | Raw stdout and stderr. |
+| What files did it change? | Run filesystem and changes list. |
+| What state did the harness keep? | Captured agent home. |
 
 ## The trial directory
 
-`evolve trial download <trial-id> -o trials/` saves the trial under `trials/<trial-id>/`. A file the trial never produced is absent, never empty.
-
-```text
-<trial-id>/
-├── config.json             the trial's identity: its task and its agent
-├── result.json             the outcome: status, reward, verifier verdict, exception
-├── evolve.json             the platform's record: cost and tokens per lane, provider, regrade lineage
-├── exception.txt           present when the trial ended with an exception
-├── agent/
-│   ├── trajectory.json     the ATIF trajectory, when stored
-│   ├── trace-parsed.jsonl  the parsed trace, one {seq, type, data} per line
-│   ├── codex.txt           the harness's stdout, under the harness's own name
-│   ├── stderr.log          the harness's stderr
-│   ├── agent-home.json     the home capture record
-│   └── .codex/             the captured home, at its real names
-└── verifier/
-    ├── test-stdout.txt     everything the verifier printed
-    └── reward.json         the rewards map
-```
-
-The stdout file takes the harness's name: `claude-code.txt`, `codex.txt`, `gemini-cli.txt`, `qwen-code.txt`, `kimi-code.txt`, `opencode.txt` or `droid.txt`, and `stdout.log` for an agent you registered yourself. The tree also holds `agent/sessions/` (claude, codex), `agent/qwen-sessions/` (qwen) and `agent/opencode/` (opencode): copies of the session files at the paths other tools expect.
-
-`result.json` states `agent_result.cost_usd` only once the spend is final; until then it is null there, and `evolve.json` carries the current figure with its `spend_source`. Tokens are always stated.
-
-The job download, `evolve job download`, adds to every trial its `lock.json`, its `trial.log`, the raw `verifier/reward.txt`, `steps/<name>/verifier/reward.json` on a multi-step trial, the home byte for byte, and `artifacts/` with a `manifest.json` and each collected artifact at its source path (separate-mode trials only). Everything platform-specific in the archive's record files rides under an `x_evolve` key: a trial's spend is `x_evolve.spentUsd` with its `spendSource`, and the job config's agents carry `x_reasoning_effort` and `x_preset`.
-
-## The agent's home folder
-
-The agent's home is the harness's own working state: its session files, its settings, and the transcripts of any subagents it ran. The platform captures it after the run and keeps it with the trial, so the run can be inspected the way the agent saw it. In the download it sits under `agent/` at its real names, with `agent-home.json` beside it: every captured file's path, size, sha256 and mode, and every file that was skipped, with the reason.
-
-The trial download carries the text view of the home. A file that is not UTF-8 text, such as a database, is named in the record and left out; the job download carries every byte. Two caches are left out on purpose, codex's `.codex/.tmp/plugins` and opencode's `.config/opencode/node_modules`; the record lists them under `excluded`, and anything else it could not carry under `skipped`, with the reason.
-
-From the SDK, `trials().artifact(id, "agent-home")` returns the same text view as a map from sandbox path to content. A home too large to serve as one text view is refused with a 413 `invalid_input`; the job download carries it whole.
-
-## The parsed trace
-
-Every harness prints its run in its own format. The platform parses that stream into one vocabulary, the parsed trace, which the dashboard shows and `evolve trial trace` prints. Each event is one JSON object: `seq`, a position that also serves as a resume cursor; `type`, the kind of event; and `data`, the harness's update as parsed.
-
-```json
-{"seq": 0, "type": "prompt", "data": {"_prompt": {"text": "Create hello.txt containing Hello."}}}
-{"seq": 1, "type": "agent_message_chunk", "data": {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "I'll create the file."}}}}
-{"seq": 2, "type": "tool_call", "data": {"update": {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Write hello.txt", "kind": "edit", "status": "pending"}}}
-{"seq": 3, "type": "tool_call_update", "data": {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed"}}}
-{"seq": 4, "type": "usage", "data": {"update": {"sessionUpdate": "usage", "scope": "call", "usage": {"promptTokens": 812, "completionTokens": 64}}}}
-```
-
-The kinds are `prompt` for the instruction the agent received, `user_message_chunk`, `agent_message_chunk` and `agent_thought_chunk` for text, `tool_call` and `tool_call_update` for a tool call and its later status and output, `plan` for the agent's plan entries, `usage` for token counts, `error` for a failure the harness reported, and `trace_loss` when events were lost. A tool call's `kind` is one of the parser's kinds, such as `read`, `edit` or `execute`, and its `status` moves through `pending`, `in_progress`, `completed` or `failed`.
-
-Once the trial is finished, the gateway's own `usage` events follow the harness's, one per model call, with the tokens and the cost as priced. Their `data.update.source` is `gateway`, and they are the only usage lines that carry tokens and money.
-
 ```bash
-evolve trial trace <trial-id>
-evolve trial trace <trial-id> --grep 'permission denied' --tail 50
-evolve trial trace <trial-id> --cursor 140
+evolve trial download "$TRIAL_ID" -o trials/
 ```
 
-`trial trace` prints one line per event: the position, the type, and the data cut to 140 characters. A gateway usage event prints as `gateway <model>` with its tokens and cost. `--type`, `--grep` and `--tail` filter on the server; `--cursor <seq>` resumes after the last event you saw; `--json` prints each event in full. While the trial runs, the dashboard's trial viewer shows the trace as it grows.
+A typical Codex trial looks like this. Files appear only when recorded.
 
-## The ATIF trajectory
+<FileTree>
 
-`agent/trajectory.json` is the same run in ATIF, the Agent Trajectory Interchange Format, the trajectory format Harbor defines, at version `ATIF-v1.7`. The platform builds it from the stored parsed trace.
+- trials/
+  - TRIAL_ID/
+    - config.json
+    - result.json
+    - evolve.json
+    - exception.txt
+    - agent/
+      - trajectory.json
+      - trace-parsed.jsonl
+      - codex.txt
+      - stderr.log
+      - agent-home.json
+      - .codex/
+    - verifier/
+      - test-stdout.txt
+      - reward.json
 
-Its top-level fields are `schema_version`, `agent` with the harness's name, version and model, and `steps`, the ordered system, user and agent turns, with `session_id`, `trajectory_id`, `final_metrics`, `subagent_trajectories` and `extra` optional. The instruction becomes the first `user` step. An `agent` step carries its message, its `tool_calls` under the harness's own tool names, and the `observation` those calls returned.
+</FileTree>
+
+<Accordion title="What each file contains">
+  | File | Contents |
+  | --- | --- |
+  | `config.json` | Task and agent identity |
+  | `result.json` | Reward, timing, and exception |
+  | `evolve.json` | Evolve's detailed trial record |
+  | `exception.txt` | Present when an exception exists |
+  | `trajectory.json` | ATIF conversation |
+  | `trace-parsed.jsonl` | Parsed events |
+  | `codex.txt` | Raw stdout |
+  | `stderr.log` | Raw stderr |
+  | `agent-home.json` | Capture manifest |
+  | `.codex/` | Captured harness state |
+  | `test-stdout.txt` | Verifier log |
+  | `reward.json` | Recorded rewards |
+</Accordion>
+
+The stdout filename follows the harness. A registered custom agent uses `stdout.log`.
+
+### Trial download or job archive?
+
+| Download | Includes |
+| --- | --- |
+| `evolve trial download "$TRIAL_ID"` | One trial reconstructed by the CLI, including the text view of its agent home. |
+| `evolve job download "$JOB_ID"` | The full server archive: job records, each trial's locks and logs, retained binary home files, and recorded artifacts. |
+
+A job archive also includes per-step records for multi-step tasks. Platform-specific fields in Harbor-format records use `x_evolve` extensions.
+
+Existing output folders require `--overwrite`. This permits writing into the folder; it does not remove unrelated old files.
+
+### Declared artifacts in the job archive
+
+Each trial in the full job archive contains `artifacts/manifest.json`. For native Evolve runs, artifact payloads come from the retained inputs of **separate verification**. Shared verification does not export the task's artifact list; inspect its live or captured files through [sandbox files](#sandbox-files).
+
+Files normally mirror their absolute source path under `artifacts/`. A task's `destination` changes that downloaded location. For example, one generated manifest entry can be:
 
 ```json
 {
-  "schema_version": "ATIF-v1.7",
-  "agent": {"name": "codex", "version": "0.31.0", "model_name": "gpt-6-astra"},
-  "steps": [
-    {"step_id": 1, "source": "user", "message": "Create hello.txt containing Hello."},
-    {
-      "step_id": 2,
-      "source": "agent",
-      "message": "I'll create the file.",
-      "tool_calls": [{"tool_call_id": "call-1", "function_name": "apply_patch", "arguments": {"path": "hello.txt"}}],
-      "observation": {"results": [{"source_call_id": "call-1", "content": "Success"}]}
+  "source": "/app/reports/result.json",
+  "destination": "artifacts/reports/result.json",
+  "type": "file",
+  "status": "ok",
+  "service": null
+}
+```
+
+<Accordion title="Artifact manifest fields">
+  The manifest is a JSON array of entries.
+
+  | Field | Meaning |
+  | --- | --- |
+  | `source` | Original absolute file path in the sandbox. |
+  | `destination` | Export path relative to the trial directory, including `artifacts/`. |
+  | `type` | `"file"` for generated entries. Directory declarations expand to individual retained files. |
+  | `status` | `"ok"` for an emitted file, or `"skipped"` for a destination conflict. |
+  | `service` | Compose service name, or `null` for the main container. |
+
+  The first file claiming a destination wins. Later equal or nested destinations are skipped, and `artifacts/manifest.json` is reserved for the manifest itself.
+
+  Generated entries describe retained file candidates; missing, unrecorded files have no entry. A native trial with no retained artifact record has `[]`, including shared-mode trials or a separate-mode trial whose artifact record could not be stored. The separate filesystem capture can still be available.
+
+  Uploaded archives retain their own artifact files and manifest when present. Their manifest content is preserved rather than rewritten to the generated schema above.
+</Accordion>
+
+## The parsed trace
+
+Each event has a sequence position, a type, and data. This illustrative event shows a completed tool call:
+
+```json
+{
+  "seq": 3,
+  "type": "tool_call_update",
+  "data": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-1",
+      "status": "completed"
     }
-  ]
+  }
 }
 ```
 
 ```bash
-evolve trial download <trial-id> --stream trace-atif
+evolve trial trace "$TRIAL_ID" --json
+evolve trial trace "$TRIAL_ID" --grep 'permission denied' --tail 50
 ```
+
+Gateway usage events carry `data.update.source: "gateway"`. Use them for gateway token and cost accounting; harness-reported usage is a different reading.
+
+## The ATIF trajectory
+
+ATIF is Harbor's **Agent Trajectory Interchange Format**. Evolve exports `ATIF-v1.7`, built from the stored parsed trace.
+
+| Field | Contents |
+| --- | --- |
+| `schema_version` | Format version |
+| `agent` | Harness, version, and model |
+| `steps[].source` | User, system, or agent |
+| `steps[].message` | Conversation content |
+| `steps[].tool_calls` | Agent actions |
+| `steps[].observation` | Tool results |
+
+```bash
+evolve trial download "$TRIAL_ID" --stream trace-atif
+```
+
+The `trajectory` stream name is reserved for a native harness session and is not served today. Use `trace-atif` for the portable trajectory.
 
 ## Raw streams and the verifier log
 
-Three artifacts are kept byte for byte: `trace-stdout`, the harness process's stdout; `trace-stderr`, its stderr; and `verifier`, everything the verifier printed. The reward itself is in `result.json` and in `verifier/reward.json`. Print one of them instead of saving:
-
 ```bash
-evolve trial download <trial-id> --stream verifier
+evolve trial download "$TRIAL_ID" --stream trace-stdout
+evolve trial download "$TRIAL_ID" --stream trace-stderr
+evolve trial download "$TRIAL_ID" --stream verifier
 ```
 
-From the SDK, `trials().artifact(id, "verifier")` returns the same text, and `null` when the trial never stored it.
+An absent artifact remains absent. It is not replaced with an empty success log.
 
-## The run's file system
+## The agent's home folder
 
-Beyond the artifacts above, every trial's whole file system can be browsed: while the box runs you read it live, and after the run you read the kept tree — the files the run created or modified, with the files it never touched listed but held only by the image. The same reads work on analysis runs and task checks, and a published task's own files can be read from its package.
+The captured home contains harness settings, sessions, and subagent transcripts. `agent-home.json` records paths, sizes, digests, and files excluded or skipped.
+
+The `agent-home` stream is a **text view**. Binary files are listed in the manifest but omitted from this view. Download the full job archive to retrieve retained binary files.
+
+## Sandbox files
+
+The run filesystem is separate from the saved trial directory above.
+
+| File in the sandbox | After capture |
+| --- | --- |
+| `/app/report.json` — changed | Metadata and captured bytes |
+| `/app/new.txt` — created | Metadata and captured bytes |
+| `/usr/bin/python` — unchanged | Metadata only |
+
+The capture preserves supported files the run created or changed. It is not a complete copy of the base image. Files omitted during capture carry a reason.
+
+<Steps>
+  <Step title="Check which source is available">
+    ```bash
+    evolve trial files status "$TRIAL_ID"
+    ```
+
+    The state is `live`, `capturing`, `captured`, or `none`.
+  </Step>
+  <Step title="Browse and read">
+    ```bash
+    evolve trial files ls "$TRIAL_ID" /app
+    evolve trial files cat "$TRIAL_ID" /app/report.json
+    evolve trial files changes "$TRIAL_ID"
+    ```
+
+    Reads use the live sandbox when available, otherwise its capture. Force one with `--source live` or `--source capture`.
+  </Step>
+  <Step title="Keep a subtree">
+    ```bash
+    evolve trial files archive "$TRIAL_ID" --path /app -o archives/
+    ```
+
+    An unchanged image file may be listed but unreadable after capture (`not_captured`). A forced source that is unavailable returns `filesystem_state`.
+  </Step>
+</Steps>
+
+### Logs and processes
 
 ```bash
-evolve trial files status <trial-id>
-evolve trial files ls <trial-id> /app/work
-evolve trial files cat <trial-id> /app/work/main.py
-evolve trial files changes <trial-id>
-evolve trial files archive <trial-id> --path /app/work -o archives/
+evolve trial logs "$TRIAL_ID" --stream agent --follow
+evolve trial procs "$TRIAL_ID"
 ```
 
-The box's own streams are read the same way: `evolve trial logs <trial-id> --stream agent --follow` prints the harness's output as it arrives; `verifier` once the verifier ran, `system` when the job was started with `--system-log`; `setup` and `metrics` are named but not recorded today, so their pages are empty and say why. `evolve trial procs <trial-id>` lists the box's processes while it runs. From the SDK it is `trials().filesystem(id)`; see the [SDK reference](/sdk-reference/trials#filesystem).
+| Stream | Availability |
+| --- | --- |
+| `agent` | Recorded harness output. |
+| `verifier` | Recorded verifier output. |
+| `system` | When the job enabled `--system-log`. |
+| `setup`, `metrics` | Reserved; currently empty with an explanation. |
+
+Process inspection requires a live sandbox. Analysis runs and task checks expose the same filesystem operations. Published task files have a separate read-only package browser.
+
+<CardGroup cols={2}>
+  <Card title="Filesystem API" icon="folder-open" href="/sdk-reference/filesystem">Read ranges, search, changes, and events.</Card>
+  <Card title="Trial viewer" icon="search" href="/dashboard/trial-viewer">Inspect the trace in the browser.</Card>
+</CardGroup>

@@ -1,93 +1,163 @@
 ---
 title: "Upload a job"
-description: "Bring a job you ran elsewhere onto the platform: a Harbor job folder, or Evolve SDK runs packed as one."
+description: "Bring existing Harbor-format results into Evolve for inspection, analysis, and sharing."
 ---
 
-A job you ran elsewhere uploads as a finished job. Its trials, traces and rewards become a job you read, analyze and share like any other.
+Upload results you already ran elsewhere. Evolve imports the records; it does not rerun the evaluation.
 
-A job from `harbor run` — local or through the Harbor hub — uploads as it is: point `upload` at the job folder, nothing to repack. Runs made with the Evolve SDK are packed into that same layout first (below).
+Have an SDK session log? Follow [Upload an SDK run](/core-concepts/upload-sdk-session) to find it, package one run, and inspect the imported trace.
 
 ```bash
-evolve upload ./job-2026-08-27__12-00-00 -d terminal-bench-4@4.0
+evolve upload ./my-job -d harbor-examples@1.0
 ```
 
-`upload` takes the job folder, or its `.tar.gz`. With `--from <url>` it takes a public https URL of the archive instead. `-d name[@version]` links the trials to a published dataset version by task name. The command follows the import until the job exists; `--no-wait` returns at once with the import id.
+| Source | Command |
+| --- | --- |
+| Job directory | `evolve upload ./my-job` |
+| Compressed archive | `evolve upload ./my-job.tar.gz` |
+| Public HTTPS archive | `evolve upload --from https://example.org/my-job.tar.gz` |
+
+The CLI waits for import by default. Use `--no-wait` to return the import ID immediately, then follow it:
 
 ```bash
-evolve job imports --status RUNNING
-evolve job import <import-id> --watch
+evolve job import "$IMPORT_ID" --watch
 ```
 
 ## What a job folder holds
 
-The Harbor job layout, exactly what `evolve job download` and `harbor job download` produce:
+A Harbor job directory can be uploaded directly. It requires `config.json` and `result.json` at the root, plus `result.json` in each trial folder.
 
 ```text
-job/
-├── config.json                   REQUIRED — the job record
-├── result.json                   REQUIRED
-└── <trial>/                      one folder per trial
-    ├── result.json               REQUIRED — the trial's facts (below)
+my-job/
+├── config.json
+├── result.json
+└── <trial-name>/
+    ├── result.json
+    ├── lock.json
     ├── agent/
-    │   ├── trajectory.json       the trace, in Harbor's trajectory format
-    │   ├── stdout.log            the harness's output (any agent/*.txt or *.log also counts)
-    │   └── …                     the agent's home, stored byte for byte
-    ├── verifier/                 test-stdout.txt, reward.txt
-    ├── artifacts/                the agent's deliverables
-    ├── steps/                    multi-step trials, as Harbor writes them
-    └── trial.log, exception.txt
+    │   ├── trajectory.json
+    │   ├── stdout.log
+    │   └── ...
+    ├── verifier/
+    ├── artifacts/
+    └── steps/
 ```
 
-The job root needs both record files; inside a trial only `result.json` is required. What is absent stays absent: a trial without a trace shows no trace, a trial without a home shows no files.
+| Optional trial files | Content |
+| --- | --- |
+| `lock.json` | Task-content identity. |
+| `agent/trajectory.json` | ATIF trace. |
+| `agent/stdout.log` | Process output. |
+| Other `agent/` files | Native sessions and other files. |
+| `verifier/` | Verifier logs and rewards. |
+| `artifacts/` | Collected outputs. |
+| `steps/` | Multi-step results. |
+
+Missing optional data stays missing. An imported trial without a trace does not acquire a synthetic trace.
 
 ## What `result.json` must hold
 
+This is a minimal illustrative trial record with a reward. Replace the task, agent, model, and result with the facts of your run.
+
 ```json
 {
-  "task_name": "my-task",
-  "trial_name": "my-task__deepseek",
+  "task_name": "hello-world",
+  "trial_name": "hello-world__attempt-1",
   "trial_uri": "",
   "task_id": {},
   "task_checksum": "",
   "config": {},
-  "agent_info": { "name": "codex", "version": "0.154.0", "model_info": { "name": "deepseek-v4.1-flash" } },
-  "verifier_result": { "rewards": { "reward": 1.0 } },
-  "exception_info": null,
-  "agent_execution": { "started_at": "2026-09-16T18:08:27Z", "finished_at": "2026-09-16T18:08:38Z" }
+  "agent_info": {
+    "name": "codex",
+    "version": "",
+    "model_info": { "name": "gpt-5.6-luna" }
+  },
+  "verifier_result": { "rewards": { "reward": 1.0 } }
 }
 ```
 
-The first seven keys are required. `verifier_result.rewards` is the score: names to numbers, `reward` the primary. Harbor's exception names (`ScoringError`, `InfrastructureError`, `ApiUsageLimitError`, `CancelledError`) map to their statuses; any other name stays as written. `agent_result` carries tokens and cost when you have them.
-
-## Runs made with the Evolve SDK
-
-Every SDK run is logged to a local file under `~/.evolve-sdk/observability/sessions/`. Its header line names the agent and model, and its raw lines are the transcript. To bring such runs onto the platform, pack one trial folder per run: the header's agent and model into `agent_info`, the raw lines at the harness's own transcript path under `agent/` (for codex `agent/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<id>.jsonl`, for claude `agent/.claude/projects/<project>/<session>.jsonl`), and the score, when you have one, in `verifier_result.rewards`. Raw transcripts anywhere else under `agent/` are stored as files but not read as the trace.
-
-The `systemPrompt` of an SDK run is not in the session file. To show it, describe the run in `agent/trajectory.json` instead of the raw lines: a first step whose `source` is `system` holding the prompt, then the conversation. A `system` step is drawn as the system prompt, never as an error. When the raw lines are at the harness path, they are the trace and `agent/trajectory.json` is not read.
+The first seven top-level keys are required. `verifier_result` is optional. Include `agent_result` for recorded token and cost data, and `exception_info` for a failure.
 
 ## What lands
 
-- Rewards → `SCORED`, rewards untouched.
-- No rewards → no score. Not an error.
-- `exception_info` → the exception, kept as written.
-- Trace, logs, home, verifier log, artifacts, steps → where a native trial's are.
-- A prior `analysis.json` → not imported. Analyses run here.
+| Supplied data | Imported result |
+| --- | --- |
+| Nonempty numeric reward map | `SCORED`, with the recorded rewards. |
+| Verifier result without rewards | `INDETERMINATE`. |
+| No verifier result | Status follows a recognized failure type, otherwise `INDETERMINATE`. |
+| Trace, home, verifier logs, artifacts, step files | Retained for inspection when present. |
+| Existing `analysis.json` | Not imported as an Evolve analysis; analyze the uploaded job separately. |
 
-The job carries `upload`: the archive's `original_job_id` and `original_job_name`, `uploaded_at`, the uploader's `reported_totals`, `task_links`. Resume, retry and regrade refuse an uploaded job (`job_uploaded`); analyze works on it. The CLI prints `ported` as the provider, and after the import `scored N of M trial(s)`. Zero of many is a warning: check `verifier_result.rewards`.
+Reported costs and totals remain identified as uploaded data. They are not charges for a new Evolve execution.
+
+<Note>
+  Uploaded jobs support inspection, download, analysis, and sharing. Resume, retry, and regrade are refused with `job_uploaded`.
+</Note>
 
 ## Task linkage
 
-Each trial's `lock.json` names its task by content hash; a task the platform holds with the same hash links by itself. A linked trial's analyses run with the task folder, an unlinked trial's without it, and the record says why: `hash_mismatch`, `task_not_in_dataset`, `no_task_digest`, `no_hash_match`, `no_dataset_named`, `dataset_ambiguous`. A name alone never links.
+Analysis is more useful when it can also read the task files.
 
-`-d name@version` overrides: it links by task name to that version and settles an ambiguous hash.
+<Steps>
+  <Step title="Upload trials">
+    Supply the recorded job and trial files.
+  </Step>
+  <Step title="Resolve task identity">
+    Use the first applicable case:
+
+    - **Case A: `-d name@version` supplied.** Match the task name in that version.
+
+    - **Case B: the archive names accessible dataset versions.** Match the task-content hash within those versions.
+
+    - **Case C: neither applies.** Match the task-content hash in the accessible catalog.
+  </Step>
+  <Step title="Analyze">
+    - **Linked task:** Read the trial record and task files.
+
+    - **Unlinked task:** Read the trial record only. The missing link is reported.
+  </Step>
+</Steps>
+
+A task name alone does not establish an automatic content match. `upload.task_links` records the matching method or why a link was not found.
+
+## Runs made with the Evolve SDK
+
+An individual managed-agent run is not a job archive. [Upload an SDK run](/core-concepts/upload-sdk-session) provides the local log path, field mapping, packaging script, and upload commands.
+
+Use `agent/trajectory.json` for ATIF. Native transcripts must use the harness's recognized session path; arbitrary files under `agent/` are stored but are not automatically parsed as a trace.
+
+<Accordion title="Recognized native session examples">
+  ```text
+  Codex
+  agent/.codex/sessions/
+  └── <year>/
+      └── <month>/
+          └── <day>/
+              └── rollout-<id>.jsonl
+
+  Claude
+  agent/.claude/projects/
+  └── <project>/
+      └── <session>.jsonl
+  ```
+
+  A native transcript that produces parsed events takes precedence over ATIF. Otherwise, the parser falls back to ATIF. ATIF can include a `system` step when the system prompt is available in your source records.
+</Accordion>
 
 ## Bounds and duplicates
 
-- One limit: the archive ceiling `limits.uploads.job_archive_bytes` (`upload_too_large`).
-- A trial with a file over 5 GiB, or a trajectory too large to parse, is skipped (`trial_too_large`); the rest lands. A `job.log` over that size refuses the job (`upload_too_large`).
-- A `result.json` that cannot be read fails the import (`invalid_trial`).
-- The same job twice: `job_already_uploaded`. Delete it, then upload again.
+Inspect the import result, including skipped trials and their reasons. A completed import can have omissions.
 
-<Card title="upload reference" icon="terminal" href="/cli-reference/upload">
-  Every flag of `evolve upload`.
-</Card>
+| Refusal | Meaning |
+| --- | --- |
+| `job_already_uploaded` | This job was imported before. Delete the existing import's job before replacing it. |
+| `invalid_trial` | A required trial result could not be parsed. |
+| `trial_too_large` | A trial exceeded a physical file or parsing limit and was skipped. |
+| `upload_too_large` | The archive or required job-level data exceeded an accepted limit. |
+
+The capability document reports `limits.uploads.job_archive_bytes`. Local dataset and job archives larger than 256 MiB use resumable upload automatically.
+
+<CardGroup cols={2}>
+  <Card title="Upload reference" icon="upload" href="/cli-reference/upload">Import options and progress commands.</Card>
+  <Card title="Analyze imported results" icon="search" href="/core-concepts/analyze">Review behavior using the retained evidence.</Card>
+</CardGroup>

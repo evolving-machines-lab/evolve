@@ -1,278 +1,201 @@
 ---
 title: "evolve job"
-description: "Start, follow, and derive jobs."
+description: "Inspect results, compare runs, and control or repeat evaluations."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
-import ListFlags from '/snippets/list-flags.mdx';
+Start with the job ID printed by `evolve run`, or find it in the list. Examples below use `$JOB_ID` for that ID.
 
 ```bash
-evolve job <command> [options]
+evolve job list
+evolve job show "$JOB_ID"
+evolve job trials "$JOB_ID"
 ```
 
-Every command below takes the [global options](/cli-reference#global-options).
+## Inspect results
 
-## job start
+<Tabs>
+  <Tab title="Jobs">
+    ```bash
+    evolve job list --search hello
+    evolve job list --kind all --scope org
+    evolve job show "$JOB_ID" --json
+    ```
+
+    | Option for `job list` | Meaning |
+    | --- | --- |
+    | `--search <text>` | Match job names and dataset names. |
+    | `--kind <job\|check\|all>` | Evaluations, task checks, or both. Default `job`. |
+    | `--scope <my\|shared\|org>` | Which records to list. Default `my`. |
+
+    `job show` accepts one or more IDs. With `--json`, one ID returns an object; several return an array.
+  </Tab>
+  <Tab title="Trials">
+    ```bash
+    evolve job trials "$JOB_ID" --status INFRASTRUCTURE_ERROR,SCORING_ERROR
+    evolve job trials "$JOB_ID" --dataset harbor-examples
+    ```
+
+    | Option for `job trials` | Meaning |
+    | --- | --- |
+    | `--status <statuses>` | Comma-separated trial statuses. |
+    | `--dataset <name>` | Select one dataset in the job. |
+
+    Statuses: `QUEUED`, `RUNNING`, `SCORING`, `SCORED`, `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`, `CANCELLED`.
+
+    Open an individual result with [`evolve trial show`](/cli-reference/trial).
+  </Tab>
+  <Tab title="Tasks">
+    ```bash
+    evolve job tasks "$JOB_ID"
+    ```
+
+    One row per task: trial count, statuses, reward, spend, and available task-check information.
+  </Tab>
+</Tabs>
+
+`job list`, `job trials`, and `job tasks` accept the shared [paging and formatting options](/cli-reference/index#list-options): `--limit`, `--cursor`, `--columns`, `--quiet`, `--no-trunc`, and `--no-headers`.
+
+A `COMPLETED` job can include failed trials. Inspect the trial statuses as well as the aggregate score.
+
+## Compare jobs
+
+Supply two to ten job IDs.
 
 ```bash
-evolve job start [options]
+evolve job compare "$JOB_ID" "$OTHER_JOB_ID"
 ```
 
-Start a job; add `--watch` to follow it. Exactly the options of [`evolve run`](/cli-reference/run).
+## Search traces
 
-## job list
+Search across the job's trial traces. `$JOB_ID` comes from `job list` or `run`.
 
 ```bash
-evolve job list [options]
+evolve job grep "$JOB_ID" 'permission denied'
+evolve job grep "$JOB_ID" 'permission denied' --type tool_call --json
 ```
 
-List jobs, newest first: yours, `--scope shared` for what teammates created, `--scope org` for everything in your organizations. A task quality check is a job too (Harbor runs `harbor check` as one job): `--kind all` lists jobs and checks in one list, each row marked by its kind, and `--kind check` lists checks alone.
+| Option | Meaning |
+| --- | --- |
+| `--type <event-type>` | Match only this exact event type. |
+| `-l`, `--limit <n>` | Trial match groups per page. Default `50`, maximum `200`. |
+| `--cursor <cursor>` | Continue from the returned `nextCursor`. |
 
-<ListFlags />
+## Stop work
 
-<ParamField path="--search" type="text">
-  Free-text filter over job name and dataset names.
-</ParamField>
+<Tabs>
+  <Tab title="Whole job">
+    ```bash
+    evolve job cancel "$JOB_ID"
+    ```
 
-<ParamField path="--scope" type="my | shared | org">
-  Visibility scope: `my`, what you created (the default); `shared`, your organizations' rows that teammates created; or `org`, every row in your organizations, your own included.
-</ParamField>
+    Request cancellation. The returned job may still be winding down.
+  </Tab>
+  <Tab title="One dataset">
+    ```bash
+    evolve job stop "$JOB_ID" --dataset harbor-examples
+    ```
 
-<ParamField path="--kind" type="job | check | all">
-  Which rows to list: `job` (the default), `check` for task quality checks, or `all` for both merged newest first. With `check` or `all` a `KIND` column leads each row; a check row reads its id, status, dataset or archive, task check count, cost and accept time, and under `--columns` its `name` and its checker's model and effort (`agents`).
-</ParamField>
+    Stop that dataset's trials while keeping the rest of the job. `--dataset <name>` is required.
+
+    Output separates stopped trials, already-terminal trials, and missing IDs. If a batch fails, the partial report names how many outcomes remain unreported.
+  </Tab>
+</Tabs>
+
+For individual trials, use [`trial stop`](/cli-reference/trial#stop-a-trial).
+
+## Run again
+
+Each command creates a new linked job. It leaves the source results intact.
+
+| Command | Work repeated |
+| --- | --- |
+| `evolve job resume "$JOB_ID"` | Failed or stopped trials selected by the resume policy. |
+| `evolve job retry "$JOB_ID"` | All trials of a settled source job. |
+| `evolve job retry "$JOB_ID" --failed-only` | Trials in `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, or `INDETERMINATE`. |
+| `evolve job retry "$JOB_ID" --trial "$TRIAL_ID"` | Exactly the selected settled trial. Repeat `--trial` for more. |
+| `evolve job regrade "$JOB_ID"` | The recorded verifier, using stored inputs. No replacement verifier. |
+
+<Accordion title="Selection options and requirements">
+  **Resume** accepts `-f, --filter-error-type <type>`. Repeat it to select exception types.
+
+  **Retry** accepts either `--failed-only` or `-t, --trial <id>`, not both. Copy full trial IDs from `evolve job trials "$JOB_ID"`; these flags do not expand prefixes. Explicit settled trials can be retried while other trials in the source job are still running.
+
+  **Regrade** accepts `--status <s1,s2,...>` and `--task <name>`. It requires eligible stored verifier inputs; shared-verifier, multi-step, and judge-backed trials cannot be regraded through this command. See [Trials](/core-concepts/trials).
+
+  Uploaded jobs cannot be resumed, retried, or regraded. Their original execution ran outside Evolve.
+</Accordion>
+
+Start a new evaluation with `evolve job start` or its shorter form, [`evolve run`](/cli-reference/run).
+
+## Download results
 
 ```bash
-evolve job list --limit 20 -q
-evolve job list --kind all
+evolve job download "$JOB_ID" -o results/
 ```
 
-## job show
+```text
+results/
+└── job-<id>/
+    ├── config.json
+    ├── result.json
+    ├── evolve.json          Evolve's record
+    └── <trial folders>/
+```
+
+| Option | Meaning |
+| --- | --- |
+| `-o`, `--output-dir <dir>` | Parent directory. Default: current directory. |
+| `--overwrite` | Allow replacing an existing job folder. |
+
+The download uses the Harbor job layout, with additional `evolve.json` records.
+
+## Share results
+
+Only the creator can manage a job's shares.
+
+<CodeGroup>
+```bash Create access
+evolve job share "$JOB_ID" --link
+evolve job share "$JOB_ID" --email colleague@example.com
+```
+
+```bash Inspect or remove access
+evolve job shares "$JOB_ID"
+evolve job unshare "$JOB_ID" --link
+evolve job unshare "$JOB_ID" --email colleague@example.com
+```
+</CodeGroup>
+
+Both `share` and `unshare` require `--link`, repeatable `--email <address>`, or both. Email sharing sends the recipient a link. Revoking a link disables it; enabling sharing later creates a new link.
+
+See [Sharing](/core-concepts/sharing) for access rules.
+
+## Read an upload's progress
+
+[`evolve upload`](/cli-reference/upload) prints an import ID before the imported job is ready.
 
 ```bash
-evolve job show <id> [id...]
+evolve job imports --status RUNNING
+evolve job import "$IMPORT_ID" --watch
 ```
 
-Show one or more jobs in full. It ends with a pass@k block, one line per arm and dataset that has numbers; `--json` carries the raw `stats.evals[].pass_at_k`. An `analyze` row holds the embedded policy and an `analysis` row the tally with the analyzer's spend. An uploaded job prints its provider as `ported` and its spend as `reported $X.XX (N/M trials reporting)`. The `visibility` row is `PRIVATE` or `LINK` — whether the job's share link is on ([job shares](#job-shares) prints the link and the addresses).
+| Command | Options |
+| --- | --- |
+| `job imports` | Shared list options; `--status <QUEUED\|RUNNING\|COMPLETED\|FAILED>`. |
+| `job import <id>` | `--watch` to follow it to a job or failure. Use the full import ID. |
 
-## job trials
+`job import --watch --json` prints one final job or error document.
+
+## Delete a job
 
 ```bash
-evolve job trials <id> [options]
+evolve job delete "$JOB_ID"
 ```
 
-List a job's trials.
+The command asks before permanent deletion. For noninteractive use, pass `-y` or `--yes`.
 
-<ListFlags />
+<Warning>
+  Deleting a job removes its stored trials, traces, analyses, and files. Only the creator can delete it, and the job must be eligible for deletion.
+</Warning>
 
-<ParamField path="--status" type="s1,s2,...">
-  Filter by trial status, for example `INFRASTRUCTURE_ERROR`.
-</ParamField>
-
-<ParamField path="--dataset" type="name">
-  Filter to one dataset's trials.
-</ParamField>
-
-```bash
-evolve job trials 3e1f9a2c-… --status INFRASTRUCTURE_ERROR,SCORING_ERROR
-```
-
-## job tasks
-
-```bash
-evolve job tasks <id> [options]
-```
-
-Per-task rollup of a job: one row per task.
-
-<ListFlags />
-
-## job compare
-
-```bash
-evolve job compare <id> <id> [...]
-```
-
-Compare two to ten jobs side by side.
-
-## job cancel
-
-```bash
-evolve job cancel <id>
-```
-
-Request cancellation of a job.
-
-## job delete
-
-```bash
-evolve job delete <id> [options]
-```
-
-Permanently delete a job you created: its trials, traces, analyses and stored files. It names the job, then asks. Another member of the organization is refused with `org_forbidden`; a live job, a running analysis wave or a live regrade refuses as on [jobs](/core-concepts/jobs#stop-cancel-delete).
-
-<ParamField path="-y, --yes">
-  Delete without a confirmation prompt. On a non-interactive stdin the command refuses without it, rather than guessing. With `--json` the receipt is `{"job_id", "trials_deleted", "analyses_deleted"}`.
-</ParamField>
-
-## job share
-
-```bash
-evolve job share <id> --link
-evolve job share <id> --email <address> [--email <address>...]
-```
-
-Share a job you created. `--link` turns on the job's unlisted link and prints it; running it again prints the same link. `--email` shares the run with an address: that person gets an email with a link to the run and reads it after signing in with the same address (a person without an account gets a sign-up link in the same email; an address already on the waitlist or holding an invite gets the share email without a sign-up link and uses that invite instead). Both flags may ride one command. Someone the run is shared with can read it — the job, its trials, traces and files — and finds it under `evolve job list --scope shared`; they cannot cancel, retry, regrade, analyze or delete it. Only the job's creator may share it; another member of the organization is refused with `org_forbidden`.
-
-<ParamField path="--link">
-  Enable the job's unlisted link and print it. Anyone holding the link reads the run without signing in.
-</ParamField>
-
-<ParamField path="--email" type="address">
-  Share with this address; repeatable. At most 50 addresses per job.
-</ParamField>
-
-## job unshare
-
-```bash
-evolve job unshare <id> --link
-evolve job unshare <id> --email <address>
-```
-
-Take a share back. `--link` turns the link off at once — the old link stops working, and a later `job share --link` prints a new one. `--email` removes that address's share. Both are safe to repeat.
-
-## job shares
-
-```bash
-evolve job shares <id>
-```
-
-Print who the job is shared with: its visibility, the link while it is on, and every address with who shared it and when. `--json` prints the same as `{"visibility", "link": {"enabled", "url"}, "emails": [{"email", "shared_by", "created_at"}]}`.
-
-## job stop
-
-```bash
-evolve job stop <id> --dataset <name>
-```
-
-Stop one dataset's live trials without cancelling the job. Trials already settled are reported as already terminal, and a dataset the job never spanned is refused. If the command fails part way (a rate limit, say), the report prints first, marked `PARTIAL` with the trials no answer came back for (`partial: true` and `unreported` under `--json`), then the error, exit 1; re-running the same command finishes the rest.
-
-<ParamField path="--dataset" type="name" required>
-  The dataset whose live trials to stop.
-</ParamField>
-
-## job resume
-
-```bash
-evolve job resume <id> [options]
-```
-
-A new linked job over a terminal job's failed or stopped trials.
-
-<ParamField path="-f, --filter-error-type" type="type">
-  Failure types to resume, matched on the trial's exception type. Repeatable. Defaults to the standard failure set plus stopped trials.
-</ParamField>
-
-```bash
-evolve job resume 3e1f9a2c-… -f InfrastructureError
-```
-
-## job retry
-
-```bash
-evolve job retry <id> [options]
-```
-
-A new linked job re-running selected trials: all of them, the failed ones only, or named ids.
-
-<ParamField path="--failed-only">
-  Only retry failed trials: `SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`. Stopped and scored trials are not failures.
-</ParamField>
-
-<ParamField path="-t, --trial" type="trial-id">
-  Retry exactly this trial. Repeatable, all or nothing: each must be settled, and the job may still be running. Not combinable with `--failed-only`.
-</ParamField>
-
-## job regrade
-
-```bash
-evolve job regrade <id> [options]
-```
-
-Verifier-only re-run of a terminal job. The result is a job.
-
-<ParamField path="--status" type="s1,s2,...">
-  Only regrade source trials in these statuses.
-</ParamField>
-
-<ParamField path="--task" type="name">
-  Only regrade source trials of this task.
-</ParamField>
-
-## job imports
-
-```bash
-evolve job imports [options]
-```
-
-List your job imports (uploads), newest first. This is how an import id is found again.
-
-<ListFlags />
-
-<ParamField path="--status" type="QUEUED | RUNNING | COMPLETED | FAILED">
-  Filter by import status.
-</ParamField>
-
-## job import
-
-```bash
-evolve job import <import-id> [options]
-```
-
-Show one job import, an upload's record, with a `skipped` count and one line per skipped trial when the ingest left any out.
-
-<ParamField path="--watch">
-  Poll until the import settles: `COMPLETED`, and the job is printed, or `FAILED`.
-</ParamField>
-
-## job download
-
-```bash
-evolve job download <id> [options]
-```
-
-Download the job's results, unpacked as the standard job-directory tree plus `evolve.json` records.
-
-<ParamField path="-o, --output-dir" type="dir">
-  Directory to unpack into. Defaults to the current directory. The tree lands in `<dir>/job-<id>/`.
-</ParamField>
-
-<ParamField path="--overwrite">
-  Replace an existing `<dir>/job-<id>/`.
-</ParamField>
-
-## job grep
-
-```bash
-evolve job grep <id> <pattern> [options]
-```
-
-Search every trial's parsed trace in one server-side pass and print one line per matching trial with its sampled events. The pattern grammar and the page semantics are on [`jobs().grep()`](/sdk-reference/jobs#grep).
-
-<ParamField path="--type" type="event-type">
-  Only search events of exactly this type.
-</ParamField>
-
-<ParamField path="-l, --limit" type="n" default="50">
-  Per-trial match groups per page. Max 200.
-</ParamField>
-
-<ParamField path="--cursor" type="c">
-  Resume after this trial id, the previous page's `nextCursor`.
-</ParamField>
-
-```bash
-evolve job grep 3e1f9a2c-… 'permission denied'
-```
-
-<GlobalOptions />
+[Global options](/cli-reference/index#global-options) apply to every command.

@@ -1,48 +1,57 @@
 ---
-title: "Evolve documentation"
-description: "Environment-driven agent evaluations: any model, any harness, any sandbox, one API key. Every task versioned and checked, every trajectory analyzed."
+title: "Evolve Documentation"
+description: "Environment-driven agent evaluation and optimization."
 ---
 
-Evolve is hosted evaluation for agents: bring your own tasks or pick a public dataset, and run any model on any agent harness against them, in parallel, in cloud sandboxes. Each task is pinned to one versioned environment, so every run starts from the same place today or next month. Every trial returns its reward, its live trace, its files and its logs, with a quality verdict on any task before you spend on it and a judged analysis of any trajectory after.
+Evolve is the engine for running reproducible agent evaluations at scale across tasks, sandboxes, harnesses, and models. It provides quality control during task creation, with full observability and trajectory analysis for every run.
 
-- **One API key.** Any model with `-m`, any agent harness with `-a`, any sandbox provider with `-e`; no provider keys to manage.
-- **Task quality control.** `evolve check` runs each task and judges it against a rubric before you spend a job on it.
-- **Full observability.** Every trial streams its trace live; its files, artifacts, agent logs and verifier logs are yours to read and download when it ends.
-- **Trace analysis after every trial.** `evolve analyze` judges every trial's trace against a rubric, cheap and scalable.
-
-```bash
-export EVOLVE_API_KEY="<your key>"   # from https://dashboard.evolvingmachines.ai/api-keys
-evolve run \
-  -d terminal-bench-4@4.0 \
-  -a codex \
-  -m gpt-6-astra \
-  -l 5 \
-  --watch
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 16, "rankSpacing": 20, "padding": 10}, "themeVariables": {"fontSize": "14px", "fontFamily": "Google Sans Flex, sans-serif"}}}%%
+flowchart LR
+  T["Tasks"] --> E["Evolve<br/>Cloud runs"]
+  H["Harnesses"] --> E
+  M["Models"] --> E
+  E --> S["Scores"]
+  E --> A["Trajectories"]
+  E --> O["Logs and files"]
 ```
 
-New here? The [quick start](/getting-started/quick-start) takes five minutes.
-
-## The whole process
-
-1. [Get tasks](/core-concepts/tasks): a public dataset, your own, or a converted benchmark.
-2. [Check](/core-concepts/check) each task against a rubric before you run it.
-3. [Publish](/core-concepts/datasets) the tasks as a versioned dataset.
-4. [Run](/core-concepts/jobs) any agent and model on it; every trial streams live.
-5. [Read](/core-concepts/trial-outputs) every trial's tree and [analyze](/core-concepts/analyze) its trace.
-
-A coding agent does all five from the same CLI with the [skills](/cli-reference/skills).
-
-<Columns cols={2}>
-  <Card title="Quick start" icon="play" href="/getting-started/quick-start">
-    Install the CLI, start a job, read its result.
+<CardGroup cols={2}>
+  <Card title="Task quality checks" icon="list-check" href="/core-concepts/check">
+    Check that tasks are solvable, instructions are clear, and verifiers score correctly.
   </Card>
-  <Card title="Core concepts" icon="layers" href="/core-concepts">
-    How tasks, jobs, trials, agents and sandboxes fit together.
+  <Card title="Agent optimization" icon="git-compare" href="/core-concepts/jobs">
+    Compare harnesses, models, and settings on the same tasks. Measure rewards and costs.
   </Card>
-  <Card title="CLI reference" icon="terminal" href="/cli-reference">
-    Every verb and flag of the `evolve` command.
+  <Card title="Trajectory analysis" icon="search" href="/core-concepts/analyze">
+    Review the agent’s actions, failures, and the evidence behind its score.
   </Card>
-  <Card title="Dashboard" icon="layout-dashboard" href="/dashboard/datasets">
-    Datasets, jobs and the trial viewer in the browser.
+  <Card title="Full observability" icon="activity" href="/core-concepts/trial-outputs">
+    Inspect traces, files, verifier logs, timing, token usage, and costs.
   </Card>
-</Columns>
+</CardGroup>
+
+## One command to start
+
+After [installation and authentication](/getting-started/installation), run one task:
+
+```bash
+evolve run \
+  -d harbor-examples@1.0 -i hello-world \
+  -a codex -m gpt-5.6-luna \
+  --max-trial-spend 1 --max-retries 0 --watch
+```
+
+The job runs on Evolve. Your terminal follows its progress; closing the terminal does not cancel it.
+
+<CardGroup cols={3}>
+  <Card title="First evaluation" icon="play" href="/getting-started/quick-start">
+    Run, score, and inspect one task.
+  </Card>
+  <Card title="Your own tasks" icon="folder-plus" href="/core-concepts/tasks">
+    Build in the Harbor task format.
+  </Card>
+  <Card title="Python and TypeScript" icon="code" href="/sdk-reference/index">
+    Run evaluations from code.
+  </Card>
+</CardGroup>

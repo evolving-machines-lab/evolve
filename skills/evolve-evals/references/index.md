@@ -1,0 +1,58 @@
+---
+title: "Evolve Documentation"
+description: "Environment-driven agent evaluation and optimization."
+---
+
+Evolve is the engine for running reproducible agent evaluations at scale across tasks, sandboxes, harnesses, and models. It provides quality control during task creation, with full observability and trajectory analysis for every run.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 16, "rankSpacing": 20, "padding": 10}, "themeVariables": {"fontSize": "14px", "fontFamily": "Google Sans Flex, sans-serif"}}}%%
+flowchart LR
+  T["Tasks"] --> E["Evolve<br/>Cloud runs"]
+  H["Harnesses"] --> E
+  M["Models"] --> E
+  E --> S["Scores"]
+  E --> A["Trajectories"]
+  E --> O["Logs and files"]
+```
+
+**[Task quality checks](/core-concepts/check)**
+
+Check that tasks are solvable, instructions are clear, and verifiers score correctly.
+
+**[Agent optimization](/core-concepts/jobs)**
+
+Compare harnesses, models, and settings on the same tasks. Measure rewards and costs.
+
+**[Trajectory analysis](/core-concepts/analyze)**
+
+Review the agent’s actions, failures, and the evidence behind its score.
+
+**[Full observability](/core-concepts/trial-outputs)**
+
+Inspect traces, files, verifier logs, timing, token usage, and costs.
+
+## One command to start
+
+After [installation and authentication](/getting-started/installation), run one task:
+
+```bash
+evolve run \
+  -d harbor-examples@1.0 -i hello-world \
+  -a codex -m gpt-5.6-luna \
+  --max-trial-spend 1 --max-retries 0 --watch
+```
+
+The job runs on Evolve. Your terminal follows its progress; closing the terminal does not cancel it.
+
+**[First evaluation](/getting-started/quick-start)**
+
+Run, score, and inspect one task.
+
+**[Your own tasks](/core-concepts/tasks)**
+
+Build in the Harbor task format.
+
+**[Python and TypeScript](/sdk-reference/index)**
+
+Run evaluations from code.

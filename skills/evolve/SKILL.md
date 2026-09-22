@@ -4,37 +4,54 @@ description: "Evolve runs agent evaluations in the cloud: any model on any codin
 allowed-tools: Bash(evolve:*), Bash(npx evolve:*)
 ---
 
-# evolve
+# Evolve
 
-Hosted evals and the SDK, from the `evolve` command.
+Run evaluations in the cloud and inspect the results. This is the entry point; the versioned manual ships inside the CLI.
 
-Install: `npm i -g @evolvingmachines/evolve`, then `export EVOLVE_API_KEY=<your key>` (create a key at https://dashboard.evolvingmachines.ai/api-keys).
-
-Python SDK: `pip install evolvingmachines-evolve` (`import evolve`). The manual still comes from the `evolve` command.
-
-## Start here
-
-This file is a pointer, not the manual. The manual ships inside the CLI and always matches the installed version. Keep it current: `npm i -g @evolvingmachines/evolve@latest`, then `evolve skills install --force` refreshes this file. Before running any `evolve` command, load it:
+## Read the relevant page first
 
 ```bash
-evolve skills get evals                        # the index of the documentation: every page, one line each
-evolve skills get evals core-concepts/tasks    # one page, by its site path
-evolve skills get evals --full                 # every page at once; only when everything is needed
+evolve skills get evals                       # documentation index
+evolve skills get evals cli-reference/run     # one focused page
+evolve run --help                            # installed command options
 ```
 
-Read the index first, then the page for your topic, then write the command. Every verb also answers `evolve <verb> --help`.
+Choose pages from the index. Load `--full` only when the entire reference is needed.
 
-## The other skills
+| Task | Starting page |
+| --- | --- |
+| First evaluation | `getting-started/quick-start` |
+| Run or configure a job | `cli-reference/run` |
+| Inspect, compare, stop, or retry | `cli-reference/job` |
+| Read files, logs, or processes | `cli-reference/filesystem` |
+| Check task quality | `cli-reference/check` |
+| Analyze completed traces | `cli-reference/analyze` |
+| Publish a dataset | `cli-reference/dataset` |
+| Import completed results | `cli-reference/upload` |
+| Upload a recorded SDK run | `core-concepts/upload-sdk-session` |
+| Python or TypeScript client | `sdk-reference/index` |
+
+For example: `evolve skills get evals cli-reference/job`.
+
+## Task-authoring skills
 
 ```bash
-evolve skills get create-task      # write a new task in the Harbor format, verifier included
-evolve skills get rewardkit        # write a task's verifier with Reward Kit
-evolve skills get create-adapter   # convert an existing benchmark into a folder of Harbor-format tasks
-evolve skills get publish          # publish a dataset of tasks, or upload a job you ran elsewhere (a Harbor job, or SDK runs packed as one)
+evolve skills get create-task      # write a Harbor-format task
+evolve skills get rewardkit        # write its verifier
+evolve skills get create-adapter   # convert a benchmark
+evolve skills get publish          # publish tasks or import results
 ```
 
-`evolve skills list` names everything the installed version serves; `--full` on any skill adds its pages. The SDK skill (run agents in sandboxes from TypeScript or Python) is not served by the command; install it from the repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`.
+`evolve skills list` shows the installed bundle. Plural `skills` reads this manual; singular `skill` uploads content for evaluated agents.
 
-## Inside the evolve repository
+## Setup, when needed
 
-An agent working in a checkout of https://github.com/evolving-machines-lab/evolve reads the same content directly from `skills/<name>/SKILL.md` (`evolve-evals` is the evals index, its pages under `references/`); nothing needs to be installed.
+CLI: `npm install -g @evolvingmachines/evolve`. Set `EVOLVE_API_KEY` using a key from https://dashboard.evolvingmachines.ai/api-keys; confirm with `evolve auth status`.
+
+Python: `pip install evolvingmachines-evolve` (`import evolve`). Managed evals references still come from `evolve skills get evals`.
+
+To install this pointer into an agent's skills directory, use `evolve skills install --target <agent>`. Do not reinstall or update the CLI merely to read its manual.
+
+The separate managed-agents SDK skill installs from the repository: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`. It is not served by `evolve skills`.
+
+Inside an Evolve checkout, read `skills/evolve-evals/SKILL.md` and its `references/` directly; no installation is needed.

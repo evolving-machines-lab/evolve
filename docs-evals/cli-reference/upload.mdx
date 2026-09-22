@@ -1,36 +1,72 @@
 ---
 title: "evolve upload"
-description: "Upload a job folder as a finished job."
+description: "Import completed evaluations into Evolve from a Harbor-format job folder."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
+Upload results from another machine or runner. Evolve imports their trials, rewards, and traces as a completed job.
 
 ```bash
-evolve upload <job_dir> [options]
+evolve upload ./completed-job -d harbor-examples@1.0
 ```
 
-Upload a job folder in the Harbor job layout, its `.tar.gz`, or a public URL of one, as a terminal job. What the folder and each trial's `result.json` must hold is on [Upload a job](/core-concepts/upload). The command follows the import to the job, prints the record with the task linkage (`linked N of M trials to <dataset>` and the not-linked tasks with their reasons), names any skipped trials, and ends with the analyze hint.
+The source must use the [supported job layout](/core-concepts/upload). A local directory needs `config.json` and `result.json` at its root.
 
-```bash
-evolve upload ./job-2026-08-27__12-00-00 -d terminal-bench-4@4.0
-```
+For an SDK session log, use the [packaging walkthrough](/core-concepts/upload-sdk-session) first.
+
+## Choose a source
+
+<Tabs>
+  <Tab title="Directory">
+    ```bash
+    evolve upload ./completed-job
+    ```
+  </Tab>
+  <Tab title="Archive">
+    ```bash
+    evolve upload ./completed-job.tar.gz
+    ```
+  </Tab>
+  <Tab title="Public URL">
+    ```bash
+    evolve upload --from https://example.com/completed-job.tar.gz
+    ```
+  </Tab>
+</Tabs>
+
+Use one source per invocation. `--from` requires a public HTTPS URL.
 
 ## Options
 
-<ParamField path="-d, --dataset" type="name[@version]">
-  Link the uploaded trials to a published dataset version by task name. Without it the trials link by their task hash on their own; this is the override, and the way to settle an ambiguous hash. See [upload](/core-concepts/upload#task-linkage).
-</ParamField>
+| Option | Meaning |
+| --- | --- |
+| `-d`, `--dataset <name[@version]>` | Link imported trial tasks to a published dataset version by task name. |
+| `--from <url>` | Have Evolve fetch a public job archive. Replaces the local path. |
+| `--no-wait` | Return the import record without waiting for the completed job. |
 
-<ParamField path="--from" type="url">
-  A public https URL of the job archive (`.tar.gz`) that the server fetches itself, instead of `<job_dir>`. No local bytes.
-</ParamField>
+Dataset linking makes the stored task available to later analysis. Review the report for unlinked tasks and skipped trial folders.
 
-<ParamField path="--no-wait">
-  Return after the import is accepted, with the import id, instead of following it to the job. Re-attach with `evolve job import <id> --watch`.
-</ParamField>
+## Follow an import
 
-<GlobalOptions />
+By default, `upload` waits for the imported job. Use `--no-wait` when you want to reconnect later.
 
-## Following an import
+```bash
+evolve upload ./completed-job --no-wait
+evolve job imports --status RUNNING
+evolve job import "$IMPORT_ID" --watch
+```
 
-`evolve job imports` lists your uploads, and `evolve job import <import-id> --watch` follows one. See the [`job`](/cli-reference/job) group.
+Copy the complete import ID printed by `upload` into `$IMPORT_ID`.
+
+With `--json`, the default command prints one final job document. With `--no-wait --json`, it prints the import record instead.
+
+## Inspect the result
+
+```bash
+evolve job show "$JOB_ID"
+evolve job trials "$JOB_ID"
+evolve analyze "$JOB_ID" --watch
+```
+
+`$JOB_ID` is the ID of the imported job. Uploaded costs are reported by the source archive, not metered execution on Evolve. Uploaded jobs can be analyzed, but cannot be resumed, retried, or regraded.
+
+[Global options](/cli-reference/index#global-options) apply.

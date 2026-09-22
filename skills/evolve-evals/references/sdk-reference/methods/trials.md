@@ -1,0 +1,371 @@
+---
+title: "Trials methods"
+description: "Read attempts, traces, files, and actions by trial id."
+---
+
+Use `trials()` to create `client`. Examples run inside an async context; ids name existing records. The [trial guide](/sdk-reference/trials) shows the full inspection workflow.
+
+| Read | Act |
+| --- | --- |
+| [get](#get), [trace](#trace), [traceEvents](#traceevents) | [retry](#retry), [regrade](#regrade), [stop](#stop) |
+| [files](#files), [file](#file), [artifact](#artifact), [filesystem](#filesystem) | |
+
+## get
+
+Read one attempt by its globally unique id. Returns `Trial`, including `job_id` and the untruncated exception message.
+
+### Signature
+
+```ts TypeScript signature
+get(trialId: string): Promise<Trial>;
+```
+
+```python Python signature
+async def get(trial_id: str) -> Trial: ...
+```
+
+```ts TypeScript
+const trial = await client.get(trialId);
+```
+
+```python Python
+trial = await client.get(trial_id)
+```
+
+See [trial fields](/sdk-reference/types#trial-fields) for rewards, usage, retries, timing, and provenance.
+
+## trace
+
+Read one page of parsed events. Returns `TraceEventPage`.
+
+### Signature
+
+```ts TypeScript signature
+trace(
+  trialId: string,
+  options?: TraceOptions
+): Promise<TraceEventPage>;
+```
+
+```python Python signature
+async def trace(
+    trial_id: str,
+    *,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = None,
+    type: Optional[str] = None,
+    grep: Optional[str] = None,
+    tail: Optional[int] = None,
+) -> TraceEventPage: ...
+```
+
+```ts TypeScript
+const page = await client.trace(trialId, {
+  tail: 20
+});
+```
+
+```python Python
+page = await client.trace(
+    trial_id,
+    tail=20,
+)
+```
+
+| Option | Meaning / default |
+| --- | --- |
+| `cursor` | Events strictly after this sequence number, passed as a string |
+| `limit` | Events per page: default 200, maximum 1,000 |
+| `type` | Exact event type |
+| `grep` | Case-insensitive POSIX regular expression over type and content |
+| `tail` | Last N matching events, still returned oldest first |
+
+The page has `items`, `nextCursor`, `hasMore` / Python `next_cursor`, `has_more`. An event has `seq: number`, `type: string`, and `data: object`. A null next cursor means caught up. To poll again later, retain the last event’s `seq`.
+
+## traceEvents
+
+Python: `trace_events`. Iterate currently available parsed events across pages. It finishes when caught up; it is not a live subscription.
+
+### Signature
+
+```ts TypeScript signature
+traceEvents(
+  trialId: string,
+  options?: TraceOptions
+): AsyncIterableIterator<TraceEvent>;
+```
+
+```python Python signature
+async def trace_events(
+    trial_id: str,
+    *,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = None,
+    type: Optional[str] = None,
+    grep: Optional[str] = None,
+    tail: Optional[int] = None,
+) -> AsyncIterator[TraceEvent]: ...
+```
+
+```ts TypeScript
+for await (const event of client.traceEvents(trialId)) {
+  console.log(event.seq, event.type);
+}
+```
+
+```python Python
+async for event in client.trace_events(trial_id):
+    print(event.seq, event.type)
+```
+
+Accepts the same `cursor`, `limit`, `type`, `grep`, and `tail` options as `trace`. Returns an async iterator of `TraceEvent`.
+
+## files
+
+List the stored trial tree by relative path. Returns one `TrialFilePage`, sorted by path.
+
+### Signature
+
+```ts TypeScript signature
+files(
+  trialId: string,
+  options?: ListTrialFilesOptions
+): Promise<TrialFilePage>;
+```
+
+```python Python signature
+async def files(
+    trial_id: str,
+    *,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> TrialFilePage: ...
+```
+
+```ts TypeScript
+const page = await client.files(trialId, {
+  limit: 20
+});
+```
+
+```python Python
+page = await client.files(
+    trial_id,
+    limit=20,
+)
+```
+
+Optional `limit` defaults to 200 (maximum 1,000); `cursor` continues the page. Each item contains `path: string` and `size_bytes: number`. An empty tree is a normal result.
+
+## file
+
+Read one path returned by `files`. Returns exact bytes: TypeScript `Buffer`, Python `bytes`.
+
+### Signature
+
+```ts TypeScript signature
+file(
+  trialId: string,
+  path: string,
+  range?: TrialFileRange
+): Promise<Buffer>;
+```
+
+```python Python signature
+async def file(
+    trial_id: str,
+    path: str,
+    *,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    suffix: Optional[int] = None,
+) -> bytes: ...
+```
+
+```ts TypeScript
+const bytes = await client.file(
+  trialId,
+  "agent/stderr.log",
+  {
+    suffix: 4096
+  }
+);
+```
+
+```python Python
+data = await client.file(
+    trial_id,
+    'agent/stderr.log',
+    suffix=4096,
+)
+```
+
+Optional byte range: `start` plus inclusive `end`, `start` through EOF, or `suffix` for the last N bytes. Do not combine `suffix` with `start` or `end`. TypeScript passes the range as the third object; Python uses keyword arguments. A missing path is a typed 404.
+
+## artifact
+
+Read a named stored artifact. Returns text, a path-to-text map, or null when nothing was stored.
+
+### Signature
+
+```ts TypeScript signature
+artifact(
+  trialId: string,
+  stream: Exclude<TrialArtifactStream, "trace-parsed" | "agent-home" | "filesystem">
+): Promise<string | null>;
+artifact(
+  trialId: string,
+  stream: "agent-home"
+): Promise<Record<string, string> | null>;
+```
+
+```python Python signature
+async def artifact(
+    trial_id: str,
+    stream: Literal['trace-parsed', 'verifier', 'trace-stdout', 'trace-stderr', 'trace-atif', 'trajectory', 'agent-home', 'filesystem'],
+) -> Optional[Union[str, Dict[str, str]]]: ...
+```
+
+```ts TypeScript
+const trajectory = await client.artifact(
+  trialId,
+  "trace-atif"
+);
+```
+
+```python Python
+trajectory = await client.artifact(
+    trial_id,
+    'trace-atif',
+)
+```
+
+| Selector | Result |
+| --- | --- |
+| `verifier`, `trace-stdout`, `trace-stderr` | `string \| null` / `str \| None` |
+| `trace-atif` | ATIF v1.7 document as JSON text, or null |
+| `agent-home` | Map of sandbox paths to UTF-8 file text, or null |
+| `trajectory` | Reserved native-session selector; currently returns not-found |
+
+Use `trace` for `trace-parsed`, and `filesystem(id).archive()` for `filesystem`. Python’s annotation lists these selectors, but `artifact` rejects both locally. Non-text home files are omitted from the text map and recorded in `/agent-home.json`; the job archive preserves their bytes.
+
+## filesystem
+
+Get a `RunFilesystem` client for this attempt. No request is made until you call a method on it.
+
+### Signature
+
+```ts TypeScript signature
+filesystem(trialId: string): RunFilesystem;
+```
+
+```python Python signature
+def filesystem(trial_id: str) -> 'RunFilesystem': ...
+```
+
+```ts TypeScript
+const fs = client.filesystem(trialId);
+const status = await fs.status();
+```
+
+```python Python
+fs = client.filesystem(trial_id)
+status = await fs.status()
+```
+
+See [every filesystem method](/sdk-reference/methods/filesystem), including live files, captured files, sandbox logs, and processes.
+
+## retry
+
+Run one settled attempt again in a new linked job. Returns `Job`; the source job may still be running.
+
+### Signature
+
+```ts TypeScript signature
+retry(
+  trialId: string,
+  options?: StartJobOptions
+): Promise<Job>;
+```
+
+```python Python signature
+async def retry(
+    trial_id: str,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Job: ...
+```
+
+```ts TypeScript
+const job = await client.retry(trialId, {
+  idempotencyKey: requestId
+});
+```
+
+```python Python
+job = await client.retry(
+    trial_id,
+    idempotency_key=request_id,
+)
+```
+
+Optional `idempotencyKey` / `idempotency_key` makes a repeated request return the same accepted job. This is the one-trial form of `jobs().retry`. Imported attempts cannot retry.
+
+## regrade
+
+Run only the verifier again against eligible recorded inputs. Returns a new one-trial `Job`.
+
+### Signature
+
+```ts TypeScript signature
+regrade(trialId: string): Promise<Job>;
+```
+
+```python Python signature
+async def regrade(trial_id: str) -> Job: ...
+```
+
+```ts TypeScript
+const job = await client.regrade(trialId);
+```
+
+```python Python
+job = await client.regrade(trial_id)
+```
+
+The attempt must be settled and have retained inputs from separate verification. Shared-mode or pre-persistence trials are refused with `regrade_source_ineligible`; imported jobs are refused.
+
+## stop
+
+Stop selected in-flight trials or trace analyses owned by the caller. Returns `StopResponse`.
+
+Pass 1–100 non-empty IDs in one call. The list can contain trial IDs, analysis IDs, or both.
+
+### Signature
+
+```ts TypeScript signature
+stop(trialIds: string[]): Promise<StopResponse>;
+```
+
+```python Python signature
+async def stop(trial_ids: List[str]) -> StopResponse: ...
+```
+
+```ts TypeScript
+const result = await client.stop([trialId, analysisId]);
+```
+
+```python Python
+result = await client.stop(
+    [trial_id, analysis_id],
+)
+```
+
+| Returned field | Type / meaning |
+| --- | --- |
+| `stopped` | `Trial[]`: attempts settled by this request |
+| `stopped_analyses` | `TrialAnalysis[]`: analyses settled as failed, phase `stopped` |
+| `already_terminal` | `string[]`: untouched settled ids |
+| `not_found` | `string[]`: missing ids or ids owned by someone else |
+
+This does not cancel the whole job. Repeating the request is safe: terminal work stays unchanged.

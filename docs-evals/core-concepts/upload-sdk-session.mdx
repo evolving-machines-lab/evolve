@@ -1,0 +1,242 @@
+---
+title: "Upload an SDK run"
+description: "Turn a recorded agent run into a job you can inspect and analyze."
+---
+
+An SDK session records the conversation. An evaluation job holds trials and their results. Package the recorded run as a trial to use job inspection and analysis.
+
+Already have a Harbor job folder? [Upload it directly](/core-concepts/upload). To share an SDK session without creating a job, use [session sharing](/cli-reference/session#share-a-session).
+
+<Steps>
+  <Step title="Find the local session log">
+    Both SDKs write local JSONL logs on the machine running the SDK:
+
+    ```text
+    ~/.evolve-sdk/
+    └── observability/sessions/
+        └── <session>.jsonl
+    ```
+
+    ```bash
+    ls -lt ~/.evolve-sdk/observability/sessions/*.jsonl
+    ```
+
+    Choose the file for your run. Its first `_meta` record contains the agent, model, session tag, and timestamp. `_prompt.text` records the input.
+
+    <Note>
+      Use a fresh Codex or Claude instance with one foreground `run()`, no resumed context, and no shell commands. After it returns `exitCode: 0`, call `kill()` to close and flush the log.
+    </Note>
+
+    A dashboard trace download contains parsed events, not the local harness stream. Do not pass it to this example.
+  </Step>
+
+  <Step title="Package one recorded run">
+    Save the script below as `pack-sdk-run.py`. It uses Python's standard library and works with local logs from either SDK.
+
+    ```bash
+    python3 pack-sdk-run.py \
+      --session "$HOME/.evolve-sdk/observability/sessions/<session>.jsonl" \
+      --task my-task \
+      --out ./sdk-job
+    ```
+
+    Replace the session filename and task name. Use the actual task key if you plan to link a dataset.
+
+    ```text
+    sdk-job/
+    ├── config.json                   Job name
+    ├── result.json                   Stable source ID
+    └── my-task__sdk/
+        ├── result.json               Trial metadata and scores
+        └── agent/
+            ├── trajectory.json       Recorded opening prompt
+            └── .codex/sessions/…     Original Codex log
+    ```
+
+    For Claude, the original log goes under `agent/.claude/projects/sdk-upload/` instead.
+
+    | Source | Destination |
+    | --- | --- |
+    | `_meta.agent` and `_meta.model` | `agent_info` |
+    | `_prompt.text` | First user step in `trajectory.json` |
+    | Original session file | Recognized harness transcript path |
+    | Optional verifier scores | Recorded trial rewards |
+
+    <Accordion title="Copy the packaging script">
+      ```python
+      import argparse
+      import hashlib
+      import json
+      import math
+      import re
+      import uuid
+      from datetime import datetime
+      from pathlib import Path
+
+      parser = argparse.ArgumentParser()
+      parser.add_argument("--session", type=Path, required=True)
+      parser.add_argument("--task", required=True)
+      parser.add_argument("--out", type=Path, required=True)
+      parser.add_argument("--rewards", type=Path)
+      args = parser.parse_args()
+
+      def stop(message):
+          parser.error(message)
+
+      if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", args.task):
+          stop("Use the task directory name: letters, digits, dots, _ or -.")
+      raw = args.session.expanduser().read_bytes()
+      records = []
+      for line in raw.decode("utf-8").splitlines():
+          try:
+              record = json.loads(line)
+          except json.JSONDecodeError:
+              continue  # Keep non-JSON output in the original file.
+          if isinstance(record, dict):
+              records.append(record)
+
+      metadata = [r["_meta"] for r in records if "_meta" in r]
+      prompts = [r["_prompt"] for r in records if "_prompt" in r]
+      if len(metadata) != 1 or len(prompts) != 1:
+          stop("Use a local log with one SDK run; do not combine runs or commands.")
+      if not any("_sessionEnd" in r for r in records):
+          stop("Finish the run and call kill() before packaging its log.")
+      meta, prompt = metadata[0], prompts[0]
+      if not isinstance(meta, dict) or not isinstance(prompt, dict):
+          stop("Expected local SDK metadata and prompt records.")
+      harness = meta.get("agent")
+      if harness not in ("codex", "claude"):
+          stop("This example supports local Codex and Claude SDK logs.")
+      if not isinstance(prompt.get("text"), str) or not prompt["text"]:
+          stop("The log has no recorded prompt text.")
+      if harness == "codex":
+          completed = sum(r.get("type") == "turn.completed" for r in records)
+          failed = any(r.get("type") == "turn.failed" for r in records)
+          if completed != 1 or failed:
+              stop("Expected one successfully completed Codex turn.")
+      else:
+          outcomes = [r for r in records if r.get("type") == "result"]
+          if len(outcomes) != 1 or outcomes[0].get("is_error") is not False:
+              stop("Expected one successful Claude result.")
+
+      rewards = None
+      if args.rewards:
+          rewards = json.loads(args.rewards.read_text())
+          if not isinstance(rewards, dict) or not rewards or not all(
+              isinstance(v, (int, float)) and not isinstance(v, bool)
+              and math.isfinite(v) for v in rewards.values()
+          ):
+              stop("Rewards must be a nonempty JSON object of recorded numeric scores.")
+
+      source_id = str(uuid.uuid5(
+          uuid.NAMESPACE_URL, hashlib.sha256(raw).hexdigest() + ":" + args.task
+      ))
+      trial_name = args.task + "__sdk"
+      agent_info = {"name": harness, "version": ""}
+      if meta.get("model"):
+          agent_info["model_info"] = {"name": meta["model"]}
+      result = {
+          "task_name": args.task, "trial_name": trial_name, "trial_uri": "",
+          "task_id": {}, "task_checksum": "", "config": {},
+          "agent_info": agent_info,
+      }
+      if rewards is not None:
+          result["verifier_result"] = {"rewards": rewards}
+      trajectory = {
+          "schema_version": "ATIF-v1.7", "session_id": meta["tag"],
+          "agent": {"name": harness, "version": ""},
+          "steps": [{"step_id": 1, "source": "user", "message": prompt["text"]}],
+          "notes": "Opening SDK prompt; agent activity is in the native transcript.",
+      }
+      if harness == "codex":
+          date = datetime.fromisoformat(meta["timestamp"].replace("Z", "+00:00"))
+          native = Path(".codex/sessions") / date.strftime("%Y/%m/%d") / f"rollout-{source_id}.jsonl"
+      else:
+          native = Path(".claude/projects/sdk-upload") / f"{source_id}.jsonl"
+
+      args.out.mkdir(parents=True, exist_ok=False)
+      trial = args.out / trial_name
+      destination = trial / "agent" / native
+      destination.parent.mkdir(parents=True)
+      destination.write_bytes(raw)
+      for path, value in (
+          (args.out / "config.json", {"job_name": args.out.name}),
+          (args.out / "result.json", {"id": source_id}),
+          (trial / "result.json", result),
+          (trial / "agent/trajectory.json", trajectory),
+      ):
+          path.write_text(json.dumps(value, indent=2) + "\n")
+      print(f"Ready to upload: {args.out}")
+      print("Recorded scores included." if rewards is not None else "No score supplied.")
+      ```
+    </Accordion>
+
+    Have verifier results? Add `--rewards ./recorded-rewards.json`, containing the verifier's numeric score map. Without it, the import has **no score**. Finishing an agent run does not prove that the task passed.
+
+    The script preserves the transcript. It does not collect sandbox files or infer costs, errors, or rewards. Add any recorded deliverables under `artifacts/`, verifier logs under `verifier/`, and known result fields using the [job layout](/core-concepts/upload#what-result-json-must-hold).
+  </Step>
+
+  <Step title="Upload the job folder">
+    ```bash
+    evolve upload ./sdk-job
+    ```
+
+    If the run used a task from a published dataset, link it by task name:
+
+    ```bash
+    evolve upload ./sdk-job -d my-dataset@1.0
+    ```
+
+    Choose one command. The CLI waits for the import and prints its job ID. Uploading the same packaged run twice is refused.
+  </Step>
+
+  <Step title="Inspect the imported run">
+    Set `$JOB_ID` to the returned ID:
+
+    ```bash
+    evolve job show "$JOB_ID"
+    evolve job trials "$JOB_ID"
+    ```
+
+    Set `$TRIAL_ID` to a trial ID from that list, then read its trace:
+
+    ```bash
+    evolve trial trace \
+      "$TRIAL_ID"
+    ```
+
+    Check that the trial has the expected task, agent, model, prompt, and agent activity. Read the import report for skipped trials or missing task links. Then analyze it:
+
+    ```bash
+    evolve analyze \
+      "$JOB_ID" \
+      --watch
+    ```
+
+    Uploaded jobs support analysis. They cannot be resumed, retried, or regraded.
+  </Step>
+</Steps>
+
+## Other session formats
+
+<AccordionGroup>
+  <Accordion title="A failed or interrupted run">
+    Failed runs can also be uploaded. Use the same [job layout](/core-concepts/upload#what-result-json-must-hold), preserve the transcript, and include the recorded `exception_info` when available. The example script stops when a successful harness completion is missing; closing a session alone does not prove completion.
+
+    Do not invent a reward or an exception from missing data. Without a recorded score or recognized failure, the imported trial is `INDETERMINATE`.
+  </Accordion>
+  <Accordion title="A session with several runs or commands">
+    A session is not automatically one trial. Choose the completed agent run and its task before packaging. SDK `_prompt` records can mark runs or shell commands; they do not identify which kind occurred.
+
+    Separate each evaluation attempt using the original call history and its transcript. Preserve any earlier conversation the attempt depended on. The example refuses combined logs because splitting on `_prompt` alone can misrepresent the run.
+  </Accordion>
+  <Accordion title="A system prompt, another harness, or a dashboard download">
+    Use a complete **ATIF trajectory** at `agent/trajectory.json` when the source is not a recognized native transcript. ATIF is the [shared trajectory format](/core-concepts/trial-outputs#the-atif-trajectory).
+
+    The SDK logger does not add the configured `systemPrompt` to its header. If you retained it, include its actual text as a `system` step in the complete trajectory. Do not reconstruct an unknown prompt.
+
+    When a recognized native transcript produces parsed events, Evolve uses those events and the opening user prompt; it does not merge in the rest of ATIF. To use your complete ATIF instead, keep original evidence under `agent/source/`, outside the recognized transcript paths.
+
+    A dashboard session download contains parsed session events. Convert those records to ATIF rather than renaming the file as a Codex or Claude native transcript.
+  </Accordion>
+</AccordionGroup>

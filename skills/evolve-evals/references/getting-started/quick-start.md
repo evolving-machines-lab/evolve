@@ -1,0 +1,100 @@
+---
+title: "Quick start"
+description: "Run one small task, inspect its result, and download the evidence."
+---
+
+A **trial** is one agent's attempt at one task. A **job** groups trials. Start with a one-trial job.
+
+### 1. Install and authenticate
+
+Create a key in the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys) after signing in.
+
+```bash
+npm install -g @evolvingmachines/evolve
+export EVOLVE_API_KEY="your-api-key"
+evolve auth status
+```
+
+Already connected? Continue below. Python and TypeScript installation is on the [installation page](/getting-started/installation).
+
+### 2. Inspect the task
+
+```bash
+evolve dataset show harbor-examples@1.0
+```
+
+This shows the dataset's tasks and provider compatibility. We will select only `hello-world`.
+
+### 3. Start the job
+
+```bash
+evolve run \
+  -d harbor-examples@1.0 \
+  -i hello-world \
+  -a codex \
+  -m gpt-5.6-luna \
+  --max-trial-spend 1 \
+  --max-retries 0 \
+  --watch
+```
+
+| Choice | Meaning |
+| --- | --- |
+| `-d` and `-i` | The dataset version and one task name. |
+| `-a` and `-m` | Codex with the selected model. |
+| `--max-trial-spend 1` | A $1 model-spend cap for this trial attempt. |
+| `--max-retries 0` | Disable configured infrastructure retries. Provider capacity waits can still occur. |
+| `--watch` | Follow progress until the job settles. |
+
+The spend cap stops new model calls once reached; a call already in progress can finish above it.
+
+The final output includes the job ID. The job continues remotely if you close the terminal.
+
+### 4. Read the result
+
+Set `JOB_ID` to the full ID printed by the previous command:
+
+```bash
+JOB_ID="paste-job-id-here"
+evolve job show "$JOB_ID"
+evolve job trials "$JOB_ID"
+```
+
+A completed job means all trials have settled. Inspect the trial's status and reward to see whether it succeeded, failed the task, or hit an execution error.
+
+### 5. Inspect the evidence
+
+Set `TRIAL_ID` to the ID from `job trials`:
+
+```bash
+TRIAL_ID="paste-trial-id-here"
+evolve trial show "$TRIAL_ID"
+evolve trial trace "$TRIAL_ID"
+evolve trial download "$TRIAL_ID" --stream verifier
+```
+
+The trace shows the agent's actions. The verifier log explains the grading process.
+
+### 6. Keep the result
+
+```bash
+evolve trial download "$TRIAL_ID" -o ./results/
+```
+
+This writes `./results/$TRIAL_ID/` with the trial record and available trace, logs, and agent session files. See the [output layout](/core-concepts/trial-outputs), including how to download the task filesystem.
+
+**[Compare configurations](/core-concepts/jobs)**
+
+Add models, tasks, or repeated attempts.
+
+**[Create a task](/core-concepts/tasks)**
+
+Evaluate work that matters to your project.
+
+**[Python](/sdk/python)**
+
+Run the same workflow from Python.
+
+**[TypeScript](/sdk/typescript)**
+
+Run the same workflow from TypeScript.

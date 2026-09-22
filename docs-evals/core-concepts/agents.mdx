@@ -1,11 +1,19 @@
 ---
 title: "Agents"
-description: "The built-in harnesses, how to configure an arm, and how to register your own agent."
+description: "Choose a built-in coding-agent harness or register your own."
 ---
 
-An agent is a harness plus a model. `-a` names the harness, `-m` the model it drives. Seven harnesses are built in.
+An evaluation arm pairs an **agent harness** with a **model**. The harness reads the instruction, calls tools, and manages the conversation. The model supplies its decisions.
 
-| Name on `-a` | Harness |
+```text
+One arm
+├── Harness: -a codex
+└── Model: -m gpt-5.6-luna
+```
+
+## Built-in harnesses
+
+| CLI name | Harness |
 | --- | --- |
 | `claude` | Claude Code |
 | `codex` | Codex |
@@ -16,91 +24,73 @@ An agent is a harness plus a model. `-a` names the harness, `-m` the model it dr
 | `droid` | Droid |
 
 ```bash
-evolve run \
-  -d terminal-bench-4@4.0 \
-  -a claude \
-  -m fable \
-  -l 5 \
-  --watch
+evolve run -d harbor-examples@1.0 -i hello-world \
+  -a codex -m gpt-5.6-luna \
+  --max-trial-spend 1 --max-retries 0 --watch
 ```
 
-`-a <name[@version]>` can pin a harness version. Omitted, the latest is chosen once, when the job is created, so every trial installs the same version; it is recorded on every trial as `agent_info.version`. A pin that does not exist is refused with `agent_version_not_found`, and a pin on a registered agent is refused.
+Use `-a name@version` to pin a harness release. Without a version, Evolve resolves one at job creation and uses that version across the job. The trial records it in `agent_info.version`.
 
-## Configure the arm
+## Configure an arm
 
-These flags apply to every arm of the job.
+| Option | Purpose |
+| --- | --- |
+| `--effort <value>` | Set supported reasoning effort |
+| `--preset no-internet` | Disable vendor server-side web tools |
+| `--preset pinned-context` | Set the supported context window to 200,000 tokens |
+| `--ak config=<path-or-JSON>` | Supply a native harness configuration |
+
+Presets and native config are supported on Claude Code and Codex. The platform applies routing settings over your config, and preset settings take precedence where they overlap. Routing, billing, credential, and environment overrides are rejected.
+
+The live [capability document](/sdk-reference/meta) lists each harness's supported options. Unsupported effort or configuration is rejected when the job is created.
+
+<Note>
+  `no-internet` disables the harness's server-side web tools. The task's [network policy](/core-concepts/task-config#network-access) controls network access from the sandbox.
+</Note>
+
+## Register a custom agent
+
+Register an installation source and a command. The name then works with `-a`.
 
 ```bash
-evolve run \
-  -d terminal-bench-4@4.0 \
-  -a codex \
-  -m gpt-6-astra \
-  -l 5 \
-  --effort high \
-  --preset no-internet \
-  --ak config=./codex-settings.json
+evolve agent add my-agent \
+  --install-script ./install.sh \
+  --run "my-agent --headless"
 ```
 
-`--effort <value>` sets the reasoning effort; see [models](/core-concepts/models#reasoning-effort). `--preset <name>` applies a named settings bundle: `no-internet` turns the vendor's server-side web tools off, `pinned-context` fixes the context window at 200000 tokens. `--ak config=<path|inline JSON>` becomes the harness's native settings file inside the sandbox; your document is the base, the platform's routing sits on top, and a preset wins where they disagree.
+Use `--dir` instead of `--install-script` to upload a directory. The install runs with internet access and no secrets; place executables in `$PREFIX/bin`.
 
-Only `claude` and `codex` take a config or a preset; the [capability document](/sdk-reference/meta) publishes `supports_config` and `presets` per harness. An effort, preset or config a harness cannot honor is refused when the job is created, never silently skipped, and so is a config key that touches billing, base URLs, routing or environment.
+### Execution contract
 
-Environment for the agent comes from two places, a task's own `[environment.env]` table and a secret attached with `--secret`; a job cannot add a third. See [secrets](/core-concepts/secrets) and [tasks](/core-concepts/tasks#environment-variables).
+1. Install the agent from its registered source.
 
-## Register your own agent
+2. Prepare the instruction file and gateway environment.
 
-Any CLI can run as an agent. Register it once, and its name works on `-a` like a built-in.
+3. Start `run_command` with `sh -c` in the task working directory, with the instruction on stdin.
 
-```bash
-evolve agent add acme-cli --install-script ./install.sh --run "acme-cli --headless"
-evolve run \
-  -d terminal-bench-4@4.0 \
-  -a acme-cli \
-  -m gpt-6-astra \
-  -l 5 \
-  --watch
-```
+4. Route model calls through the supplied gateway credentials.
 
-`--install-script <path>` names a file; its contents are uploaded. `--dir <path>` uploads a local directory instead. `--run <command>` is required and runs with `sh -c`. `--ae KEY=VALUE` injects environment at run time and may repeat.
+5. Collect outputs and run the task verifier.
 
-```bash
-evolve agent list
-evolve agent show acme-cli
-evolve agent remove acme-cli
-```
+| Input | Meaning |
+| --- | --- |
+| Standard input | Task instruction |
+| `EVOLVE_INSTRUCTION_FILE` | Path to the same instruction |
+| `EVOLVE_MODEL` | Model selected for this arm |
+| `EVOLVE_GATEWAY_BASE_URL` | OpenAI-compatible URL, including `/v1` |
+| `EVOLVE_GATEWAY_API_KEY` | Gateway credential |
+| `OPENAI_BASE_URL`, `OPENAI_API_KEY` | Aliases for the same gateway values |
 
-Removing an agent keeps the record of the past jobs that ran it. A registered agent belongs to its owner and to an organization: teammates may name it in their jobs and open it by name; a name outside your organizations reads as `agent_not_found`. The number you may hold is published as `agent_registration.max_per_user`; past it, `agent_limit_reached`.
+Your agent must use these gateway settings for metered model calls. If it requires a config file, write that file from these values inside `run_command`.
 
-The install script, or the uploaded directory, runs once with internet and no secrets: fetch only public sources and leave the executables in `$PREFIX/bin`. To change an agent without a gap, use the SDK's `upsert`; the CLI removes the registration and adds it again.
+`--agent-env KEY=VALUE` adds non-secret runtime settings to the registration. It cannot override the contract variables or declare credential-like names. Attach [job secrets](/core-concepts/secrets) for credentials the task needs.
 
-### The run contract
+### Custom-agent differences
 
-Your `run_command` runs with `sh -c` at the task's working directory, and can rely on exactly this:
+Custom agents do not have a built-in live trace parser or the shared `--effort` option. Put implementation-specific reasoning flags in the run command. Harness version pins are not accepted for registrations.
 
-- The instruction arrives twice: on stdin, and at the path in `$EVOLVE_INSTRUCTION_FILE`.
-- `$EVOLVE_GATEWAY_BASE_URL` is an OpenAI-compatible base URL that already ends in `/v1`, and `$EVOLVE_GATEWAY_API_KEY` is its credential. The same two values are also `$OPENAI_BASE_URL` and `$OPENAI_API_KEY`, so a CLI that reads its endpoint from the environment works unchanged.
-- `$EVOLVE_MODEL` is the `model_name` of the arm.
-- Your declared env may not override those six keys, and may not look like a credential; both are refused at registration with `agent_invalid_env`.
+Registrations belong to a user and an organization. Members can use them; the owner manages them. Deleting one preserves historical job records.
 
-A CLI that routes through a config file must write that file inside `run_command`, from the contract values. `codex` is the worked example:
-
-```bash
-mkdir -p ~/.codex && cat > ~/.codex/config.toml <<EOF
-model_provider = "evolve"
-[model_providers.evolve]
-name = "evolve"
-base_url = "$EVOLVE_GATEWAY_BASE_URL"
-env_key = "EVOLVE_GATEWAY_API_KEY"
-wire_api = "responses"
-EOF
-codex login --with-api-key <<< "$EVOLVE_GATEWAY_API_KEY"
-codex exec --skip-git-repo-check -
-```
-
-A CLI that ignores `OPENAI_BASE_URL` without this reaches for its vendor's endpoint, finds the box sealed, and spends the agent budget failing to connect. The spend cap is airtight only under `no-network`; see [models](/core-concepts/models).
-
-Against a built-in, a registered agent has no live trace (there is no parser for an unknown CLI) and no `reasoning_effort` (put the flag in `run_command`); everything else is recorded the same way.
-
-<Card title="agent reference" icon="terminal" href="/cli-reference/agent">
-  Every flag of `evolve agent`.
+<Card title="Agent commands" icon="terminal" href="/cli-reference/agent">
+  Register, inspect, and remove a custom agent.
 </Card>

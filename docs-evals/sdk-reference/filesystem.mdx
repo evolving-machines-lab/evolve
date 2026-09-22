@@ -1,0 +1,173 @@
+---
+title: "Filesystems and downloads"
+description: "Choose the right files: saved results, a sandbox, or a task package."
+---
+
+<Note>For every method’s inputs, return values, and language differences, see the [filesystem method reference](/sdk-reference/methods/filesystem).</Note>
+
+Evolve exposes three file surfaces. They answer different questions.
+
+| Need | Client |
+| --- | --- |
+| Read a trial's saved `result.json`, logs, or collected artifact | `trials.files()` / `trials.file()` |
+| Browse sandbox paths during or after a run | `filesystem()` |
+| Inspect the task files supplied to a run | `datasets.taskFiles()` / `task_files()` |
+
+## Open a run's filesystem
+
+<CodeGroup>
+```ts TypeScript
+import { trials } from "@evolvingmachines/evolve";
+
+const fs = trials().filesystem(trialId);
+const status = await fs.status();
+const folder = await fs.list({ path: status.work_dir });
+console.log(status.state, folder.entries);
+```
+
+```python Python
+from evolve import trials
+
+fs = trials().filesystem(trial_id)
+status = await fs.status()
+folder = await fs.list(path=status.work_dir)
+print(status.state, folder.entries)
+```
+</CodeGroup>
+
+The same methods are available from:
+
+<Tabs>
+  <Tab title="TypeScript">
+    | Run | Client |
+    | --- | --- |
+    | Trial | `trials().filesystem(trialId)` |
+    | Analysis | `analyses().filesystem(analysisId)` |
+    | Task check | `checks().taskFilesystem(checkId, taskCheckId)` |
+  </Tab>
+  <Tab title="Python">
+    | Run | Client |
+    | --- | --- |
+    | Trial | `trials().filesystem(trial_id)` |
+    | Analysis | `analyses().filesystem(analysis_id)` |
+    | Task check | `checks().task_filesystem(check_id, task_check_id)` |
+  </Tab>
+</Tabs>
+
+### What source will answer?
+
+```text
+1. Read status
+   ├─ live      → sandbox
+   ├─ captured  → saved files
+   ├─ capturing → preparing files
+   └─ none      → unavailable
+
+2. Require a source (optional)
+   ├─ "live"    → sandbox only
+   └─ "capture" → saved files only
+```
+
+Omit `source` to prefer live files, then a capture. A missing required source raises `filesystem_state`.
+
+<Note>
+A captured listing can include unchanged image files whose bytes were not saved. Check `entry.captured`; reading one with no stored bytes raises `not_captured`. A capture is not a complete disk image.
+</Note>
+
+## Browse, read, search
+
+<CodeGroup>
+```ts TypeScript
+const bytes = await fs.read("/app/report.json");
+const hits = await fs.search({ q: "error", path: "/app" });
+const changes = await fs.changes({ phase: "agent" });
+```
+
+```python Python
+content = await fs.read("/app/report.json")
+hits = await fs.search("error", path="/app")
+changes = await fs.changes(phase="agent")
+```
+</CodeGroup>
+
+These paths are examples. Use `status.work_dir` and a listing to find the run's actual files.
+
+| Method | Options | Result |
+| --- | --- | --- |
+| `status()` | None | State, box, work directory, watcher, capture summary |
+| `list(...)` | `path`, `source`, `cursor`, `limit` | `entries`, `next_cursor` |
+| `read(path, ...)` | `source`, byte range | `Buffer` / `bytes` |
+| `search(...)` | Query, `path`, `regex`, `limit`, `source` | Hits and `truncated` flag |
+| `changes(...)` | `source`, `phase`, `cursor`, `limit` | Changed files and next cursor |
+| `archive(...)` | `path`, `source`, download options | Archive bytes or saved path |
+
+TypeScript search takes `{q, ...}`; Python takes `q` as its first argument. Change phases are `setup`, `agent`, `verifier`, or `all`.
+
+Byte ranges: TypeScript `{range: {start, end}}` or `{range: {suffix}}`; Python `start=`, `end=`, or `suffix=`. End is inclusive. Suffix selects the last N bytes.
+
+List/change pages default to 500 rows; search defaults to 200. Their maximum is 1,000. A `truncated` search should be narrowed before treating it as complete.
+
+## Follow changes and logs
+
+<CodeGroup>
+```ts TypeScript
+await fs.watch(["/app"]);
+for await (const event of fs.events()) {
+  console.log(event.event, event.data);
+}
+```
+
+```python Python
+await fs.watch(["/app"])
+async for event in fs.events():
+    print(event.event, event.data)
+```
+</CodeGroup>
+
+`watch(paths)` registers up to eight folders. `events()` yields filesystem, state, and heartbeat frames.
+
+| Read | TypeScript | Python |
+| --- | --- | --- |
+| One log page | `logs({ stream: "agent", cursor, limit })` | `logs("agent", cursor=..., limit=...)` |
+| Log events | `logEvents(options)` | `log_events(...)` |
+| Live processes | `procs()` | `procs()` |
+
+Log streams are `agent`, `verifier`, `system`, `setup`, and `metrics`. System logs require `system_log` at job creation. A stream can be empty with a `reason`; reserved or unavailable streams do not imply missing agent work.
+
+Filesystem and log event streams connect once. To reconnect, retain the last event id and pass `lastEventId` / `last_event_id`. TypeScript also accepts `signal`. This is separate from the automatic reconnect behavior of `jobs.watch()`.
+
+## Task package files
+
+<CodeGroup>
+```ts TypeScript
+import { datasets } from "@evolvingmachines/evolve";
+
+const files = datasets().taskFiles("harbor-examples@1.0", "hello-world");
+const tree = await files.list();
+const instruction = await files.read("instruction.md");
+```
+
+```python Python
+from evolve import datasets
+
+files = datasets().task_files("harbor-examples@1.0", "hello-world")
+tree = await files.list()
+instruction = await files.read("instruction.md")
+```
+</CodeGroup>
+
+The dataset reference must pin a version. This client provides `status()`, `list()`, and `read(path)`. List options are `path`, `cursor`, and `limit`: one object in TypeScript, keyword arguments in Python. Reads accept the same byte-range options as above. There is no live source, process list, or log stream.
+
+## Download options
+
+Dataset, job, analysis, and check downloads use the same delivery choices. Run-filesystem `archive()` does too.
+
+| Choice | TypeScript | Python |
+| --- | --- | --- |
+| Bytes in memory | No options → `Buffer` | No `to` → `bytes` |
+| Save to a directory | `{ to: "./results" }` → path | `to="./results"` → path |
+| Raw response stream | `{ stream: true }` | Not exposed |
+
+`to` is a directory. The client chooses the archive filename from the response and returns the saved path.
+
+Buffer/bytes and saved-file downloads check declared length and digest when supplied. Saved files appear at their final path only after verification. TypeScript raw streams leave integrity checking to the caller.

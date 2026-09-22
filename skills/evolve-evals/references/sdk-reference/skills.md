@@ -1,0 +1,66 @@
+---
+title: "Uploaded skills"
+description: "Store skill folders and attach them to evaluation agents."
+---
+
+[Method reference: calls, parameters, and response fields](/sdk-reference/methods/skills).
+
+`skills()` manages content mounted into an agent run. It is separate from `evolve skills`, which serves documentation to coding agents.
+
+## Upload and attach
+
+```text
+my-skill/
+├── SKILL.md
+├── scripts/
+└── references/
+```
+
+```ts TypeScript
+import { skills, jobs } from "@evolvingmachines/evolve";
+
+const [skill] = await skills().upload("./my-skill");
+const job = await jobs().start({
+  datasets: [{ name: "harbor-examples", version: "1.0", task_names: ["hello-world"] }],
+  agents: [{ name: "codex", model_name: "gpt-5.6-luna", skills: [skill.ref] }],
+  max_trial_spend_usd: 0.50,
+  retry: { max_retries: 0 },
+});
+```
+
+```python Python
+from evolve import skills, jobs
+
+uploaded = await skills().upload("./my-skill")
+skill = uploaded[0]
+job = await jobs().start(
+    datasets=[{"name": "harbor-examples", "version": "1.0", "task_names": ["hello-world"]}],
+    agents=[{"name": "codex", "model_name": "gpt-5.6-luna", "skills": [skill.ref]}],
+    max_trial_spend_usd=0.50,
+    retry={"max_retries": 0},
+)
+```
+
+Upload returns a list. A folder containing multiple child skill folders can create multiple records.
+
+## Pick a reference
+
+| Reference | Meaning |
+| --- | --- |
+| `upload:<id>` | This immutable uploaded content |
+| `name:<skill-name>` | The name's current uploaded version, resolved when the job is created |
+
+Uploading identical content under the same name reuses the record. New content creates a new record and moves the name reference. Existing jobs keep their recorded skill locks.
+
+## Methods
+
+| Action | TypeScript | Python | Returns |
+| --- | --- | --- | --- |
+| Upload a directory | `upload(directory, {org})` | `upload(directory, org=...)` | Skill list |
+| List uploads | `list({scope, limit, cursor})` | `list(scope=..., limit=..., cursor=...)` | Paginated handle |
+| Read content/metadata | `get(idOrNameRef)` | `get(id_or_name_ref)` | Skill metadata and `skill_md` |
+| Delete an upload | `delete(id)` | `delete(id)` | No content |
+
+`org` overrides the client default. List scopes are `my`, `shared`, and `org`. Team members can reference visible skills; only their owner can delete them. A skill used by a non-terminal job cannot be deleted.
+
+The metadata includes `id`, `name`, `org`, `digest`, `size_bytes`, `description`, `ref`, and `created_at`. See [skill concepts](/core-concepts/skills) for git-backed references and mounting behavior.

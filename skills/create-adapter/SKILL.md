@@ -10,18 +10,27 @@ metadata:
 An adapter is a small program that reads an existing benchmark and writes one task
 directory per task, in the Harbor task format. Its output is a folder of tasks, ready for
 `evolve dataset publish`. This skill guides the conversion; `evolve skills get create-task`
-has the task format in full, and `evolve skills get publish` every publish option.
+guides task authoring, and `evolve skills get publish` guides publishing. Read
+`evolve skills get evals cli-reference/dataset` for every dataset publish option.
 
-## Authoritative reference
+## References
 
-The conversion rules below are Harbor's, from its adapter guide, and Evolve runs the
-task format unchanged. For the full guide, read
-https://github.com/laude-institute/harbor/blob/main/docs/content/docs/datasets/adapters.mdx
-(its steps on parity experiments, the registry and pull requests are Harbor's own
-process and do not apply here). The task format itself is at
+The conversion structure follows Harbor's adapter format. Evolve's supported task
+options and publishing workflow are documented in its bundled references:
+
+| Topic | Read |
+| --- | --- |
+| Task layout and configuration | `evolve skills get evals core-concepts/tasks` and `evolve skills get evals core-concepts/task-config` |
+| Environments and Compose | `evolve skills get evals core-concepts/task-environment` and `evolve skills get evals core-concepts/compose` |
+| Verifiers and rewards | `evolve skills get evals core-concepts/task-verifiers` and `evolve skills get evals core-concepts/rewardkit` |
+| Managed support limits | `evolve skills get evals core-concepts/compatibility` |
+
+The upstream task format is at
 https://docs.harborframework.com/core-concepts/tasks/overview.
 
-Do not invent structure, field names, or workflow beyond what the guide specifies.
+Use Evolve's references for commands and supported behavior. Upstream adapter
+examples below can help with conversion code; Harbor's registry and pull-request
+workflow do not apply to publishing on Evolve.
 
 ## Prerequisites
 
@@ -59,7 +68,7 @@ before proceeding.
 | Adapter name | Lowercase, hyphen-separated. Must match the benchmark's common identifier (e.g., `swe-bench`, `aider-polyglot`). Becomes the dataset name on Evolve and, with dashes turned to underscores, the Python package name. |
 | Human-readable name | Appears in the README. |
 | Upstream repo URL | Needed for step 1 (benchmark analysis) and for the README. |
-| Reference solutions available? | If the benchmark ships reference solutions, use them. If not, they must be written, with LLM help, before the tasks can be checked. |
+| Reference solutions available? | Use them when available. Otherwise record the gap and write solutions when possible; Evolve can check tasks without them. |
 | Subset | Adapting a subset of tasks is acceptable (e.g., only a verified split). Document every exclusion in the README. |
 
 ### 3. Write the converter
@@ -90,8 +99,10 @@ The `evolve` CLI has no adapter scaffold; create this layout by hand:
 `--overwrite`, and `--task-ids`. Run it as
 `uv run python -m <adapter_name>.main --output-dir <path>`.
 
-Each generated task directory must contain at minimum `task.toml`, `instruction.md`,
-`environment/Dockerfile`, `solution/solve.sh`, and `tests/test.sh`:
+For a single-step benchmark using Dockerfile-built images, generate this layout.
+`solution/solve.sh` is optional in the format, but useful for testing the conversion.
+Tasks using a prebuilt image can omit `environment/Dockerfile`; follow the
+environment reference above.
 
 ```
 <output-dir>/
@@ -149,11 +160,13 @@ OPENAI_API_KEY = "${OPENAI_API_KEY}"
 **`tests/test.sh`:** must write a numeric reward (integer or float, 0 to 1) to
 `/logs/verifier/reward.txt`, or named numbers to `/logs/verifier/reward.json`.
 `/logs/verifier/` exists at run time. Use the same metrics as the original benchmark.
+For multiple JSON metrics, include a `reward` key in `[0, 1]` for the primary score.
+Install pytest in the image that runs verification; do not fetch it during the test.
 
 ```bash
 #!/bin/bash
-pytest /tests/test_*.py
-if [ $? -eq 0 ]; then
+set -uo pipefail
+if python3 -m pytest /tests/test_*.py; then
   echo 1 > /logs/verifier/reward.txt
 else
   echo 0 > /logs/verifier/reward.txt
@@ -178,6 +191,9 @@ WORKDIR /workspace
 RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
+
+# The shared verifier uses the task image
+RUN pip install --no-cache-dir 'pytest==8.4.1'
 
 # Install benchmark-specific dependencies
 # RUN pip install --no-cache-dir <packages>
@@ -211,14 +227,31 @@ run each task.
 
 ### 5. Verify the conversion
 
-Check the generated tasks. The check reads each task and, when it can, runs its
-environment, its `solution/solve.sh` and its verifier, then rules on every criterion of a
-rubric; every task should come back `no_problem_found` with `executed` true.
+Validate the metadata, then request a hosted review of each task:
 
 ```bash
+evolve dataset check "<output-dir>"
 evolve check "<output-dir>" --watch
-evolve check show <check-id>
 ```
+
+Set `CHECK_ID` to the parent check ID returned by `evolve check`, then read it:
+
+```bash
+evolve check show "$CHECK_ID"
+```
+
+The first command sends `task.toml` files and any `dataset.toml` to the API for
+validation, without uploading the full task packages or executing them. The
+second runs a paid checker agent against a rubric. It can run the environment,
+reference solution, and verifier when its sandbox supports them; it does not
+guarantee that execution.
+
+Read every task's status, findings, and evidence. Under the default rubric,
+`no_problem_found` means no criterion failed and no file-based criterion is
+unknown. `executed` is true when none of the five execution criteria is
+`unknown`; it is derived from findings, not a separate execution audit.
+Use `evolve check trace <task-check-id>` to inspect the checker's work. Test any
+unresolved execution in an environment that can run the task.
 
 A failing check usually means one of three things, in this order:
 
@@ -229,14 +262,18 @@ A failing check usually means one of three things, in this order:
 3. **Environment error:** a Dockerfile that does not build or a test that cannot run makes
    the task impossible for every agent, so catch it here.
 
-Where Harbor is installed, `harbor run -p "<output-dir>" -a oracle` runs every reference
-solution locally (optional); the reward should be `1.0` on every task.
+The Evolve CLI has no standalone oracle command. Do not treat `evolve check` as
+one. When a reference solution is available, verify that it earns full credit and
+that invalid submissions fail; keep the execution evidence with the conversion.
 
-**Benchmarks without reference solutions:** write them, with LLM help, before publishing.
-A cheap agent and model can take a first pass over all the tasks; complete the rest with
-a stronger model plus human review.
+**Benchmarks without reference solutions:** document that limitation. The default
+checker marks the solution criterion `not_applicable` when none is shipped.
+Write and validate solutions where possible; a model's proposed solution still
+needs review.
 
-**Step complete when:** every task passes `evolve check`.
+**Step complete when:** every generated task has been reviewed, confirmed defects
+are fixed, and any unresolved execution or missing-solution limits are documented.
+Read `evolve skills get evals core-concepts/check` for the result rules.
 
 ### 6. Document and publish
 
@@ -245,7 +282,8 @@ and every exclusion; benchmark bugs found and how they were handled; prompt
 modifications, environment adjustments and other deviations from the original, with the
 reason; known limitations; the exact commands to regenerate the tasks and to run them.
 
-Then publish the output folder as a dataset (`evolve skills get publish` has every option):
+Then publish the output folder as a dataset (`evolve skills get publish` explains the
+workflow; `evolve skills get evals cli-reference/dataset` lists the options):
 
 ```bash
 evolve dataset check "<output-dir>"
@@ -256,11 +294,18 @@ evolve run -d "<adapter-name>@1.0" -a codex -m gpt-5.5 --watch
 To see how faithful the conversion is, run a job with the same agent and model the
 benchmark's own leaderboard reports, and compare the scores.
 
+For TypeScript or Python automation, read
+`evolve skills get evals sdk-reference/methods/datasets`,
+`evolve skills get evals sdk-reference/methods/checks`, and
+`evolve skills get evals sdk-reference/methods/jobs`.
+
 ## Reference adapters by shape
 
 Harbor's repository holds one adapter per benchmark, public at
 https://github.com/laude-institute/harbor/tree/main/adapters. When implementation
-questions come up, read the one that matches the benchmark's shape:
+questions come up, read the one that matches the benchmark's shape. These are
+optional conversion examples; verify their task settings against Evolve's
+supported scope before using them:
 
 | Shape | Example adapter |
 |-------|----------------|

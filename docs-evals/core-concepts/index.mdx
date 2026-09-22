@@ -1,42 +1,53 @@
 ---
-title: "Core concepts"
-description: "How a dataset becomes trials, rewards, analyses and results."
+title: "How evaluations fit together"
+description: "The few concepts you need to read a job and understand its results."
 ---
 
+A dataset supplies the tasks. An agent and model attempt them. A verifier scores the work.
+
 ```mermaid
-%%{init: {"themeVariables": {"fontSize": "15px", "fontFamily": "Google Sans Flex, sans-serif"}, "flowchart": {"nodeSpacing": 24, "rankSpacing": 28, "padding": 10, "wrappingWidth": 170, "subGraphTitleMargin": {"top": 6, "bottom": 6}}}}%%
-flowchart TB
-  subgraph S[Set up]
-    D[Dataset: a folder of tasks] --> J[Job: arms of harness x model, one sandbox provider]
-    J --> T[Trials: one per task per arm]
-  end
-  subgraph RUN[Run, per trial]
-    SB[Sandbox: the agent works on the task] --> V[Verifier: scores the result]
-    SB -.-> L[Live trace to the dashboard]
-    V --> R[Reward and outputs: trajectory, files, logs]
-  end
-  subgraph AFTER[After]
-    AN[Analyze: trace analysis, verdicts]
-    C[Check: task quality]
-    O[Results: jobs, trials, analyses and checks, in the dashboard and as downloads]
-  end
-  T --> SB
-  R --> AN
-  D --> C
-  R ~~~ C
-  R --> O
-  AN --> O
-  C --> O
+%%{init: {"flowchart": {"nodeSpacing": 16, "rankSpacing": 20, "padding": 10}, "themeVariables": {"fontSize": "14px", "fontFamily": "Google Sans Flex, sans-serif"}}}%%
+flowchart TD
+  D["Dataset version"] --> T["Tasks"]
+  A["Agent configurations<br/>Harness + model + settings"] --> J["Job"]
+  T --> J
+  J --> R["Trials<br/>Task × configuration × attempt"]
+  R --> V["Verifier → reward"]
+  R --> F["Trace + logs + files"]
 ```
 
-- **Dataset**: a named, versioned folder of tasks in the catalog. `name@version` names one version; a bare name means the active one.
-- **Task**: one directory with an instruction, an environment, and a verifier. See [tasks](/core-concepts/tasks).
-- **Job**: one run of every task of its datasets by every arm, a fixed number of attempts each. See [jobs](/core-concepts/jobs).
-- **Arm**: one harness driving one model, with its optional effort, preset, config and skills. A job with two models has two arms, and every arm runs on the job's one sandbox provider.
-- **Trial**: one attempt of one task by one arm, in its own sandbox. See [trials](/core-concepts/trials).
-- **Trajectory**: the record of what the agent did: the instruction, every agent turn, every tool call and its result. It streams live to the dashboard while the trial runs and is stored with the trial.
-- **Verifier**: the task's test script. It runs after the agent has finished and produces the reward.
-- **Reward**: the verifier's score for the trial, usually `1` or `0`.
-- **Outputs**: what a finished trial keeps: the reward, the trajectory, the agent's files and the logs, captured when the trial ends. See [trial outputs](/core-concepts/trial-outputs).
-- **Analysis**: a rubric judgment of a settled trial's trace, one analyzer run per trial. See [analyze](/core-concepts/analyze).
-- **Check**: a rubric judgment of a task itself, before you spend a job on it. See [check](/core-concepts/check).
+| Concept | What it means | Example |
+| --- | --- | --- |
+| [Task](/core-concepts/tasks) | An instruction, environment, and grading logic. | Fix a bug and pass the tests. |
+| [Dataset](/core-concepts/datasets) | A named, versioned collection of tasks. | `harbor-examples@1.0`. |
+| [Agent](/core-concepts/agents) | A harness running a selected model. | Codex with `gpt-5.6-luna`. |
+| [Sandbox](/core-concepts/sandboxes) | The isolated environment where a trial runs. | A task image on Daytona, E2B, or Modal. |
+| [Job](/core-concepts/jobs) | A group of trials with shared run settings. | 10 tasks × 2 configurations × 3 attempts = 60 trials. |
+| [Trial](/core-concepts/trials) | One attempt at one task. | One score and its supporting evidence. |
+| [Verifier](/core-concepts/task-verifiers) | The task's code that evaluates the output. | A script writing a reward of `0` or `1`. |
+| [Trace](/core-concepts/trial-outputs) | The recorded agent conversation and actions. | Messages, tool calls, and results. |
+
+## Two ways to examine quality
+
+<CardGroup cols={2}>
+  <Card title="Check the task" icon="list-checks" href="/core-concepts/check">
+    Review the instruction, environment, solution, and verifier before scaling the evaluation.
+  </Card>
+  <Card title="Analyze the attempt" icon="search" href="/core-concepts/analyze">
+    Review a recorded trial against a rubric to understand the agent's behavior.
+  </Card>
+</CardGroup>
+
+Checks and analyses are optional model-powered operations with their own results and costs. The task's verifier produces the evaluation reward.
+
+## Read the result at the right level
+
+| Level | What to read |
+| --- | --- |
+| **Job configuration** | What was selected and resolved |
+| **Job summary** | Counts, scores, and costs |
+| **Each trial: status** | Whether execution and grading completed |
+| **Each trial: reward** | How the verifier scored the work |
+| **Each trial: evidence** | Trace, logs, and recorded files |
+
+Start with the [quick start](/getting-started/quick-start), then learn how to [configure a job](/core-concepts/jobs).

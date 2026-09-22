@@ -1,11 +1,11 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Evolve",
-  "description": "Evolve hosted evals: run any model on any agent harness against datasets of Harbor-format tasks, in cloud sandboxes, from the evolve CLI and the TypeScript and Python SDKs. Use when the user wants to: (1) start, watch, or read a hosted eval job (evolve run, evolve job, jobs()), (2) browse the dataset catalog or publish their own dataset (evolve dataset), (3) check task quality (evolve check) or analyze trial traces (evolve analyze), (4) inspect or download trials, artifacts and traces (evolve trial, trials()), (5) register their own agent, mount skills, attach secrets, or choose models and sandbox providers, (6) upload a job run elsewhere (evolve upload), (7) use the dashboard's jobs, datasets, checks, traces and trial viewer pages. For running agents in sandboxes from code (the SDK's run(), Swarm, Pipeline) install the SDK skill: `npx skills add evolving-machines-lab/evolve --skill evolve-agents`.",
+  "description": "Run managed evaluations with the Evolve CLI and Python or TypeScript SDK. Start and inspect jobs, publish Harbor-format datasets, configure agents and models, read trials and files, analyze traces, check task quality, and manage teams, sharing, skills, and secrets. For running agents directly with the SDK builder, Swarm, or Pipeline, use the separate evolve-agents skill.",
   "theme": "maple",
   "colors": {
-    "primary": "#B026FF",
-    "light": "#B026FF",
+    "primary": "#9D20E8",
+    "light": "#C36BFF",
     "dark": "#B026FF"
   },
   "favicon": "/favicon.png",
@@ -76,52 +76,78 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Docs",
+        "tab": "Guides",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Start here",
             "pages": [
               "index",
               "getting-started/installation",
-              "getting-started/quick-start"
+              "getting-started/quick-start",
+              "core-concepts/index"
             ]
           },
           {
-            "group": "Core concepts",
+            "group": "Run evaluations",
             "pages": [
-              "core-concepts/index",
-              "core-concepts/tasks",
               "core-concepts/datasets",
               "core-concepts/jobs",
-              "core-concepts/trials",
-              "core-concepts/trial-outputs",
               "core-concepts/agents",
               "core-concepts/models",
               "core-concepts/sandboxes",
-              "core-concepts/analyze",
-              "core-concepts/check",
               "core-concepts/skills",
-              "core-concepts/secrets",
+              "core-concepts/secrets"
+            ]
+          },
+          {
+            "group": "Read results",
+            "pages": [
+              "core-concepts/trials",
+              "core-concepts/trial-outputs",
+              "core-concepts/analyze",
               "core-concepts/upload",
+              "core-concepts/upload-sdk-session"
+            ]
+          },
+          {
+            "group": "Work together",
+            "pages": [
               "core-concepts/teams",
               "core-concepts/sharing"
             ]
           },
           {
-            "group": "Dashboard",
+            "group": "Use code",
             "pages": [
-              "dashboard/datasets",
-              "dashboard/jobs",
-              "dashboard/trial-viewer",
-              "dashboard/checks",
-              "dashboard/traces"
+              "sdk/typescript",
+              "sdk/python",
+              "sdk/http"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Build tasks",
+        "groups": [
+          {
+            "group": "Task format",
+            "pages": [
+              "getting-started/first-task",
+              "core-concepts/tasks",
+              "core-concepts/task-environment",
+              "core-concepts/compose",
+              "core-concepts/task-config",
+              "core-concepts/task-reference",
+              "core-concepts/task-verifiers",
+              "core-concepts/rewardkit",
+              "core-concepts/multi-step",
+              "core-concepts/compatibility"
             ]
           },
           {
-            "group": "SDK",
+            "group": "Validate your work",
             "pages": [
-              "sdk/typescript",
-              "sdk/python"
+              "core-concepts/check"
             ]
           }
         ]
@@ -130,7 +156,7 @@
         "tab": "CLI reference",
         "groups": [
           {
-            "group": "The evolve command",
+            "group": "Start work",
             "pages": [
               "cli-reference/index",
               "cli-reference/run",
@@ -140,15 +166,22 @@
             ]
           },
           {
-            "group": "Command groups",
+            "group": "Inspect results",
             "pages": [
               "cli-reference/job",
               "cli-reference/trial",
               "cli-reference/analysis",
+              "cli-reference/filesystem",
+              "cli-reference/session"
+            ]
+          },
+          {
+            "group": "Manage resources",
+            "pages": [
               "cli-reference/dataset",
+              "cli-reference/agent",
               "cli-reference/skill",
               "cli-reference/skills",
-              "cli-reference/agent",
               "cli-reference/auth",
               "cli-reference/secrets"
             ]
@@ -159,20 +192,64 @@
         "tab": "SDK reference",
         "groups": [
           {
-            "group": "Clients",
+            "group": "Get started",
             "pages": [
               "sdk-reference/index",
-              "sdk-reference/jobs",
-              "sdk-reference/trials",
-              "sdk-reference/datasets",
-              "sdk-reference/analyses",
-              "sdk-reference/checks",
-              "sdk-reference/skills",
-              "sdk-reference/agents",
-              "sdk-reference/auth",
               "sdk-reference/meta",
               "sdk-reference/types",
-              "sdk-reference/errors"
+              "sdk-reference/errors",
+              "sdk-reference/error-codes"
+            ]
+          },
+          {
+            "group": "Run and inspect",
+            "pages": [
+              "sdk-reference/jobs",
+              "sdk-reference/trials",
+              "sdk-reference/filesystem",
+              "sdk-reference/analyses",
+              "sdk-reference/checks"
+            ]
+          },
+          {
+            "group": "Manage resources",
+            "pages": [
+              "sdk-reference/datasets",
+              "sdk-reference/agents",
+              "sdk-reference/skills",
+              "sdk-reference/secrets",
+              "sdk-reference/auth"
+            ]
+          },
+          {
+            "group": "Method reference",
+            "pages": [
+              "sdk-reference/methods/jobs",
+              "sdk-reference/methods/trials",
+              "sdk-reference/methods/filesystem",
+              "sdk-reference/methods/analyses",
+              "sdk-reference/methods/checks",
+              "sdk-reference/methods/datasets",
+              "sdk-reference/methods/agents",
+              "sdk-reference/methods/skills",
+              "sdk-reference/methods/secrets",
+              "sdk-reference/methods/auth",
+              "sdk-reference/methods/meta"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Dashboard",
+        "groups": [
+          {
+            "group": "Explore the dashboard",
+            "pages": [
+              "dashboard/datasets",
+              "dashboard/jobs",
+              "dashboard/trial-viewer",
+              "dashboard/checks",
+              "dashboard/traces"
             ]
           }
         ]

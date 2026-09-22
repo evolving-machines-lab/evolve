@@ -1,0 +1,86 @@
+---
+title: "Secrets"
+description: "Store a credential once and attach it to evaluation jobs by name."
+---
+
+Secret values are write-only. Reads return metadata, and jobs store references to the selected secret rows.
+
+```text
+1. Store the secret
+   GITHUB_TOKEN
+         ↓
+2. Attach its reference
+   --secret GITHUB_TOKEN
+         ↓
+3. Run the trial
+   Value enters agent environment
+```
+
+## Store a value
+
+```bash
+printf %s "$GITHUB_TOKEN" | evolve secrets set GITHUB_TOKEN --delivery direct
+```
+
+Piping keeps the value out of the command text. Use `--label staging` to store a labeled variant; the default label is `default`.
+
+Eval jobs support **direct** delivery: the value enters the agent sandbox. Brokered secrets are supported by other Evolve surfaces but are rejected for managed evals.
+
+## Attach it to a job
+
+```bash
+evolve run -d my-dataset@1.0 -a codex -m gpt-5.6-luna \
+  --secret GITHUB_TOKEN@staging \
+  --max-trial-spend 1 --max-retries 0 --watch
+```
+
+| Attachment | Meaning |
+| --- | --- |
+| `GITHUB_TOKEN` | Use the default label, or the only available label |
+| `GITHUB_TOKEN@staging` | Select the `staging` value |
+| `GITHUB_TOKEN@staging=GH_TOKEN` | Expose it as `GH_TOKEN` inside the sandbox |
+
+If several labels exist and none is `default`, select one explicitly. Every arm receives the attachment. Reserved routing names and the `EVOLVE_` prefix cannot be overwritten.
+
+## Request it from a task
+
+```toml task.toml
+[environment.env]
+GITHUB_TOKEN = "${GITHUB_TOKEN}"
+```
+
+The template matches the attached environment name. A missing required attachment rejects the job. For a non-secret fallback, use `"${NAME:-fallback}"`.
+
+Task literals belong in `[environment.env]`. Managed eval jobs do not accept arbitrary `agent_env` values through `--ae`.
+
+## List, replace, or remove
+
+```bash
+evolve secrets list
+evolve secrets delete GITHUB_TOKEN --label staging
+```
+
+A different value under an existing name and label is rejected with `secret_exists`. Use a new label, or delete the old row before storing its replacement. Removing or disabling a secret needed by an unfinished job can cause its later trials to fail.
+
+### Save and attach in one request
+
+The SDK accepts both references and inline values in a job's `secrets` list:
+
+```json
+{
+  "secrets": [
+    {"name": "GITHUB_TOKEN", "label": "staging"},
+    {"name": "SERVICE_TOKEN", "value": "VALUE", "delivery": "direct"}
+  ]
+}
+```
+
+An inline value is saved before the job stores its reference. Repeating the same value and delivery resolves to the existing row; a conflicting value is rejected. The CLI equivalent is `--secret-inline NAME[@LABEL]:DELIVERY=VALUE`.
+
+**[Secret commands](/cli-reference/secrets)**
+
+Storage, labels, and delivery options.
+
+**[Secret SDK](/sdk-reference/secrets)**
+
+Manage secrets from Python or TypeScript.

@@ -1,151 +1,220 @@
 ---
 title: "Jobs"
-description: "Start a job, watch it, read its results, and derive new jobs from it."
+description: "Run a task set across agents and models. Follow each attempt to its result."
 ---
 
-A job runs every task of its datasets with every agent arm, a fixed number of attempts each. Start one with `evolve run`. It is the short form of `evolve job start`, and both take the same flags.
+A job runs selected tasks against one or more **agent arms**. An arm is an agent, model, and configuration you want to evaluate.
+
+```text
+3 selected tasks
+× 2 agent arms
+× 2 attempts
+= 12 trials
+```
+
+Each of the three tasks runs twice in Arm A and twice in Arm B.
+
+## Start a job
 
 ```bash
 evolve run \
-  -d terminal-bench-4@4.0 \
-  -a codex \
-  -m gpt-6-astra \
-  -k 2 \
-  -l 5 \
+  -d harbor-examples@1.0 -i hello-world \
+  -a codex -m gpt-5.6-luna \
+  --max-trial-spend 1 -r 0 \
   --watch
 ```
 
-`-d` names a dataset and may repeat: one job can span several. `-a` names the agent. `-m` names the model and may repeat too; each model is one arm, so two models against one agent run every task twice.
+| Choose | Flag | Meaning |
+| --- | --- | --- |
+| Task set | `-d name@version` | Repeat for several datasets. |
+| Agent | `-a codex` | The harness that runs the model. |
+| Model | `-m model` | Repeat to compare models with the same harness. |
+| Attempts | `-k 2` | Attempts per task and arm. Default: 1. |
+| Parallel trials | `-n 4` | Job concurrency. Default: 4; maximum: 150. |
+| Label | `--job-name nightly` | A readable name. The job ID remains its identity. |
 
-`-k` is the number of attempts per task and arm (default 1). `-n` is how many trials run in parallel (default 4, at most 150). `--job-name` gives the job a label; omitted, the server generates one.
+Use a [config file](#config-files) to compare different harnesses in one job.
 
 ## Narrow the task set
 
-```bash
-evolve run \
-  -d terminal-bench-4@4.0 \
-  -a codex \
-  -m gpt-6-astra \
-  -i 'auth-*' \
-  -x 'auth-legacy' \
-  -l 20 \
-  --watch
+```text
+1. Select dataset version
+          ↓
+2. Include names matching -i
+          ↓
+3. Remove names matching -x
+          ↓
+4. Keep up to -l tasks per dataset
 ```
 
-`-i` and `-x` are include and exclude globs over task names, applied to every dataset. `-l` caps the task count of each dataset after the filters.
+`-i` and `-x` accept task-name globs. Quote them so your shell does not expand them.
+
+```bash
+evolve run -d my-dataset@1.0 -a codex -m gpt-5.6-luna \
+  -i 'auth-*' -x 'auth-legacy' -l 20 \
+  --max-trial-spend 2 -r 0 --watch
+```
 
 ## Watch it
 
-`--watch` streams the job's events until it finishes: each trial as it starts, scores and settles, then the final block. `-q` keeps only the final block. Without `--watch` the command prints the job id and returns; read the job later with `evolve job show`.
+With `--watch`, the CLI follows events until the job finishes. Without it, the CLI returns the accepted job immediately.
+
+Use the returned ID as `$JOB_ID`:
+
+```bash
+evolve job show "$JOB_ID"
+evolve job trials "$JOB_ID"
+evolve job tasks "$JOB_ID"
+```
+
+<Note>
+  **Accepted** means the job was created. **Completed** means every trial settled. Neither means every trial succeeded.
+</Note>
 
 ## Spend and retries
 
-Every trial runs under a model-spend cap, `--max-trial-spend <usd>`; omitted, the server's default applies, $200. It is the only spend limit: there is no job-wide budget. The job states the cap it applied as `max_trial_spend_usd` and the most it can cost as `worst_case_spend_usd`, the cap times the trials times the attempts the retry policy allows. A trial that exhausts its cap is not a failure; it is scored on what it produced.
+Set `--max-trial-spend` to cap each trial attempt’s **agent** model spend. The response records the resolved cap and its model-spend estimate for the full job:
 
-Your credit balance sits under every cap. A job started at a zero balance is refused with `insufficient_credits`, and a balance that runs out stops spending mid-job.
+```text
+worst_case_spend_usd
+  = per-trial cap
+  × trial count
+  × (1 + max_retries)
+```
 
-Trials that fail on infrastructure errors are retried automatically. `-r <n>` sets how many times; the default is 2, and `0` turns it off. No other status re-runs on its own. `--retry-include` and `--retry-exclude` choose by exception type, exclude wins, and the names are on the [run reference](/cli-reference/run#spend-and-retries).
+| Cost | Where to read it |
+| --- | --- |
+| Job model spend, including retired retry attempts | `stats.cost_usd` |
+| Verifier judge spend, included in that total | `stats.judge_cost_usd` |
+| Trace analysis spend, separate from trial spend | `stats.analysis.cost_usd` |
+| GPU compute estimate, separate from model spend | `stats.gpu_cost_usd` |
 
-A retried trial keeps its history: `n_retries` and the `retries` list on the trial, `stats.n_retries` on the job, and every retried attempt's spend stays in the job total. Two infrastructure failures of the same kind in a row stop the retries early; the trial stays `INFRASTRUCTURE_ERROR`, its message says why, and the event stream carries `trial.retry_circuit_broken`.
+An LLM verifier judge has its own cap: the smaller of the agent cap and $5. Its spend is additional to the estimate above. Analysis also has a separate budget.
+
+The fleet defaults are $200 per trial and 2 infrastructure retries; deployment settings can change them. The job response records the values used. There is no job-wide spend-cap setting.
+
+A trial that reaches its own cap proceeds to verification. An account, team, or platform budget refusal is a separate `BUDGET` outcome.
+
+<Accordion title="Automatic retries and capacity waits">
+  `-r 0` disables configured infrastructure retries. With retries enabled, only eligible `INFRASTRUCTURE_ERROR` trials rerun automatically. Each retry receives a fresh per-trial cap; previous spend remains in the job total.
+
+  `--retry-include` and `--retry-exclude` filter exception types. Exclusions win. The same infrastructure failure twice in a row can stop retries early.
+
+  A provider that cannot allocate a sandbox can cause a **capacity wait**, even with `-r 0`. Capacity waits use a separate bounded wait budget and do not consume configured retries.
+</Accordion>
 
 ## Read the results
 
 ```bash
-evolve job show <job-id>
-evolve job trials <job-id> --status INFRASTRUCTURE_ERROR,SCORING_ERROR
-evolve job tasks <job-id>
-evolve job compare <job-id> <job-id>
+evolve job trials "$JOB_ID" --status INFRASTRUCTURE_ERROR,SCORING_ERROR
+evolve job compare "$JOB_ID" "$OTHER_JOB_ID"
 evolve job list --search nightly
 ```
 
-`job show` prints the whole job, with pass@k once every attempt has settled. `job trials` lists the trials, `--status` and `--dataset` narrow the list. `job tasks` is one row per task.
+Results are grouped by agent arm and dataset. Compare 2–10 jobs at once.
 
-`job compare` puts two to ten jobs side by side. `job list` is your jobs, newest first; `--scope shared` lists your organizations' jobs that teammates created, and `--scope org` every job in your organizations, yours included — the question an organization page asks.
+<Accordion title="How to read pass@k">
+  pass@k estimates the chance of at least one successful attempt among `k` attempts, averaged across tasks.
 
-A job's spend prints as `at least $X` while it holds settled trials whose spend has not been measured yet.
+  It appears for settled groups with one binary reward per trial. Missing rewards count as failures for this statistic; the trial's own reward remains absent. Non-binary or multi-key rewards do not produce pass@k.
 
-pass@k is the chance that k attempts contain at least one success, averaged over the tasks of an arm. The k values are the powers of two and the multiples of five up to the smallest attempt count, so a single-attempt job has none. An attempt that produced no reward counts as a failure, and a group with non-binary rewards or attempts still in flight shows nothing. The archive's `result.json` carries the same numbers.
+  Available `k` values are powers of two and multiples of five up to the smallest per-task attempt count. A single-attempt group has no pass@k.
+</Accordion>
 
 ## Statuses
 
-A job is `QUEUED` (accepted, waiting for dispatch), `RUNNING`, `CANCELLING` (cancel requested, in-flight trials winding down), `COMPLETED` (every trial settled), `CANCELLED`, or `FAILED`. `FAILED` is reserved: nothing sets it today, so `failure` is null on every job. A job that goes wrong does so one trial at a time and still reaches `COMPLETED`; read `trials.byStatus` for where. Trial statuses are on [trials](/core-concepts/trials#statuses).
+| Status | Meaning |
+| --- | --- |
+| `QUEUED` | Accepted; waiting for dispatch. |
+| `RUNNING` | Trials are being processed. |
+| `CANCELLING` | Cancellation requested; active trials are stopping. |
+| `COMPLETED` | All trials settled. Some may have errors. |
+| `CANCELLED` | The job was cancelled. |
+| `FAILED` | Reserved in the API; the current worker does not assign it. |
+
+Read [trial statuses](/core-concepts/trials#statuses) to understand individual outcomes.
 
 ## Derive a new job
 
-Every derived run is a new job linked to its source through `source_jobs`. The source is never changed.
+Each command below creates a new job linked through `source_jobs`. The original result stays intact.
+
+| Action | Runs again | Selects |
+| --- | --- | --- |
+| **Resume** | Agent and verifier | Failed or stopped trials from a finished job. |
+| **Retry** | Agent and verifier | All, failed, or explicitly selected settled trials. Scored trials are allowed. |
+| **Regrade** | Verifier only | Eligible trials with recorded verifier inputs. |
 
 ```bash
-evolve job retry <job-id> --failed-only
-evolve job retry <job-id> -t <trial-id> -t <trial-id>
-evolve job resume <job-id> -f InfrastructureError
-evolve job regrade <job-id> --task tricky-task
+evolve job resume "$JOB_ID"
+evolve job retry "$JOB_ID" --failed-only
+evolve job retry "$JOB_ID" -t "$TRIAL_ID"
+evolve job regrade "$JOB_ID" --task hello-world
 ```
 
-`resume` takes a finished job's failed or stopped trials and runs them: `ScoringError`, `InfrastructureError`, `ApiUsageLimitError` and `IncompleteTrialError`, plus stopped trials and the still-queued trials of a cancelled job. `-f <type>` narrows it by exception type. Scored trials are never re-run. A live source is refused with `job_not_terminal`, an empty selection with `no_failed_trials`.
+Use full trial IDs with `-t`. Named settled trials can be retried while other trials in the source job are running. Whole-job retry and resume require a finished source.
 
-`retry` runs selected trials again: every trial, only the failed ones with `--failed-only` (`SCORING_ERROR`, `INFRASTRUCTURE_ERROR`, `BUDGET`, `INDETERMINATE`), or exactly the ones named with `-t`. A scored trial is a legitimate target. The whole-job and `--failed-only` forms need a finished source; the named form works on a running job once every named trial has settled, else `trial_not_settled`, or `trial_not_found` for an id the job does not own. Naming trials and `--failed-only` together is refused.
+<Accordion title="Regrade eligibility">
+  Regrade re-runs the recorded verifier snapshot on retained inputs. It does not accept a replacement verifier or pick up edits to the task's tests.
 
-`regrade` re-runs only the verifier of a finished job, under the network policy the source trial ran with; `--status` and `--task` narrow the set. Only settled separate-mode trials are eligible; shared-mode trials and judge tasks are not. A single-trial regrade of an ineligible source is refused with `regrade_source_ineligible`; a whole-job regrade skips the ineligible trials and answers `no_regradable_trials` when none remain. The result is a job with `is_regrade` true.
+  Regrade needs recorded inputs from a separate verifier environment. Shared-verifier, multi-step, and LLM-judge tasks are not supported for regrade.
+
+  A whole-job regrade skips ineligible trials and refuses if none remain. A single-trial regrade reports the reason it is ineligible. Uploaded jobs cannot be resumed, retried, or regraded.
+</Accordion>
 
 ## Stop, cancel, delete
 
-```bash
-evolve job cancel <job-id>
-evolve job stop <job-id> --dataset terminal-bench-4
-evolve job delete <job-id> --yes
-```
+| Command | Effect |
+| --- | --- |
+| `evolve job cancel "$JOB_ID"` | Stop the whole job. |
+| `evolve job stop "$JOB_ID" --dataset my-dataset` | Stop trials from one dataset. Other trials continue. |
+| `evolve job delete "$JOB_ID" --yes` | Permanently remove the finished job and its stored results. |
 
-`cancel` asks the whole job to stop; a finished job is a no-op. `stop` ends one dataset's live trials and leaves the job running. `delete` removes a job you created permanently: its trials, traces, analyses and stored files. Without `--yes` it asks first.
-
-Only the job's creator may delete it; another member of the organization is refused with `org_forbidden`. The job must be finished: a live job, a running analysis wave or a live regrade derived from it refuses, naming what to wait for. Regrade jobs and the `source_jobs` entries of derived jobs stay. Deleting an uploaded job is how it is replaced; see [upload](/core-concepts/upload).
+Deletion is restricted to the creator. Active analyses or derived regrades can prevent deletion until they finish.
 
 ## Share
 
 ```bash
-evolve job share <job-id> --link
-evolve job share <job-id> --email alice@example.org
-evolve job shares <job-id>
-evolve job unshare <job-id> --link
+evolve job share "$JOB_ID" --link
 ```
 
-A job you created can be shared two ways, and both may be on at once. `--link` turns on an unlisted link: anyone holding it reads the run — the summary, trials, traces, logs, and files when the tasks are your own organization's or the public catalog's — without signing in. The link is never listed anywhere; `job shares` prints it again whenever you need it, and `job unshare --link` kills it at once. `--email` shares the run with a person by address: they get an email with a link to the run and read it after signing in with that address (a person without an account gets a sign-up link in the same email; an address already on the waitlist or holding an invite gets the share email without a sign-up link and uses that invite instead). A run shared with you appears under `evolve job list --scope shared`.
-
-Sharing is read-only: whoever holds the link or the email share cannot cancel, retry, regrade, analyze or delete the job. Only the creator may share or unshare; another member of the organization is refused with `org_forbidden`. A job's `visibility` field says `PRIVATE` or `LINK`.
-
-A [check](/core-concepts/check#share) and a managed-agent session share the same two ways, each on its own id: `evolve check share <check-id>` and `evolve session share <session-id>` take the same `--link` and `--email` flags and answer the same share state. A session belongs to an organization like a job, so your teammates read it by membership and the addresses it was shared with read it too; the [Traces page](/dashboard/traces) covers what a session's link opens. The dashboard side, and what a link shows, are on [Sharing](/core-concepts/sharing).
+Share by link or email. Recipients get read access; see [Sharing](/core-concepts/sharing).
 
 ## Download
 
 ```bash
-evolve job download <job-id> -o results/
+evolve job download "$JOB_ID" -o results/
 ```
 
-The results unpack as the standard job directory, `results/job-<id>/`: the job's `config.json`, `lock.json`, `result.json` and `job.log`, and one directory per trial. See [trial outputs](/core-concepts/trial-outputs) for what each trial directory holds.
+This unpacks a Harbor-format job directory under `results/job-<id>/`, with job records and one folder per trial. See [Trial outputs](/core-concepts/trial-outputs).
 
 ## Config files
 
-Put the job in a file and run it with `-c`. The file is YAML or JSON with the same field names the SDK's `jobs().start()` takes. Flags on the command line override the file's fields, one field at a time. `--print-config` prints the resolved job body as JSON and exits without running anything.
+Use YAML or JSON for a repeatable comparison:
 
-```yaml nightly.yaml
+```yaml comparison.yaml
 datasets:
-  - name: terminal-bench-4
-    version: "4.0"
   - name: harbor-examples
     version: "1.0"
+    task_names: [hello-world]
 agents:
   - name: codex
-    model_name: gpt-6-astra
+    model_name: gpt-5.6-luna
   - name: claude
     model_name: fable
 n_attempts: 2
-max_trial_spend_usd: 25
+max_trial_spend_usd: 1
+retry:
+  max_retries: 0
 ```
 
 ```bash
-evolve run -c nightly.yaml --print-config
-evolve run -c nightly.yaml --watch
+evolve run -c comparison.yaml --print-config
+evolve run -c comparison.yaml --watch
 ```
 
-<Card title="run reference" icon="terminal" href="/cli-reference/run">
-  Every flag of `evolve run`.
-</Card>
+`--print-config` shows the request without submitting it. It does not resolve every server default or validate server acceptance. Use `--org` for team ownership.
+
+<CardGroup cols={2}>
+  <Card title="Run reference" icon="terminal" href="/cli-reference/run">Flags, configuration overrides, and output modes.</Card>
+  <Card title="Inspect a trial" icon="search" href="/core-concepts/trials">Read the score, failure, and trace.</Card>
+</CardGroup>

@@ -1,0 +1,96 @@
+---
+title: "evolve auth"
+description: "Check your identity, manage team membership, and choose a default organization."
+---
+
+Set `EVOLVE_API_KEY`, then confirm which account and key the CLI is using.
+
+```bash
+export EVOLVE_API_KEY="<your-key>"
+evolve auth status
+```
+
+Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys). `--api-key <key>` overrides the environment for one command.
+
+## Find your organizations
+
+```bash
+evolve auth org list
+evolve auth org show acme
+```
+
+`org show <slug>` returns your role, members, quota, and current usage for that organization.
+
+| Option for `org list` | Meaning |
+| --- | --- |
+| `--search <text>` | Match slug, display name, or role. |
+| `--columns <keys\|all\|help>` | Select columns or list their names. |
+| `-q`, `--quiet` | Print organization slugs only. |
+| `--no-trunc` | Keep full terminal table cells. |
+| `--no-headers` | Omit piped TSV headers. |
+
+This list has no `--limit` or `--cursor` option.
+
+## Create a team
+
+```bash
+evolve auth org create acme --display-name "Acme"
+```
+
+You become the organization owner. `--display-name <text>` is optional and defaults to the supplied name.
+
+## Invite and join
+
+### 1. Owner creates an invitation
+
+```bash
+evolve auth org invite acme
+```
+
+The response includes an invite token and its expiry/use limits.
+
+### 2. Owner gives the token to a teammate
+
+The command prints the token; it does not send the invitation for you.
+
+### 3. Teammate joins with their own API key
+
+```bash
+evolve auth org join "$INVITE_TOKEN"
+```
+
+The teammate joins as a member. Set `$INVITE_TOKEN` to the token from the owner.
+
+## Set the default organization
+
+### Save a team
+
+```bash
+evolve auth org use acme
+```
+
+### Show the default
+
+```bash
+evolve auth org use
+```
+
+### Return to personal
+
+```bash
+evolve auth org use personal
+```
+
+This is a local preference. It writes to `$XDG_CONFIG_HOME/evolve/config.json`, or `~/.config/evolve/config.json`. The command does not verify membership; the server checks access when you create a resource.
+
+| Selection | Priority |
+| --- | --- |
+| `--org <name>` on a creation command | First. |
+| Saved CLI default | Used when no organization flag is supplied. |
+| Personal organization | Used when neither is set. |
+
+`--org personal` uses your personal organization for one command without changing the saved default.
+
+The default applies to job creation, dataset publishing, agent registration, and skill uploads. See [Teams](/core-concepts/teams) for ownership and permissions.
+
+[Global options](/cli-reference/index#global-options) apply to every auth command.

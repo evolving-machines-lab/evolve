@@ -1,64 +1,121 @@
 ---
-title: "Check"
-description: "Check the quality of tasks against a rubric before you spend a job on them."
+title: "Check tasks"
+description: "Review instructions, environments, solutions, and verifiers before an evaluation."
 ---
 
-A check reads a task and, when it can, runs its environment, its reference solution and its verifier, then rules on every criterion of a rubric. Point it at a task directory, or at a directory of tasks:
+A **check** reviews task quality. An [analysis](/core-concepts/analyze) reviews an agent's completed trial. Both use rubrics; they answer different questions.
 
-```bash
-evolve check ./tasks \
-  -i 'abs-*' \
-  -l 5 \
-  --watch
+<CodeGroup>
+```bash Local task or task collection
+evolve check ./tasks --watch
 ```
 
-Or at a published dataset version. Nothing is uploaded; the checker reads the retained task package.
+```bash Published dataset
+evolve check -d harbor-examples@1.0 -i hello-world --watch
+```
+</CodeGroup>
+
+Local checks upload the selected task material. Dataset checks use the retained package; they do not publish a new version.
+
+## Choose the tasks
+
+<Steps>
+  <Step title="Read the source">
+    | Source | Uses |
+    | --- | --- |
+    | Task directory | One task. |
+    | Task collection | Top-level task directories. |
+    | Published dataset | Retained task package. |
+  </Step>
+  <Step title="Filter task names">
+    Apply include (`-i`) and exclude (`-x`) globs.
+  </Step>
+  <Step title="Limit the selection">
+    Apply the task cap (`-l`).
+  </Step>
+  <Step title="Run the checks">
+    Run one checker per selected task.
+  </Step>
+</Steps>
 
 ```bash
-evolve check -d my-swe@1.0 --watch
+evolve check ./tasks -i 'auth-*' -x 'auth-legacy' -l 5 --watch
 ```
 
-When the path is a task directory, that task is checked; otherwise every top-level directory that is one, in sorted order. `-i` and `-x` are globs over task names and `-l` caps the count, in that order; a selection that leaves nothing is refused with `no_checkable_tasks`. There is no task-count ceiling.
+A check is a hosted model run and incurs cost. `evolve dataset check` is a separate metadata preflight; it does not perform this rubric review.
 
-`-r` is a rubric file, `-p` a prompt file. `-m` and `--effort` set the checker's model and effort, `-e` its sandbox provider, `-n` how many checks run at once, beneath the organization's `max_concurrent_analyses`.
+## What it reviews
 
-The default rubric has eleven criteria: `instruction_is_sufficient`, `tests_match_the_instruction`, `verifier_is_correct`, `no_answer_leakage`, `grader_is_out_of_reach`, `reference_solution_is_valid`, `verifier_rejects_non_solutions`, `environment_builds_and_runs`, `verification_is_stable`, `limits_allow_the_task` and `task_is_solvable`. The checker's default model is the analyzer's; a custom rubric, model, prompt and effort follow the same rules and refusals as [analyze](/core-concepts/analyze).
+| Review area | Default criteria |
+| --- | --- |
+| Instructions and tests | Sufficient instructions; tests match instructions; verifier correctness. |
+| Evaluation integrity | No answer leakage; grading is out of the agent's reach. |
+| Execution | Valid reference solution; rejection of non-solutions; environment works; stable verification; sufficient limits. |
+| Feasibility | The task is solvable. |
+
+The default rubric has eleven criteria. Inspect their complete guidance and the current model, effort, provider, and prompt:
+
+```bash
+evolve check --show-defaults
+```
+
+Use `-r rubric.toml` or `-p prompt.txt` to customize. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically.
 
 ## The result
 
-Each task gets one entry per criterion, with an `outcome` (`pass`, `fail`, `not_applicable` or `unknown`), an `explanation` and `evidence`. Under the default rubric, one label is derived:
+One parent check contains one **task check** per selected task:
 
-- `has_a_problem`: a fail on any criterion
-- `unclear`: otherwise, an unknown on any of the six file-based criteria
-- `no_problem_found`: everything else
+```text
+check
+├── task check: hello-world
+│   ├── criteria
+│   │   ├── outcomes
+│   │   ├── explanations
+│   │   └── evidence
+│   ├── label + executed
+│   └── checker trace + files
+└── task check: another-task
+    └── ...
+```
 
-`executed` says whether the checker actually ran the task's environment, so a reading-only `no_problem_found` is never mistaken for a run. A check never fails as a whole: refusals happen at accept, and a task's failure is on that task. A check is readable by its creator, by every member of the organization and by whoever it was shared with; anyone else reads `check_not_found`.
+| Label | Rule, in order |
+| --- | --- |
+| `has_a_problem` | Any criterion fails. |
+| `unclear` | Otherwise, a file-based criterion is unknown. |
+| `no_problem_found` | Neither condition above applies. |
+
+<Note>
+  **Read `executed` beside the label.** It is derived from the checker findings: true when none of the five execution criteria is `unknown`. It is not a separate execution audit. A `no_problem_found` result with `executed: false` leaves execution questions unresolved.
+</Note>
+
+A rubric with different criterion names has null `label` and `executed`. The explanations and evidence remain available.
+
+The parent lifecycle is `queued` → `running` → `completed`. A completed check can contain failed task checks; inspect each task's `status` and `failure`.
 
 ## Read it back
 
 ```bash
 evolve check list --status running
-evolve check show <check-id>
-evolve check trace <task-check-id> --since 200
-evolve check download <check-id> -o checks/
-evolve check download <task-check-id> --stream task-check
+evolve check show "$CHECK_ID"
+evolve check trace "$TASK_CHECK_ID"
+evolve check download "$CHECK_ID" -o checks/
 ```
 
-`check show` prints the check with one result per task. `check trace` prints the checker's transcript for one task check. `check download` saves the whole check as a check folder by its check id, one task's folder by its task check id, or streams one artifact of a task check: `task-check`, `trace-parsed`, `trace-stdout`, `trace-stderr` or `agent-home`.
+Use the parent check ID for the whole report. Use a task-check ID for one checker's transcript, filesystem, or individual verdict:
+
+```bash
+evolve check download "$TASK_CHECK_ID" --stream task-check
+```
 
 ## Share
 
 ```bash
-evolve check share <check-id> --link
-evolve check share <check-id> --email alice@example.org
-evolve check shares <check-id>
-evolve check unshare <check-id> --link
+evolve check share "$CHECK_ID" --link
 ```
 
-A check you created shares the two ways a [job](/core-concepts/jobs#share) does, and both may be on at once. `--link` turns on an unlisted link: anyone holding it reads the check's report and downloads its check folder, without signing in. `check shares` prints the link again whenever you need it, and `check unshare --link` kills it at once. `--email` shares the check with a person by address: they get an email with a link and read the check after signing in with that address (a person without an account gets a sign-up link in the same email). A check shared with you appears under `evolve check list --scope shared`.
+The creator can share by link or email. Recipients can read the report and available files. Sharing does not give them permission to stop task checks.
 
-Sharing is read-only: whoever holds the link or the email share reads the check and can never stop one of its task checks; that stays with the creator. Only the creator may share or unshare; another member of the organization is refused with `org_forbidden`. A check's `visibility` field says `PRIVATE` or `LINK`. The dashboard side, and what a link shows, are on [Sharing](/core-concepts/sharing).
-
-<Card title="check reference" icon="terminal" href="/cli-reference/check">
-  Every flag of `evolve check`.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Check reference" icon="terminal" href="/cli-reference/check">Flags, custom rubrics, and task-check commands.</Card>
+  <Card title="Checks in the dashboard" icon="list-check" href="/dashboard/checks">Open reports and inspect findings.</Card>
+</CardGroup>

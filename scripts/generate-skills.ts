@@ -11,7 +11,7 @@
  *     -> skills/evolve-evals/     SKILL.md: front matter (name, the site's description,
  *                                 metadata.internal) + an index following docs.json's
  *                                 navigation (tab -> group -> page title -> one line);
- *                                 references/<site path>.mdx: every page, byte for byte
+ *                                 references/<site path>.md: readable Markdown from each page
  *   docs-agents/SKILL.source.md, docs-agents/typescript/0[1-5]-*.md, docs-agents/python/0[1-5]-*.md
  *     -> skills/evolve-agents/    SKILL.md: the hand-written skill behind the marker;
  *                                 references/<language>/<chapter>: the chapters, byte for byte
@@ -36,7 +36,7 @@
  * .github/workflows/sync-docs-to-skill.yml runs --check on pull requests and
  * regenerates + commits on pushes to main and project-sable.
  *
- * Dependencies: `tsx` and `yaml`, both root devDependencies (`yaml` at the
+ * Dependencies: `tsx`, `typescript`, and `yaml`, all root devDependencies (`yaml` at the
  * same version packages/sdk-ts pins).
  */
 
@@ -44,6 +44,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { renderDocsMarkdown } from "./docs-markdown.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SITE = join(ROOT, "docs-evals");
@@ -68,17 +69,19 @@ const POINTER_MAX_WORDS = 500;
 const POINTER_FIELDS = ["name", "description", "allowed-tools"] as const;
 
 /** The generated body of skills/evolve-evals/SKILL.md, above the index. */
-const EVALS_PREAMBLE = `# Evolve hosted evals
+const EVALS_PREAMBLE = `# Evolve managed evals
 
-Hosted evaluation for agents: datasets of Harbor-format tasks, jobs that run any model on any agent harness against them in cloud sandboxes, and the trials, checks and analyses they produce — from the \`evolve\` CLI and the TypeScript and Python SDKs.
+Run evaluations in cloud sandboxes. Read results, inspect files, check tasks, and analyze traces through the CLI or Python and TypeScript SDKs.
 
-The pages under \`references/\` are the documentation site's pages, byte for byte, at the site's paths: a site link to \`/core-concepts/tasks\` is \`references/core-concepts/tasks.mdx\`, and \`evolve skills get evals core-concepts/tasks\` prints it. An \`import\` of \`/snippets/<file>\` is \`references/snippets/<file>\`.
+## Find the right instructions
 
-## How to use this skill
+1. Choose a page from the index below. Read it with \`evolve skills get evals <page>\`.
+2. Follow links by site path: \`/core-concepts/tasks\` means \`evolve skills get evals core-concepts/tasks\` or \`references/core-concepts/tasks.md\` in this folder.
+3. Confirm installed command options with \`evolve <command> --help\`. Use \`--json\` when parsing command output.
 
-1. Find the topic in the index below and read that page before writing any command or code: \`evolve skills get evals <page>\` prints it, the page named by its site path; \`evolve skills get evals --full\` prints every page.
-2. Every CLI verb is documented from its own \`--help\`; run \`evolve <verb> --help\` to confirm the flags of the installed version.
-3. Every command and every SDK client reads \`EVOLVE_API_KEY\`; the Installation page says where the key comes from.
+These pages are generated from the same source as the website. Tabs become labeled sections, field details remain visible, and snippets are included in place. Read individual pages first; \`--full\` prints the whole manual.
+
+Hosted requests use \`EVOLVE_API_KEY\`. Start with Installation if authentication is missing. The managed-agent builder, Swarm, and Pipeline have a separate \`evolve-agents\` skill.
 
 `;
 
@@ -234,7 +237,7 @@ function renderGroup(group: NavGroup, depth: number, out: string[]): void {
     const { data } = frontMatter(readText(file), `docs-evals/${page}.mdx`);
     const title = requireString(data, "title", `docs-evals/${page}.mdx`);
     const description = requireString(data, "description", `docs-evals/${page}.mdx`);
-    out.push(`| [${cell(title)}](references/${page}.mdx) | ${cell(description)} |`);
+    out.push(`| [${cell(title)}](references/${page}.md) | ${cell(description)} |`);
   }
   out.push("");
   for (const g of nested) renderGroup(g, depth + 1, out);
@@ -253,9 +256,13 @@ function evalsSkill(): Map<string, Buffer> {
   const front = ["---", `name: ${EVALS_SKILL}`, `description: ${JSON.stringify(docsJson.description)}`, "metadata:", "  internal: true", "---"].join("\n");
   const files = new Map<string, Buffer>();
   files.set("SKILL.md", withGeneratedMarker(Buffer.from(`${front}\n\n${EVALS_PREAMBLE}\n${index.join("\n")}`, "utf8"), "docs-evals/"));
-  const pages = walkFiles(SITE).filter((p) => p.endsWith(".mdx"));
+  // snippets/ holds includes for pages, never pages of the manual.
+  const pages = walkFiles(SITE).filter((p) => p.endsWith(".mdx") && !relPath(SITE, p).startsWith("snippets/"));
   if (pages.length === 0) throw new Error("docs-evals: no .mdx pages found");
-  for (const p of pages) files.set(`references/${relPath(SITE, p)}`, readBytes(p));
+  for (const p of pages) {
+    const target = relPath(SITE, p).replace(/\.mdx$/, ".md");
+    files.set(`references/${target}`, Buffer.from(renderDocsMarkdown(readText(p), { file: p, root: SITE }), "utf8"));
+  }
   return files;
 }
 

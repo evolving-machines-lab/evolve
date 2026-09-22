@@ -1,222 +1,128 @@
 ---
-title: "analyses"
-description: "Read trace-analysis runs."
+title: "Analyses"
+description: "Analyze trial traces, then inspect the verdict and the analyzer's own run."
 ---
 
-`analyses()` returns the analyses client. Analyses are started from a job, with `jobs().analyze()`; this client reads them back.
+<Note>For every method’s inputs, return values, and language differences, see the [analyses method reference](/sdk-reference/methods/analyses).</Note>
 
-## list
+Analysis asks an agent to read a trial's evidence against a rubric. It produces criterion outcomes and explanations. It does not replace the verifier's reward.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    list(options?: { scope?: "my" | "shared" | "org"; job?: string; status?: AnalysisStatus[]; limit?: number; cursor?: string }): AnalysisList
-    ```
+```text
+Trial trace + task + rubric
+             │
+             ▼
+        Analyzer run
+             │
+             ▼
+ Summary + criterion outcomes + evidence
+```
 
-    Analysis runs, newest first, each naming the trial, job and task it judged.
+## Start an analysis
 
-    ```ts
-    for await (const a of analyses().list({
-      job: job.id,
-      status: ["failed"],
-    })) {
-      console.log(a.id, a.label);
-    }
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    def list(
-        *,
-        scope: Optional[JobListScope] = None,
-        job: Optional[str] = None,
-        status: Optional[List[AnalysisStatus]] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    )
-    ```
+Start work through the **jobs** client. Read analyzer runs through the **analyses** client.
 
-    Analysis runs, newest first, each naming the trial, job and task it judged.
+<CodeGroup>
+```ts TypeScript
+import { jobs, analyses } from "@evolvingmachines/evolve";
 
-    ```python
-    async for a in analyses().list(
-        job=job.id,
-        status=["failed"],
-    ):
-        print(a["id"], a["label"])
-    ```
-  </Tab>
-</Tabs>
+await jobs().analyze(jobId, { failing: true });
+const job = await jobs().watchAnalysis(jobId);
+console.log(job.stats.analysis);
+```
 
-## get, transcript, artifact
+```python Python
+from evolve import jobs, analyses
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    get(analysisId: string): Promise<TrialAnalysis>
-    transcript(
-      analysisId: string,
-      options?: { since?: number },
-    ): Promise<AnalysisTranscript>
-    artifact(
-      analysisId: string,
-      stream: "trace-stdout" | "trace-stderr",
-    ): Promise<string | null>
-    artifact(
-      analysisId: string,
-      stream: "agent-home",
-    ): Promise<Record<string, string> | null>
-    ```
+await jobs().analyze(job_id, failing=True)
+job = await jobs().watch_analysis(job_id)
+print(job.stats.get("analysis"))
+```
+</CodeGroup>
 
-    The verdict document for every analysis, failed ones included, the analyzer's own transcript (everything after `since` in one read), or one stored artifact; an analysis has no verifier log and no trajectory. A run opens to its job's creator and every member of the organization; any other id answers `analysis_not_found` (`trial_not_found` from `transcript`).
+Manual analysis requires a terminal job. It returns immediately after queuing work. Only one analysis wave can run for that job at a time.
 
-    ```ts
-    const verdict = await analyses().get("a0a1b2c3-…");
-    ```
-  </Tab>
-  <Tab title="Python">
-    The Python client has `list` and `download` only. Read a verdict from the analyzed trial: `(await trials().get(trial_id)).analysis`.
-  </Tab>
-</Tabs>
+To analyze trials as they finish, pass `analyze: {}` / `analyze={}` when starting the job. Wait for job completion before calling the analysis watch.
 
-## defaults
+### Configuration
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    defaults(): Promise<AnalyzeDefaults>
-    ```
+The field names are the same in both languages. TypeScript passes an object; Python uses keyword arguments on `analyze()` or a dictionary inside job creation.
 
-    The defaults an analysis runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in analyze prompt as a template with `{trial_path}`, `{task_section}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `jobs().analyze()`; passed back unchanged, they run exactly as the defaults do, and the analysis records them as named, so a later change of the platform default does not move it.
+| Field | Purpose |
+| --- | --- |
+| `model_name` | Analyzer model |
+| `reasoning_effort` | Effort supported by the analyzer |
+| `sandbox_provider` | Analyzer's sandbox provider |
+| `rubric` | `{criteria: [{name, description, guidance}, ...]}` |
+| `prompt` | Replacement prompt template text |
+| `n_concurrent` | Requested parallel analyses; integer 1–150, also bounded by team quota |
+| `passing` | Only scored trials with primary reward exactly 1 |
+| `failing` | Other analyzable trials |
+| `n_trials` | Positive cap after selection |
+| `trial_ids` | Explicit trial ids from this job; manual analysis only |
 
-    ```ts
-    const { rubric } = await analyses().defaults();
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def defaults() -> AnalyzeDefaults
-    ```
+`passing` and `failing` cannot both be true. Cancelled trials are excluded. Explicit ids are filtered before the cap; unknown, duplicate, or empty ids are refused.
 
-    The defaults an analysis runs under when you name none: `model_name`, `reasoning_effort`, `sandbox_provider`, the platform's `rubric`, and `prompt`, the built-in analyze prompt as a template with `{trial_path}`, `{task_section}` and `{criteria_guidance}` unrendered. Edit the rubric or the prompt from here and pass it to `jobs().analyze()`; passed back unchanged, they run exactly as the defaults do, and the analysis records them as named, so a later change of the platform default does not move it.
+<Accordion title="Analysis watch options">
+| TypeScript | Python | Purpose |
+| --- | --- | --- |
+| `onStats` | `on_stats` | Called with the job when analysis tally changes |
+| `pollIntervalMs` | `poll_interval_s` | Initial interval; default 2000 ms / 2 s |
+| `signal` | `timeout_s` | Stop waiting / bound the Python wait |
 
-    ```python
-    rubric = (await analyses().defaults())["rubric"]
-    ```
-  </Tab>
-</Tabs>
+Polling slows to at most 30 seconds while the tally stays unchanged. Call the watch after starting analysis; a job never analyzed can have a null tally indefinitely.
+</Accordion>
 
-## download
+## Read current defaults
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    download(analysisId: string): Promise<Buffer>
-    download(
-      analysisId: string,
-      options: { to: string },
-    ): Promise<string>
-    download(
-      analysisId: string,
-      options: { stream: true },
-    ): Promise<ReadableStream<Uint8Array>>
-    ```
+<CodeGroup>
+```ts TypeScript
+const defaults = await analyses().defaults();
+console.log(defaults.model_name, defaults.rubric, defaults.prompt);
+```
 
-    The run as one `.tar.gz`, `analyze-<analyzed trial>__<7 chars>/`: a trial tree of the analyzer's own run, with `artifacts/analysis.json` on a completed run. The bytes, the saved file's path, or a stream. `analysis_not_terminal` while the run is queued or running.
+```python Python
+defaults = await analyses().defaults()
+print(defaults["model_name"], defaults["rubric"], defaults["prompt"])
+```
+</CodeGroup>
 
-    ```ts
-    const path = await analyses().download(
-      "a0a1b2c3-…",
-      { to: "./analyses" },
-    );
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def download(
-        analysis_id: str,
-        *,
-        to: Optional[str] = None,
-    )
-    ```
+The response includes `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
 
-    The run as one `.tar.gz`, `analyze-<analyzed trial>__<7 chars>/`: the bytes, or with `to` the saved file's path. `analysis_not_found` for an id you cannot read, `analysis_not_terminal` while the run is queued or running.
+A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
-    ```python
-    path = await analyses().download(
-        "a0a1b2c3-…",
-        to="./analyses",
-    )
-    ```
-  </Tab>
-</Tabs>
+## Read verdicts
 
-## filesystem(analysisId: string)
+<CodeGroup>
+```ts TypeScript
+for await (const result of analyses().list({ job: jobId })) {
+  console.log(result.id, result.status, result.label, result.checks);
+}
+```
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    filesystem(analysisId: string): RunFilesystem
+```python Python
+async for result in analyses().list(job=job_id):
+    print(result["id"], result["status"], result["label"], result["checks"])
+```
+</CodeGroup>
 
-    interface RunFilesystem {
-      status(): Promise<FilesystemStatus>
-      list(options?: { path?: string; source?: "live" | "capture"; cursor?: string; limit?: number }): Promise<FilesystemListing>
-      read(path: string, options?: { source?: "live" | "capture"; range?: TrialFileRange }): Promise<Buffer>
-      search(options: { q: string; path?: string; regex?: boolean; limit?: number; source?: "live" | "capture" }): Promise<FilesystemSearchResult>
-      changes(options?: { source?: "live" | "capture"; phase?: "setup" | "agent" | "verifier" | "all"; cursor?: string; limit?: number }): Promise<FilesystemChanges>
-      archive(options?: { path?: string; source?: "live" | "capture" }): Promise<Buffer>
-      archive(options: { path?: string; source?: "live" | "capture"; to: string }): Promise<string>
-      watch(paths: string[]): Promise<FilesystemWatchResult>
-      events(options?: { lastEventId?: string; signal?: AbortSignal }): AsyncIterableIterator<FilesystemStreamEvent>
-      logs(options: { stream: SandboxLogStream; cursor?: string; limit?: number }): Promise<SandboxLogLines>
-      logEvents(options?: { lastEventId?: string; signal?: AbortSignal }): AsyncIterableIterator<SandboxLogEvent>
-      procs(): Promise<SandboxProcs>
-    }
-    ```
+List options: `scope`, `job`, `status` list, `limit`, `cursor`. Status values are `queued`, `running`, `completed`, `failed`.
 
-    The analysis run's file system, sandbox logs and process list. While the box runs, every read sees it as it changes; after the run, the same reads answer from the kept tree. `status()` says which (`state`: `live`, `captured`, `capturing`, `none`), and `source` on a read forces one — a source that is not there is refused with `filesystem_state`.
+The latest verdict also appears on `trial.analysis`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence. Default-rubric labels are `flagged`, `env_fault`, `unclear`, or `clean`; a custom rubric may have no label.
 
-    `list` pages one folder by name; each entry says whether the run created or modified it and in which phase, and on the kept tree `captured: false` marks a file the run never touched (it lists but does not open — `not_captured`). `read` answers raw bytes, a slice with `range`. `search` finds text under a folder, or over the whole box when `path` is `/` (seconds); `truncated` says there was more. `changes` is the flat list of what the run created, modified or removed. `archive` is a `.tar.gz` of one subtree, in memory or saved under `to`; while the box runs, a subtree too large to read out in time is refused (`feature_unsupported`).
+## Inspect the analyzer run
 
-    `events` yields change frames while the box lives (`state`, then one `fs` per change with its `seq`, `path` and `type`); on a provider without a native watcher, `watch(paths)` declares the folders you have open so their changes are reported (at most 8). `logs` pages one stream — `agent`, `verifier`, or `system` when the job asked for it; `setup` and `metrics` are named but not recorded today, so their page is empty with a `reason` — and `logEvents` follows every stream while the box lives. `procs` is the live process list.
+| Method | TypeScript | Python |
+| --- | --- | --- |
+| List runs | `list(options)` | `list(...)` |
+| Read defaults | `defaults()` | `defaults()` |
+| Download run | `download(analysisId, { to })` | `download(analysis_id, to=...)` |
+| Browse sandbox files | `filesystem(analysisId)` | `filesystem(analysis_id)` |
+| Read one verdict directly | `get(analysisId)` | Use list results or `trial.analysis` |
+| Read analyzer transcript | `transcript(analysisId, { since })` | Not exposed |
+| Read raw stored artifact | `artifact(analysisId, stream)` | Not exposed |
 
-    ```ts
-    const fs = analyses().filesystem(analysis.id);
-    const { state } = await fs.status();
-    for (const entry of (await fs.list({ path: "/app/work" })).entries) console.log(entry.name, entry.changed);
-    const main = (await fs.read("/app/work/main.py")).toString("utf8");
-    for await (const frame of fs.events()) if (frame.event === "fs") console.log(frame.data.path, frame.data.type);
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    def filesystem(self, analysis_id: str) -> RunFilesystem
+`analysisId` identifies the analyzer run, not the trial it read. `since` is an inclusive nonnegative event index; the transcript returns `events`, `total`, run metadata, and separate `gateway_calls`.
 
-    class RunFilesystem:
-        async def status(self) -> FilesystemStatus
-        async def list(self, *, path="/", source=None, cursor=None, limit=None) -> FilesystemListing
-        async def read(self, path, *, source=None, start=None, end=None, suffix=None) -> bytes
-        async def search(self, q, *, path="/", regex=False, limit=None, source=None) -> FilesystemSearchResult
-        async def changes(self, *, source=None, phase=None, cursor=None, limit=None) -> FilesystemChanges
-        async def archive(self, *, path="/", source=None, to=None)  # bytes, or the saved path with to=
-        async def watch(self, paths) -> FilesystemWatchResult
-        def events(self, *, last_event_id=None) -> AsyncIterator[FilesystemStreamEvent]
-        async def logs(self, stream, *, cursor=None, limit=None) -> SandboxLogLines
-        def log_events(self, *, last_event_id=None) -> AsyncIterator[SandboxLogEvent]
-        async def procs(self) -> SandboxProcs
-    ```
+TypeScript artifact selectors are `trace-stdout`, `trace-stderr`, and `agent-home`. The first two return text or null; `agent-home` returns a file map or null.
 
-    The same surface, the same words: `status().state` says whether the reads answer from the running box (`live`) or the kept tree (`captured`); `source=` forces one. `read` answers bytes, a slice with `start`/`end` or `suffix`. `events` and `log_events` are async iterators over the live streams.
-
-    ```python
-    fs = analyses().filesystem(analysis.id)
-    print((await fs.status()).state)
-    for entry in (await fs.list(path="/app/work")).entries:
-        print(entry.name, entry.changed)
-    main = (await fs.read("/app/work/main.py")).decode()
-    async for frame in fs.events():
-        if frame.event == "fs":
-            print(frame.data["path"], frame.data["type"])
-    ```
-  </Tab>
-</Tabs>
+Downloads return a wrapper-trial archive. See [filesystem and download options](/sdk-reference/filesystem).
