@@ -47,7 +47,9 @@ Success returns `202` and the accepted job. Set `$JOB_ID` to its `id`. Closing t
 
 The JSON fields match the [SDK job inputs](/sdk-reference/jobs#required-inputs). Add `org` to create the job in a team. Attach stored secrets through the request's [secret references](/sdk-reference/secrets#attach-it-to-a-job).
 
-**Note:** To retry the same submission safely after a transport failure, send an `Idempotency-Key` header with a unique value for that intended job. Reuse it only for retries of that submission. A new intended run needs a new key.
+**Note:**
+
+To retry the same submission safely after a transport failure, send an `Idempotency-Key` header with a unique value for that intended job. Reuse it only for retries of that submission. A new intended run needs a new key.
 
 ## Follow the result
 

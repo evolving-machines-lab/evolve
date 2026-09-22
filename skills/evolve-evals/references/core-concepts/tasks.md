@@ -7,7 +7,9 @@ A task is one problem for an agent to solve. It packages an instruction, a Linux
 
 Evolve accepts the **Harbor task format**, with the [managed capabilities and limits](/core-concepts/compatibility) described in these guides.
 
-**Tip:** New to task authoring? [Build your first task](/getting-started/first-task) from five small files.
+**Tip:**
+
+New to task authoring? [Build your first task](/getting-started/first-task) from five small files.
 
 - my-task/
   - instruction.md

@@ -204,4 +204,6 @@ evolve run -d my-dataset@1.0 -a codex -m gpt-5.6-luna \
 
 These are the only accepted `--ve` keys. Judge spend is reported separately from agent spend. Its independent cap is the smaller of the agent’s per-trial cap and $5. Judge-enabled trials are not currently regradable.
 
-**Tip:** Ask a coding agent to load `evolve skills get rewardkit` for verifier authoring guidance. Use `evolve skills get create-task` for the complete task workflow.
+**Tip:**
+
+Ask a coding agent to load `evolve skills get rewardkit` for verifier authoring guidance. Use `evolve skills get create-task` for the complete task workflow.

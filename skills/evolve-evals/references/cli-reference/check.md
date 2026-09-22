@@ -19,7 +19,9 @@ evolve check -d harbor-examples@1.0 -i hello-world --watch
 
 Use exactly one source: a local path or `--dataset`. Local tasks are uploaded for this check; they do not need to be published as a dataset first.
 
-**Note:** `evolve check` runs an agent and incurs usage. For metadata validation before publishing, use [`evolve dataset check`](/cli-reference/dataset#check-before-publishing).
+**Note:**
+
+`evolve check` runs an agent and incurs usage. For metadata validation before publishing, use [`evolve dataset check`](/cli-reference/dataset#check-before-publishing).
 
 ## Choose tasks
 
@@ -100,7 +102,9 @@ evolve check trace "$TASK_CHECK_ID" --since 200
 
 `--since <n>` skips the first N transcript events. JSON output is one event per line. For files, logs, and live processes, use the [filesystem commands](/cli-reference/filesystem).
 
-**Note:** The parent check ID selects the whole report. Trace, files, logs, and processes need an individual **task-check ID**.
+**Note:**
+
+The parent check ID selects the whole report. Trace, files, logs, and processes need an individual **task-check ID**.
 
 ## Download
 

@@ -7,7 +7,9 @@ Use `code` to identify a failure. Read `param` for the input to fix and `details
 
 This catalog covers all 122 codes known to the SDK. A newer server can add codes; [Meta](/sdk-reference/meta) lists the deployment's vocabulary.
 
-**Info:** An API refusal raises an SDK exception. An accepted import can fail later and return a `failure` record instead. A skipped trial appears in `skipped_trials`. The [job import section](#job-imports) separates these cases.
+**Info:**
+
+An API refusal raises an SDK exception. An accepted import can fail later and return a `failure` record instead. A skipped trial appears in `skipped_trials`. The [job import section](#job-imports) separates these cases.
 
 ## Keys, credits, and quotas
 

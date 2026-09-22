@@ -22,7 +22,9 @@ npm install @evolvingmachines/evolve
 
 The CLI and TypeScript package use Node.js. Python requires **3.10 or newer**; its managed evals clients make HTTP requests directly and do not need Node.js.
 
-**Note:** For a one-off CLI command, use `npx --package=@evolvingmachines/evolve evolve --help`. Outside a project with Evolve installed, bare `npx evolve` can fetch an unrelated package.
+**Note:**
+
+For a one-off CLI command, use `npx --package=@evolvingmachines/evolve evolve --help`. Outside a project with Evolve installed, bare `npx evolve` can fetch an unrelated package.
 
 ## Connect your account
 

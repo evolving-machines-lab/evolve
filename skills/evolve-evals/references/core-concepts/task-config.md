@@ -24,7 +24,9 @@ workdir = "/app"
 network_mode = "no-network"
 ```
 
-**Note:** `artifacts` is a top-level key. Place it before any `[table]` header, as above.
+**Note:**
+
+`artifacts` is a top-level key. Place it before any `[table]` header, as above.
 
 For every accepted field and default, use the [task.toml reference](/core-concepts/task-reference).
 

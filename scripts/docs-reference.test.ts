@@ -41,15 +41,49 @@ function headings(text: string): string[] {
     .map((match) => (match[1] ?? match[2]).replace(/`/g, ""));
 }
 
-function hasMethodHeading(names: string[], method: string): boolean {
-  return names.some((name) => name.split(/[^A-Za-z0-9_]+/).includes(method));
+/** A heading documents a method when it IS the method (`## get`) or a qualified spelling of it (`## package.get`), a TypeScript / Python pair counting as one;
+ * a heading that merely mentions the name (`## When to call get`) does not. Each heading is claimed once, so two
+ * clients on one page cannot share a section. */
+function claimMethodHeading(names: string[], claimed: Set<string>, method: string): boolean {
+  const matches = (name: string): boolean => name.split(" / ").some((part) => part === method || part.endsWith(`.${method}`) || part === `${method}()`);
+  const index = names.findIndex((name, at) => !claimed.has(`${at}`) && matches(name));
+  if (index < 0) return false;
+  claimed.add(`${index}`);
+  return true;
 }
 
-test("every hosted client interface is assigned a method reference", () => {
+function hasMethodHeading(names: string[], method: string): boolean {
+  return claimMethodHeading(names, new Set(), method);
+}
+
+function pythonFences(text: string): string {
+  return [...text.matchAll(/^```python[^\n]*\n([\s\S]*?)^```/gm)].map((match) => match[1]).join("\n");
+}
+
+/** The CLI's command groups, read from its GROUPS table: every 2-space key until the table closes. */
+function cliGroups(): string[] {
+  const cli = read("packages/sdk-ts/src/cli/index.ts");
+  const start = cli.indexOf("const GROUPS: Record<string, GroupSpec> = {");
+  assert.ok(start >= 0, "the CLI's GROUPS table moved; update this test");
+  const body = cli.slice(start);
+  const end = body.search(/^};$/m);
+  return [...body.slice(0, end).matchAll(/^  ([a-z][a-z-]*): \{/gm)].map((match) => match[1]);
+}
+
+test("every hosted interface with methods is assigned a method reference", () => {
   const discovered = source.statements.filter(ts.isInterfaceDeclaration)
-    .map((node) => node.name.text).filter((name) => name.endsWith("Client"));
-  const mapped = Object.keys(clients).filter((name) => name.endsWith("Client") && name !== "ManagedSecretsClient");
-  assert.deepEqual(discovered.sort(), mapped.sort());
+    .filter((node) => node.members.some(ts.isMethodSignature))
+    .map((node) => node.name.text).filter((name) => name !== "Awaitable");
+  const mapped = Object.keys(clients).filter((name) => name !== "ManagedSecretsClient");
+  assert.deepEqual(discovered.sort(), mapped.sort(), "an interface with methods appeared in hosted/types.ts without a reference page");
+});
+
+test("every CLI command group has a reference page", () => {
+  const groups = cliGroups();
+  assert.ok(groups.length >= 10, `only ${groups.length} CLI groups found; the table parser may be stale`);
+  for (const group of groups) {
+    assert.doesNotThrow(() => read(`docs-evals/cli-reference/${group}.mdx`), `CLI group "${group}" needs docs-evals/cli-reference/${group}.mdx`);
+  }
 });
 
 test("every known error has exactly one explanation in the error catalog", () => {
@@ -62,6 +96,7 @@ test("every known error has exactly one explanation in the error catalog", () =>
   }
 });
 
+const claimedHeadings = new Map<string, Set<string>>();
 for (const [client, page] of Object.entries(clients)) {
   test(`${client} has a reference section for every TypeScript and Python method`, () => {
     const file = client === "ManagedSecretsClient" ? secretSource : source;
@@ -70,9 +105,12 @@ for (const [client, page] of Object.entries(clients)) {
     assert.ok(methods.length > 0);
     const reference = read(`docs-evals/sdk-reference/methods/${page}.mdx`);
     const names = headings(reference);
+    const claimed = claimedHeadings.get(page) ?? new Set<string>();
+    claimedHeadings.set(page, claimed);
     for (const method of methods) {
-      assert.ok(hasMethodHeading(names, method), `${client}.${method} needs its own reference heading`);
+      assert.ok(claimMethodHeading(names, claimed, method), `${client}.${method} needs its own reference heading (a heading equal to the name, or <client>.${method} on a shared page)`);
     }
+    const pythonCode = pythonFences(reference);
     const py = client === "ManagedSecretsClient" ? pythonSecrets : python;
     const start = py.indexOf(`class ${client}:`);
     assert.ok(start >= 0, `Missing Python class ${client}`);
@@ -82,7 +120,7 @@ for (const [client, page] of Object.entries(clients)) {
     for (const method of pyMethods.filter((name) => name !== "close")) {
       const camelCase = method.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
       assert.ok(hasMethodHeading(names, method) || hasMethodHeading(names, camelCase), `${client}.${method} needs its own reference section`);
-      assert.ok(new RegExp(`\\b${method}\\(`).test(reference), `${client}.${method} needs its Python call or signature`);
+      assert.ok(new RegExp(`\\b${method}\\(`).test(pythonCode), `${client}.${method} needs its Python call or signature inside a python code block`);
     }
   });
 }

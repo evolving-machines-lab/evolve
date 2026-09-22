@@ -68,6 +68,8 @@ Use the model your custom agent is written to run. Registration does not make ev
 
 List scopes are `my`, `shared`, and `org`. Upsert accepts the same fields as create except `name`, which is its first argument.
 
-**Note:** Upsert is a full replacement. Include every setting you want to retain; omitting `env` clears it. It avoids the gap created by deleting and then registering again.
+**Note:**
+
+Upsert is a full replacement. Include every setting you want to retain; omitting `env` clears it. It avoids the gap created by deleting and then registering again.
 
 Deleting a registration does not rewrite the agent identity already recorded on past jobs.

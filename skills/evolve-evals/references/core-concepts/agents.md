@@ -44,7 +44,9 @@ Presets and native config are supported on Claude Code and Codex. The platform a
 
 The live [capability document](/sdk-reference/meta) lists each harness's supported options. Unsupported effort or configuration is rejected when the job is created.
 
-**Note:** `no-internet` disables the harness's server-side web tools. The task's [network policy](/core-concepts/task-config#network-access) controls network access from the sandbox.
+**Note:**
+
+`no-internet` disables the harness's server-side web tools. The task's [network policy](/core-concepts/task-config#network-access) controls network access from the sandbox.
 
 ## Register a custom agent
 

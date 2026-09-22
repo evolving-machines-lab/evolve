@@ -90,7 +90,9 @@ The first seven top-level keys are required. `verifier_result` is optional. Incl
 
 Reported costs and totals remain identified as uploaded data. They are not charges for a new Evolve execution.
 
-**Note:** Uploaded jobs support inspection, download, analysis, and sharing. Resume, retry, and regrade are refused with `job_uploaded`.
+**Note:**
+
+Uploaded jobs support inspection, download, analysis, and sharing. Resume, retry, and regrade are refused with `job_uploaded`.
 
 ## Task linkage
 

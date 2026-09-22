@@ -5,7 +5,9 @@ description: "One configuration. Focused clients for jobs, datasets, trials, and
 
 Use the same managed evaluation service from TypeScript or Python. Evolve runs the jobs; your program submits work and reads the results.
 
-**Note:** To run agents directly with the Evolve builder, Swarm, or Pipeline, use the separate [agent SDK manual](https://github.com/evolving-machines-lab/evolve/blob/main/docs-agents/index.md).
+**Note:**
+
+To run agents directly with the Evolve builder, Swarm, or Pipeline, use the separate [agent SDK manual](https://github.com/evolving-machines-lab/evolve/blob/main/docs-agents/index.md).
 
 ```ts TypeScript
 import { hosted } from "@evolvingmachines/evolve";
@@ -102,7 +104,9 @@ The `org` default applies when you create jobs, publish datasets, register agent
 
 Prefer a single client when useful: `jobs(config)`, `trials(config)`, and the other factories accept the same configuration. Import `auth` and `managedSecrets` / `managed_secrets` separately; they are not properties of `hosted()`.
 
-**Tip:** `meta()` needs no key. Other clients authenticate with your API key. TypeScript checks for a key when the client is created; Python checks when it makes an authenticated request.
+**Tip:**
+
+`meta()` needs no key. Other clients authenticate with your API key. TypeScript checks for a key when the client is created; Python checks when it makes an authenticated request.
 
 ## One page or every item
 

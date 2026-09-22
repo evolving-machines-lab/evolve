@@ -93,7 +93,9 @@ retries = 3
 
 The agent starts after the check exits `0`. Exhausted retries fail the trial before the agent runs. The values above are the defaults; only `command` is required.
 
-**Note:** A separate verifier cannot reuse an agent image that starts a service. Give it its own verifier image, or use shared verification.
+**Note:**
+
+A separate verifier cannot reuse an agent image that starts a service. Give it its own verifier image, or use shared verification.
 
 ## Add MCP tools
 

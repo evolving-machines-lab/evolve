@@ -87,7 +87,9 @@ evolve skill delete SKILL_ID
 
 An upload referenced by a queued, running, or cancelling job cannot be deleted.
 
-**Note:** `evolve skill` manages skills mounted into evaluated agents. `evolve skills` reads the bundled documentation for the coding agent helping you use Evolve.
+**Note:**
+
+`evolve skill` manages skills mounted into evaluated agents. `evolve skills` reads the bundled documentation for the coding agent helping you use Evolve.
 
 **[Uploaded skill commands](/cli-reference/skill)**
 

@@ -3,7 +3,9 @@ title: "Trials"
 description: "Inspect one attempt, from its reward to its trace and files."
 ---
 
-**Note:** For every method’s inputs, return values, and language differences, see the [trials method reference](/sdk-reference/methods/trials).
+**Note:**
+
+For every method’s inputs, return values, and language differences, see the [trials method reference](/sdk-reference/methods/trials).
 
 A trial is one task, one agent/model arm, and one attempt. Get its id from `jobs.trials(jobId)`; its record includes the parent `job_id`.
 

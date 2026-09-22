@@ -46,7 +46,9 @@ Inspect the per-task provider verdicts before starting a larger run. A compatibl
 
 Network allowlist kinds and resource ceilings also differ. The live [`meta()` document](/sdk-reference/meta) publishes these constraints. Daytona disk and GPU limits depend on the platform's live provider quota.
 
-**Note:** A temporary capacity shortage can put a trial back in the queue even with `--max-retries 0`. Capacity waits are bounded and separate from ordinary retry attempts.
+**Note:**
+
+A temporary capacity shortage can put a trial back in the queue even with `--max-retries 0`. Capacity waits are bounded and separate from ordinary retry attempts.
 
 ## Images and startup
 

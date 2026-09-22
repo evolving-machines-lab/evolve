@@ -256,7 +256,8 @@ function evalsSkill(): Map<string, Buffer> {
   const front = ["---", `name: ${EVALS_SKILL}`, `description: ${JSON.stringify(docsJson.description)}`, "metadata:", "  internal: true", "---"].join("\n");
   const files = new Map<string, Buffer>();
   files.set("SKILL.md", withGeneratedMarker(Buffer.from(`${front}\n\n${EVALS_PREAMBLE}\n${index.join("\n")}`, "utf8"), "docs-evals/"));
-  const pages = walkFiles(SITE).filter((p) => p.endsWith(".mdx"));
+  // snippets/ holds includes for pages, never pages of the manual.
+  const pages = walkFiles(SITE).filter((p) => p.endsWith(".mdx") && !relPath(SITE, p).startsWith("snippets/"));
   if (pages.length === 0) throw new Error("docs-evals: no .mdx pages found");
   for (const p of pages) {
     const target = relPath(SITE, p).replace(/\.mdx$/, ".md");

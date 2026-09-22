@@ -73,7 +73,9 @@ The file paths above are examples. List the folder first and choose a path that 
 
 Reads normally choose the available source. Add `--source live` or `--source capture` to require one; an unavailable source returns an error.
 
-**Note:** A capture is not a full copy of the original image. Unchanged image files can appear in listings without stored bytes. Reading one returns `not_captured`. Search also excludes files whose bytes were not captured.
+**Note:**
+
+A capture is not a full copy of the original image. Unchanged image files can appear in listings without stored bytes. Reading one returns `not_captured`. Search also excludes files whose bytes were not captured.
 
 ## Browse and read
 

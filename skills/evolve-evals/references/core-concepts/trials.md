@@ -45,7 +45,9 @@ This is the normal execution path. A trial can stop earlier with an error, budge
 | `INDETERMINATE` | No reliable scoring outcome was recorded. |
 | `CANCELLED` | The trial was stopped. |
 
-**Note:** A missing reward is not zero. A multi-key reward map without a primary reward can be `SCORED` while the scalar `reward` is null; inspect `verifier_result.rewards`.
+**Note:**
+
+A missing reward is not zero. A multi-key reward map without a primary reward can be `SCORED` while the scalar `reward` is null; inspect `verifier_result.rewards`.
 
 ### Find the cause
 

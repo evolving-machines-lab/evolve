@@ -23,7 +23,9 @@ ls -lt ~/.evolve-sdk/observability/sessions/*.jsonl
 
 Choose the file for your run. Its first `_meta` record contains the agent, model, session tag, and timestamp. `_prompt.text` records the input.
 
-**Note:** Use a fresh Codex or Claude instance with one foreground `run()`, no resumed context, and no shell commands. After it returns `exitCode: 0`, call `kill()` to close and flush the log.
+**Note:**
+
+Use a fresh Codex or Claude instance with one foreground `run()`, no resumed context, and no shell commands. After it returns `exitCode: 0`, call `kill()` to close and flush the log.
 
 A dashboard trace download contains parsed events, not the local harness stream. Do not pass it to this example.
 

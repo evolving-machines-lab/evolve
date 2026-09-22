@@ -67,7 +67,9 @@ evolve job trials "$JOB_ID"
 evolve job tasks "$JOB_ID"
 ```
 
-**Note:** **Accepted** means the job was created. **Completed** means every trial settled. Neither means every trial succeeded.
+**Note:**
+
+**Accepted** means the job was created. **Completed** means every trial settled. Neither means every trial succeeded.
 
 ## Spend and retries
 

@@ -42,7 +42,9 @@ Open **Versions** to inspect provenance and task counts. Click a version to brow
 
 **Activate** changes which version a bare dataset name resolves to. An explicit reference such as `my-dataset@1.0` remains pinned to that version.
 
-**Note:** A ready version can contain failed task builds. Inspect the task/build details before assuming every task is runnable.
+**Note:**
+
+A ready version can contain failed task builds. Inspect the task/build details before assuming every task is runnable.
 
 ## Publish or manage
 

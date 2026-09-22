@@ -7,7 +7,10 @@ import { dirname, resolve, sep } from "node:path";
 import ts from "typescript";
 
 type Attributes = Record<string, string | boolean>;
-const containers = new Set(["CardGroup", "Tabs", "CodeGroup", "Steps", "AccordionGroup", "FileTree", "Tree"]);
+const containers = new Set(["CardGroup", "Tabs", "CodeGroup", "Steps", "AccordionGroup", "FileTree", "Tree", "div"]);
+// Raw HTML the skill cannot show; a page that needs one gets an explicit Markdown rendering instead.
+const rawHtml = new Set(["video", "iframe", "table", "script", "style", "object", "embed", "svg", "details", "summary", "section", "span", "p", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6"]);
+const inlineHtml = new Set(["a", "kbd", "sup", "sub", "b", "i", "em", "strong", "code"]);
 const titled = new Set(["Tab", "Accordion", "Expandable"]);
 const callouts = new Set(["Note", "Tip", "Warning", "Info", "Check", "Danger"]);
 const fencedCode = /^([ \t]*)(`{3,}|~{3,})([^\n]*)\n[\s\S]*?^\1\2[ \t]*$/gm;
@@ -79,16 +82,21 @@ function component(name: string, props: Attributes, body: string, step: number, 
   const content = dedent(body);
   const title = String(props.title ?? "");
   // Layout wrappers carry no instructions; retain their entire Markdown body.
-  if (name === "div") return `\n\n${content}\n\n`;
   if (containers.has(name)) return `\n\n${content}\n\n`;
+  if (name === "a") return props.href ? `[${content.trim()}](${props.href})` : content;
+  if (inlineHtml.has(name)) return content;
+  if (rawHtml.has(name)) throw new Error(`${where}: raw <${name}> has no skill rendering; write it as Markdown`);
   if (name === "Card") {
     if (!title) throw new Error(`${where}: Card needs a title`);
     const label = props.href ? `[${title}](${props.href})` : title;
     return `\n\n**${label}**\n\n${content}\n\n`;
   }
-  if (name === "Step") return `\n\n### ${step}. ${title}\n\n${content}\n\n`;
+  if (name === "Step") {
+    if (!title) throw new Error(`${where}: Step needs a title`);
+    return `\n\n### ${step}. ${title}\n\n${content}\n\n`;
+  }
   if (titled.has(name)) return `\n\n${title ? `### ${title}\n\n` : ""}${content}\n\n`;
-  if (callouts.has(name)) return `\n\n**${title || name}:** ${content}\n\n`;
+  if (callouts.has(name)) return `\n\n**${title || name}:**\n\n${content}\n\n`;
   if (name === "Frame") return `\n\n${content}${props.caption ? `\n\n*${props.caption}*` : ""}\n\n`;
   if (name === "ParamField" || name === "ResponseField") {
     const field = props.body ?? props.query ?? props.path ?? props.header ?? props.name;
@@ -136,7 +144,7 @@ export function renderDocsMarkdown(input: string, options: { file: string; root:
     let output = "";
     let step = 0;
     while (position < text.length) {
-      const match = /<\/?(?:[A-Z][\w.]*|img|br|div)\b/.exec(text.slice(position));
+      const match = /<\/?(?:[A-Z][\w.]*|img|br|div|a|kbd|sup|sub|b|i|em|strong|code|video|iframe|table|script|style|object|embed|svg|details|summary|section|span|p|ul|ol|li|h[1-6])\b/.exec(text.slice(position));
       if (!match) {
         output += text.slice(position);
         position = text.length;
@@ -168,7 +176,7 @@ export function renderDocsMarkdown(input: string, options: { file: string; root:
     if (expected) throw new Error(`${file}: missing </${expected}>`);
     return output;
   }
-  let result = render().replace(/\n[ \t]+\n/g, "\n\n").replace(/\n{3,}/g, "\n\n").trim();
+  let result = render().trim();
   if (/^\s*(?:import|export)\s/m.test(result)) throw new Error(`${file}: unresolved MDX import/export`);
   const literal = new RegExp(`${prefix}(\\d+)_END`, "g");
   const restore = (value: string): string => value.replace(literal, (_, index: string) => restore(saved[Number(index)]));

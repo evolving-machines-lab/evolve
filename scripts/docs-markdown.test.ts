@@ -34,7 +34,7 @@ test("preserves field metadata, links, callouts, step order, and tree indentatio
   assert.match(result, /### 2\. Run/);
   assert.ok(result.includes('[Files](/files)'));
   assert.ok(result.includes('Type: `number`. Required. Default: `50`.'));
-  assert.ok(result.includes('**Warning:** Costs apply.'));
+  assert.ok(result.includes('**Warning:**\n\nCosts apply.'));
   assert.ok(result.includes('- task/\n  - tests/\n    - test.sh'));
 });
 
@@ -100,4 +100,19 @@ test("normalizes expanded component spacing without changing blank lines inside 
   assert.ok(!result.replace(code, "CODE").includes("\n\n\n"));
   assert.ok(result.startsWith("### 1. Run\n\n### Python"));
   assert.ok(result.endsWith("**[Next](/next)**\n\nContinue.\n"));
+});
+
+test("a callout keeps a leading code block, list or table as Markdown", () => {
+  const fence = renderDocsMarkdown("<Note>\n```bash\nevolve run\n```\n</Note>", options);
+  assert.ok(fence.includes("**Note:**\n\n```bash\nevolve run\n```"));
+  const list = renderDocsMarkdown("<Tip>\n- a\n- b\n</Tip>", options);
+  assert.ok(list.includes("**Tip:**\n\n- a\n- b"));
+});
+
+test("raw HTML the skill cannot show fails generation; inline tags keep their text", () => {
+  assert.throws(() => renderDocsMarkdown('<video src="/demo.mp4" />', options), /raw <video>/);
+  assert.throws(() => renderDocsMarkdown("<table><tr><td>x</td></tr></table>", options), /raw <table>/);
+  assert.throws(() => renderDocsMarkdown('<Steps><Step>No title.</Step></Steps>', options), /Step needs a title/);
+  assert.equal(renderDocsMarkdown("Press <kbd>Enter</kbd>.", options), "Press Enter.\n");
+  assert.equal(renderDocsMarkdown('See <a href="/x">the page</a>.', options), "See [the page](/x).\n");
 });

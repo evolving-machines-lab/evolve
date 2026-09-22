@@ -94,7 +94,9 @@ A ready version becomes active on your dataset. Publishing a new version label l
 
 Use a new version label for changed tasks. Publishing an existing label re-imports it in place, so `name@version` selects a label rather than immutable content.
 
-**Note:** Configuration validation cannot prove that images build or tests are correct. Run [task checks](/core-concepts/check) to inspect task quality.
+**Note:**
+
+Configuration validation cannot prove that images build or tests are correct. Run [task checks](/core-concepts/check) to inspect task quality.
 
 ## Pin or switch versions
 

@@ -100,7 +100,9 @@ Use full IDs when opening records from another scope. Prefix lookup usually sear
 
 Most positional UUIDs accept an unambiguous prefix of at least eight characters. A full ID avoids the extra lookup requests.
 
-**Note:** Use **full trial IDs** with `analyze --trial` and `job retry --trial`. Import IDs must also be copied in full.
+**Note:**
+
+Use **full trial IDs** with `analyze --trial` and `job retry --trial`. Import IDs must also be copied in full.
 
 A trial prefix may require reading the trials of every job in scope. On large accounts, prefer the full ID from `evolve job trials "$JOB_ID"`.
 

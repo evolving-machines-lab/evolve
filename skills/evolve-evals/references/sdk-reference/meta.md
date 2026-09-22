@@ -41,7 +41,9 @@ Also available as `hosted().meta()` in both languages.
 | `error_codes`, `import_warning_codes` | Which failure and warning codes does this deployment publish? |
 | `managed_providers` | Which providers are available to the separate managed-agent runtime? |
 
-**Tip:** Read capabilities when building a picker or validating a saved configuration. A documented example is useful; a fixed copy of the platform's model catalog becomes stale.
+**Tip:**
+
+Read capabilities when building a picker or validating a saved configuration. A documented example is useful; a fixed copy of the platform's model catalog becomes stale.
 
 ## Configuration
 

@@ -47,7 +47,9 @@ evolve run \
 
 `--analyze` schedules analysis after each eligible trial settles. Analysis has its own lifecycle and cost.
 
-**Note:** When using embedded analysis through an SDK, wait for the job first, then its analyses. A temporary zero-pending analysis count does not mean a running job has finished producing trials.
+**Note:**
+
+When using embedded analysis through an SDK, wait for the job first, then its analyses. A temporary zero-pending analysis count does not mean a running job has finished producing trials.
 
 ```typescript TypeScript
 import { jobs } from "@evolvingmachines/evolve";

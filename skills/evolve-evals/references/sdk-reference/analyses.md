@@ -3,7 +3,9 @@ title: "Analyses"
 description: "Analyze trial traces, then inspect the verdict and the analyzer's own run."
 ---
 
-**Note:** For every method’s inputs, return values, and language differences, see the [analyses method reference](/sdk-reference/methods/analyses).
+**Note:**
+
+For every method’s inputs, return values, and language differences, see the [analyses method reference](/sdk-reference/methods/analyses).
 
 Analysis asks an agent to read a trial's evidence against a rubric. It produces criterion outcomes and explanations. It does not replace the verifier's reward.
 

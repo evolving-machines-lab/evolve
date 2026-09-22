@@ -5,7 +5,9 @@ description: "Read the analyzer’s verdict, transcript, files, and current defa
 
 Create `client` with `analyses()`. Start a wave with [jobs.analyze](/sdk-reference/methods/jobs#analyze), then read its results here.
 
-**Note:** Python exposes `list`, `defaults`, `download`, and `filesystem`. Direct `get`, `transcript`, and `artifact` reads are TypeScript-only. In Python, `list(job=...)` or `Trial.analysis` gives the verdict; an analysis download gives its stored evidence.
+**Note:**
+
+Python exposes `list`, `defaults`, `download`, and `filesystem`. Direct `get`, `transcript`, and `artifact` reads are TypeScript-only. In Python, `list(job=...)` or `Trial.analysis` gives the verdict; an analysis download gives its stored evidence.
 
 | Both SDKs | TypeScript only |
 | --- | --- |

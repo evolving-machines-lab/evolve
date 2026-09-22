@@ -71,6 +71,8 @@ evolve analysis download "$ANALYSIS_ID" --stream trace-stderr
 
 Use the shared [filesystem reference](/cli-reference/filesystem) for `analysis files`, `analysis logs`, and `analysis procs`.
 
-**Note:** These filesystem and log commands require an **analysis ID**. They do not select an analysis from a trial ID.
+**Note:**
+
+These filesystem and log commands require an **analysis ID**. They do not select an analysis from a trial ID.
 
 [Global options](/cli-reference/index#global-options) apply.

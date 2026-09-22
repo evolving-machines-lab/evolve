@@ -113,7 +113,9 @@ rk.has_lines(10, weight=1.0)
 
 Handle expected failures by returning `False` or `0`. An unhandled exception aborts the verifier; it does not become a failed criterion automatically.
 
-**Note:** `file_matches()` ignores leading and trailing whitespace. Use a custom check, as above, when exact whitespace matters.
+**Note:**
+
+`file_matches()` ignores leading and trailing whitespace. Use a custom check, as above, when exact whitespace matters.
 
 ## Built-in criteria
 

@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: "Run and inspect managed evaluations with Evolve: models and coding-agent harnesses on Harbor-format tasks. Use for eval jobs, datasets, trials, scores, traces, checks, analyses, task authoring, publishing, and Evolve SDK runs in sandboxes. Not for ordinary shell work, browser automation, or unrelated agent frameworks."
+description: "Evolve runs agent evaluations in the cloud: any model on any coding-agent harness (Claude Code, Codex, Gemini and more) against datasets of Harbor-format tasks, such as terminal-bench or SWE-bench style benchmarks, plus an SDK that runs those agents in sandboxes from TypeScript or Python. Use this skill whenever the user names Evolve or the `evolve` command, or wants to benchmark, evaluate, score or compare models or agent harnesses, start or watch an eval job, browse or publish a dataset of tasks, read trials, traces, rewards, checks or analyses, write, verify, convert or publish a task in the Harbor format (task.toml, verifier, Reward Kit, rubric), or run a coding agent in a sandbox from code, even when the word Evolve is not said. Not for browser automation, ordinary shell or git work, a data table in pandas or SQL, or agent frameworks other than Evolve."
 allowed-tools: Bash(evolve:*), Bash(npx evolve:*)
 ---
 

@@ -3,7 +3,9 @@ title: "Checks"
 description: "Review task quality before spending a benchmark run."
 ---
 
-**Note:** For every method’s inputs, return values, and language differences, see the [checks method reference](/sdk-reference/methods/checks).
+**Note:**
+
+For every method’s inputs, return values, and language differences, see the [checks method reference](/sdk-reference/methods/checks).
 
 A check asks an agent to inspect tasks against a quality rubric. It can read a local directory or an existing dataset version.
 
@@ -106,7 +108,9 @@ Each task can be `queued`, `running`, `completed`, or `failed`. The check become
 | `executed` | Whether execution-based criteria were resolved; inspect it beside the label |
 | `failure` | Why that task check could not produce a result |
 
-**Note:** `no_problem_found` alone does not prove the task environment ran. Read `executed` and the criterion evidence. Custom rubrics may have no derived label.
+**Note:**
+
+`no_problem_found` alone does not prove the task environment ran. Read `executed` and the criterion evidence. Custom rubrics may have no derived label.
 
 ## Read and follow checks
 

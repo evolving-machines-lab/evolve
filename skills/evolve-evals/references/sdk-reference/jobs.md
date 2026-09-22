@@ -3,7 +3,9 @@ title: "Jobs"
 description: "Submit evaluations, follow progress, and work with results."
 ---
 
-**Note:** For every method’s inputs, return values, and language differences, see the [jobs method reference](/sdk-reference/methods/jobs).
+**Note:**
+
+For every method’s inputs, return values, and language differences, see the [jobs method reference](/sdk-reference/methods/jobs).
 
 A job runs selected tasks against one or more agent/model combinations. Each combination is an **arm**. Each attempt is a **trial**.
 

@@ -191,6 +191,8 @@ evolve job delete "$JOB_ID"
 
 The command asks before permanent deletion. For noninteractive use, pass `-y` or `--yes`.
 
-**Warning:** Deleting a job removes its stored trials, traces, analyses, and files. Only the creator can delete it, and the job must be eligible for deletion.
+**Warning:**
+
+Deleting a job removes its stored trials, traces, analyses, and files. Only the creator can delete it, and the job must be eligible for deletion.
 
 [Global options](/cli-reference/index#global-options) apply to every command.

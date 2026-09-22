@@ -3,7 +3,9 @@ title: "Filesystems and downloads"
 description: "Choose the right files: saved results, a sandbox, or a task package."
 ---
 
-**Note:** For every method’s inputs, return values, and language differences, see the [filesystem method reference](/sdk-reference/methods/filesystem).
+**Note:**
+
+For every method’s inputs, return values, and language differences, see the [filesystem method reference](/sdk-reference/methods/filesystem).
 
 Evolve exposes three file surfaces. They answer different questions.
 
@@ -67,7 +69,9 @@ The same methods are available from:
 
 Omit `source` to prefer live files, then a capture. A missing required source raises `filesystem_state`.
 
-**Note:** A captured listing can include unchanged image files whose bytes were not saved. Check `entry.captured`; reading one with no stored bytes raises `not_captured`. A capture is not a complete disk image.
+**Note:**
+
+A captured listing can include unchanged image files whose bytes were not saved. Check `entry.captured`; reading one with no stored bytes raises `not_captured`. A capture is not a complete disk image.
 
 ## Browse, read, search
 
