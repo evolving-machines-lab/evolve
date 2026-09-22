@@ -85,7 +85,7 @@ check
 
 **Note:**
 
-**Read `executed` beside the label.** It is derived from the checker findings: true when none of the five execution criteria is `unknown`. It is not a separate execution audit. A `no_problem_found` result with `executed: false` leaves execution questions unresolved.
+**Read `executed` beside the label.** It is derived from the checker findings: true when none of the six execution criteria is `unknown`. It is not a separate execution audit. A `no_problem_found` result with `executed: false` leaves execution questions unresolved.
 
 A rubric with different criterion names has null `label` and `executed`. The explanations and evidence remain available.
 

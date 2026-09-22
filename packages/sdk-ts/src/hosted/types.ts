@@ -1663,7 +1663,7 @@ export type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
 
 /**
  * The derived label of a task check — computed the same way. `has_a_problem`
- * on a fail of any criterion; else `unclear` on an unknown of any of the six
+ * on a fail of any criterion; else `unclear` on an unknown of any of the seven
  * file-based criteria; else `no_problem_found`. Null under a custom rubric.
  */
 export type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
@@ -5099,11 +5099,11 @@ export interface TaskCheck {
   /** The derived label (CheckLabel states the rule); null until completed, and null under a custom rubric. */
   label: CheckLabel | null;
   /**
-   * Whether the box ran the task's environment: true when none of the five
+   * Whether the box ran the task's environment: true when none of the six
    * run-based criteria (reference_solution_is_valid,
    * verifier_rejects_non_solutions, environment_builds_and_runs,
-   * verification_is_stable, limits_allow_the_task) is unknown, so a
-   * reading-only `no_problem_found` is never mistaken for a run. Null
+   * verification_is_stable, limits_allow_the_task, attempt_isolation) is
+   * unknown, so a reading-only `no_problem_found` is never mistaken for a run. Null
    * exactly when `label` is null.
    */
   executed: boolean | null;
