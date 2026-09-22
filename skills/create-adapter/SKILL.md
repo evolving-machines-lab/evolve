@@ -10,12 +10,16 @@ metadata:
 An adapter is a small program that reads an existing benchmark and writes one task
 directory per task, in the Harbor task format. Its output is a folder of tasks, ready for
 `evolve dataset publish`. This skill guides the conversion; `evolve skills get create-task`
-has the task format in full, and `evolve skills get publish` every publish option.
+guides task authoring, and `evolve skills get publish` guides publishing. Read
+`evolve skills get evals cli-reference/dataset` for every dataset publish option.
 
 ## Authoritative reference
 
-The conversion rules below are Harbor's, from its adapter guide, and Evolve runs the
-task format unchanged. For the full guide, read
+The conversion rules below are Harbor's, from its adapter guide. Evolve accepts
+Harbor-format tasks subject to managed-platform support; read
+`evolve skills get evals core-concepts/tasks` and
+`evolve skills get evals core-concepts/task-config` for supported behavior. For the
+upstream adapter guide, read
 https://github.com/laude-institute/harbor/blob/main/docs/content/docs/datasets/adapters.mdx
 (its steps on parity experiments, the registry and pull requests are Harbor's own
 process and do not apply here). The task format itself is at
@@ -245,7 +249,8 @@ and every exclusion; benchmark bugs found and how they were handled; prompt
 modifications, environment adjustments and other deviations from the original, with the
 reason; known limitations; the exact commands to regenerate the tasks and to run them.
 
-Then publish the output folder as a dataset (`evolve skills get publish` has every option):
+Then publish the output folder as a dataset (`evolve skills get publish` explains the
+workflow; `evolve skills get evals cli-reference/dataset` lists the options):
 
 ```bash
 evolve dataset check "<output-dir>"

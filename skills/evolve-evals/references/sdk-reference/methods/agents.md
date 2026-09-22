@@ -1,0 +1,154 @@
+---
+title: "Agents: methods"
+description: "Register, read, replace, and delete custom agents."
+---
+
+Use `agents()` or `hosted().agents` for registered custom agents. Built-in harness capabilities come from [`meta()`](/sdk-reference/methods/meta). Examples use a configured `client`. Python examples run inside an async function.
+
+## create
+
+Register a custom agent from an install script or local directory.
+
+```ts TypeScript
+const agent = await client.create({
+  name: "my-agent",
+  directory: "./agent-source",
+  run_command: "my-agent --headless",
+});
+```
+
+```python Python
+agent = await client.create(
+    name="my-agent",
+    directory="./agent-source",
+    run_command="my-agent --headless",
+)
+```
+
+**Returns:** `Agent`. See [agent fields](#agent-fields).
+
+### Parameters and behavior
+
+| Parameter | Type and meaning |
+| --- | --- |
+| `name` | Required string. Read naming rules and reserved names from `meta().agent_registration`. |
+| `install_script` or `directory` | Exactly one. Script is its text, not a path. Directory is packed and uploaded. |
+| `run_command` | Required command string, run headlessly with `sh -c` in the task working directory. |
+| `env?` | String-to-string map. Injected at run time; platform-owned environment keys are refused. |
+| `org?` | Organization slug or id. Overrides client default, then falls back to your personal organization. |
+
+The build has internet access but no secrets. Its dependencies must be publicly fetchable, and installation must leave executables under `$PREFIX/bin`. Read [custom agents](/core-concepts/agents) for the run contract.
+
+## list
+
+Browse registered agents visible in the chosen scope.
+
+```ts TypeScript
+const page = await client.list({
+  scope: "org",
+  limit: 20,
+});
+```
+
+```python Python
+page = await client.list(
+    scope="org",
+    limit=20,
+)
+```
+
+**Returns:** `AgentPage` when awaited; an `Agent` per iteration.
+
+### Parameters and behavior
+
+| Parameter | Type and meaning |
+| --- | --- |
+| `scope?` | `my` (default): yours. `shared`: other members’ registrations in your organizations. `org`: all registrations in your organizations, including yours. |
+| `limit?`, `cursor?` | Collection pagination; default 50, maximum 200. Await one page or use `for await` / `async for`. |
+
+Page fields are `items`, `nextCursor`, `hasMore` in TypeScript; `items`, `next_cursor`, `has_more` in Python.
+
+## get
+
+Read a registered agent by name.
+
+```ts TypeScript
+const agent = await client.get("my-agent");
+```
+
+```python Python
+agent = await client.get("my-agent")
+```
+
+**Returns:** `Agent`.
+
+### Parameters and behavior
+
+`name` is a required string. This reads registered agents; use `meta()` to discover built-in harnesses.
+
+## upsert
+
+Create or fully replace the registration under a name.
+
+```ts TypeScript
+const agent = await client.upsert("my-agent", {
+  directory: "./agent-source",
+  run_command: "my-agent --headless",
+  env: { AGENT_MODE: "eval" },
+});
+```
+
+```python Python
+agent = await client.upsert(
+    "my-agent",
+    directory="./agent-source",
+    run_command="my-agent --headless",
+    env={"AGENT_MODE": "eval"},
+)
+```
+
+**Returns:** `Agent` after replacement.
+
+### Parameters and behavior
+
+The first argument is the required name. Remaining fields match [`create`](#create), except `name` is not repeated in the TypeScript input.
+
+This replaces the entire registration: omitting `env` clears it. The owning organization cannot change. Existing registrations can be updated without a delete-and-create gap.
+
+## delete
+
+Remove a registered agent.
+
+```ts TypeScript
+await client.delete("my-agent");
+```
+
+```python Python
+await client.delete("my-agent")
+```
+
+**Returns:** No value (`void` / `None`).
+
+### Parameters and behavior
+
+`name` is required. Past jobs retain their recorded agent identity.
+
+## Agent fields
+
+### Agent response
+
+Both SDKs use the same fields; Python returns an `Agent` dataclass. `source` identifies how it was registered. The response does not contain the install script or source archive.
+
+```ts Fields
+interface Agent {
+  name: string;
+  org: string | null;
+  source: AgentSource;
+  run_command: string;
+  env: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+type AgentSource = "install_script" | "tarball";
+```

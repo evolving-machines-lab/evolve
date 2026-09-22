@@ -1,0 +1,73 @@
+---
+title: "Models"
+description: "Select models, compare them, and control metered spend."
+---
+
+`-m` selects the model for an evaluation arm. Every arm must name a model; there is no default.
+
+```bash
+evolve run -d harbor-examples@1.0 -i hello-world \
+  -a codex \
+  -m gpt-5.6-luna -m gpt-5.6-terra \
+  --max-trial-spend 1 --max-retries 0 --watch
+```
+
+Repeating `-m` creates one arm per model. This command runs the selected task once with each model.
+
+## Find a supported model
+
+Each harness has its own model names. Read the live roster instead of assuming a name works with every harness:
+
+```bash
+curl -sS https://dashboard.evolvingmachines.ai/api/meta
+```
+
+The `agents` list includes each harness's models, effort support, and configuration capabilities. The same document is available through [`meta()` in both SDKs](/sdk-reference/meta), without authentication.
+
+## Model access and spend
+
+```text
+1. Agent harness
+         ↓
+2. Evolve gateway
+   Meter usage against the cap
+         ↓
+3. Model provider
+```
+
+An `EVOLVE_API_KEY` supplies platform model access. `--max-trial-spend` limits the agent’s metered spend per trial attempt. Verifier judges and trace analysis have separate budgets. See [job costs](/core-concepts/jobs#spend-and-retries).
+
+Requests that bypass the gateway with separately supplied credentials are not metered by Evolve. A task's `no-network` agent policy restricts model access to the platform gateway.
+
+If you enable your own provider key, supported model requests bill that provider account. Gateway metering and the cap still apply. Job creation still rejects accounts with an exhausted platform credit balance.
+
+## Reasoning effort
+
+`--effort` applies to every arm in the CLI run. Accepted values depend on the harness:
+
+| Harness behavior | How to configure it |
+| --- | --- |
+| Supports effort levels | Use a value from `limits.job.reasoning_efforts` |
+| Qwen thinking mode | Use `off` or `minimal` to disable thinking; `medium` or `thinking` to enable it |
+| Gemini | Do not pass effort; it is unsupported |
+| Custom agent | Configure reasoning in its run command |
+
+When omitted, Evolve resolves the harness's default and records it in `agent_info.reasoning_effort`. The same harness and model at different efforts are distinct arms.
+
+In `/api/meta`, `agents[].effort_support` identifies the mode: `level`, `binary`, or `none`. Qwen's accepted values are listed in `limits.job.binary_effort_values`.
+
+## Analysis and check models
+
+Trace analysis and task checks use the Claude Code harness. Select their model separately:
+
+| Operation | Model option |
+| --- | --- |
+| `evolve analyze` | `-m` |
+| `evolve check` | `-m` |
+| Analysis attached to `evolve run` | `--analyze-model` |
+
+Their default is `openrouter/deepseek/deepseek-v4.1-flash`. Choose from the supported Claude Code roster.
+
+**[Configure a run](/cli-reference/run)**
+
+All model, effort, concurrency, and budget options.

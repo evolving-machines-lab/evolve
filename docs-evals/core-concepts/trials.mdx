@@ -1,103 +1,126 @@
 ---
 title: "Trials"
-description: "One agent's attempt at one task: its record, its trace, and its artifacts."
+description: "Inspect one agent's attempt: what it did, what it earned, and why it stopped."
 ---
 
-A trial is one attempt of one task by one agent arm. Trial ids are global: every trial command takes the trial id alone, and the trial's record carries its job id. Treat ids as opaque strings.
+A **trial** is one attempt at one task by one agent arm. Its ID works on its own; you do not need to supply the parent job ID.
+
+Use an ID from `evolve job trials "$JOB_ID"` as `$TRIAL_ID`:
 
 ```bash
-evolve trial show <trial-id>
+evolve trial show "$TRIAL_ID"
 ```
 
-`trial show` prints the task, the agent and model, the status, the reward, the tokens, what the trial spent and, when it failed, the exception. Spend prints as a plain amount once the meter has settled it, as `at least $X` while it is still a lower bound, and as `-` when nobody has measured it yet.
-
-While a trial runs, `attempt_phase` says which step it is in (`prepare`, `build`, `boot`, `install`, `agent`, `verify`, `persist`), and `live_spent_usd` is a lower bound on its spend so far, refreshed about every 30 seconds and null before the first reading; `usage` carries the same reading with its tokens. On a settled trial read `agent_result.cost_usd`; `spend_source` says whether it is final (`measured`).
-
-## The trace
-
-Every trial records a parsed event trace: the instruction, each agent turn, every tool call and its result. Print it, filtered on the server.
-
-```bash
-evolve trial trace <trial-id>
-evolve trial trace <trial-id> --type <event-type>
-evolve trial trace <trial-id> --grep 'permission denied' --tail 50
-```
-
-`--type` keeps events of exactly one type. `--grep` is a case-insensitive regex over type and content. `--tail` keeps the last N matching events. To search every trial of a job in one pass:
-
-```bash
-evolve job grep <job-id> 'permission denied'
-```
-
-## Artifacts
-
-Beside the parsed trace, a trial keeps the raw record of its run. One vocabulary names the pieces everywhere; every file and format is described on [trial outputs](/core-concepts/trial-outputs).
-
-- `trace-parsed`: the parsed event trace
-- `trace-stdout`: the agent process's stdout, byte for byte
-- `trace-stderr`: the agent process's stderr
-- `trace-atif`: the normalized trajectory, in the ATIF format
-- `agent-home`: the text view of the agent's home folder, captured after the run
-- `verifier`: everything the scoring step printed
-- `trajectory`: reserved for the harness's own native session file, not served yet
-
-Stream one artifact to stdout:
-
-```bash
-evolve trial download <trial-id> --stream verifier
-```
-
-## Download the trial tree
-
-Without `--stream`, the trial is saved whole under `<dir>/<trial-id>/` in the trial tree layout, plus `evolve.json`.
-
-```bash
-evolve trial download <trial-id> -o trials/
-```
+## Follow the attempt
 
 ```text
-config.json               task and agent
-result.json               status, reward, verifier verdict, exception, phase clocks
-agent/trajectory.json     the normalized ATIF trajectory
-agent/<harness>.txt       the harness's stdout stream (claude-code.txt, codex.txt, ...)
-agent/stderr.log          the harness's stderr stream
-agent/trace-parsed.jsonl  the parsed event trace
-agent/.claude/ ...        the captured agent home at its real names
-agent/agent-home.json     the capture record: every file's path, size and digest
-verifier/test-stdout.txt  the verifier log
-verifier/reward.json      the rewards map, when the verifier produced one
-exception.txt             when the trial carries an exception
-evolve.json               the platform's own record: cost, tokens, provider
+1. QUEUED
+   Wait for dispatch
+         ↓
+2. RUNNING
+   Prepare → build → boot
+   → install → run the agent
+         ↓
+3. SCORING
+   Run the verifier
+         ↓
+4. Settle
+   Record reward, exception,
+   spend, and files
 ```
 
-An artifact the trial never recorded is an absent file, never an empty placeholder. `--overwrite` replaces an existing folder. The job archive from `evolve job download` holds the same tree per trial, plus what only the server can add: `lock.json`, `trial.log`, `artifacts/`, and the raw `verifier/reward.txt`.
-
-## Act on one trial
-
-```bash
-evolve trial retry <trial-id>
-evolve trial regrade <trial-id>
-evolve trial stop <trial-id> <trial-id>
-```
-
-`retry` runs a settled trial again, `regrade` re-runs only its verifier, and each produces a new job holding the one new trial. `stop` ends in-flight trials without cancelling their job; each stopped trial settles `CANCELLED` and is charged its spend so far.
+This is the normal execution path. A trial can stop earlier with an error, budget refusal, or cancellation. `attempt_phase` distinguishes slow preparation from agent work or verification.
 
 ## Statuses
 
-A valid reward, 0 included, is `SCORED`; a failure is never reported as a fabricated zero.
+| Status | What it tells you |
+| --- | --- |
+| `QUEUED` | Waiting to run. |
+| `RUNNING` | Execution is in progress. Check `attempt_phase`. |
+| `SCORING` | The verifier is evaluating the result. |
+| `SCORED` | A valid reward map was recorded. Zero is a real score. |
+| `SCORING_ERROR` | The verifier output was invalid or verification failed. |
+| `INFRASTRUCTURE_ERROR` | Infrastructure prevented a reliable result. Eligible failures may retry. |
+| `BUDGET` | An account, team, or platform budget refused execution. |
+| `INDETERMINATE` | No reliable scoring outcome was recorded. |
+| `CANCELLED` | The trial was stopped. |
 
-- `QUEUED`: waiting for a sandbox slot.
-- `RUNNING`: the agent phase; `attempt_phase` says which step.
-- `SCORING`: the agent finished; the verifier is running.
-- `SCORED`: a valid reward is in `reward`.
-- `SCORING_ERROR`: the verifier crashed or wrote a reward outside `[0, 1]`; read `exception_info`.
-- `INFRASTRUCTURE_ERROR`: the trial was lost before a result was recorded; retried automatically, then `resume`.
-- `BUDGET`: a budget above the trial's own cap refused it. The exception type is `ApiUsageLimitError` and the message carries `user:` (your credits), `team:` (the organization's monthly budget) or `other:` (the platform's global stop). Never retried on its own; add credits or raise the budget, then `resume`.
-- `INDETERMINATE`: the platform cannot tell whether the trial completed.
-- `CANCELLED`: stopped before settling; the exception type is `CancelledError`.
+<Note>
+  A missing reward is not zero. A multi-key reward map without a primary reward can be `SCORED` while the scalar `reward` is null; inspect `verifier_result.rewards`.
+</Note>
 
-`SCORING_ERROR` and `INDETERMINATE` carry the last 4000 characters of the verifier's own output in `exception_message`. Job statuses are on [jobs](/core-concepts/jobs#statuses).
+### Find the cause
 
-<Card title="trial reference" icon="terminal" href="/cli-reference/trial">
-  Every flag of `evolve trial`.
-</Card>
+| Read | Use it for |
+| --- | --- |
+| `exception_info` | Failure type and explanation. |
+| `attempt_phase` | The current stage of execution. |
+| `n_retries` and `retries` | Automatic retries and earlier outcomes. |
+| `sandbox_provider_degrade` | Why the actual provider differs from the requested one. |
+| `step_results` | Per-step outcomes for a multi-step task. |
+
+For `BUDGET`, restore the relevant credits or budget before [resuming the job](/core-concepts/jobs#derive-a-new-job).
+
+## The trace
+
+The trace shows the prompt, messages, tool calls, and results. Search one trial or the whole job:
+
+```bash
+evolve trial trace "$TRIAL_ID"
+evolve trial trace "$TRIAL_ID" --grep 'permission denied' --tail 50
+evolve job grep "$JOB_ID" 'permission denied'
+```
+
+| Filter | Meaning |
+| --- | --- |
+| `--type` | Exact event type. |
+| `--grep` | Case-insensitive regular expression. |
+| `--tail` | Last N matching events. |
+| `--cursor` | Continue after an event position. |
+| `--json` | Full events, one JSON object per line. |
+
+`trial trace` reads the stored events available now. It does not stay connected for future events. Use the [dashboard viewer](/dashboard/trial-viewer) for an updating trace.
+
+## Spend
+
+| Field | Reading |
+| --- | --- |
+| `live_spent_usd` | Spend so far while running; a lower bound. |
+| `agent_result.cost_usd` | Recorded agent spend after settlement. |
+| `spend_source` | Whether the reading is final or provisional. |
+| `judge_result` | Verifier judge spend and usage. |
+| `usage` | Gateway token and cost accounting. |
+
+`measured` is final. `measured_provisional` can increase. `assumed_cap` means spend was not measured; its stored zero is a placeholder, not proof of a free run.
+
+## Artifacts
+
+```bash
+evolve trial download "$TRIAL_ID" --stream verifier
+evolve trial download "$TRIAL_ID" --stream trace-atif
+```
+
+The verifier log explains grading. The ATIF trajectory provides a portable conversation record. Raw stdout, stderr, and captured agent-home files are also available.
+
+## Download the trial tree
+
+```bash
+evolve trial download "$TRIAL_ID" -o trials/
+```
+
+The CLI saves `trials/<trial-id>/`. See [Trial outputs](/core-concepts/trial-outputs#the-trial-directory) for the tree and the difference from a full job archive.
+
+## Act on one trial
+
+| Command | Result |
+| --- | --- |
+| `evolve trial retry "$TRIAL_ID"` | New job that reruns this settled trial. |
+| `evolve trial regrade "$TRIAL_ID"` | New job that reruns only an eligible verifier. |
+| `evolve trial stop "$TRIAL_ID"` | Stop this live trial; leave its job running. |
+
+Retry and regrade create new records. They do not replace the source result. Read [eligibility and selection rules](/core-concepts/jobs#derive-a-new-job) before using them.
+
+<CardGroup cols={2}>
+  <Card title="Trial outputs" icon="folder-open" href="/core-concepts/trial-outputs">Files, traces, and the captured filesystem.</Card>
+  <Card title="Trial reference" icon="terminal" href="/cli-reference/trial">Every inspection and control command.</Card>
+</CardGroup>

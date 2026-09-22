@@ -1,30 +1,75 @@
 ---
 title: "Trial viewer"
-description: "Read one trial's trace event by event, its tool calls, its spend, and download its artifacts."
+description: "Follow the agent's actions and inspect the evidence behind a result."
 ---
 
-Click a trial on a job's TRIALS tab, or a row on the Traces page, to open it.
+Open a trial from a job's **Trials** tab, or select a run in **Traces**.
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="A scored trial in the viewer">
-  <img src="/images/trial.png" alt="The trial viewer: a header with the task, agent, model, sandbox id, cost and status, a progress bar with previous and next event controls, an EVENTS list on the left, and the selected event's content on the right." />
+<Frame caption="Follow what the agent did and inspect the corresponding usage.">
+  <img src="/images/dashboard-trial-viewer.png" alt="Trial viewer with agent messages, tool calls, tool results, and recorded model usage." />
 </Frame>
 
-The header names the run: its kind (EVAL for a trial, AGENT for a managed-agent session, REGRADE, ANALYZE, or CHECK), its task, its agent and model, its sandbox id, what it spent, and its status.
+```text
+1. Run header
+   Task · agent · status · spend
 
-BACK returns to where you came from. RETRY runs a settled trial again as a new one-trial job. STOP ends a run that is still going; its creator can stop it.
+2. Controls
+   Back · search · downloads
 
-DOWNLOAD on a trial offers the parsed trace, the ATIF trajectory, the raw stdout, the raw stderr, the agent home folder, the verifier log, or everything at once; on an analysis or a check it offers the verdict document, the raw stdout, the raw stderr, the agent home folder, or everything.
+3. Event list
+   Select a message or tool call
+            ↓
+4. Read the event
+   Full content and tool result
+```
 
-Under the header, the reward and the event navigation: previous, next, and a progress bar you can drag. Type `/` to search the events.
+This schematic shows the reading order. The viewer adapts its controls to the run type and available space.
 
-The EVENTS list runs down the left: the prompt, each assistant message and thought, each tool call and its result, and the gateway's own records: one per model call with its tokens and cost, and a run total at the end. Click an event to read it in full on the right. A running trial keeps appending events while you watch.
+## Read a run
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="An analysis run, with the TOOLS panel open">
-  <img src="/images/trial-analysis.png" alt="The trial viewer on an analysis run: a TOOLS summary with the number of calls, the success rate and a bar per tool, then the events list and the selected event's content." />
-</Frame>
+<Steps>
+  <Step title="Identify the run">
+    Check the run kind, task, model, status, and spend. An analysis or check shows the reviewer's own execution, not the evaluated agent's trace.
+  </Step>
+  <Step title="Follow events">
+    Move through the prompt, messages, thoughts, tool calls, and tool results. Select an event to read it in full. New events appear while a live run continues.
+  </Step>
+  <Step title="Check the outcome">
+    Inspect the reward or failure. Open the verifier log or review verdict from Downloads when you need the scoring evidence.
+  </Step>
+</Steps>
 
-The panel above the events has two tabs. TOOLS counts the run's tool calls, its success rate and how many failed, with a bar per tool. SPEND shows what the run spent. The gateway meter at the end of the run states the prompt, cached, cache-write and completion tokens and the cost in dollars.
+## Move through the trace
 
-An analysis, a check or a regrade is read the same way. An analysis's events are the analyzer's own trace, and its verdict document is on the DOWNLOAD menu.
+| Control | Action |
+| --- | --- |
+| Event row | Select an event. |
+| `↑` / `k` | Previous event. |
+| `↓` / `j` | Next event. |
+| `/` | Focus event search. |
+
+Search highlights matching events. Tool analytics summarizes tool use. Spend views use the recorded accounting; gateway events identify model calls and their token and cost readings.
+
+## Download the right evidence
+
+<Tabs>
+  <Tab title="Evaluation trial">
+    Parsed trace, ATIF trajectory, stdout, stderr, agent home, verifier log, or the combined download.
+  </Tab>
+  <Tab title="Analysis or task check">
+    Verdict document, reviewer stdout and stderr, agent home, or the combined download.
+  </Tab>
+</Tabs>
+
+A download can only contain what the run recorded. See [Trial outputs](/core-concepts/trial-outputs) for the saved layout and binary-file differences.
+
+## Run actions
+
+**Retry** creates a new one-trial job from a settled evaluation trial. **Stop** ends a live run. Controls appear only when the run type, state, and your permissions allow them.
+
+Use **Back** to return to the job tab or list you came from.
+
+<CardGroup cols={2}>
+  <Card title="Understand trial outcomes" icon="list-check" href="/core-concepts/trials#statuses">Scores, errors, budgets, and cancellation.</Card>
+  <Card title="Files and logs" icon="folder-open" href="/core-concepts/trial-outputs#sandbox-files">Inspect the live sandbox or its retained capture.</Card>
+</CardGroup>

@@ -1,0 +1,164 @@
+---
+title: "Upload a job"
+description: "Bring existing Harbor-format results into Evolve for inspection, analysis, and sharing."
+---
+
+Upload results you already ran elsewhere. Evolve imports the records; it does not rerun the evaluation.
+
+Have an SDK session log? Follow [Upload an SDK run](/core-concepts/upload-sdk-session) to find it, package one run, and inspect the imported trace.
+
+```bash
+evolve upload ./my-job -d harbor-examples@1.0
+```
+
+| Source | Command |
+| --- | --- |
+| Job directory | `evolve upload ./my-job` |
+| Compressed archive | `evolve upload ./my-job.tar.gz` |
+| Public HTTPS archive | `evolve upload --from https://example.org/my-job.tar.gz` |
+
+The CLI waits for import by default. Use `--no-wait` to return the import ID immediately, then follow it:
+
+```bash
+evolve job import "$IMPORT_ID" --watch
+```
+
+## What a job folder holds
+
+A Harbor job directory can be uploaded directly. It requires `config.json` and `result.json` at the root, plus `result.json` in each trial folder.
+
+```text
+my-job/
+├── config.json
+├── result.json
+└── <trial-name>/
+    ├── result.json
+    ├── lock.json
+    ├── agent/
+    │   ├── trajectory.json
+    │   ├── stdout.log
+    │   └── ...
+    ├── verifier/
+    ├── artifacts/
+    └── steps/
+```
+
+| Optional trial files | Content |
+| --- | --- |
+| `lock.json` | Task-content identity. |
+| `agent/trajectory.json` | ATIF trace. |
+| `agent/stdout.log` | Process output. |
+| Other `agent/` files | Native sessions and other files. |
+| `verifier/` | Verifier logs and rewards. |
+| `artifacts/` | Collected outputs. |
+| `steps/` | Multi-step results. |
+
+Missing optional data stays missing. An imported trial without a trace does not acquire a synthetic trace.
+
+## What `result.json` must hold
+
+This is a minimal illustrative trial record with a reward. Replace the task, agent, model, and result with the facts of your run.
+
+```json
+{
+  "task_name": "hello-world",
+  "trial_name": "hello-world__attempt-1",
+  "trial_uri": "",
+  "task_id": {},
+  "task_checksum": "",
+  "config": {},
+  "agent_info": {
+    "name": "codex",
+    "version": "",
+    "model_info": { "name": "gpt-5.6-luna" }
+  },
+  "verifier_result": { "rewards": { "reward": 1.0 } }
+}
+```
+
+The first seven top-level keys are required. `verifier_result` is optional. Include `agent_result` for recorded token and cost data, and `exception_info` for a failure.
+
+## What lands
+
+| Supplied data | Imported result |
+| --- | --- |
+| Nonempty numeric reward map | `SCORED`, with the recorded rewards. |
+| Verifier result without rewards | `INDETERMINATE`. |
+| No verifier result | Status follows a recognized failure type, otherwise `INDETERMINATE`. |
+| Trace, home, verifier logs, artifacts, step files | Retained for inspection when present. |
+| Existing `analysis.json` | Not imported as an Evolve analysis; analyze the uploaded job separately. |
+
+Reported costs and totals remain identified as uploaded data. They are not charges for a new Evolve execution.
+
+**Note:** Uploaded jobs support inspection, download, analysis, and sharing. Resume, retry, and regrade are refused with `job_uploaded`.
+
+## Task linkage
+
+Analysis is more useful when it can also read the task files.
+
+### 1. Upload trials
+
+Supply the recorded job and trial files.
+
+### 2. Resolve task identity
+
+Use the first applicable case:
+
+- **Case A: `-d name@version` supplied.** Match the task name in that version.
+
+- **Case B: the archive names accessible dataset versions.** Match the task-content hash within those versions.
+
+- **Case C: neither applies.** Match the task-content hash in the accessible catalog.
+
+### 3. Analyze
+
+- **Linked task:** Read the trial record and task files.
+
+- **Unlinked task:** Read the trial record only. The missing link is reported.
+
+A task name alone does not establish an automatic content match. `upload.task_links` records the matching method or why a link was not found.
+
+## Runs made with the Evolve SDK
+
+An individual managed-agent run is not a job archive. [Upload an SDK run](/core-concepts/upload-sdk-session) provides the local log path, field mapping, packaging script, and upload commands.
+
+Use `agent/trajectory.json` for ATIF. Native transcripts must use the harness's recognized session path; arbitrary files under `agent/` are stored but are not automatically parsed as a trace.
+
+### Recognized native session examples
+
+```text
+Codex
+agent/.codex/sessions/
+└── <year>/
+    └── <month>/
+        └── <day>/
+            └── rollout-<id>.jsonl
+
+Claude
+agent/.claude/projects/
+└── <project>/
+    └── <session>.jsonl
+```
+
+A native transcript that produces parsed events takes precedence over ATIF. Otherwise, the parser falls back to ATIF. ATIF can include a `system` step when the system prompt is available in your source records.
+
+## Bounds and duplicates
+
+Inspect the import result, including skipped trials and their reasons. A completed import can have omissions.
+
+| Refusal | Meaning |
+| --- | --- |
+| `job_already_uploaded` | This job was imported before. Delete the existing import's job before replacing it. |
+| `invalid_trial` | A required trial result could not be parsed. |
+| `trial_too_large` | A trial exceeded a physical file or parsing limit and was skipped. |
+| `upload_too_large` | The archive or required job-level data exceeded an accepted limit. |
+
+The capability document reports `limits.uploads.job_archive_bytes`. Local dataset and job archives larger than 256 MiB use resumable upload automatically.
+
+**[Upload reference](/cli-reference/upload)**
+
+Import options and progress commands.
+
+**[Analyze imported results](/core-concepts/analyze)**
+
+Review behavior using the retained evidence.

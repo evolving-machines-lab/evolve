@@ -1,0 +1,170 @@
+---
+title: "Datasets"
+description: "Browse task versions, check a local corpus, and publish it."
+---
+
+[Method reference: calls, parameters, and response fields](/sdk-reference/methods/datasets).
+
+A dataset contains versioned tasks. Use a bare name for its active version, or `name@version` to select one explicitly.
+
+## Browse the catalog
+
+```ts TypeScript
+import { datasets } from "@evolvingmachines/evolve";
+
+const client = datasets();
+for await (const dataset of client.list({ search: "harbor-examples" })) {
+  console.log(dataset.name, dataset.active_version);
+}
+const dataset = await client.get("harbor-examples@1.0");
+console.log(dataset.tasks?.items);
+```
+
+```python Python
+from evolve import datasets
+
+client = datasets()
+async for dataset in client.list(search="harbor-examples"):
+    print(dataset.name, dataset.active_version)
+dataset = await client.get("harbor-examples@1.0")
+print(dataset.tasks.items if dataset.tasks else [])
+```
+
+| Method | Options | Returns |
+| --- | --- | --- |
+| `list(...)` | `search`, `limit`, `cursor` | Dataset handle; await one page or iterate all |
+| `get(ref, ...)` | `limit`, `cursor` page the tasks | Dataset detail and one task page |
+| `getActive(name, ...)` / `get_active(name, ...)` | `limit`, `cursor` | Active version and task page; raises `NoActiveVersionError` if none is active |
+| `getTaskBuild(ref, task)` / `get_task_build(ref, task)` | Pinned `name@version` required | One task's build state, failure excerpt, and log reference |
+| `taskFiles(ref, task)` / `task_files(ref, task)` | Pinned `name@version` required | [Package file client](/sdk-reference/filesystem#task-package-files) |
+
+### More catalog filters through HTTP
+
+`GET /api/datasets` also accepts these query parameters. The CLI and SDK list methods do not expose them.
+
+| Parameter | Values |
+| --- | --- |
+| `org` | Team slug or id; requires membership |
+| `visibility` | `public` or `private` |
+| `sortField` | `name` (default), `updated`, or `tasks` |
+| `sortDirection` | `asc` (default) or `desc` |
+
+```bash
+curl -sS --get https://dashboard.evolvingmachines.ai/api/datasets \
+  -H "Authorization: Bearer $EVOLVE_API_KEY" \
+  --data-urlencode "org=my-team" \
+  --data-urlencode "visibility=private" \
+  --data-urlencode "sortField=updated" \
+  --data-urlencode "sortDirection=desc"
+```
+
+`org` selects the team's catalog, including public datasets. `visibility` narrows the selected catalog; it does not grant access to other private datasets. `updated` and `tasks` use the active version's creation time and task count. Start from the first page when changing sort order.
+
+## Check before publishing
+
+Metadata preflight reads `task.toml` files and an optional `dataset.toml`. It checks their declared requirements without uploading the full corpus or building its images.
+
+```ts TypeScript
+const verdict = await client.preflight({ source: { directory: "./tasks" } });
+console.log(verdict);
+```
+
+```python Python
+verdict = await client.preflight(directory="./tasks")
+print(verdict)
+```
+
+SDK `publish()` does not run this step automatically. Preflight is also different from an [agent-run quality check](/sdk-reference/checks).
+
+## Publish a version
+
+```text
+1. Send a source
+   └─ DatasetImport id returned
+2. Import and build tasks
+   ├─ At least one task ready
+   │  → version READY
+   └─ No usable version
+      → import FAILED
+3. Read the settled import and version
+   └─ Inspect failed_tasks
+      even when the version is READY
+```
+
+```ts TypeScript
+const pending = await client.publish({
+  name: "my-benchmark",
+  version: "1.0",
+  source: { directory: "./tasks" },
+});
+const result = await client.watchImport(pending.id);
+console.log(result.status, result.failure);
+```
+
+```python Python
+pending = await client.publish(
+    name="my-benchmark",
+    version="1.0",
+    directory="./tasks",
+)
+result = await client.watch_import(pending.id)
+print(result.status, result.failure)
+```
+
+Choose exactly one source:
+
+| Source | TypeScript `source` | Python keyword arguments | Name/version |
+| --- | --- | --- | --- |
+| Local corpus | `{ directory: "./tasks" }` | `directory="./tasks"` | Required unless supplied by `dataset.toml` |
+| Git repository | `{ git_url, git_ref, git_path? }` | `git_url=`, `git_ref=`, optional `git_path=` | Required |
+| Public tarball | `{ archive_url }` | `archive_url=` | Required |
+| Public Harbor Hub package | `{ hub_package: "org/name@ref" }` | `hub_package="org/name@ref"` | May default from the package |
+
+`org` selects the owning team, overriding the client default. Git sources need a ref; `git_path` selects a repository subdirectory.
+
+### Follow a publish
+
+| Operation | TypeScript | Python |
+| --- | --- | --- |
+| Read one import | `getImport(id)` | `get_import(id)` |
+| List your imports | `listImports({status, dataset, limit, cursor})` | `list_imports(status=..., dataset=..., limit=..., cursor=...)` |
+| Wait for settlement | `watchImport(id, options)` | `watch_import(id, ...)` |
+
+### Upload callbacks
+
+Pass these in the second `publish` argument in TypeScript, or as Python keyword arguments.
+
+| TypeScript | Python | Receives |
+| --- | --- | --- |
+| `onUploadProgress` | `on_upload_progress` | Sent bytes, total archive bytes |
+| `onRegistered` | `on_registered` | Import id when a resumable upload registers it |
+
+Local dataset and job archives larger than 256 MiB use resumable transfer. Remote-source submissions upload no client archive. Python upload callbacks run on the uploader thread and must be thread-safe.
+
+### Watch options
+
+| TypeScript | Python | Meaning |
+| --- | --- | --- |
+| `onStatus` | `on_status` | Called when import status/receiving state changes |
+| `onProgress` | `on_progress` | Called with changed progress and the import |
+| `onVersion` | `on_version` | Called with version and dataset during settlement |
+| `pollIntervalMs` | `poll_interval_s` | Default `2000` ms / `2` s |
+| `settleTimeoutMs` | `settle_timeout_s` | Post-import version settlement bound; default 30 minutes |
+| `signal` | `timeout_s` | Stop waiting / bound the overall Python wait |
+
+A failed import is returned with `status: FAILED` and a failure object. Dataset completion also confirms that its version settled. Stopping your wait does not cancel the import.
+
+## Download and manage
+
+| Action | TypeScript | Python |
+| --- | --- | --- |
+| Download original package | `download(ref, { to: "./packages" })` | `download(ref, to="./packages")` |
+| Select active version | `activate(name, version)` | `activate(name, version)` |
+| Follow upstream changes | `update(name, { upstream_auto_import: true })` | `update(name, upstream_auto_import=True)` |
+| Delete dataset | `delete(name)` | `delete(name)` |
+
+Original-package download is owner-only. Platform-curated datasets do not have a downloadable owner package through this method. [Task package files](/sdk-reference/filesystem#task-package-files) are a separate inspection surface.
+
+Only a READY version can be activated. Upstream auto-import needs a watchable git source. Deletion is refused while jobs still reference the dataset.
+
+Download returns bytes by default; `to` names a directory. TypeScript also supports a raw stream. See [download options](/sdk-reference/filesystem#download-options).

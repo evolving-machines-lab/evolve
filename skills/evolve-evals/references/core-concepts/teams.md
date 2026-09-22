@@ -1,0 +1,128 @@
+---
+title: "Teams"
+description: "Put evaluations in a shared workspace and give teammates access through membership."
+---
+
+Every account starts with a personal organization. Create a team organization to run and inspect work together.
+
+```text
+Your account
+├── Personal workspace
+└── Team workspace
+    ├── Members and roles
+    ├── Jobs, checks, and sessions
+    ├── Datasets
+    ├── Registered agents
+    └── Uploaded skills
+```
+
+## Create and join
+
+### 1. Create the team
+
+```bash
+evolve auth org create acme --display-name "Acme Lab"
+```
+
+### 2. Create an invitation
+
+```bash
+evolve auth org invite acme
+```
+
+Only an owner can create invitations. The command prints a token once; give it to the person you want to invite. By default, it expires after 7 days and allows unlimited joins.
+
+### 3. Join from the invited account
+
+Set `$INVITE_TOKEN` to the token from the owner, then run:
+
+```bash
+evolve auth org join "$INVITE_TOKEN"
+```
+
+The invited account joins as a member.
+
+| Role | Access |
+| --- | --- |
+| Member | Read team work and run evaluations. |
+| Owner | Member access, plus team and membership management. |
+
+Membership does not make every record yours to delete or share. Those operations retain their creator-specific rules.
+
+## Manage the team
+
+Use the dashboard's **Members** and **Settings** pages, or the [HTTP team-management endpoints](/sdk-reference/auth#manage-teams-over-http).
+
+| Action | Rule |
+| --- | --- |
+| Rename the team | An owner can change its slug or display name. |
+| Change roles or remove someone | Owner required. The last owner cannot be demoted or removed. |
+| Leave | Any member can leave, except the last owner. Promote another owner first. |
+| Revoke an invitation | Owner required. This stops new joins; it does not remove existing members. |
+| Delete the team | Owner required. Deletion is refused while the team owns jobs or datasets. |
+
+Personal organizations cannot be renamed, deleted, or have their membership changed. For invitation expiry and use limits, use the [HTTP invitation options](/sdk-reference/auth#manage-teams-over-http); the CLI and SDKs use the defaults.
+
+## Run under a team
+
+```bash
+evolve run \
+  -d harbor-examples@1.0 -i hello-world \
+  -a codex -m gpt-5.6-luna \
+  --max-trial-spend 1 -r 0 --org acme
+```
+
+Set a default for later CLI commands, or return to your personal organization:
+
+```bash
+evolve auth org use acme
+evolve auth org use personal
+```
+
+Dataset publishing, custom-agent registration, and skill upload also accept an organization. A new version of an existing dataset stays in that dataset's organization.
+
+```typescript TypeScript
+import { hosted } from "@evolvingmachines/evolve";
+
+const client = hosted({ org: "acme" });
+```
+
+```python Python
+from evolve import hosted, HostedClientConfig
+
+client = hosted(HostedClientConfig(org="acme"))
+```
+
+The SDK client default applies to operations that accept organization ownership, such as job creation and dataset publishing. It is not a filter on every read.
+
+## Choose what to list
+
+| Scope | Shows |
+| --- | --- |
+| `my` | Work you created. The default. |
+| `shared` | Teammates' work and runs shared with your email address. |
+| `org` | Work in your organizations, including your own. |
+
+```bash
+evolve job list --scope org
+```
+
+## In the dashboard
+
+Use the workspace switcher beneath your account to choose **Personal** or a team. Team pages include Datasets, Jobs, Traces, Members, and Settings.
+
+| Page | Use it for |
+| --- | --- |
+| **Members** | Read roles; owners manage membership and invitation links. |
+| **Settings** | Read the workspace name; owners manage the team. |
+| **Traces** | Team runs with a Created by column. |
+
+Skills, Integrations, Secrets, API Keys, Usage, and Billing remain account pages. Selecting a team does not turn these into shared team settings.
+
+**[Organization commands](/cli-reference/auth)**
+
+Create, join, inspect, and select a team.
+
+**[Share one run](/core-concepts/sharing)**
+
+Give access without adding a team member.

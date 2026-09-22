@@ -1,0 +1,98 @@
+---
+title: "Errors"
+description: "Handle API refusals separately from local, transfer, and wait failures."
+---
+
+For hosted API refusals, branch on the error's stable `code`. Keep `requestId` / `request_id` when reporting a problem.
+
+Looking up a specific failure? The [error code reference](/sdk-reference/error-codes) explains every known code and its next step.
+
+## Catch an API refusal
+
+```ts TypeScript
+import { EvolveApiError, jobs } from "@evolvingmachines/evolve";
+
+try {
+  await jobs().get(jobId);
+} catch (error) {
+  if (error instanceof EvolveApiError) {
+    console.error(error.status, error.code, error.param, error.requestId);
+    console.error(error.details);
+  } else {
+    throw error;
+  }
+}
+```
+
+```python Python
+from evolve import EvolveAPIError, jobs
+
+try:
+    await jobs().get(job_id)
+except EvolveAPIError as error:
+    print(error.status, error.code, error.param, error.request_id)
+    print(error.details)
+```
+
+| Field | Meaning |
+| --- | --- |
+| `status` | HTTP status |
+| `code` | Stable failure identifier; a newer server can add codes |
+| `message` / `str(error)` | Human-readable explanation |
+| `param` | Input field or query parameter to fix, when known |
+| `details` | Structured failure context |
+| `retryAfterSec` / `retry_after_sec` | Server's requested wait, when supplied |
+| `requestId` / `request_id` | Request identifier for diagnosis |
+
+`isKnownCode()` / `is_known_code()` checks this SDK's known code list. `HOSTED_ERROR_CODES` and `isHostedErrorCode` / `is_hosted_error_code` are exported. [Meta](/sdk-reference/meta) publishes the deployment's current list.
+
+## Common next actions
+
+| Code | Next step |
+| --- | --- |
+| `invalid_input` | Fix the named parameter and read `details` |
+| `provider_unsupported` | Inspect refused task requirements and choose a compatible setup |
+| `job_not_terminal` | Wait for the job to settle before this operation |
+| `no_analyzable_trials` | Check selected ids, reward filters, and trial statuses |
+| `analysis_already_running` | Wait for the existing wave |
+| `filesystem_state` | Read filesystem status and choose an available source |
+| `not_captured` | The file has no saved bytes; inspect capture metadata |
+| `secret_ambiguous` | Choose a label explicitly |
+
+An unknown code is still an API error. Do not replace it with a guessed classification.
+
+## Failures outside the API error class
+
+| Failure | TypeScript | Python |
+| --- | --- | --- |
+| Dataset has no active version | `NoActiveVersionError` | `NoActiveVersionError` |
+| Dataset version did not settle within watch's bound | `ImportSettleError` | `ImportSettleError` |
+| Download length differs | `EvolveIncompleteDownloadError` | Same name |
+| Download digest differs | `EvolveDigestMismatchError` | Same name |
+| Upload inactivity | `EvolveUploadTimeoutError` | Transport timeout exception |
+| Missing key / invalid local arguments | Usually `Error` | Usually `ValueError` or `TypeError` |
+| Managed secret HTTP failure | `Error` | `RuntimeError` |
+
+A failed import is usually a returned import with `status: FAILED` and `failure`. That is different from failing to read the import over HTTP.
+
+## Retry the right thing
+
+```text
+API request refused
+├─ Ordinary call
+│  → error returned to your code
+├─ Job event watch
+│  → reconnects on transport errors
+│    and 429/5xx
+├─ Polling watch
+│  → waits through 429/503
+└─ Resumable upload
+   → bounded transport/rate-limit
+     retries
+
+Trial execution failed
+└─ Job retry policy
+   → separate server-side decision
+```
+
+The SDK does not blindly retry every write. Use idempotency keys on [supported job operations](/sdk-reference/jobs). Aborting a watch stops waiting; it does not cancel the remote work.

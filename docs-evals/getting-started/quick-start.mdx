@@ -1,94 +1,88 @@
 ---
 title: "Quick start"
-description: "Start your first job, watch it run, and download a trial."
+description: "Run one small task, inspect its result, and download the evidence."
 ---
 
-This page takes you from an empty terminal to a downloaded trial: one API key, any harness, any model, any sandbox provider, and every trial's trace streamed live. A trial is one agent's attempt at one task. A job is a set of trials: the tasks of one or more datasets, run by one or more agents.
+A **trial** is one agent's attempt at one task. A **job** groups trials. Start with a one-trial job.
 
 <Steps>
-  <Step title="Install the CLI and set your key">
+  <Step title="Install and authenticate">
+    Create a key in the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys) after signing in.
+
     ```bash
     npm install -g @evolvingmachines/evolve
-    export EVOLVE_API_KEY="<your key>"
+    export EVOLVE_API_KEY="your-api-key"
     evolve auth status
     ```
 
-    Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys), then export it. See [installation](/getting-started/installation) for the SDKs.
+    Already connected? Continue below. Python and TypeScript installation is on the [installation page](/getting-started/installation).
   </Step>
-
-  <Step title="Give your coding agent the manual">
+  <Step title="Inspect the task">
     ```bash
-    evolve skills install
+    evolve dataset show harbor-examples@1.0
     ```
 
-    Your agent then reads these docs with `evolve skills get evals`, and the `create-task`, `rewardkit`, `create-adapter` and `publish` skills by name. [The five skills](/cli-reference/skills).
+    This shows the dataset's tasks and provider compatibility. We will select only `hello-world`.
   </Step>
-
-  <Step title="Pick a dataset">
-    The catalog lists every dataset you can run, with its versions.
-
-    ```bash
-    evolve dataset list
-    evolve dataset show terminal-bench-4@4.0
-    ```
-
-    `dataset show` prints the version's tasks and, for each task, which sandbox providers can run it.
-  </Step>
-
-  <Step title="Start a job and watch it">
-    Name a dataset, an agent, and a model. `--watch` streams the job's events until it finishes; `-l 5` caps the run at five tasks and `--max-trial-spend 1` caps what each trial may spend on the model, so the first job is small.
-
+  <Step title="Start the job">
     ```bash
     evolve run \
-      -d terminal-bench-4@4.0 \
+      -d harbor-examples@1.0 \
+      -i hello-world \
       -a codex \
-      -m gpt-6-astra \
-      -l 5 \
+      -m gpt-5.6-luna \
       --max-trial-spend 1 \
+      --max-retries 0 \
       --watch
     ```
 
-    The final block prints the job id, how many trials landed in each status, and what the trials spent. Without `--watch` the command returns the id at once and the job keeps running.
-  </Step>
+    | Choice | Meaning |
+    | --- | --- |
+    | `-d` and `-i` | The dataset version and one task name. |
+    | `-a` and `-m` | Codex with the selected model. |
+    | `--max-trial-spend 1` | A $1 model-spend cap for this trial attempt. |
+    | `--max-retries 0` | Disable configured infrastructure retries. Provider capacity waits can still occur. |
+    | `--watch` | Follow progress until the job settles. |
 
+    The spend cap stops new model calls once reached; a call already in progress can finish above it.
+
+    The final output includes the job ID. The job continues remotely if you close the terminal.
+  </Step>
   <Step title="Read the result">
+    Set `JOB_ID` to the full ID printed by the previous command:
+
     ```bash
-    evolve job show <job-id>
-    evolve job trials <job-id>
-    evolve trial show <trial-id>
+    JOB_ID="paste-job-id-here"
+    evolve job show "$JOB_ID"
+    evolve job trials "$JOB_ID"
     ```
 
-    `job show` is the whole job: how many trials landed in each status, the rewards, the spend. `job trials` lists the trials one per line with their ids. `trial show` is one trial in full, with its reward and, when it failed, why.
+    A completed job means all trials have settled. Inspect the trial's status and reward to see whether it succeeded, failed the task, or hit an execution error.
   </Step>
-
-  <Step title="Download the trial">
-    A trial downloads as a trial tree: the trajectory, the agent's stdout and stderr, the verifier log, and the reward.
-
-    ```bash
-    evolve trial download <trial-id> -o trials/
-    ```
-
-    To read one artifact without saving anything, stream it instead.
+  <Step title="Inspect the evidence">
+    Set `TRIAL_ID` to the ID from `job trials`:
 
     ```bash
-    evolve trial download <trial-id> --stream verifier
+    TRIAL_ID="paste-trial-id-here"
+    evolve trial show "$TRIAL_ID"
+    evolve trial trace "$TRIAL_ID"
+    evolve trial download "$TRIAL_ID" --stream verifier
     ```
+
+    The trace shows the agent's actions. The verifier log explains the grading process.
+  </Step>
+  <Step title="Keep the result">
+    ```bash
+    evolve trial download "$TRIAL_ID" -o ./results/
+    ```
+
+    This writes `./results/$TRIAL_ID/` with the trial record and available trace, logs, and agent session files. See the [output layout](/core-concepts/trial-outputs), including how to download the task filesystem.
   </Step>
 </Steps>
 
-## Next, by what you want to do
-
-<Columns cols={2}>
-  <Card title="Port a benchmark" icon="arrow-right-left" href="/core-concepts/tasks">
-    `evolve skills get create-adapter` turns it into Harbor-format tasks.
-  </Card>
-  <Card title="Write a task" icon="file-plus" href="/core-concepts/tasks">
-    `evolve skills get create-task`, and `rewardkit` for its verifier.
-  </Card>
-  <Card title="Publish a dataset" icon="upload" href="/core-concepts/datasets">
-    `evolve skills get publish`, then `evolve dataset publish`.
-  </Card>
-  <Card title="Upload a job you ran elsewhere" icon="folder-up" href="/core-concepts/upload">
-    `evolve upload <job dir>` brings a Harbor job into the dashboard.
-  </Card>
-</Columns>
+<CardGroup cols={2}>
+  <Card title="Compare configurations" icon="git-compare" href="/core-concepts/jobs">Add models, tasks, or repeated attempts.</Card>
+  <Card title="Create a task" icon="folder-plus" href="/core-concepts/tasks">Evaluate work that matters to your project.</Card>
+  <Card title="Python" icon="code" href="/sdk/python">Run the same workflow from Python.</Card>
+  <Card title="TypeScript" icon="code" href="/sdk/typescript">Run the same workflow from TypeScript.</Card>
+</CardGroup>

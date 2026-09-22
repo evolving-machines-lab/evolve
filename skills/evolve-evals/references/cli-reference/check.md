@@ -1,0 +1,152 @@
+---
+title: "evolve check"
+description: "Check task quality, inspect the report, and read the checker's trace."
+---
+
+Check a local task folder, a folder of tasks, or a published dataset. Evolve runs the checker remotely.
+
+### Local tasks
+
+```bash
+evolve check ./tasks --watch
+```
+
+### Published tasks
+
+```bash
+evolve check -d harbor-examples@1.0 -i hello-world --watch
+```
+
+Use exactly one source: a local path or `--dataset`. Local tasks are uploaded for this check; they do not need to be published as a dataset first.
+
+**Note:** `evolve check` runs an agent and incurs usage. For metadata validation before publishing, use [`evolve dataset check`](/cli-reference/dataset#check-before-publishing).
+
+## Choose tasks
+
+| Option | Meaning |
+| --- | --- |
+| `-d`, `--dataset <name[@version]>` | Use tasks from a published dataset instead of a local path. |
+| `-i`, `--include-task-name <glob>` | Include matching tasks. Repeatable. |
+| `-x`, `--exclude-task-name <glob>` | Exclude matching tasks. Repeatable. |
+| `-l`, `--n-tasks <n>` | Maximum tasks after filtering, selected in sorted order. |
+| `-n`, `--n-concurrent <n>` | Concurrent task checks, `1`–`150`; otherwise your organization's ceiling. |
+
+## Configure the checker
+
+Read the actual platform defaults before customizing them.
+
+```bash
+evolve check --show-defaults
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--name <name>` | Check label. Defaults to the acceptance timestamp. |
+| `-m`, `--model <name>` | Checker model. |
+| `--effort <value>` | Reasoning effort. |
+| `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
+| `-p`, `--prompt <path>` | Replacement prompt text file. |
+| `-e`, `--env <provider>` | Checker sandbox provider. |
+| `--show-defaults` | Print the prompt, rubric, model, effort, and provider, then exit. |
+| `--watch` | Wait until every task check settles. |
+| `-q`, `--quiet` | With watch, suppress intermediate progress. |
+
+`--show-defaults` accepts only [global options](/cli-reference/index#global-options). It cannot be combined with a path, dataset, or checker options.
+
+For rubric format and interpretation, see [Check](/core-concepts/check).
+
+## Read the report
+
+The command prints a parent check ID. Use it as `$CHECK_ID` below.
+
+```bash
+evolve check list
+evolve check show "$CHECK_ID"
+```
+
+```text
+Check
+├── Task check: task A
+├── Task check: task B
+└── Task check: task C
+
+Each task check
+├── Criterion results
+└── Trace
+```
+
+A task check's `executed` value says whether it ran the task. A clean inspection without execution is not proof that the solution and verifier work.
+
+### List options
+
+`check list` accepts the shared [list options](/cli-reference/index#list-options), plus:
+
+| Option | Meaning |
+| --- | --- |
+| `--scope <my\|shared\|org>` | Records to list. Default `my`. |
+| `--status <statuses>` | Comma-separated parent check statuses: `queued`, `running`, `completed`. |
+| `-d`, `--dataset <name[@version]>` | Filter checks by dataset. A bare name includes all versions. |
+
+`check show` returns exit code `1` if any task-check execution failed. A criterion marked `fail` is a quality finding, not that execution error.
+
+## Inspect one task check
+
+Find the task-check ID in `evolve check show "$CHECK_ID" --json`. Use that ID as `$TASK_CHECK_ID`.
+
+```bash
+evolve check trace "$TASK_CHECK_ID"
+evolve check trace "$TASK_CHECK_ID" --since 200
+```
+
+`--since <n>` skips the first N transcript events. JSON output is one event per line. For files, logs, and live processes, use the [filesystem commands](/cli-reference/filesystem).
+
+**Note:** The parent check ID selects the whole report. Trace, files, logs, and processes need an individual **task-check ID**.
+
+## Download
+
+### Whole check
+
+```bash
+evolve check download "$CHECK_ID" -o checks/
+```
+
+Saves `check-<id>/` with the report and task-check folders.
+
+### One task check
+
+```bash
+evolve check download "$TASK_CHECK_ID" -o checks/
+```
+
+Saves that task check's folder.
+
+### One artifact
+
+```bash
+evolve check download "$TASK_CHECK_ID" --stream task-check
+evolve check download "$TASK_CHECK_ID" --stream trace-stdout
+```
+
+| Option | Meaning |
+| --- | --- |
+| `-o`, `--output-dir <dir>` | Parent folder. Default `checks/`. |
+| `--overwrite` | Allow replacing an existing folder. |
+| `--stream <artifact>` | Print `task-check`, `trace-parsed`, `trace-stdout`, `trace-stderr`, or `agent-home`. Requires a task-check ID. |
+| `--since <n>` | Skip N transcript events with `--stream trace-parsed`. |
+
+Stream mode cannot be combined with output directory or overwrite.
+
+## Share a report
+
+The creator can share the parent check by link or email.
+
+```bash
+evolve check share "$CHECK_ID" --link
+evolve check share "$CHECK_ID" --email colleague@example.com
+evolve check shares "$CHECK_ID"
+evolve check unshare "$CHECK_ID" --link
+```
+
+`share` and `unshare` accept `--link`, repeatable `--email <address>`, or both; at least one is required. Email sharing sends a link to the recipient.
+
+[Sharing rules](/core-concepts/sharing) and [global options](/cli-reference/index#global-options) apply.

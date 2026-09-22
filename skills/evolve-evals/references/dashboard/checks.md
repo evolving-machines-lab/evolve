@@ -1,0 +1,54 @@
+---
+title: "Checks"
+description: "Read task-quality findings and open the evidence behind them."
+---
+
+Find a check in **Jobs** under kind **Check**, or open a job's **Check** tab to see checks of its tasks.
+
+![A task quality report showing its verdict, criterion outcomes, and checker cost.](/images/dashboard-task-check.png)
+
+*Read the overall finding, then inspect the criterion evidence.*
+
+```text
+Check report
+├── Source tasks + model + effort + cost
+└── Task results
+    ├── Label and execution findings
+    ├── Criterion outcomes and evidence
+    └── Checker trace
+```
+
+## Start a check
+
+Checks start from the CLI or SDK. A job with no task checks shows the corresponding dataset command:
+
+```bash
+evolve check -d harbor-examples@1.0 -i hello-world --watch
+```
+
+This reviews the task material. It does not run another evaluation job against your chosen evaluation agent.
+
+## The check page
+
+The header identifies the check, source, model, effort, status, and cost. Each task row opens that checker's [trace viewer](/dashboard/trial-viewer).
+
+| Action | Availability |
+| --- | --- |
+| **Share** | Creator; manage link and email access. |
+| **Stop** | Creator, while task checks are still live. |
+| **Download** | Once the check is completed. |
+
+## Read the finding
+
+| Finding | Next step |
+| --- | --- |
+| **Has a problem** | Read the failed criterion and its evidence. |
+| **Unclear** | Read what information was missing. |
+| **No problem found** | Check execution findings before treating it as a runtime validation. |
+| Failed task check | Read its failure; this is a failed review, not a task-quality verdict. |
+
+The `executed` flag is derived from criterion outcomes. It does not independently attest that every relevant command ran. See [how check results are derived](/core-concepts/check#the-result).
+
+**[Check reference](/cli-reference/check)**
+
+Run checks, customize the rubric, and download reports.

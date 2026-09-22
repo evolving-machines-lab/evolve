@@ -1,0 +1,115 @@
+---
+title: "evolve trial"
+description: "Inspect one attempt: its score, trace, files, and execution."
+---
+
+Get a trial ID from `evolve job trials "$JOB_ID"`. The examples use that ID as `$TRIAL_ID`.
+
+```bash
+evolve trial show "$TRIAL_ID"
+```
+
+The detail view includes status, reward, spend, execution details, and the latest analysis when one exists.
+
+## Read the trace
+
+```bash
+evolve trial trace "$TRIAL_ID" --grep 'permission denied' --tail 20
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--type <event-type>` | Select an exact event type. |
+| `--grep <pattern>` | Case-insensitive regular expression over event type and content. |
+| `--tail <n>` | Keep the last N matching events. |
+| `--cursor <seq>` | Resume after this event sequence number. |
+| `-l`, `--limit <n>` | Events per API page. Default `200`, maximum `1000`. |
+
+The command reads all available pages and then exits. `--limit` sets page size, not a total event cap. Use [sandbox logs](/cli-reference/filesystem#logs) to follow live output.
+
+With `--json`, each trace event is a separate JSON line.
+
+## Download the trial
+
+```bash
+evolve trial download "$TRIAL_ID" -o trials/
+```
+
+```text
+trials/
+└── <trial-id>/
+    ├── config.json
+    ├── result.json
+    ├── evolve.json
+    ├── agent/
+    └── verifier/
+```
+
+`agent/` stores the trace and agent files. `verifier/` stores verifier output.
+
+Files are included when their artifacts exist.
+
+| Option | Meaning |
+| --- | --- |
+| `-o`, `--output-dir <dir>` | Parent folder. Default `trials/`. |
+| `--overwrite` | Allow writing into an existing trial folder. |
+| `--stream <artifact>` | Print one artifact instead of saving the trial tree. |
+| `--cursor <seq>` | With `--stream trace-parsed`, resume after this sequence. |
+| `--limit <n>` | With `--stream trace-parsed`, set API page size. |
+
+`--stream` cannot be combined with `--output-dir` or `--overwrite`.
+
+### Artifact names
+
+| Artifact | Content |
+| --- | --- |
+| `trace-parsed` | Parsed trace events. |
+| `trace-stdout` | Raw agent stdout. |
+| `trace-stderr` | Raw agent stderr. |
+| `trace-atif` | Normalized ATIF trajectory. |
+| `verifier` | Verifier output. |
+| `agent-home` | Stored agent-home files. |
+| `filesystem` | Sandbox filesystem archive, as `.tar.gz` bytes. |
+| `trajectory` | Reserved name; native trajectory download is not available through this selector. |
+
+```bash
+evolve trial download "$TRIAL_ID" --stream trace-stdout
+evolve trial download "$TRIAL_ID" --stream filesystem > trial-files.tar.gz
+```
+
+Missing stored logs can return `null` with `--json`. Binary filesystem output becomes a base64 JSON envelope when `--json` is used.
+
+## Files, logs, and processes
+
+**[Browse files](/cli-reference/filesystem)**
+
+List folders, read a file, search text, or download a subtree.
+
+**[Follow logs](/cli-reference/filesystem#logs)**
+
+Read agent, verifier, or system output and inspect live processes.
+
+## Retry or regrade
+
+```bash
+evolve trial retry "$TRIAL_ID"
+evolve trial regrade "$TRIAL_ID"
+```
+
+| Command | Result |
+| --- | --- |
+| `retry` | A new job running the settled trial again. |
+| `regrade` | A new job running only the verifier over eligible stored inputs. |
+
+Neither command changes the original trial. Regrade requires a supported single-step, separate verifier with stored inputs; judge-backed verifiers are excluded. See [Trials](/core-concepts/trials).
+
+## Stop a trial
+
+```bash
+evolve trial stop "$TRIAL_ID"
+evolve trial stop "$TRIAL_ID" "$OTHER_TRIAL_ID"
+```
+
+Stop selected trials while keeping their job. The response distinguishes stopped, already-terminal, and missing IDs. To stop an entire dataset's trials, use [`job stop`](/cli-reference/job#stop-work).
+
+[Global options and ID prefixes](/cli-reference/index) apply.

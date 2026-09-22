@@ -1,68 +1,73 @@
 ---
 title: "Models"
-description: "How a model is named on -m, and why one API key covers every provider."
+description: "Select models, compare them, and control metered spend."
 ---
 
-`-m` names the model an arm runs, as the harness knows it. One `EVOLVE_API_KEY` covers every provider: you never configure a provider key for a job, and every model call that goes through the platform's gateway is metered against the trial's spend cap. The cap is airtight only on a task that declares `no-network`; under `allowlist` or `public` an agent can reach a provider directly with a key of its own, and that traffic is neither metered nor capped.
+`-m` selects the model for an evaluation arm. Every arm must name a model; there is no default.
 
 ```bash
-evolve run \
-  -d terminal-bench-4@4.0 \
-  -a claude \
-  -m fable \
-  -l 5 \
-  --watch
-evolve run \
-  -d terminal-bench-4@4.0 \
+evolve run -d harbor-examples@1.0 -i hello-world \
   -a codex \
-  -m gpt-6-astra \
-  -m gpt-5.6-terra \
-  -l 5 \
-  --watch
+  -m gpt-5.6-luna -m gpt-5.6-terra \
+  --max-trial-spend 1 --max-retries 0 --watch
 ```
 
-`-m` repeats. Each model is one arm, so the second command runs every task twice, once per model. Every arm must name a model; there is no default.
+Repeating `-m` creates one arm per model. This command runs the selected task once with each model.
 
-With a provider key of your own enabled, model calls bill that provider account instead of credits; the cap still applies, and a zero credit balance still refuses a job create, resume or retry.
+## Find a supported model
 
-## The rosters
+Each harness has its own model names. Read the live roster instead of assuming a name works with every harness:
 
-Each harness has its own roster of model names. These are the names the SDK ships at this release. The platform publishes the live list for each harness in its capability document, which the SDK reads with `meta()`.
+```bash
+curl -sS https://dashboard.evolvingmachines.ai/api/meta
+```
 
-<Tabs>
-  <Tab title="claude">
-    `fable`, `opus`, `sonnet`, `haiku`, `opus[1m]`, `sonnet[1m]`, `glm-5.3`, `glm-5.3-flash`, `openrouter/deepseek/deepseek-v4.1-flash`, `fireworks/deepseek-v4.1-flash`
-  </Tab>
-  <Tab title="codex">
-    `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.3-codex`
-  </Tab>
-  <Tab title="gemini">
-    `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-pro-preview`
-  </Tab>
-  <Tab title="qwen">
-    `qwen3.7-max`, `qwen3.7-plus`, `qwen3.6-flash`
-  </Tab>
-  <Tab title="kimi">
-    `kimi-k3`, `kimi-k2.7-code`, `kimi-k3-raptor`, `kimi-k2p7-code-raptor`
-  </Tab>
-  <Tab title="opencode">
-    `openrouter/anthropic/claude-fable-5.1`, `openrouter/anthropic/claude-opus-5`, `openrouter/anthropic/claude-sonnet-5`, `openrouter/anthropic/claude-haiku-4.5`, `openrouter/openai/gpt-6-astra`, `openrouter/openai/gpt-5.6-sol`, `openrouter/openai/gpt-5.6-terra`, `openrouter/openai/gpt-5.6-luna`, `openrouter/google/gemini-3.6-flash`, `openrouter/qwen/qwen3.7-max`, `openrouter/moonshotai/kimi-k3`, `openrouter/z-ai/glm-5.3`, `openrouter/z-ai/glm-5.3-flash`, `openrouter/deepseek/deepseek-v4.1-flash`, `fireworks/deepseek-v4.1-flash`
-  </Tab>
-  <Tab title="droid">
-    `claude-fable-5.1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gemini-3.6-flash`, `qwen3.7-max`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `openrouter/deepseek/deepseek-v4.1-flash`, `fireworks/deepseek-v4.1-flash`
-  </Tab>
-</Tabs>
+The `agents` list includes each harness's models, effort support, and configuration capabilities. The same document is available through [`meta()` in both SDKs](/sdk-reference/meta), without authentication.
+
+## Model access and spend
+
+```text
+1. Agent harness
+         ↓
+2. Evolve gateway
+   Meter usage against the cap
+         ↓
+3. Model provider
+```
+
+An `EVOLVE_API_KEY` supplies platform model access. `--max-trial-spend` limits the agent’s metered spend per trial attempt. Verifier judges and trace analysis have separate budgets. See [job costs](/core-concepts/jobs#spend-and-retries).
+
+Requests that bypass the gateway with separately supplied credentials are not metered by Evolve. A task's `no-network` agent policy restricts model access to the platform gateway.
+
+If you enable your own provider key, supported model requests bill that provider account. Gateway metering and the cap still apply. Job creation still rejects accounts with an exhausted platform credit balance.
 
 ## Reasoning effort
 
-`--effort <value>` sets the reasoning effort for every arm. The values each harness accepts are in the [capability document](/sdk-reference/meta), under its `effort_support`: `gemini` accepts no effort value, `qwen` switches thinking on or off rather than taking a level, and the other five harnesses take a level. An effort a harness cannot honor is refused with `invalid_input` when the job is created, never silently skipped.
+`--effort` applies to every arm in the CLI run. Accepted values depend on the harness:
 
-An omitted effort resolves to the harness's own default and is stamped as if declared: every trial echoes it on `agent_info.reasoning_effort`, and the job's `stats.evals` keys carry it as the segment before the dataset, `agent__model__effort__dataset`. Effort is part of an arm's identity: the same agent and model at two efforts are two arms.
+| Harness behavior | How to configure it |
+| --- | --- |
+| Supports effort levels | Use a value from `limits.job.reasoning_efforts` |
+| Qwen thinking mode | Use `off` or `minimal` to disable thinking; `medium` or `thinking` to enable it |
+| Gemini | Do not pass effort; it is unsupported |
+| Custom agent | Configure reasoning in its run command |
 
-## The analyzer's and the checker's model
+When omitted, Evolve resolves the harness's default and records it in `agent_info.reasoning_effort`. The same harness and model at different efforts are distinct arms.
 
-The analyzer and the checker run on the `claude` roster. Their default model is `openrouter/deepseek/deepseek-v4.1-flash`; `-m` on `evolve analyze` and `evolve check`, and `--analyze-model` on `evolve run`, pick another.
+In `/api/meta`, `agents[].effort_support` identifies the mode: `level`, `binary`, or `none`. Qwen's accepted values are listed in `limits.job.binary_effort_values`.
 
-<Card title="Agents" icon="bot" href="/core-concepts/agents">
-  The seven harnesses, and how to bring your own.
+## Analysis and check models
+
+Trace analysis and task checks use the Claude Code harness. Select their model separately:
+
+| Operation | Model option |
+| --- | --- |
+| `evolve analyze` | `-m` |
+| `evolve check` | `-m` |
+| Analysis attached to `evolve run` | `--analyze-model` |
+
+Their default is `openrouter/deepseek/deepseek-v4.1-flash`. Choose from the supported Claude Code roster.
+
+<Card title="Configure a run" icon="terminal" href="/cli-reference/run">
+  All model, effort, concurrency, and budget options.
 </Card>

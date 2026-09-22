@@ -466,7 +466,9 @@ async function main(): Promise<void> {
       assertEqual(stdout(pointer), body(readFileSync(join(REPO_ROOT, "skills", "evolve", "SKILL.md"), "utf8")), "the served pointer is the body of skills/evolve/SKILL.md");
       const tasks = captureIO();
       assertEqual(await runCli(["skills", "get", "evals", "core-concepts/tasks"], tasks.io), 0, "the real site's tasks page is a page");
-      assertEqual(stdout(tasks), readFileSync(join(REPO_ROOT, "docs-evals", "core-concepts", "tasks.mdx"), "utf8"), "byte-equal to docs-evals/core-concepts/tasks.mdx, the page the generator copied");
+      assertEqual(stdout(tasks), readFileSync(join(REPO_ROOT, "skills", "evolve-evals", "references", "core-concepts", "tasks.md"), "utf8"), "serves the readable Markdown generated from the canonical task page");
+      assert(!stdout(tasks).includes("<CardGroup"), "the bundled page contains no website component markup");
+      assert(stdout(tasks).includes("/core-concepts/task-environment"), "the generated page retains links to the task guides");
       process.env.EVOLVE_SKILLS_DIR = fixture;
     }
 

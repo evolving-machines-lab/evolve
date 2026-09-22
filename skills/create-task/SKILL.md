@@ -12,8 +12,10 @@ Guide the user through creating a new task end-to-end. Don't just dump commands 
 walk them through each decision, especially around the verifier (which is usually the 
 hardest part).
 
-The task format is Harbor's, and Evolve runs it unchanged. The full specification is at 
-https://docs.harborframework.com/core-concepts/tasks/overview.
+Evolve accepts Harbor-format tasks subject to managed-platform support. Read
+`evolve skills get evals core-concepts/tasks` and
+`evolve skills get evals core-concepts/task-config` for supported behavior. The upstream
+format specification is at https://docs.harborframework.com/core-concepts/tasks/overview.
 
 ## Step 1: Create the task directory
 
@@ -329,7 +331,8 @@ evolve run -d "<dataset>@1.0" -a codex -m gpt-5.5 --watch
 ```
 
 If the task is too easy (every model 1.0) or impossible (every model 0.0), consider 
-adjusting difficulty. `evolve skills get publish` covers every publish option.
+adjusting difficulty. `evolve skills get publish` explains the workflow;
+`evolve skills get evals cli-reference/dataset` covers every dataset publish option.
 
 ## Step 9: Write README.md (always the final step)
 
@@ -452,9 +455,10 @@ fields fall back to the task-level values.
 
 ### Artifacts
 
-Step-level `artifacts` are collected into `steps/{name}/artifacts/` after that
-step's verification. Task-level and trial-level artifacts are collected at
-every step in addition to the step-level ones.
+Evolve accepts step-level `artifacts` in the task configuration, but does not
+currently collect per-step artifact snapshots. Do not rely on
+`steps/{name}/artifacts/` being present. Step results and verifier logs are
+recorded separately; see `evolve skills get evals core-concepts/multi-step`.
 
 ### Checking a multi-step task
 

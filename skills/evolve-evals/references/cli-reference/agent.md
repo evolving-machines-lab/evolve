@@ -1,0 +1,76 @@
+---
+title: "evolve agent"
+description: "Register a custom agent so Evolve can install and run it for evaluations."
+---
+
+Register an install script or agent directory, plus a command to run. Use the registration's name with `evolve run -a`.
+
+### Install script
+
+```bash
+evolve agent add my-agent \
+  --install-script ./install.sh \
+  --run "my-agent --headless"
+```
+
+Evolve uploads the script's contents.
+
+### Agent directory
+
+```bash
+evolve agent add my-agent \
+  --dir ./my-agent \
+  --run "./bin/my-agent --headless" \
+  --agent-env MODE=eval
+```
+
+Evolve uploads the directory as an archive.
+
+Use exactly one source. Both forms require `--run`.
+
+## Registration options
+
+| Option | Meaning |
+| --- | --- |
+| `--install-script <path>` | Local install script. |
+| `--dir <path>` | Local agent directory. |
+| `--run <command>` | Required command, executed with `sh -c`. |
+| `--agent-env <KEY=VALUE>`, `--ae <KEY=VALUE>` | Runtime environment variables. Repeatable. |
+| `--org <name>` | Owning organization; otherwise the saved CLI default, then personal. |
+
+The registration belongs to you and an organization. Its members can use it in jobs; only you can change or remove it.
+
+For the execution contract and model access, see [Agents](/core-concepts/agents).
+
+## List and inspect
+
+```bash
+evolve agent list --scope org
+evolve agent show my-agent
+```
+
+`agent list` accepts `--scope <my|shared|org>` and all shared [list options](/cli-reference/index#list-options).
+
+`agent show` takes the registered agent's name. This group manages custom registrations; it is not the list of built-in harnesses.
+
+## Run it
+
+```bash
+evolve run \
+  -d harbor-examples@1.0 -i hello-world \
+  -a my-agent -m gpt-5.6-luna \
+  --max-trial-spend 0.30 --max-retries 0 \
+  --watch
+```
+
+The supplied model must be suitable for your agent's implementation.
+
+## Remove a registration
+
+```bash
+evolve agent remove my-agent
+```
+
+Past jobs keep their recorded agent configuration. Removal has no CLI confirmation prompt.
+
+[Global options](/cli-reference/index#global-options) apply. The plural `agents` is reserved; use `agent`.

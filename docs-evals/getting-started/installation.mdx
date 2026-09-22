@@ -1,56 +1,78 @@
 ---
 title: "Installation"
-description: "Install the evolve command and the SDKs, and set your API key."
+description: "Install your preferred client and connect it to your Evolve account."
 ---
 
-## The CLI
+Use the CLI, Python, or TypeScript. All three connect to the same managed evaluation service.
 
-The `evolve` command ships inside the npm package `@evolvingmachines/evolve`.
-
-```bash
-npm install -g @evolvingmachines/evolve
-evolve --version
-```
-
-Inside a project that has the package, `npx evolve` runs it. For a one-off without installing, name the package: `npx --package=@evolvingmachines/evolve evolve --help`. A bare `npx evolve` fetches an unrelated package of that name from the public registry.
-
-## The SDKs
-
-The same surface is available as a library in TypeScript and in Python.
+## Install a client
 
 <CodeGroup>
-
-```bash TypeScript
-npm install @evolvingmachines/evolve
+```bash CLI
+npm install -g @evolvingmachines/evolve
+evolve --version
 ```
 
 ```bash Python
 pip install evolvingmachines-evolve
 ```
 
+```bash TypeScript
+npm install @evolvingmachines/evolve
+```
 </CodeGroup>
 
-The Python package needs Python 3.10 or newer. The hosted clients on these pages talk to the platform directly. Node.js and npm are needed only to run agents on your own machine through `run()`, which these pages do not cover.
+The CLI and TypeScript package use Node.js. Python requires **3.10 or newer**; its managed evals clients make HTTP requests directly and do not need Node.js.
 
-## Your API key
+<Note>
+For a one-off CLI command, use `npx --package=@evolvingmachines/evolve evolve --help`. Outside a project with Evolve installed, bare `npx evolve` can fetch an unrelated package.
+</Note>
 
-Create a key on the dashboard's [API keys page](https://dashboard.evolvingmachines.ai/api-keys), then export it. Every command and every SDK client reads `EVOLVE_API_KEY`.
+## Connect your account
 
-```bash
-export EVOLVE_API_KEY="<your key>"
-evolve auth status
-```
+<Steps>
+  <Step title="Create an API key">
+    Sign in to the [Evolve dashboard](https://dashboard.evolvingmachines.ai), then open [API keys](https://dashboard.evolvingmachines.ai/api-keys) and create a key.
 
-`auth status` prints who the platform thinks you are and which key is in use. The key itself is never printed back. To use a different key for one call, pass `--api-key <key>` on the command line, or `{ apiKey }` to an SDK client.
+    | Access | Use it for |
+    | --- | --- |
+    | **Full access** | Run evaluations, publish datasets, and make changes your account is allowed to make. Use this for the quick start. |
+    | **Read-only** | Inspect existing work. It cannot create, cancel, delete, or change team membership. |
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash
+    export EVOLVE_API_KEY="your-api-key"
+    ```
 
-## Your coding agent
+    Every authenticated client reads this variable. Set it in the environment where your terminal or application runs.
+  </Step>
+  <Step title="Check the connection">
+    ```bash
+    evolve auth status
+    ```
+
+    The result identifies your account and key. See [SDK authentication](/sdk-reference/auth) for the equivalent Python and TypeScript calls.
+  </Step>
+</Steps>
+
+A read-only key used for a write returns HTTP `403` with code `read_only_key`. Full access still respects team roles and resource permissions. Revoke keys in the dashboard, or use the [HTTP key-management endpoints](/sdk-reference/auth#manage-api-keys-over-http).
+
+## Give your coding agent the manual
 
 ```bash
 evolve skills install
 ```
 
-One small skill, `evolve`, lands in the skill folder of every coding agent on your machine: Claude Code, Codex, Cursor, Copilot, Gemini CLI and OpenCode. From then on, when you mention Evolve, evals, datasets, jobs or tasks, the agent reads the manual from the command itself, `evolve skills get evals`, one page at a time. The manual ships inside the package, so it always matches the version you installed. See [evolve skills](/cli-reference/skills).
+By default, this installs the small `evolve` skill into supported agent locations that already exist. To create a specific destination, use a target such as `evolve skills install --target codex`. The skill directs the agent to the manual bundled with your CLI:
 
-<Card title="Quick start" icon="play" href="/getting-started/quick-start">
-  Start your first job.
-</Card>
+```bash
+evolve skills get evals
+evolve skills get evals getting-started/quick-start
+```
+
+See [bundled skills](/cli-reference/skills) for installation targets and task-authoring guides.
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="play" href="/getting-started/quick-start">Run one task from the terminal.</Card>
+  <Card title="SDKs" icon="code" href="/sdk-reference/index">Create and inspect jobs from code.</Card>
+</CardGroup>

@@ -1,346 +1,177 @@
 ---
-title: "datasets"
-description: "The catalog: list, read, publish, download, activate, delete."
+title: "Datasets"
+description: "Browse task versions, check a local corpus, and publish it."
 ---
 
-`datasets()` returns the catalog client. A `ref` is `name` or `name@version`.
+[Method reference: calls, parameters, and response fields](/sdk-reference/methods/datasets).
 
-## list, get, getActive
+A dataset contains versioned tasks. Use a bare name for its active version, or `name@version` to select one explicitly.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    list(options?: { search?: string; limit?: number; cursor?: string }): DatasetList
-    get(
-      ref: string,
-      options?: { limit?: number; cursor?: string },
-    ): Promise<Dataset>
-    getActive(
-      name: string,
-      options?: { limit?: number; cursor?: string },
-    ): Promise<ActiveDataset>
-    ```
+## Browse the catalog
 
-    The catalog, one dataset with one page of its tasks (default 200, at most 500), or the active version alone. `getActive` throws `NoActiveVersionError` when nothing is runnable. A task row carries public fields only; see [Task](/sdk-reference/types#task).
+<CodeGroup>
+```ts TypeScript
+import { datasets } from "@evolvingmachines/evolve";
 
-    ```ts
-    const dataset = await datasets().get("terminal-bench-4@4.0");
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    def list(
-        *,
-        search: Optional[str] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    )
-    async def get(
-        ref: str,
-        *,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    ) -> Dataset
-    async def get_active(
-        name: str,
-        *,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    ) -> ActiveDataset
-    ```
+const client = datasets();
+for await (const dataset of client.list({ search: "harbor-examples" })) {
+  console.log(dataset.name, dataset.active_version);
+}
+const dataset = await client.get("harbor-examples@1.0");
+console.log(dataset.tasks?.items);
+```
 
-    The catalog, one dataset with one page of its tasks, or the active version alone. `get_active` raises `NoActiveVersionError` when nothing is runnable.
+```python Python
+from evolve import datasets
 
-    ```python
-    dataset = await datasets().get("terminal-bench-4@4.0")
-    ```
-  </Tab>
-</Tabs>
+client = datasets()
+async for dataset in client.list(search="harbor-examples"):
+    print(dataset.name, dataset.active_version)
+dataset = await client.get("harbor-examples@1.0")
+print(dataset.tasks.items if dataset.tasks else [])
+```
+</CodeGroup>
 
-## getTaskBuild
+| Method | Options | Returns |
+| --- | --- | --- |
+| `list(...)` | `search`, `limit`, `cursor` | Dataset handle; await one page or iterate all |
+| `get(ref, ...)` | `limit`, `cursor` page the tasks | Dataset detail and one task page |
+| `getActive(name, ...)` / `get_active(name, ...)` | `limit`, `cursor` | Active version and task page; raises `NoActiveVersionError` if none is active |
+| `getTaskBuild(ref, task)` / `get_task_build(ref, task)` | Pinned `name@version` required | One task's build state, failure excerpt, and log reference |
+| `taskFiles(ref, task)` / `task_files(ref, task)` | Pinned `name@version` required | [Package file client](/sdk-reference/filesystem#task-package-files) |
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    getTaskBuild(
-      ref: string,
-      taskName: string,
-    ): Promise<TaskBuild>
-    ```
+<Accordion title="More catalog filters through HTTP">
+  `GET /api/datasets` also accepts these query parameters. The CLI and SDK list methods do not expose them.
 
-    One task's build record: its outcome and, on failure, the failing step and log.
+  | Parameter | Values |
+  | --- | --- |
+  | `org` | Team slug or id; requires membership |
+  | `visibility` | `public` or `private` |
+  | `sortField` | `name` (default), `updated`, or `tasks` |
+  | `sortDirection` | `asc` (default) or `desc` |
 
-    ```ts
-    const build = await datasets().getTaskBuild("my-swe@1.0", "broken-task");
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def get_task_build(
-        ref: str,
-        task_name: str,
-    ) -> TaskBuild
-    ```
+  ```bash
+  curl -sS --get https://dashboard.evolvingmachines.ai/api/datasets \
+    -H "Authorization: Bearer $EVOLVE_API_KEY" \
+    --data-urlencode "org=my-team" \
+    --data-urlencode "visibility=private" \
+    --data-urlencode "sortField=updated" \
+    --data-urlencode "sortDirection=desc"
+  ```
 
-    One task's build record: its outcome and, on failure, the failing step and log.
+  `org` selects the team's catalog, including public datasets. `visibility` narrows the selected catalog; it does not grant access to other private datasets. `updated` and `tasks` use the active version's creation time and task count. Start from the first page when changing sort order.
+</Accordion>
 
-    ```python
-    build = await datasets().get_task_build("my-swe@1.0", "broken-task")
-    ```
-  </Tab>
-</Tabs>
+## Check before publishing
 
-## taskFiles
+Metadata preflight reads `task.toml` files and an optional `dataset.toml`. It checks their declared requirements without uploading the full corpus or building its images.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    taskFiles(ref: string, taskName: string): TaskPackageFiles
+<CodeGroup>
+```ts TypeScript
+const verdict = await client.preflight({ source: { directory: "./tasks" } });
+console.log(verdict);
+```
 
-    interface TaskPackageFiles {
-      status(): Promise<TaskPackageFilesystemStatus>
-      list(options?: { path?: string; cursor?: string; limit?: number }): Promise<FilesystemListing>
-      read(path: string, options?: { range?: TrialFileRange }): Promise<Buffer>
-    }
-    ```
+```python Python
+verdict = await client.preflight(directory="./tasks")
+print(verdict)
+```
+</CodeGroup>
 
-    A published task's files, exactly as the platform stored them and as every trial ran against them: `list` pages one folder of the task directory (`/` holds `instruction.md`, `task.toml`, `environment/`, `tests/`), `read` answers one file's bytes. `ref` must name the version (`name@version`); a version imported before packages were kept is refused with `task_package_not_retained` (`status().package_retained` says so first).
+SDK `publish()` does not run this step automatically. Preflight is also different from an [agent-run quality check](/sdk-reference/checks).
 
-    ```ts
-    const files = datasets().taskFiles("my-swe@1.0", "abs-1");
-    const tests = await files.list({ path: "/tests" });
-    const script = (await files.read("/tests/test.sh")).toString("utf8");
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    def task_files(self, ref: str, task_name: str) -> TaskPackageFiles
+## Publish a version
 
-    class TaskPackageFiles:
-        async def status(self) -> TaskPackageFilesystemStatus
-        async def list(self, *, path="/", cursor=None, limit=None) -> FilesystemListing
-        async def read(self, path, *, start=None, end=None, suffix=None) -> bytes
-    ```
+```text
+1. Send a source
+   └─ DatasetImport id returned
+2. Import and build tasks
+   ├─ At least one task ready
+   │  → version READY
+   └─ No usable version
+      → import FAILED
+3. Read the settled import and version
+   └─ Inspect failed_tasks
+      even when the version is READY
+```
 
-    ```python
-    files = datasets().task_files("my-swe@1.0", "abs-1")
-    tests = await files.list(path="/tests")
-    script = (await files.read("/tests/test.sh")).decode()
-    ```
-  </Tab>
-</Tabs>
+<CodeGroup>
+```ts TypeScript
+const pending = await client.publish({
+  name: "my-benchmark",
+  version: "1.0",
+  source: { directory: "./tasks" },
+});
+const result = await client.watchImport(pending.id);
+console.log(result.status, result.failure);
+```
 
-## preflight
+```python Python
+pending = await client.publish(
+    name="my-benchmark",
+    version="1.0",
+    directory="./tasks",
+)
+result = await client.watch_import(pending.id)
+print(result.status, result.failure)
+```
+</CodeGroup>
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    preflight(input: { source: { directory: string } }): Promise<DatasetPreflight>
-    ```
+Choose exactly one source:
 
-    Dry-run a local folder of tasks: only each task's metadata is sent, nothing is uploaded or written.
+| Source | TypeScript `source` | Python keyword arguments | Name/version |
+| --- | --- | --- | --- |
+| Local corpus | `{ directory: "./tasks" }` | `directory="./tasks"` | Required unless supplied by `dataset.toml` |
+| Git repository | `{ git_url, git_ref, git_path? }` | `git_url=`, `git_ref=`, optional `git_path=` | Required |
+| Public tarball | `{ archive_url }` | `archive_url=` | Required |
+| Public Harbor Hub package | `{ hub_package: "org/name@ref" }` | `hub_package="org/name@ref"` | May default from the package |
 
-    ```ts
-    const verdict = await datasets().preflight({ source: { directory: "./my-swe" } });
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def preflight(
-        *,
-        directory: str,
-    ) -> DatasetPreflight
-    ```
+`org` selects the owning team, overriding the client default. Git sources need a ref; `git_path` selects a repository subdirectory.
 
-    Dry-run a local folder of tasks: only each task's metadata is sent, nothing is uploaded or written.
+### Follow a publish
 
-    ```python
-    verdict = await datasets().preflight(directory="./my-swe")
-    ```
-  </Tab>
-</Tabs>
+| Operation | TypeScript | Python |
+| --- | --- | --- |
+| Read one import | `getImport(id)` | `get_import(id)` |
+| List your imports | `listImports({status, dataset, limit, cursor})` | `list_imports(status=..., dataset=..., limit=..., cursor=...)` |
+| Wait for settlement | `watchImport(id, options)` | `watch_import(id, ...)` |
 
-## publish
+<AccordionGroup>
+  <Accordion title="Upload callbacks">
+    Pass these in the second `publish` argument in TypeScript, or as Python keyword arguments.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    publish(input: { source: DatasetSource; name?: string; version?: string; org?: string }, options?: { onUploadProgress?: (sentBytes: number, totalBytes: number) => void; onRegistered?: (importId: string) => void }): Promise<DatasetImport>
-    ```
+    | TypeScript | Python | Receives |
+    | --- | --- | --- |
+    | `onUploadProgress` | `on_upload_progress` | Sent bytes, total archive bytes |
+    | `onRegistered` | `on_registered` | Import id when a resumable upload registers it |
 
-    Publish a version from one `source`: `{ git_url, git_ref, git_path? }` (an `https://` URL, and a subfolder that exists at the ref), `{ directory }`, `{ archive_url }` or `{ hub_package }`. `org` names the organization a new dataset lands in (omitted, the client's `org` default, else your personal one). An existing dataset stays where it is only when no org reaches the server; a named org, the client default included, that is not the dataset's own is refused with `invalid_input`, so a re-publish never moves a dataset. Returns the import record; follow it with `watchImport`.
+    Local dataset and job archives larger than 256 MiB use resumable transfer. Remote-source submissions upload no client archive. Python upload callbacks run on the uploader thread and must be thread-safe.
+  </Accordion>
+  <Accordion title="Watch options">
+    | TypeScript | Python | Meaning |
+    | --- | --- | --- |
+    | `onStatus` | `on_status` | Called when import status/receiving state changes |
+    | `onProgress` | `on_progress` | Called with changed progress and the import |
+    | `onVersion` | `on_version` | Called with version and dataset during settlement |
+    | `pollIntervalMs` | `poll_interval_s` | Default `2000` ms / `2` s |
+    | `settleTimeoutMs` | `settle_timeout_s` | Post-import version settlement bound; default 30 minutes |
+    | `signal` | `timeout_s` | Stop waiting / bound the overall Python wait |
 
-    `onUploadProgress` reports sent bytes for a directory source, and `onRegistered` fires once with the import id when a large upload begins. What is packed is on [datasets](/core-concepts/datasets#publish-your-own).
+    A failed import is returned with `status: FAILED` and a failure object. Dataset completion also confirms that its version settled. Stopping your wait does not cancel the import.
+  </Accordion>
+</AccordionGroup>
 
-    ```ts
-    const imp = await datasets().publish({
-      source: { directory: "./my-swe" },
-      name: "my-swe",
-      version: "1.0",
-    });
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def publish(
-        *,
-        git_url=None,
-        git_ref=None,
-        git_path=None,
-        directory=None,
-        archive_url=None,
-        hub_package=None,
-        name=None,
-        version=None,
-        org=None,
-        on_upload_progress=None,
-        on_registered=None,
-    ) -> DatasetImport
-    ```
+## Download and manage
 
-    Publish a version from one source: `git_url` with `git_ref` (and `git_path`), `directory`, `archive_url`, or `hub_package`. `org` names the organization a new dataset lands in (omitted, the client's `org` default, else your personal one). An existing dataset stays where it is only when no org reaches the server; a named org, the client default included, that is not the dataset's own is refused with `invalid_input`, so a re-publish never moves a dataset. Returns the import record; follow it with `watch_import`.
+| Action | TypeScript | Python |
+| --- | --- | --- |
+| Download original package | `download(ref, { to: "./packages" })` | `download(ref, to="./packages")` |
+| Select active version | `activate(name, version)` | `activate(name, version)` |
+| Follow upstream changes | `update(name, { upstream_auto_import: true })` | `update(name, upstream_auto_import=True)` |
+| Delete dataset | `delete(name)` | `delete(name)` |
 
-    ```python
-    imp = await datasets().publish(
-        directory="./my-swe",
-        name="my-swe",
-        version="1.0",
-    )
-    ```
-  </Tab>
-</Tabs>
+Original-package download is owner-only. Platform-curated datasets do not have a downloadable owner package through this method. [Task package files](/sdk-reference/filesystem#task-package-files) are a separate inspection surface.
 
-## getImport, watchImport, listImports
+Only a READY version can be activated. Upstream auto-import needs a watchable git source. Deletion is refused while jobs still reference the dataset.
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    getImport(id: string): Promise<DatasetImport>
-    watchImport(id: string, options?: { onStatus?: (datasetImport: DatasetImport) => void; onProgress?: (progress: DatasetImportProgress, datasetImport: DatasetImport) => void; onVersion?: (version: DatasetVersion, dataset: Dataset) => void; signal?: AbortSignal; pollIntervalMs?: number; settleTimeoutMs?: number }): Promise<DatasetImport>
-    listImports(options?: { status?: DatasetImportStatus; dataset?: string; limit?: number; cursor?: string }): DatasetImportList
-    ```
-
-    Read one publish, follow it until the version is READY or FAILED, or list your publishes. `watchImport` polls every `pollIntervalMs` (default 2000): `onStatus` fires on every status change, `onProgress` on every change of the five-phase `progress` (`extracting`, `parsing`, `building`, `copying`, `verifying`), `onVersion` on the version's state. `settleTimeoutMs` (default 30 minutes) bounds the wait; past it the watch throws `ImportSettleError` with the last observed state. `listImports` filters by `status` and `dataset`.
-
-    ```ts
-    const done = await datasets().watchImport(imp.id);
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def get_import(id: str) -> DatasetImport
-    async def watch_import(
-        id: str,
-        *,
-        on_status=None,
-        on_progress=None,
-        on_version=None,
-        poll_interval_s: float = 2.0,
-        timeout_s: Optional[float] = None,
-        settle_timeout_s: float = ...,
-    ) -> DatasetImport
-    def list_imports(
-        *,
-        status: Optional[str] = None,
-        dataset: Optional[str] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    )
-    ```
-
-    Read one publish, follow it until the version is READY or FAILED, or list your publishes. `watch_import` polls every `poll_interval_s`: `on_status` fires on every status change, `on_progress` on every change of the five-phase `progress` (`extracting`, `parsing`, `building`, `copying`, `verifying`), `on_version` on the version's state. `settle_timeout_s` (default 30 minutes) bounds the wait; past it the watch raises `ImportSettleError` with the last observed state. `list_imports` filters by `status` and `dataset`.
-
-    ```python
-    done = await datasets().watch_import(imp.id)
-    ```
-  </Tab>
-</Tabs>
-
-## download
-
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    download(ref: string): Promise<Buffer>
-    download(
-      ref: string,
-      options: { to: string },
-    ): Promise<string>
-    download(
-      ref: string,
-      options: { stream: true },
-    ): Promise<ReadableStream<Uint8Array>>
-    ```
-
-    The original package of a dataset you own: the bytes, the saved file's path, or a stream. The Buffer and `{ to }` shapes verify the download against the digest the server states and throw `EvolveDigestMismatchError` on a mismatch; `{ stream: true }` is unverified. A version published before packages were retained answers `package_not_retained`. Prefer `{ to }` for anything sizeable.
-
-    ```ts
-    const path = await datasets().download(
-      "my-swe@1.0",
-      { to: "./corpora" },
-    );
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def download(
-        ref: str,
-        *,
-        to: Optional[str] = None,
-    )
-    ```
-
-    The original package of a dataset you own: the bytes, or with `to` the saved file's path. Both shapes verify the download against the digest the server states, raising `EvolveDigestMismatchError` on a mismatch. A version published before packages were retained answers `package_not_retained`. Prefer `to` for anything sizeable.
-
-    ```python
-    path = await datasets().download(
-        "my-swe@1.0",
-        to="./corpora",
-    )
-    ```
-  </Tab>
-</Tabs>
-
-## activate, update, delete
-
-<Tabs>
-  <Tab title="TypeScript">
-    ```ts
-    activate(
-      name: string,
-      version: string,
-    ): Promise<Dataset>
-    update(
-      name: string,
-      patch: { upstream_auto_import: boolean },
-    ): Promise<Dataset>
-    delete(name: string): Promise<void>
-    ```
-
-    Make a READY version the active one (`version_not_ready` while building, `version_not_activatable` for FAILED or ARCHIVED), switch automatic import of new upstream versions (`upstream_not_watchable` without a moving git ref), or delete a dataset you own (`dataset_not_owned` on a platform dataset, `dataset_in_use` naming the jobs that reference it).
-
-    ```ts
-    await datasets().activate("my-swe", "1.0");
-    ```
-  </Tab>
-  <Tab title="Python">
-    ```python
-    async def activate(
-        name: str,
-        version: str,
-    ) -> Dataset
-    async def update(
-        name: str,
-        *,
-        upstream_auto_import: bool,
-    ) -> Dataset
-    async def delete(name: str) -> None
-    ```
-
-    Make a READY version the active one (`version_not_ready` while building, `version_not_activatable` for FAILED or ARCHIVED), switch automatic import of new upstream versions (`upstream_not_watchable` without a moving git ref), or delete a dataset you own (`dataset_not_owned` on a platform dataset, `dataset_in_use` naming the jobs that reference it).
-
-    ```python
-    await datasets().activate("my-swe", "1.0")
-    ```
-  </Tab>
-</Tabs>
+Download returns bytes by default; `to` names a directory. TypeScript also supports a raw stream. See [download options](/sdk-reference/filesystem#download-options).

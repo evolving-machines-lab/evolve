@@ -1,0 +1,121 @@
+---
+title: "Check tasks"
+description: "Review instructions, environments, solutions, and verifiers before an evaluation."
+---
+
+A **check** reviews task quality. An [analysis](/core-concepts/analyze) reviews an agent's completed trial. Both use rubrics; they answer different questions.
+
+```bash Local task or task collection
+evolve check ./tasks --watch
+```
+
+```bash Published dataset
+evolve check -d harbor-examples@1.0 -i hello-world --watch
+```
+
+Local checks upload the selected task material. Dataset checks use the retained package; they do not publish a new version.
+
+## Choose the tasks
+
+### 1. Read the source
+
+| Source | Uses |
+| --- | --- |
+| Task directory | One task. |
+| Task collection | Top-level task directories. |
+| Published dataset | Retained task package. |
+
+### 2. Filter task names
+
+Apply include (`-i`) and exclude (`-x`) globs.
+
+### 3. Limit the selection
+
+Apply the task cap (`-l`).
+
+### 4. Run the checks
+
+Run one checker per selected task.
+
+```bash
+evolve check ./tasks -i 'auth-*' -x 'auth-legacy' -l 5 --watch
+```
+
+A check is a hosted model run and incurs cost. `evolve dataset check` is a separate metadata preflight; it does not perform this rubric review.
+
+## What it reviews
+
+| Review area | Default criteria |
+| --- | --- |
+| Instructions and tests | Sufficient instructions; tests match instructions; verifier correctness. |
+| Evaluation integrity | No answer leakage; grading is out of the agent's reach. |
+| Execution | Valid reference solution; rejection of non-solutions; environment works; stable verification; sufficient limits. |
+| Feasibility | The task is solvable. |
+
+The default rubric has eleven criteria. Inspect their complete guidance and the current model, effort, provider, and prompt:
+
+```bash
+evolve check --show-defaults
+```
+
+Use `-r rubric.toml` or `-p prompt.txt` to customize. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically.
+
+## The result
+
+One parent check contains one **task check** per selected task:
+
+```text
+check
+├── task check: hello-world
+│   ├── criteria
+│   │   ├── outcomes
+│   │   ├── explanations
+│   │   └── evidence
+│   ├── label + executed
+│   └── checker trace + files
+└── task check: another-task
+    └── ...
+```
+
+| Label | Rule, in order |
+| --- | --- |
+| `has_a_problem` | Any criterion fails. |
+| `unclear` | Otherwise, a file-based criterion is unknown. |
+| `no_problem_found` | Neither condition above applies. |
+
+**Note:** **Read `executed` beside the label.** It is derived from the checker findings: true when none of the five execution criteria is `unknown`. It is not a separate execution audit. A `no_problem_found` result with `executed: false` leaves execution questions unresolved.
+
+A rubric with different criterion names has null `label` and `executed`. The explanations and evidence remain available.
+
+The parent lifecycle is `queued` → `running` → `completed`. A completed check can contain failed task checks; inspect each task's `status` and `failure`.
+
+## Read it back
+
+```bash
+evolve check list --status running
+evolve check show "$CHECK_ID"
+evolve check trace "$TASK_CHECK_ID"
+evolve check download "$CHECK_ID" -o checks/
+```
+
+Use the parent check ID for the whole report. Use a task-check ID for one checker's transcript, filesystem, or individual verdict:
+
+```bash
+evolve check download "$TASK_CHECK_ID" --stream task-check
+```
+
+## Share
+
+```bash
+evolve check share "$CHECK_ID" --link
+```
+
+The creator can share by link or email. Recipients can read the report and available files. Sharing does not give them permission to stop task checks.
+
+**[Check reference](/cli-reference/check)**
+
+Flags, custom rubrics, and task-check commands.
+
+**[Checks in the dashboard](/dashboard/checks)**
+
+Open reports and inspect findings.

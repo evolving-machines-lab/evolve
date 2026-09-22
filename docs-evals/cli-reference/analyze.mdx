@@ -1,84 +1,96 @@
 ---
 title: "evolve analyze"
-description: "Analyze a finished job's trial traces against a rubric, on the platform."
+description: "Evaluate completed trial traces against a rubric."
 ---
 
-import GlobalOptions from '/snippets/global-options.mdx';
+Start an analysis for a finished job. Use the job ID from `evolve job list` as `$JOB_ID`.
 
 ```bash
-evolve analyze <job-id> [options]
+evolve analyze "$JOB_ID" --watch
+```
+
+Each selected trial gets its own analysis run. Read those runs with [`evolve analysis`](/cli-reference/analysis).
+
+## Inspect the defaults
+
+```bash
 evolve analyze --show-defaults
+evolve analyze --show-defaults --json
 ```
 
-Analyze a terminal job's trial traces against a rubric, server-side. Without `--watch` the command returns at once with the job block and the hint `Follow it with: evolve job show <id>`; `--json` prints the accepted job body. Exit 0 on an accepted wave; with `--watch`, exit 1 when any analysis failed.
+This returns the current model, reasoning effort, sandbox provider, prompt, and rubric. Defaults mode takes no job ID or other analysis options.
+
+## Select trials
+
+<Tabs>
+  <Tab title="Failing results">
+    ```bash
+    evolve analyze "$JOB_ID" --failing --n-trials 20 --watch
+    ```
+  </Tab>
+  <Tab title="Specific trials">
+    ```bash
+    evolve job trials "$JOB_ID" --json
+    evolve analyze "$JOB_ID" --trial "$TRIAL_ID" --watch
+    ```
+
+    Copy the **full trial ID** into `$TRIAL_ID`. This flag does not expand prefixes.
+  </Tab>
+</Tabs>
+
+| Option | Meaning |
+| --- | --- |
+| `-t`, `--trial <trial-id>` | Select a trial in the job. Repeatable; full IDs required. |
+| `--passing` | Only trials with reward `1.0`. |
+| `--failing` | Eligible settled trials other than `SCORED` with reward exactly `1.0`. Includes missing rewards and execution errors. |
+| `-l`, `--n-trials <n>` | Maximum selected trials, after filters. |
+| `-n`, `--n-concurrent <n>` | Concurrent analyses, `1`–`150`. If omitted, use your organization's ceiling. |
+
+Cancelled trials are excluded. `--passing` and `--failing` cannot be combined. The server validates trial membership and eligibility. A job can have only one active analysis wave at a time.
+
+## Customize the analysis
 
 ```bash
-evolve analyze 3e1f9a2c-… \
-  -r rubric.toml \
-  -p prompt.txt \
-  --failing \
-  -l 20 \
-  -n 2 \
+evolve analyze "$JOB_ID" \
+  --rubric rubric.toml \
+  --prompt prompt.txt \
   --watch
-evolve analyze 3e1f9a2c-… -t d1a10c4e-… -t d1a10f72-…
 ```
 
-## Options
+| Option | Meaning |
+| --- | --- |
+| `-m`, `--model <name>` | Analyzer model. |
+| `--effort <value>` | Reasoning effort. |
+| `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
+| `-p`, `--prompt <path>` | Text file replacing the default prompt. |
+| `-e`, `--env <provider>` | Sandbox provider for analysis. |
+| `--show-defaults` | Print the default policy and exit. |
 
-<ParamField path="-m, --model" type="name" default="openrouter/deepseek/deepseek-v4.1-flash">
-  Model the analyzer runs. `glm-5.3-flash` and `haiku` are alternatives, `glm-5.3` escalates, and `fireworks/deepseek-v4.1-flash` is the same model on its Fireworks route. Must be on the `claude` roster.
-</ParamField>
+A rubric contains a `criteria` list. Every criterion needs `name`, `description`, and `guidance`.
 
-<ParamField path="--effort" type="value">
-  Reasoning effort the analyzer runs at. Defaults to the per-model default: `high` on `openrouter/deepseek/deepseek-v4.1-flash`, `max` on `glm-5.3-flash`.
-</ParamField>
+```toml rubric.toml
+[[criteria]]
+name = "uses_evidence"
+description = "The final answer is supported by observed results."
+guidance = "Check whether the trace supports the claims in the final answer."
+```
 
-<ParamField path="-r, --rubric" type="path">
-  Rubric file: TOML (one `[[criteria]]` table per criterion), YAML or JSON in the `{criteria: [{name, description, guidance}]}` shape, parsed at the keyboard with unknown fields refused by name; the server owns the bounds. Defaults to the platform's analyze rubric, seven criteria with `score_is_earned` first.
-</ParamField>
+For prompt placeholders, rubric rules, and verdicts, see [Analyze](/core-concepts/analyze).
 
-<ParamField path="-p, --prompt" type="path">
-  Prompt file for the evaluator agent; its text replaces the built-in prompt, with `{trial_path}`, `{task_section}` and `{criteria_guidance}` rendered, `{{` and `}}` writing a literal brace, and an unknown `{token}` rendering empty. The instructions for writing the result are appended after it. An empty file is refused; there is no length bound. Defaults to the built-in prompt.
-</ParamField>
+## Wait and read results
 
-<ParamField path="-e, --env" type="provider">
-  Sandbox provider the analyzer runs on. Defaults to `daytona`.
-</ParamField>
+| Option | Meaning |
+| --- | --- |
+| `--watch` | Wait until the selected analyses settle. |
+| `-q`, `--quiet` | With watch, suppress intermediate progress. |
 
-<ParamField path="--show-defaults">
-  Print the defaults an analysis runs under when you name none: model, effort, provider, the rubric's criteria and the built-in prompt template, then exit. With `--json`, one object. Takes no job id and no other analyze flag.
-</ParamField>
+Without watch, the command returns the accepted job. With `--watch --json`, it prints `analysis.accepted`, progress records, and `analysis.final`.
 
-<ParamField path="-n, --n-concurrent" type="n">
-  Max concurrent trial analyses, 1 to 150, beneath the organization's `max_concurrent_analyses` (fleet default 60). Defaults to the ceiling.
-</ParamField>
+```bash
+evolve analysis list --job "$JOB_ID"
+evolve trial show "$TRIAL_ID"
+```
 
-<ParamField path="--passing">
-  Only analyze passing trials (reward 1.0).
-</ParamField>
+A failed analysis execution produces exit code `1`. A rubric criterion marked `fail` is a finding, not an execution error.
 
-<ParamField path="--failing">
-  Only analyze failing trials (reward below 1.0, or an exception).
-</ParamField>
-
-<ParamField path="-t, --trial" type="trial-id">
-  Analyze only this trial; repeatable. Combines with `--passing` or `--failing` (a named trial on the other side is skipped) and comes before `-l`. An id that is not a trial of this job is refused, with the unknown ids named.
-</ParamField>
-
-<ParamField path="-l, --n-trials" type="n">
-  Max trials to analyze, after `--passing`, `--failing` or `--trial`, in the job's trial order.
-</ParamField>
-
-<ParamField path="--watch">
-  Poll until every analysis settles, then print one row per analyzed trial: the label (`custom rubric` when there is none), the criterion outcomes, the analyzer's cost and a summary excerpt, with failed analyses listed below. With `--json`, NDJSON envelopes: `analysis.accepted`, `analysis.stats` per change, `analysis.final` with the job and the analyzed trials.
-</ParamField>
-
-<ParamField path="-q, --quiet">
-  With `--watch`: suppress the progress lines and print the final block only.
-</ParamField>
-
-<GlobalOptions />
-
-## Reading analyses back
-
-The [`analysis`](/cli-reference/analysis) group lists, shows, traces and downloads analysis runs.
+To analyze automatically during a new evaluation, use [`run --analyze`](/cli-reference/run). [Global options](/cli-reference/index#global-options) apply.

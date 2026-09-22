@@ -1,65 +1,102 @@
 ---
 title: "Jobs"
-description: "Start a job from the browser, follow it, and read its results."
+description: "Launch an evaluation, follow its progress, and move from a summary to the evidence."
 ---
 
-The Jobs page lists your jobs, newest first. A task quality check is a job too, so the list holds both: the KIND column tells them apart, and a check row opens the [check's page](/dashboard/checks#the-check-page).
+Open **Jobs** in your selected workspace. The list includes evaluation jobs and task checks; **Kind** tells them apart.
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="The jobs list">
-  <img src="/images/jobs.png" alt="The Jobs page: a NEW JOB button, a search box, a status filter, and a table of jobs and checks with kind, status, datasets, agents, trials, cost and creation time." />
+<Frame caption="Evaluation jobs and task checks appear in the same list.">
+  <img src="/images/dashboard-jobs.png" alt="Jobs and task checks with status, dataset, agent, progress, and cost." />
 </Frame>
 
-Search by name, and filter by status: ALL, QUEUED, RUNNING, CANCELLING, COMPLETED, CANCELLED or FAILED. A job row shows its datasets, its agents with their models, how many trials have settled out of the total, what it has spent, and when it started; a check row shows what was checked, the checker's model and effort, how many task checks have settled out of the total, the checker's cost, and when it started. Tick rows to cancel live jobs or delete finished ones; a check row cannot be ticked, its verbs live on its page.
+```text
+Jobs list
+├── Evaluation
+│   └── Job overview
+│       └── Trial
+│           └── Trace and outputs
+└── Check
+    └── Check report
+        └── Task check
+            └── Findings and trace
+```
+
+Search by name or filter by status. Evaluation rows show the task set, agents, progress, and spend. Check rows show the source tasks and checker progress.
 
 ## New job
 
-NEW JOB opens the form. It takes the same choices as `evolve run`.
+Choose **New job** to configure an evaluation.
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="The New job form">
-  <img src="/images/new-job.png" alt="The New job form: a Sources list of datasets to tick, an Agents section with agent, model and reasoning effort, an ADD AGENT button, and a Summary rail with LAUNCH and VALIDATE buttons." />
+<Frame caption="Choose sources and agent settings. The summary updates as you configure the run.">
+  <img src="/images/dashboard-new-job.png" alt="Job launcher with a dataset search, agent, model, reasoning effort, and trial summary." />
 </Frame>
 
-- **Sources**: tick one or more datasets, cap the task count, and narrow the tasks with include and exclude patterns over their names.
-- **Agents**: one arm per entry, with its agent, its model (required) and its reasoning effort. Arm options hold the version pin, a preset, a config file and skills. ADD AGENT adds another arm.
-- **Secrets**: attach a secret from your vault, or save and attach a one-off value.
-- **Job settings**: job name, attempts per task, parallel trials, auto-retries, and the spend cap per trial.
-- **Advanced**, collapsed by default: the sandbox provider, the timeout multipliers, the judge overrides for the verifier, and the exceptions to retry on.
+<Steps>
+  <Step title="Choose sources">
+    Select datasets and versions. Add include/exclude task patterns or a task cap.
+  </Step>
+  <Step title="Add agents">
+    Choose a harness, model, and reasoning effort for each arm. Expand arm options for a version pin, preset, configuration, or skills.
+  </Step>
+  <Step title="Set the run limits">
+    Set attempts, parallel trials, retries, and the per-trial spend cap. Add required secrets. Advanced settings include provider, timeouts, and verifier judge overrides.
+  </Step>
+  <Step title="Review and launch">
+    Check the Summary. **Validate** checks the form locally; **Launch** submits it for server validation and execution.
+  </Step>
+</Steps>
 
-The Summary rail counts datasets × agents × attempts. VALIDATE checks the whole form without starting anything. LAUNCH starts the job and opens its page.
+The number of trials is selected tasks × agent arms × attempts. [Job settings](/core-concepts/jobs) explain what each choice changes.
 
 ## One job
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="A job's page, on its OVERVIEW tab">
-  <img src="/images/job.png" alt="A job's page: the job id and status in the header, CANCEL, RESUME, DOWNLOAD and RE-RUN JOB buttons, tiles for trials, errors, average reward, cost and max cost, and the OVERVIEW tab with a progress bar and a per-agent table." />
+Start with progress and errors, then open the relevant tab.
+
+<Frame caption="The overview connects run progress to scores for each agent and dataset.">
+  <img src="/images/dashboard-job-overview.png" alt="Completed job summary with trials, errors, reward, cost, progress, and per-agent scores." />
 </Frame>
 
-The header carries the job id and its status. CANCEL stops a running job. RESUME runs a finished job's failed or stopped trials again as a new job. Both appear for the job's creator and the organization's members; a job shared with you by address opens without them.
+| Tab | Answers |
+| --- | --- |
+| **Overview** | How did each agent and dataset perform? |
+| **Trials** | Which attempts scored, failed, or are still running? |
+| **Analyze** | Does the trace support the score? |
+| **Check** | What quality checks exist for these tasks? |
+| **Config** | What exact settings and resolved records did this job use? |
 
-DOWNLOAD saves a finished job's results as a `.tar.gz` in the standard job layout; while the job runs it is disabled, with the reason on hover. RE-RUN JOB opens the New job form filled in with this job's choices.
+A job can be **Completed** while some trials have errors. The top-level average is shown only for a single agent/dataset group; use Overview for comparisons across groups.
 
-Five tiles sum the job up: trials settled out of the total, errors, average reward, cost so far, and the most the job can cost. The average reward shows a value for a job with one agent and one dataset; with more, it shows a dash and the OVERVIEW rows carry the means. Below them, five tabs.
+### Job actions
 
-- **OVERVIEW**: a progress bar by trial status, and one row per agent and dataset with its scored trials, errors, mean reward and pass@k.
-- **TRIALS**: every trial, with ALL or ERRORS, its task, agent, status, reward, cost, duration and token counts. Click a row to open the [trial viewer](/dashboard/trial-viewer).
-- **ANALYZE**: the trace analyses of the job's trials, below.
-- **CHECK**: the task quality checks of the job's datasets. See [checks](/dashboard/checks).
-- **CONFIG**: the stored job record as JSON: its id, status, counts, stats and resolved settings.
+| Action | Effect |
+| --- | --- |
+| **Cancel** | Request that the running job stop. |
+| **Resume** | Create a new job from eligible failed or stopped trials. |
+| **Re-run job** | Open the launcher with this job's choices. |
+| **Download** | Retrieve a finished job's result archive. |
+| **Share** | Manage read access to a job you created. |
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="The TRIALS tab">
-  <img src="/images/job-trials.png" alt="The TRIALS tab: ALL and ERRORS filters and a table of trials with task, agent, status, reward, cost, duration, input tokens and output tokens." />
-</Frame>
+Actions depend on the job state and your access. Email sharing gives read access; team membership can also permit job operations.
 
 ## The ANALYZE tab
 
-{/* retake after the UI pass, from a non-admin account */}
-<Frame caption="The ANALYZE tab after every trial was analyzed">
-  <img src="/images/job-analyze.png" alt="The ANALYZE tab: tiles for completed, failed and pending analyses and the analyzer's cost, the policy with model, effort and criteria, and a table of pass, fail, not applicable and unknown counts per criterion." />
+The summary separates completed, failed, and pending analyses, plus their cost. An embedded analysis policy shows the configured model, effort, and rubric; manual analyses record their own settings.
+
+<Frame caption="Criterion totals help identify which findings need closer inspection.">
+  <img src="/images/dashboard-analysis.png" alt="Analysis criteria with pass, fail, not-applicable, and unknown totals." />
 </Frame>
 
-The tab counts completed, failed and pending analyses and the analyzer's own spend. The policy block names the analyzer's model, its reasoning effort and the rubric's criteria. The first table counts, per criterion, how many analyses ruled pass, fail, not applicable or unknown.
+1. Read the **analysis summary**.
 
-Below it, one row per trial carries its label, its verdicts, the analyzer's spend and its summary; click a row to open the analysis in the trial viewer. Start analyses with `evolve analyze <job-id>` or with `--analyze` on `evolve run`, see [analyze](/core-concepts/analyze).
+2. Review **criterion totals**: pass, fail, not applicable, and unknown.
+
+3. Open **per-trial findings**: label, evidence, and summary.
+
+4. Follow the **analyzer trace**.
+
+Start a review with `evolve analyze "$JOB_ID" --watch`, or enable analysis when launching through the CLI or SDK. See [Analyze trials](/core-concepts/analyze).
+
+<CardGroup cols={2}>
+  <Card title="Trial viewer" icon="search" href="/dashboard/trial-viewer">Inspect one attempt in detail.</Card>
+  <Card title="Checks" icon="list-check" href="/dashboard/checks">Read the task-quality reports.</Card>
+</CardGroup>
