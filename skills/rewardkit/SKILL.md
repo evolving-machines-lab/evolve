@@ -1,6 +1,6 @@
 ---
 name: rewardkit
-description: Write Harbor-format task verifiers using Reward Kit. Use when creating or editing a 
+description: Write verifiers for Evolve's Harbor-format tasks using Reward Kit. Use when creating or editing a
   task's tests/ directory, adding grading criteria, setting up LLM/agent judges, or designing 
   verifiers that produce a reward score.
 metadata:
@@ -10,6 +10,10 @@ metadata:
 Help the user write task verifiers with Reward Kit. Reward Kit is a lightweight Python 
 package that turns a directory of criteria files into a reward score. Each criterion is a 
 Python function call or a TOML judge file; folders become separate rewards.
+
+The package keeps its upstream name, `harbor-rewardkit`. For Evolve's supported
+setup and a complete example, read
+`evolve skills get evals core-concepts/rewardkit`.
 
 ## Setup in a task
 
@@ -22,17 +26,32 @@ tests/
 └── judge.toml        # optional LLM/agent judge
 ```
 
-`tests/test.sh`:
+Install the package when the image builds, using Python 3.12 or newer. In shared
+mode, add this to `environment/Dockerfile`; in separate mode, install it in the
+verifier image:
+
+```dockerfile
+RUN pip install --no-cache-dir \
+    'harbor-rewardkit==0.2.1'
+```
+
+Then write `tests/test.sh`:
 ```bash
 #!/bin/bash
-uvx --from 'harbor-rewardkit==0.2.*' rewardkit /tests
+set -euo pipefail
+python3 -m rewardkit /tests \
+  --workspace /app \
+  --output /logs/verifier/reward.json
 ```
 
 This runs all criteria in `/tests/` against the workspace at `/app` and writes 
-`/logs/verifier/reward.json`. Defaults match Harbor's conventions — no extra config needed.
+`/logs/verifier/reward.json`. Adjust `--workspace` if the task uses another directory.
 
-Run `evolve check "<task-path>" --watch` to run the verifier against the task's reference 
-solution before publishing the task.
+Run `evolve check "<task-path>" --watch` for task quality review. The checker may
+run the reference solution and verifier when its environment supports them;
+inspect its findings and evidence. The `executed` field is derived from rubric
+outcomes, not an independent execution audit. Read
+`evolve skills get evals core-concepts/check` for the result semantics.
 
 If judge criteria need API keys, request them through `task.toml`:
 ```toml
@@ -40,11 +59,16 @@ If judge criteria need API keys, request them through `task.toml`:
 ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 ```
 
-On Evolve you never put a real key in the task: write the template exactly as above, as
-the whole value, and the judge's credential is supplied at run time. The rubric names the
-judge model, or Reward Kit's own default applies. A job can override the judge for every
-verifier with `evolve run --ve REWARDKIT_JUDGE=<judge> --ve REWARDKIT_MODEL=<model>`; no
-other verifier env key is accepted on a job.
+Write the template literally as the whole value. Evolve supplies a scoped gateway
+credential and base URL during verification. Set the judge model explicitly in
+the TOML. Use `OPENAI_API_KEY` instead for an OpenAI-family judge.
+
+On a job, `--ve REWARDKIT_JUDGE=<judge>` overrides the judge and
+`--ve REWARDKIT_MODEL=<model>` selects an agent judge's model. These are the only
+two job-level verifier environment overrides. Read
+`evolve skills get evals cli-reference/run` for CLI options or
+`evolve skills get evals sdk-reference/methods/jobs` for the Python and TypeScript
+`start` inputs.
 
 Ask whether Reward Kit should run in the agent's shared environment or in a
 separate verifier environment. Prefer a separate verifier environment when judge
@@ -79,6 +103,12 @@ verifier image's build context and its `tests/Dockerfile` must provide
 uploads `tests/` to `/tests` instead. When it pins a distinct image, that image
 boots as it is with nothing uploaded, so it must carry `/tests/test.sh` itself.
 
+For separate verification, declare the files to grade in the task's `artifacts`
+list. The verifier does not receive the agent's whole workspace. Read
+`evolve skills get evals core-concepts/task-verifiers` and
+`evolve skills get evals core-concepts/task-config` for Evolve's file-transfer and
+network rules.
+
 ## Programmatic criteria
 
 Call built-ins from any `.py` file in `tests/`:
@@ -95,6 +125,10 @@ rk.json_key_equals("result.json", "status", "ok")
 All criteria accept `weight` (default `1.0`) and `isolated` (default `False`, runs in 
 overlayfs so side effects don't leak).
 
+Isolation needs working overlayfs support. If the image needs `fuse-overlayfs`,
+install it at build time; do not rely on its runtime installer with restricted
+network access. Confirm the sandbox permits the required mounts.
+
 ### Available built-ins
 
 - **Files**: `file_exists`, `file_not_exists`, `file_contains`, `file_contains_regex`, 
@@ -107,7 +141,12 @@ overlayfs so side effects don't leak).
 - **Images**: `image_similarity`, `image_size_equals` (needs `[image]` extra)
 - **Trajectory**: `trajectory_tool_used`, `trajectory_tool_not_used`, `trajectory_turn_count`
 
-For extras, install with `uv tool install harbor-rewardkit[all]`.
+Install needed extras in that same image: `harbor-rewardkit[documents]==0.2.1`
+or `harbor-rewardkit[image]==0.2.1`. Use `[all]` only if both are needed.
+
+Do not depend on downloading packages during verification. Evolve's offline
+Reward Kit bundle is for judge-enabled runs and does not include optional
+extras. Its `uvx` path cannot fetch versions or extras absent from the bundle.
 
 ## Custom criteria
 
@@ -143,7 +182,7 @@ For subjective checks (quality, readability, edge cases), create a TOML file:
 
 ```toml
 [judge]
-judge = "anthropic/claude-sonnet-5"   # LiteLLM model string
+judge = "anthropic/claude-sonnet-4-6"
 files = ["/app/main.py"]
 
 [[criterion]]
@@ -169,7 +208,7 @@ Agent judges shell out to a CLI and can explore the filesystem:
 ```toml
 [judge]
 judge = "claude-code"
-model = "anthropic/claude-sonnet-5"
+model = "anthropic/claude-sonnet-4-6"
 isolated = true
 
 [[criterion]]
@@ -178,6 +217,10 @@ type = "binary"
 ```
 
 Slower and more expensive than LLM judges, but they can run commands and inspect files.
+
+Evolve supports `claude-code` and `codex` agent judges. Install the selected CLI
+in the verifier image and request its matching provider credential. The managed
+judge path does not supply verifier MCP tools or arbitrary provider credentials.
 
 ### Useful `[judge]` options
 
@@ -289,7 +332,14 @@ weight unless that aggregation's inline map overrides them;
 - `/logs/verifier/reward.json` — per-reward scores
 - `/logs/verifier/reward-details.json` — per-criterion results, judge reasoning, errors
 
+Evolve uses `reward` as the primary score, or the only value when there is one
+key. Multiple dimensions without `reward` remain metrics but have no primary
+score. Keep the primary score in `[0, 1]`.
+
 ## Multi-step tasks
+
+Evolve currently requires shared verification for multi-step tasks; separate
+verifier environments are rejected.
 
 In a multi-step task, each step has its own `tests/` under
 `steps/{name}/tests/`, and the verifier runs once per step. Reward Kit behaves
@@ -311,6 +361,9 @@ separate reward key for that step, and `multi_step_reward_strategy = "mean"`
 averages each key across steps. Use `"final"` when the last step is an
 end-to-end check whose rewards already represent the full task.
 
+Read `evolve skills get evals core-concepts/multi-step` for Evolve's supported
+step configuration and result layout.
+
 ## When to reach for what
 
 - **Use built-ins** for file existence, string matches, command output, JSON/CSV checks, 
@@ -326,5 +379,6 @@ end-to-end check whose rewards already represent the full task.
 
 ## Working example
 
-See https://github.com/laude-institute/harbor/tree/main/examples/tasks/reward-kit-example.
-Reward Kit's own documentation: https://docs.harborframework.com/core-concepts/rewardkit/quick-start.
+Read `evolve skills get evals core-concepts/rewardkit` for a complete verifier,
+or `evolve skills get evals getting-started/first-task` for the task's build,
+publish, check, and evaluation workflow.

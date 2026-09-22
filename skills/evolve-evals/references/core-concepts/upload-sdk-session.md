@@ -196,13 +196,21 @@ Set `$JOB_ID` to the returned ID:
 ```bash
 evolve job show "$JOB_ID"
 evolve job trials "$JOB_ID"
-evolve job viewer "$JOB_ID"
+```
+
+Set `$TRIAL_ID` to a trial ID from that list, then read its trace:
+
+```bash
+evolve trial trace \
+  "$TRIAL_ID"
 ```
 
 Check that the trial has the expected task, agent, model, prompt, and agent activity. Read the import report for skipped trials or missing task links. Then analyze it:
 
 ```bash
-evolve analyze "$JOB_ID" --watch
+evolve analyze \
+  "$JOB_ID" \
+  --watch
 ```
 
 Uploaded jobs support analysis. They cannot be resumed, retried, or regraded.
