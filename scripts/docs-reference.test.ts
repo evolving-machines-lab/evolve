@@ -14,6 +14,9 @@ const pythonSecrets = read("packages/sdk-py/evolve/managed_secrets.py");
 
 // These checks guard reference coverage. Human review still checks the meaning
 // of each description, parameter, example, and language-specific difference.
+// A client that shares a page owns the headings under its prefix.
+const headingPrefix: Record<string, string> = { TaskPackageFiles: "package" };
+
 const clients: Record<string, string> = {
   DatasetsClient: "datasets",
   AgentsClient: "agents",
@@ -41,11 +44,10 @@ function headings(text: string): string[] {
     .map((match) => (match[1] ?? match[2]).replace(/`/g, ""));
 }
 
-/** A heading documents a method when it IS the method (`## get`) or a qualified spelling of it (`## package.get`), a TypeScript / Python pair counting as one;
- * a heading that merely mentions the name (`## When to call get`) does not. Each heading is claimed once, so two
- * clients on one page cannot share a section. */
-function claimMethodHeading(names: string[], claimed: Set<string>, method: string): boolean {
-  const matches = (name: string): boolean => name.split(" / ").some((part) => part === method || part.endsWith(`.${method}`) || part === `${method}()`);
+// Claimed once per page, so two clients sharing a page cannot share a section; a prefixed client owns `<prefix>.<method>` headings.
+function claimMethodHeading(names: string[], claimed: Set<string>, method: string, prefix?: string): boolean {
+  const wanted = prefix ? `${prefix}.${method}` : method;
+  const matches = (name: string): boolean => name.split(" / ").some((part) => part === wanted || part === `${wanted}()`);
   const index = names.findIndex((name, at) => !claimed.has(`${at}`) && matches(name));
   if (index < 0) return false;
   claimed.add(`${index}`);
@@ -60,14 +62,16 @@ function pythonFences(text: string): string {
   return [...text.matchAll(/^```python[^\n]*\n([\s\S]*?)^```/gm)].map((match) => match[1]).join("\n");
 }
 
-/** The CLI's command groups, read from its GROUPS table: every 2-space key until the table closes. */
+/** The CLI's command groups and top-level verbs, read from its two tables: every 2-space key until each table closes. */
 function cliGroups(): string[] {
   const cli = read("packages/sdk-ts/src/cli/index.ts");
-  const start = cli.indexOf("const GROUPS: Record<string, GroupSpec> = {");
-  assert.ok(start >= 0, "the CLI's GROUPS table moved; update this test");
-  const body = cli.slice(start);
-  const end = body.search(/^};$/m);
-  return [...body.slice(0, end).matchAll(/^  ([a-z][a-z-]*): \{/gm)].map((match) => match[1]);
+  const keys = (marker: string): string[] => {
+    const start = cli.indexOf(marker);
+    assert.ok(start >= 0, `the CLI table "${marker}" moved; update this test`);
+    const body = cli.slice(start);
+    return [...body.slice(0, body.search(/^};$/m)).matchAll(/^  ([a-z][a-z-]*): \{/gm)].map((match) => match[1]);
+  };
+  return [...new Set([...keys("const GROUPS: Record<string, GroupSpec> = {"), ...keys("const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {")])];
 }
 
 test("every hosted interface with methods is assigned a method reference", () => {
@@ -108,7 +112,7 @@ for (const [client, page] of Object.entries(clients)) {
     const claimed = claimedHeadings.get(page) ?? new Set<string>();
     claimedHeadings.set(page, claimed);
     for (const method of methods) {
-      assert.ok(claimMethodHeading(names, claimed, method), `${client}.${method} needs its own reference heading (a heading equal to the name, or <client>.${method} on a shared page)`);
+      assert.ok(claimMethodHeading(names, claimed, method, headingPrefix[client]), `${client}.${method} needs its own reference heading (${headingPrefix[client] ? `${headingPrefix[client]}.${method}` : method}, or a TypeScript / Python pair)`);
     }
     const pythonCode = pythonFences(reference);
     const py = client === "ManagedSecretsClient" ? pythonSecrets : python;
@@ -119,7 +123,7 @@ for (const [client, page] of Object.entries(clients)) {
     assert.ok(pyMethods.length > 0);
     for (const method of pyMethods.filter((name) => name !== "close")) {
       const camelCase = method.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
-      assert.ok(hasMethodHeading(names, method) || hasMethodHeading(names, camelCase), `${client}.${method} needs its own reference section`);
+      assert.ok(claimMethodHeading(names, new Set(), method, headingPrefix[client]) || claimMethodHeading(names, new Set(), camelCase, headingPrefix[client]), `${client}.${method} needs its own reference section`);
       assert.ok(new RegExp(`\\b${method}\\(`).test(pythonCode), `${client}.${method} needs its Python call or signature inside a python code block`);
     }
   });

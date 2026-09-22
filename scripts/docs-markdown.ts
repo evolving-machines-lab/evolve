@@ -8,8 +8,9 @@ import ts from "typescript";
 
 type Attributes = Record<string, string | boolean>;
 const containers = new Set(["CardGroup", "Tabs", "CodeGroup", "Steps", "AccordionGroup", "FileTree", "Tree", "div"]);
-// Raw HTML the skill cannot show; a page that needs one gets an explicit Markdown rendering instead.
-const rawHtml = new Set(["video", "iframe", "table", "script", "style", "object", "embed", "svg", "details", "summary", "section", "span", "p", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6"]);
+// Every HTML element name: the inline ones below render as Markdown, the rest refuse (the skill shows no HTML);
+// a lowercase name outside this list is a placeholder such as <id> and stays literal text.
+const htmlElements = new Set(["a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption", "cite", "code", "col", "colgroup", "data", "datalist", "dd", "del", "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map", "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output", "p", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "script", "search", "section", "select", "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup", "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track", "u", "ul", "var", "video", "wbr"]);
 const inlineHtml = new Set(["a", "kbd", "sup", "sub", "b", "i", "em", "strong", "code"]);
 const titled = new Set(["Tab", "Accordion", "Expandable"]);
 const callouts = new Set(["Note", "Tip", "Warning", "Info", "Check", "Danger"]);
@@ -83,9 +84,17 @@ function component(name: string, props: Attributes, body: string, step: number, 
   const title = String(props.title ?? "");
   // Layout wrappers carry no instructions; retain their entire Markdown body.
   if (containers.has(name)) return `\n\n${content}\n\n`;
-  if (name === "a") return props.href ? `[${content.trim()}](${props.href})` : content;
-  if (inlineHtml.has(name)) return content;
-  if (rawHtml.has(name)) throw new Error(`${where}: raw <${name}> has no skill rendering; write it as Markdown`);
+  if (name === "a") {
+    if (props.href && !content.trim()) throw new Error(`${where}: <a href="${props.href}"> needs link text`);
+    return props.href ? `[${content.trim()}](${props.href})` : content;
+  }
+  if (name === "code") return `\`${content}\``;
+  if (name === "b" || name === "strong") return `**${content}**`;
+  if (name === "i" || name === "em") return `*${content}*`;
+  if (name === "sup") return `^${content}^`;
+  if (name === "sub") return `~${content}~`;
+  if (name === "kbd") return content;
+  if (htmlElements.has(name) && name !== "img" && name !== "br") throw new Error(`${where}: raw <${name}> has no skill rendering; write it as Markdown`);
   if (name === "Card") {
     if (!title) throw new Error(`${where}: Card needs a title`);
     const label = props.href ? `[${title}](${props.href})` : title;
@@ -96,7 +105,10 @@ function component(name: string, props: Attributes, body: string, step: number, 
     return `\n\n### ${step}. ${title}\n\n${content}\n\n`;
   }
   if (titled.has(name)) return `\n\n${title ? `### ${title}\n\n` : ""}${content}\n\n`;
-  if (callouts.has(name)) return `\n\n**${title || name}:**\n\n${content}\n\n`;
+  if (callouts.has(name)) {
+    if (!content.trim()) throw new Error(`${where}: empty <${name}>`);
+    return `\n\n**${title || name}:**\n\n${content}\n\n`;
+  }
   if (name === "Frame") return `\n\n${content}${props.caption ? `\n\n*${props.caption}*` : ""}\n\n`;
   if (name === "ParamField" || name === "ResponseField") {
     const field = props.body ?? props.query ?? props.path ?? props.header ?? props.name;
@@ -144,7 +156,7 @@ export function renderDocsMarkdown(input: string, options: { file: string; root:
     let output = "";
     let step = 0;
     while (position < text.length) {
-      const match = /<\/?(?:[A-Z][\w.]*|img|br|div|a|kbd|sup|sub|b|i|em|strong|code|video|iframe|table|script|style|object|embed|svg|details|summary|section|span|p|ul|ol|li|h[1-6])\b/.exec(text.slice(position));
+      const match = /<\/?(?:[A-Z][\w.]*|blockquote|figcaption|colgroup|datalist|fieldset|noscript|optgroup|progress|template|textarea|address|article|caption|details|picture|section|summary|button|canvas|dialog|figure|footer|header|hgroup|iframe|legend|object|option|output|script|search|select|source|strong|aside|audio|embed|input|label|meter|small|style|table|tbody|tfoot|thead|title|track|video|abbr|area|base|body|cite|code|data|form|head|html|link|main|mark|menu|meta|ruby|samp|slot|span|time|bdi|bdo|col|del|dfn|div|img|ins|kbd|map|nav|pre|sub|sup|var|wbr|br|dd|dl|dt|em|h1|h2|h3|h4|h5|h6|hr|li|ol|rp|rt|td|th|tr|ul|a|b|i|p|q|s|u)\b(?![\w-])/.exec(text.slice(position));
       if (!match) {
         output += text.slice(position);
         position = text.length;
