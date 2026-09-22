@@ -114,9 +114,14 @@ test("raw HTML the skill cannot show fails generation; inline tags keep their te
   assert.throws(() => renderDocsMarkdown("<table><tr><td>x</td></tr></table>", options), /raw <(table|tr|td)>/);
   assert.throws(() => renderDocsMarkdown('<Steps><Step>No title.</Step></Steps>', options), /Step needs a title/);
   assert.equal(renderDocsMarkdown("Press <kbd>Enter</kbd>.", options), "Press Enter.\n");
-  assert.equal(renderDocsMarkdown("Run <code>evolve run</code> now; x<sup>2</sup>, H<sub>2</sub>O, <b>bold</b>, <em>soft</em>.", options), "Run `evolve run` now; x^2^, H~2~O, **bold**, *soft*.\n");
+  assert.equal(renderDocsMarkdown("Run <code>evolve run</code> now; x<sup>2</sup>, H<sub>2</sub>O, <b>bold</b>, <em>soft</em>.", options), "Run `evolve run` now; x^2^, H2O, **bold**, *soft*.\n");
   assert.equal(renderDocsMarkdown("Paths like <year>/<month>/<id> stay literal.", options), "Paths like <year>/<month>/<id> stay literal.\n");
   assert.throws(() => renderDocsMarkdown('<audio src="/a.mp3" />', options), /raw <audio>/);
+  assert.throws(() => renderDocsMarkdown('<svg width="10"><circle r="1" /></svg>', options), /raw <svg>/);
+  assert.throws(() => renderDocsMarkdown("<hr>", options), /raw <hr>/);
+  assert.throws(() => renderDocsMarkdown("<pre>raw <Card> text</pre>", options), /raw <pre>/);
+  assert.throws(() => renderDocsMarkdown("a <label> placeholder", options), /raw <label>/);
+  assert.equal(renderDocsMarkdown("A line<br>continues", options), "A line\ncontinues\n");
   assert.throws(() => renderDocsMarkdown("<Note></Note>", options), /empty <Note>/);
   assert.throws(() => renderDocsMarkdown('<a href="/x" />', options), /needs link text/);
   assert.equal(renderDocsMarkdown('See <a href="/x">the page</a>.', options), "See [the page](/x).\n");

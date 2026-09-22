@@ -10,10 +10,12 @@ type Attributes = Record<string, string | boolean>;
 const containers = new Set(["CardGroup", "Tabs", "CodeGroup", "Steps", "AccordionGroup", "FileTree", "Tree", "div"]);
 // Every HTML element name: the inline ones below render as Markdown, the rest refuse (the skill shows no HTML);
 // a lowercase name outside this list is a placeholder such as <id> and stays literal text.
-const htmlElements = new Set(["a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption", "cite", "code", "col", "colgroup", "data", "datalist", "dd", "del", "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map", "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output", "p", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "script", "search", "section", "select", "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup", "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track", "u", "ul", "var", "video", "wbr"]);
-const inlineHtml = new Set(["a", "kbd", "sup", "sub", "b", "i", "em", "strong", "code"]);
+// Void elements close themselves (a bare <hr> or <input> is not an unclosed tag).
+const voidElements = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+const htmlElements = new Set(["a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption", "cite", "code", "col", "colgroup", "data", "datalist", "dd", "del", "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map", "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output", "p", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "script", "search", "section", "select", "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup", "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track", "u", "ul", "var", "video", "wbr", "svg", "math"]);
 const titled = new Set(["Tab", "Accordion", "Expandable"]);
 const callouts = new Set(["Note", "Tip", "Warning", "Info", "Check", "Danger"]);
+const tagScanner = new RegExp(`<\\/?(?:[A-Z][\\w.]*|${[...htmlElements].sort((a, b) => b.length - a.length).join("|")})\\b(?![\\w-])`);
 const fencedCode = /^([ \t]*)(`{3,}|~{3,})([^\n]*)\n[\s\S]*?^\1\2[ \t]*$/gm;
 
 /** Collapse presentation spacing only after components have been expanded.
@@ -92,7 +94,7 @@ function component(name: string, props: Attributes, body: string, step: number, 
   if (name === "b" || name === "strong") return `**${content}**`;
   if (name === "i" || name === "em") return `*${content}*`;
   if (name === "sup") return `^${content}^`;
-  if (name === "sub") return `~${content}~`;
+  if (name === "sub") return content;
   if (name === "kbd") return content;
   if (htmlElements.has(name) && name !== "img" && name !== "br") throw new Error(`${where}: raw <${name}> has no skill rendering; write it as Markdown`);
   if (name === "Card") {
@@ -156,7 +158,7 @@ export function renderDocsMarkdown(input: string, options: { file: string; root:
     let output = "";
     let step = 0;
     while (position < text.length) {
-      const match = /<\/?(?:[A-Z][\w.]*|blockquote|figcaption|colgroup|datalist|fieldset|noscript|optgroup|progress|template|textarea|address|article|caption|details|picture|section|summary|button|canvas|dialog|figure|footer|header|hgroup|iframe|legend|object|option|output|script|search|select|source|strong|aside|audio|embed|input|label|meter|small|style|table|tbody|tfoot|thead|title|track|video|abbr|area|base|body|cite|code|data|form|head|html|link|main|mark|menu|meta|ruby|samp|slot|span|time|bdi|bdo|col|del|dfn|div|img|ins|kbd|map|nav|pre|sub|sup|var|wbr|br|dd|dl|dt|em|h1|h2|h3|h4|h5|h6|hr|li|ol|rp|rt|td|th|tr|ul|a|b|i|p|q|s|u)\b(?![\w-])/.exec(text.slice(position));
+      const match = tagScanner.exec(text.slice(position));
       if (!match) {
         output += text.slice(position);
         position = text.length;
@@ -172,7 +174,8 @@ export function renderDocsMarkdown(input: string, options: { file: string; root:
         if (name !== expected) throw new Error(`${file}: expected </${expected}>, got </${name}>`);
         return output;
       }
-      const selfClosing = /\/\s*>$/.test(tag) || name === "img" || name === "br";
+      const selfClosing = /\/\s*>$/.test(tag) || voidElements.has(name);
+      if (htmlElements.has(name) && !["a", "code", "b", "strong", "i", "em", "sup", "sub", "kbd", "img", "br", "div"].includes(name)) throw new Error(`${file}: raw <${name}> has no skill rendering; write it as Markdown`);
       if (imports.has(name)) {
         if (!selfClosing) throw new Error(`${file}: imported snippets must be self-closing`);
         output += save(`\n\n${imports.get(name)!}\n\n`);
