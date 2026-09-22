@@ -2056,15 +2056,16 @@ class TaskCheck(TypedDict):
     #: ``'no_problem_found'`` — computed by the platform from the outcomes
     #: when the result is stored: ``'has_a_problem'`` on a fail of any
     #: criterion; else ``'unclear'`` on an unknown of any of the seven
-    #: file-based criteria; else ``'no_problem_found'``. None until
-    #: completed, and None under a custom rubric.
+    #: file-based criteria; else ``'no_problem_found'``. ``attempt_isolation``
+    #: is read for ``'has_a_problem'`` only: its unknown changes neither the
+    #: label nor ``executed``. None until completed, and None under a custom
+    #: rubric.
     label: Optional[CheckLabel]
     #: Whether the box ran the task's environment: True when none of the
-    #: six run-based criteria (reference_solution_is_valid,
+    #: five run-based criteria (reference_solution_is_valid,
     #: verifier_rejects_non_solutions, environment_builds_and_runs,
-    #: verification_is_stable, limits_allow_the_task, attempt_isolation)
-    #: is unknown, so a reading-only ``'no_problem_found'`` is never
-    #: mistaken for a run.
+    #: verification_is_stable, limits_allow_the_task) is unknown, so a
+    #: reading-only ``'no_problem_found'`` is never mistaken for a run.
     #: None exactly when ``label`` is None.
     executed: Optional[bool]
     cost_usd: Optional[float]
