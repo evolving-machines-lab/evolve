@@ -1,6 +1,6 @@
 ---
 title: "Analyses"
-description: "Analyze trial traces, then inspect the verdict and the analyzer's own run."
+description: "Analyze trial traces, then inspect the result and the analyzer's own run."
 ---
 
 <Note>For every method’s inputs, return values, and language differences, see the [analyses method reference](/sdk-reference/methods/analyses).</Note>
@@ -90,24 +90,24 @@ The response includes `model_name`, `rubric`, `prompt`, `reasoning_effort`, and 
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
-## Read verdicts
+## Read results
 
 <CodeGroup>
 ```ts TypeScript
 for await (const result of analyses().list({ job: jobId })) {
-  console.log(result.id, result.status, result.label, result.checks);
+  console.log(result.id, result.status, result.checks);
 }
 ```
 
 ```python Python
 async for result in analyses().list(job=job_id):
-    print(result["id"], result["status"], result["label"], result["checks"])
+    print(result["id"], result["status"], result["checks"])
 ```
 </CodeGroup>
 
 List options: `scope`, `job`, `status` list, `limit`, `cursor`. Status values are `queued`, `running`, `completed`, `failed`.
 
-The latest verdict also appears on `trial.analysis`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence. Default-rubric labels are `flagged`, `env_fault`, `unclear`, or `clean`; a custom rubric may have no label.
+The latest analysis also appears on `trial.analysis`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence. Evolve derives no verdict from them; compute what you need from the criteria.
 
 ## Inspect the analyzer run
 
@@ -117,7 +117,7 @@ The latest verdict also appears on `trial.analysis`. Each criterion reports `pas
 | Read defaults | `defaults()` | `defaults()` |
 | Download run | `download(analysisId, { to })` | `download(analysis_id, to=...)` |
 | Browse sandbox files | `filesystem(analysisId)` | `filesystem(analysis_id)` |
-| Read one verdict directly | `get(analysisId)` | Use list results or `trial.analysis` |
+| Read one analysis directly | `get(analysisId)` | Use list results or `trial.analysis` |
 | Read analyzer transcript | `transcript(analysisId, { since })` | Not exposed |
 | Read raw stored artifact | `artifact(analysisId, stream)` | Not exposed |
 

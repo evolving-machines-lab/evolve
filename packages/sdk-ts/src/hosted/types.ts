@@ -506,7 +506,7 @@ export interface RetryConfig {
 export interface RubricCriterion {
   /**
    * Criterion identifier, snake_case (it keys the result's `checks` object).
-   * The platform's default rubrics name seven criteria for analyze and thirteen for check.
+   * The platform's default rubrics are served by `analyses().defaults()` and `checks().defaults()`.
    */
   name: string;
   /** What the criterion evaluates, one sentence. */
@@ -537,8 +537,7 @@ export interface Rubric {
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
  * wave. `{}` is legal and means "all defaults":
  * openrouter/deepseek/deepseek-v4.1-flash at its per-model effort (high)
- * over the platform's default analyze rubric (seven criteria, score_is_earned
- * first) and its default prompt body.
+ * over the platform's default analyze rubric and its default prompt body.
  *
  * The analyzer always runs the claude-code harness (Harbor's default analyze
  * agent) in its own sealed sandbox — on the provider `sandbox_provider`
@@ -1649,28 +1648,6 @@ export interface AnalysisCheck {
 }
 
 /**
- * The derived label of an analysis — computed by the platform from the
- * outcomes when the result is stored, never asked from the model. Null until
- * completed, and null on a completed analysis whose rubric is not the
- * default one (a custom rubric carries its per-criterion outcomes and no
- * label). Precedence: `flagged` on a fail of score_is_earned,
- * score_is_correct, task_was_fair or report_is_truthful; else `env_fault` on
- * a fail of environment_worked; else `unclear` on an unknown of any of those
- * five, or a not_applicable of score_is_earned or score_is_correct; else
- * `clean`.
- */
-export type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
-
-/**
- * The derived label of a task check — computed the same way. `has_a_problem`
- * on a fail of any criterion; else `unclear` on an unknown of any of the seven
- * file-based criteria; else `no_problem_found`. `attempt_isolation` is read
- * for `has_a_problem` only: its unknown changes neither the label nor
- * `executed`. Null under a custom rubric.
- */
-export type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
-
-/**
  * Why an analysis FAILED — a stored typed failure, never a silent absence and
  * never a fake pass. NOT under the key `error` for the same reason JobFailure
  * is not.
@@ -1712,7 +1689,7 @@ export interface TrialAnalysis {
    * Provenance: the analyzed trial, its job, and its task. Redundant on
    * `Trial.analysis` (the trial is the enclosing object) and the whole point
    * of a `analyses().list()` row, where nothing else says which run the
-   * verdict judged. Harbor's `trial_name` names the same thing by directory.
+   * result judged. Harbor's `trial_name` names the same thing by directory.
    */
   trial_id: string;
   job_id: string;
@@ -1746,8 +1723,6 @@ export interface TrialAnalysis {
    * (the frozen-criteria law). Null until completed.
    */
   checks: Record<string, AnalysisCheck> | null;
-  /** The derived label (AnalysisLabel states the rule); null until completed, and null under a custom rubric. */
-  label: AnalysisLabel | null;
   estimated_cost_usd: number | null;
   /**
    * The analyzer's one-home usage reading — the SAME object, same keys, the
@@ -4888,7 +4863,7 @@ export interface AnalysisTranscript {
 }
 
 /**
- * Client for analysis runs — the analyzer's own transcript, verdict document,
+ * Client for analysis runs — the analyzer's own transcript, result document,
  * and stored artifacts, all globally addressable by analysis id.
  *
  * DELIBERATELY OFF-CONTRACT: these three reads ride the dashboard's traces
@@ -4903,7 +4878,7 @@ export interface AnalysisTranscript {
  * GatewayUsageEvent prose, not as an operation. RECORDED TENSION: whether
  * that feed and this one join the contract as operations (spec + both SDK
  * shadows) is an open ruling, not something settled here. The contract-side
- * verdict stays where it always was — `Trial.analysis` on the trial body;
+ * result stays where it always was — `Trial.analysis` on the trial body;
  * this client adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
@@ -4924,7 +4899,7 @@ export interface AnalysesClient {
   /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): model, effort, provider, rubric and the unrendered prompt template. */
   defaults(): Promise<AnalyzeDefaults>;
   /**
-   * The verdict document — the wire's TrialAnalysis, statuses and typed
+   * The result document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same
    * object the analyzed trial serves as `Trial.analysis` when this analysis
    * is its latest; this door answers for earlier analyses too.
@@ -4995,7 +4970,7 @@ export interface AnalysesClient {
  * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
  * default for both rubric
  * agents, a recorded deviation), `rubric` (the default is the platform's
- * check rubric, thirteen criteria), and
+ * check rubric), and
  * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing the platform's
  * default check body and rendered with `{task_path}`, `{file_tree}`,
  * `{criteria_guidance}`; the output contract is appended after it exactly
@@ -5017,7 +4992,7 @@ export interface CheckConfigInput {
   name?: string;
   /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
   model_name?: string;
-  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (thirteen criteria). */
+  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (`checks().defaults()`). */
   rubric?: Rubric;
   /** The prompt template — the TEXT of Harbor's `-p/--prompt` file. */
   prompt?: string;
@@ -5077,9 +5052,8 @@ export interface CheckSource {
 /**
  * One task's quality check — Harbor's QualityCheckResult shape (their
  * cli/quality_checker/models.py:31-35: `task_name`, `checks` keyed by
- * criterion, `cost_usd`), its checks extended by the result schema and the
- * derived `label` and `executed` beside them, plus the hosted provenance: its own id, the check
- * it belongs to, its lifecycle (the analysis ladder's four lowercase words),
+ * criterion, `cost_usd`), its checks extended by the result schema, plus the
+ * hosted provenance: its own id, the check it belongs to, its lifecycle (the analysis ladder's four lowercase words),
  * the bounded attempt count, and a typed `failure` in place of Harbor's
  * `error` string (the TrialAnalysis rule).
  *
@@ -5098,17 +5072,6 @@ export interface TaskCheck {
   status: AnalysisStatus;
   /** One entry per rubric criterion, keys exactly the frozen criteria. Null until completed. */
   checks: Record<string, AnalysisCheck> | null;
-  /** The derived label (CheckLabel states the rule); null until completed, and null under a custom rubric. */
-  label: CheckLabel | null;
-  /**
-   * Whether the box ran the task's environment: true when none of the five
-   * run-based criteria (reference_solution_is_valid,
-   * verifier_rejects_non_solutions, environment_builds_and_runs,
-   * verification_is_stable, limits_allow_the_task) is unknown, so a
-   * reading-only `no_problem_found` is never mistaken for a run. Null
-   * exactly when `label` is null.
-   */
-  executed: boolean | null;
   cost_usd: number | null;
   /** 1, or 2 when the one automatic re-run fired (a run that produced no valid check-result.json, the missing file included, is re-run once — the analyze verb's hosted rule; a run cut by its budget is not that class: it settles `failed` with phase `timeout` at once and is never re-run). */
   attempts: number;

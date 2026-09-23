@@ -589,14 +589,6 @@ AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
 #: ``'completed'`` once every task settled. A check never fails as a whole;
 #: each task carries its own typed failure (``TaskCheck['failure']``).
 CheckStatus = Literal['queued', 'running', 'completed']
-#: The derived label of a trial analysis (spec ``TrialAnalysis.label``;
-#: ``TrialAnalysis`` states the rule). None on the wire until completed and
-#: under a custom rubric.
-AnalysisLabel = Literal['flagged', 'env_fault', 'unclear', 'clean']
-#: The derived label of one task's quality check (spec ``TaskCheck.label``;
-#: ``TaskCheck`` states the rule). None until completed and under a custom
-#: rubric.
-CheckLabel = Literal['has_a_problem', 'unclear', 'no_problem_found']
 #: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
 #: ``'measured_provisional'`` is a real gateway reading taken inside its
 #: asynchronous spend flush — an honest floor a deferred pass later confirms or
@@ -1624,8 +1616,8 @@ class RubricCriterion(TypedDict):
     every wire shape here.
     """
     #: Criterion identifier, snake_case (it keys the result's ``checks``).
-    #: The platform's default rubrics name seven criteria for analyze and
-    #: thirteen for check.
+    #: The platform's default rubrics are served by ``analyses().defaults()``
+    #: and ``checks().defaults()``.
     name: str
     #: What the criterion evaluates, one sentence.
     description: str
@@ -1657,7 +1649,7 @@ class AnalyzeConfigInput(TypedDict, total=False):
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
     means "all defaults" — openrouter/deepseek/deepseek-v4.1-flash at its
     per-model effort (high)
-    over the platform's default analyze rubric (seven criteria) and its
+    over the platform's default analyze rubric and its
     default prompt body. The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
@@ -1882,7 +1874,7 @@ class TrialAnalysis(TypedDict):
     #: Provenance: the analyzed trial, its job, and its task. Redundant on
     #: ``Trial.analysis`` (the trial is the enclosing object) and the whole
     #: point of an ``analyses().list()`` row, where nothing else says which
-    #: run the verdict judged. Harbor's ``trial_name`` names the same thing
+    #: run the result judged. Harbor's ``trial_name`` names the same thing
     #: by directory.
     trial_id: str
     job_id: str
@@ -1906,17 +1898,6 @@ class TrialAnalysis(TypedDict):
     #: One entry per rubric criterion, keys exactly the rubric's criterion
     #: names (the frozen-criteria law). None until completed.
     checks: Optional[Dict[str, AnalysisCheck]]
-    #: The derived label — ``'flagged'`` | ``'env_fault'`` | ``'unclear'`` |
-    #: ``'clean'`` — computed by the platform from the outcomes when the
-    #: result is stored, never asked from the model: ``'flagged'`` on a fail
-    #: of score_is_earned, score_is_correct, task_was_fair or
-    #: report_is_truthful; else ``'env_fault'`` on a fail of
-    #: environment_worked; else ``'unclear'`` on an unknown of any of those
-    #: five, or a not_applicable of score_is_earned or score_is_correct;
-    #: else ``'clean'``. None until completed, and None on a completed
-    #: analysis whose rubric is not the default one (a custom rubric carries
-    #: its per-criterion outcomes and no label).
-    label: Optional[AnalysisLabel]
     estimated_cost_usd: Optional[float]
     #: The analyzer's one-home usage reading — the SAME shape, same keys, the
     #: trial and session surfaces serve
@@ -1981,8 +1962,7 @@ class CheckConfigInput(TypedDict, total=False):
     ``claude-sonnet-4-6``; this platform's is the analyzer's
     ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
     for both rubric agents, a
-    recorded deviation), ``rubric`` (default: the platform's check rubric,
-    thirteen criteria) and
+    recorded deviation), ``rubric`` (default: the platform's check rubric) and
     ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing the
     platform's default check body; rendered with ``{task_path}``, ``{file_tree}``,
     ``{criteria_guidance}``; the output contract appended after it exactly
@@ -2030,10 +2010,8 @@ class CheckSource(TypedDict):
 class TaskCheck(TypedDict):
     """One task's quality check — Harbor's QualityCheckResult shape (their
     cli/quality_checker/models.py:31-35: ``task_name``, ``checks`` keyed by
-    criterion, ``cost_usd``), its checks extended by the result schema and
-    the derived ``label`` and ``executed`` beside them, plus the hosted
-    provenance: its own id, the
-    check it belongs to, its lifecycle (the analysis ladder's four lowercase
+    criterion, ``cost_usd``), its checks extended by the result schema,
+    plus the hosted provenance: its own id, the check it belongs to, its lifecycle (the analysis ladder's four lowercase
     words), the bounded attempt count, and a typed ``failure`` in place of
     Harbor's ``error`` string.
 
@@ -2052,22 +2030,6 @@ class TaskCheck(TypedDict):
     status: str
     #: One entry per rubric criterion, keys exactly the frozen criteria. None until completed.
     checks: Optional[Dict[str, AnalysisCheck]]
-    #: The derived label — ``'has_a_problem'`` | ``'unclear'`` |
-    #: ``'no_problem_found'`` — computed by the platform from the outcomes
-    #: when the result is stored: ``'has_a_problem'`` on a fail of any
-    #: criterion; else ``'unclear'`` on an unknown of any of the seven
-    #: file-based criteria; else ``'no_problem_found'``. ``attempt_isolation``
-    #: is read for ``'has_a_problem'`` only: its unknown changes neither the
-    #: label nor ``executed``. None until completed, and None under a custom
-    #: rubric.
-    label: Optional[CheckLabel]
-    #: Whether the box ran the task's environment: True when none of the
-    #: five run-based criteria (reference_solution_is_valid,
-    #: verifier_rejects_non_solutions, environment_builds_and_runs,
-    #: verification_is_stable, limits_allow_the_task) is unknown, so a
-    #: reading-only ``'no_problem_found'`` is never mistaken for a run.
-    #: None exactly when ``label`` is None.
-    executed: Optional[bool]
     cost_usd: Optional[float]
     #: 1, or 2 when the one automatic re-run fired.
     attempts: int
@@ -8309,7 +8271,7 @@ class JobsClient:
         analysis.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at high
-        over the platform's default analyze rubric (seven criteria), on the
+        over the platform's default analyze rubric, on the
         platform's analysis default provider.
         CANCELLED trials are never analyzed.
         Which trials, and how wide, are Harbor's own analyze options with
@@ -9415,7 +9377,7 @@ class AnalysesClient:
     Created via the standalone ``analyses()`` factory. Requires
     ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
 
-    The per-run reads (the verdict by id, the analyzer's transcript, its
+    The per-run reads (the result by id, the analyzer's transcript, its
     stored artifacts) ride the dashboard's traces feed, which is not part of
     the OpenAPI contract; the TypeScript SDK and the CLI speak those doors.
     This client speaks the contract's one analyses door: the list.
@@ -9620,8 +9582,8 @@ class ChecksClient:
         first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at its
-        per-model effort over the platform's default check rubric (thirteen
-        criteria), on the platform's analysis default provider.
+        per-model effort over the platform's default check rubric, on the
+        platform's analysis default provider.
 
         THE RESPONSE IS THE ACCEPTED CHECK (202): one ``results`` entry per
         task, each ``'queued'``; follow it with :meth:`watch` or poll

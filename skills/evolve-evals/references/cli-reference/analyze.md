@@ -74,7 +74,7 @@ description = "The final answer is supported by observed results."
 guidance = "Check whether the trace supports the claims in the final answer."
 ```
 
-For prompt placeholders, rubric rules, and verdicts, see [Analyze](/core-concepts/analyze).
+For prompt placeholders, rubric rules, and results, see [Analyze](/core-concepts/analyze).
 
 ## Wait and read results
 

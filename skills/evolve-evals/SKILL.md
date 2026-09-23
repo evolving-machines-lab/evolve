@@ -110,7 +110,7 @@ Hosted requests use `EVOLVE_API_KEY`. Start with Installation if authentication 
 | --- | --- |
 | [evolve job](references/cli-reference/job.md) | Inspect results, compare runs, and control or repeat evaluations. |
 | [evolve trial](references/cli-reference/trial.md) | Inspect one attempt: its score, trace, files, and execution. |
-| [evolve analysis](references/cli-reference/analysis.md) | Read an analysis verdict, transcript, or stored files. |
+| [evolve analysis](references/cli-reference/analysis.md) | Read an analysis result, transcript, or stored files. |
 | [Files, logs, and processes](references/cli-reference/filesystem.md) | Inspect a running sandbox, captured files, or a published task package. |
 | [evolve session](references/cli-reference/session.md) | Inspect and share the sessions recorded by managed-agent SDK runs. |
 
@@ -133,7 +133,7 @@ Hosted requests use `EVOLVE_API_KEY`. Start with Installation if authentication 
 | --- | --- |
 | [SDK clients](references/sdk-reference/index.md) | One configuration. Focused clients for jobs, datasets, trials, and results. |
 | [Platform capabilities](references/sdk-reference/meta.md) | Discover available harnesses, models, providers, and current limits. |
-| [Returned objects](references/sdk-reference/types.md) | Read jobs, trials, pages, costs, and verdicts without guessing their shape. |
+| [Returned objects](references/sdk-reference/types.md) | Read jobs, trials, pages, costs, and results without guessing their shape. |
 | [Errors](references/sdk-reference/errors.md) | Handle API refusals separately from local, transfer, and wait failures. |
 | [Error codes](references/sdk-reference/error-codes.md) | Every known code, what it means, and what to do next. |
 
@@ -144,7 +144,7 @@ Hosted requests use `EVOLVE_API_KEY`. Start with Installation if authentication 
 | [Jobs](references/sdk-reference/jobs.md) | Submit evaluations, follow progress, and work with results. |
 | [Trials](references/sdk-reference/trials.md) | Inspect one attempt, from its reward to its trace and files. |
 | [Filesystems and downloads](references/sdk-reference/filesystem.md) | Choose the right files: saved results, a sandbox, or a task package. |
-| [Analyses](references/sdk-reference/analyses.md) | Analyze trial traces, then inspect the verdict and the analyzer's own run. |
+| [Analyses](references/sdk-reference/analyses.md) | Analyze trial traces, then inspect the result and the analyzer's own run. |
 | [Checks](references/sdk-reference/checks.md) | Review task quality before spending a benchmark run. |
 
 ### Manage resources
@@ -164,7 +164,7 @@ Hosted requests use `EVOLVE_API_KEY`. Start with Installation if authentication 
 | [Jobs methods](references/sdk-reference/methods/jobs.md) | Every job method: inputs, results, and a small example in each SDK. |
 | [Trials methods](references/sdk-reference/methods/trials.md) | Read attempts, traces, files, and actions by trial id. |
 | [Filesystem methods](references/sdk-reference/methods/filesystem.md) | Read run files, captured changes, sandbox logs, and live processes. |
-| [Analyses methods](references/sdk-reference/methods/analyses.md) | Read the analyzer’s verdict, transcript, files, and current defaults. |
+| [Analyses methods](references/sdk-reference/methods/analyses.md) | Read the analyzer’s result, transcript, files, and current defaults. |
 | [Checks methods](references/sdk-reference/methods/checks.md) | Create task quality checks and read each checker’s result. |
 | [Datasets: methods](references/sdk-reference/methods/datasets.md) | Every dataset call, option, and returned field. |
 | [Agents: methods](references/sdk-reference/methods/agents.md) | Register, read, replace, and delete custom agents. |

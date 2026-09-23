@@ -1,6 +1,6 @@
 ---
 title: "Returned objects"
-description: "Read jobs, trials, pages, costs, and verdicts without guessing their shape."
+description: "Read jobs, trials, pages, costs, and results without guessing their shape."
 ---
 
 The SDK returns structured data. TypeScript uses objects. Python uses dataclasses for most entities and dictionaries for stats, analyses, checks, and rubric records.
@@ -12,7 +12,7 @@ The SDK returns structured data. TypeScript uses objects. Python uses dataclasse
 | Job id | `job.id` | `job.id` |
 | Trial reward | `trial.reward` | `trial.reward` |
 | Job cost | `job.stats.cost_usd` | `job.stats.get("cost_usd")` |
-| Analysis label | `analysis.label` | `analysis["label"]` |
+| Analysis checks | `analysis.checks` | `analysis["checks"]` |
 | Check results | `check.results` | `check["results"]` |
 | Filesystem state | `status.state` | `status.state` |
 | Page cursor | `page.nextCursor` | `page.next_cursor` |
@@ -746,9 +746,9 @@ interface TrialRetryCircuitBrokenData {
 
 Analysis reads a trial’s trajectory. A task check reviews the task itself. Their criterion results share the same four outcomes: `pass`, `fail`, `not_applicable`, and `unknown`.
 
-Python returns verdicts and defaults as dictionaries. `checks` maps criterion names to `{ outcome, explanation, evidence }`; evidence is a list of `{ where, quote }` records. Custom rubrics may have no derived label.
+Python returns results and defaults as dictionaries. `checks` maps criterion names to `{ outcome, explanation, evidence }`; evidence is a list of `{ where, quote }` records. Evolve derives no verdict from a result; compute what you need from the criteria.
 
-### Analysis verdict and criterion evidence
+### Analysis result and criterion evidence
 
 ```ts
 interface TrialAnalysis {
@@ -763,7 +763,6 @@ interface TrialAnalysis {
   prompt: string | null;
   summary: string | null;
   checks: Record<string, AnalysisCheck> | null;
-  label: AnalysisLabel | null;
   estimated_cost_usd: number | null;
   usage?: UsageReading | null;
   attempts?: number;
@@ -799,7 +798,7 @@ interface AnalyzeDefaults {
 
 ### Check group and each task result
 
-`executed` distinguishes a default-rubric result with resolved execution criteria from a reading-only result. It is null when the derived label is null. A completed group may contain failed task checks; inspect every result.
+A completed group may contain failed task checks; inspect every result.
 
 ```ts
 interface Check {
@@ -836,8 +835,6 @@ interface TaskCheck {
   task_name: string;
   status: AnalysisStatus;
   checks: Record<string, AnalysisCheck> | null;
-  label: CheckLabel | null;
-  executed: boolean | null;
   cost_usd: number | null;
   attempts: number;
   failure: AnalysisFailure | null;
@@ -890,7 +887,7 @@ interface TaskCheckTranscript {
 }
 ```
 
-### Rubric and derived labels
+### Rubric
 
 ```ts
 interface Rubric {
@@ -902,10 +899,6 @@ interface RubricCriterion {
   description: string;
   guidance: string;
 }
-
-type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
-
-type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
 ```
 
 ## Filesystem results

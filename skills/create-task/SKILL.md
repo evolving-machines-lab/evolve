@@ -347,17 +347,16 @@ evolve check show "$CHECK_ID"
 
 `evolve dataset check` sends `task.toml` and any `dataset.toml` to the API for
 validation. It does not upload the full task package or execute the task.
-`evolve check` runs a paid checker agent. It reviews the files against thirteen
-default criteria and can run the environment, solution, and verifier when its
-sandbox supports them. It is not a dedicated reference-solution runner; the
-Evolve CLI has no standalone oracle command.
+`evolve check` runs a paid checker agent. It reviews the files against the
+default criteria (`evolve check --show-defaults`) and can run the environment,
+solution, and verifier when its sandbox supports them. It is not a dedicated
+reference-solution runner; the Evolve CLI has no standalone oracle command.
 
-Read each criterion's `outcome`, `explanation`, and `evidence`. The default rubric
-also produces `has_a_problem`, `unclear`, or `no_problem_found`. Its `executed`
-flag is derived from the findings: true when none of the five execution criteria
-is `unknown`. It is not independent proof that the solution or verifier ran.
-Inspect the evidence and checker trace; unresolved execution needs a test in an
-environment that can run the task.
+Read each criterion's `outcome`, `explanation`, and `evidence`. The result is
+that per-criterion JSON; Evolve derives no verdict from it. The default rubric's execution
+criteria say whether the checker ran the task: `unknown` on them is not proof
+that the solution or verifier ran. Inspect the evidence and checker trace;
+unresolved execution needs a test in an environment that can run the task.
 
 Read `evolve skills get evals core-concepts/check` and
 `evolve skills get evals cli-reference/check` for results, traces, and custom rubrics.
