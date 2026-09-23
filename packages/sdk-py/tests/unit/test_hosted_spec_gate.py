@@ -579,6 +579,20 @@ def _spec_property_enum(schema: str, prop: str) -> 'list[str]':
     return []
 
 
+def _spec_has_property(schema: str, prop: str) -> bool:
+    """True when the schema's block declares the property (a property-depth ``prop:`` line)."""
+    in_schema = False
+    for line in _spec_lines():
+        if not in_schema:
+            in_schema = re.match(rf'^ {{4}}{schema}:\s*$', line) is not None
+            continue
+        if re.match(r'^ {4}[A-Z]\w*:\s*$', line):
+            break
+        if re.match(rf'^ {{8}}{prop}:\s*$', line):
+            return True
+    return False
+
+
 def test_effort_support_vocabulary_matches_the_spec_enum():
     """The axis the effort_support CRITICAL proved missing: the spec typed the
     field as a boolean while the server served a three-value string, and this
@@ -631,12 +645,13 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     assert len(check_statuses) >= 3, 'the Check.status parse found too few — spec moved?'
     assert list(typing.get_args(CheckStatus)) == check_statuses
 
-    # The contract carries no derived verdict: neither result shape has a
-    # `label` enum (the parse finds none), and the SDK exports no label type.
+    # The contract carries no derived verdict: no label or executed property on
+    # either result shape, and the SDK exports no label type.
     import evolve
 
-    assert _spec_property_enum('TrialAnalysis', 'label') == []
-    assert _spec_property_enum('TaskCheck', 'label') == []
+    assert _spec_has_property('TrialAnalysis', 'checks'), 'the property parser sees a property that exists (non-vacuity)'
+    for schema, prop in (('TrialAnalysis', 'label'), ('TaskCheck', 'label'), ('TaskCheck', 'executed')):
+        assert not _spec_has_property(schema, prop), f'{schema} carries no {prop}'
     assert not hasattr(evolve, 'AnalysisLabel') and not hasattr(evolve, 'CheckLabel')
 
 
