@@ -47,7 +47,7 @@ The header identifies the check, source, model, effort, status, and cost. Each t
 | **No problem found** | Check execution findings before treating it as a runtime validation. |
 | Failed task check | Read its failure; this is a failed review, not a task-quality verdict. |
 
-The chip is a summary the dashboard computes from the criterion outcomes: any fail, else any unknown, else no problem found. For a default-rubric check it also notes whether the five execution criteria were all answered. Neither is a separate execution audit. See [the check result](/core-concepts/check#the-result).
+The chip is a summary the dashboard computes from the criterion outcomes. Under a custom rubric: any fail, else any unknown, else no problem found. Under the default rubric an unknown on one of the five execution criteria does not make the chip unclear; it marks the chip not executed, and `attempt_isolation` counts only when it fails. Neither is a separate execution audit. See [the check result](/core-concepts/check#the-result).
 
 **[Check reference](/cli-reference/check)**
 

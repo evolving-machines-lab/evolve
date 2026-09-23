@@ -117,7 +117,7 @@ Each criterion has an outcome, explanation, and evidence.
 | `not_applicable` | The criterion has no subject in this trial. |
 | `unknown` | The available record cannot decide it. |
 
-The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes (any fail, else any unknown, else clean; for the default rubric it also separates an environment failure, `env_fault`, from an undecided score, `unclear`); read the criteria and compute what you need from them. A missing or extra criterion makes the analysis result invalid. A run without a valid result can retry once.
+The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes. Under a custom rubric: any fail, else any unknown, else clean. Under the default rubric the chip reads only `score_is_earned`, `score_is_correct`, `task_was_fair`, `report_is_truthful` and `environment_worked`: a fail on the first four is `flagged`, else a failed `environment_worked` is `env_fault`, else an unknown on any of the five or a not applicable score criterion is `unclear`, else `clean`; the other two criteria are facts about the trial and never move the chip. Read the criteria and compute what you need from them. A missing or extra criterion makes the analysis result invalid. A run without a valid result can retry once.
 
 The analysis's `estimated_cost_usd` and the job's `stats.analysis.cost_usd` are separate from evaluation spend.
 
