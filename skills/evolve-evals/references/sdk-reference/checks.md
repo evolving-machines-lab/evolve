@@ -107,7 +107,7 @@ Each task can be `queued`, `running`, `completed`, or `failed`. The check become
 
 **Note:**
 
-Evolve derives no verdict from a result. Read the criterion outcomes and evidence; the five execution criteria say whether the checker ran the task.
+Evolve derives no verdict from a result. Read the criterion outcomes and evidence; the default rubric's execution criteria say whether the checker ran the task.
 
 ## Read and follow checks
 

@@ -49,7 +49,7 @@ This runs all criteria in `/tests/` against the workspace at `/app` and writes
 
 Run `evolve check "<task-path>" --watch` for task quality review. The checker may
 run the reference solution and verifier when its environment supports them;
-inspect its findings and evidence. The five execution criteria say whether it
+inspect its findings and evidence. The default rubric's execution criteria say whether it
 ran the task; `unknown` on them is not proof that the solution or verifier
 ran. Read
 `evolve skills get evals core-concepts/check` for the result semantics.

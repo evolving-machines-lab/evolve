@@ -33,7 +33,7 @@ evolve dataset check ./tasks
 
 This sends each `task.toml` and the optional manifest to Evolve. It does not publish the corpus or run the tasks. Fix refused fields before continuing.
 
-For an agent-based quality review, use `evolve check ./tasks --watch`. This uploads tasks and incurs agent usage. Read the findings and trace: Evolve derives no verdict from the result, and `unknown` on the five execution criteria is not proof that the reference solution and verifier were executed successfully. See `evolve skills get evals core-concepts/check`.
+For an agent-based quality review, use `evolve check ./tasks --watch`. This uploads tasks and incurs agent usage. Read the findings and trace: Evolve derives no verdict from the result, and `unknown` on the default rubric's execution criteria is not proof that the reference solution and verifier were executed successfully. See `evolve skills get evals core-concepts/check`.
 
 ### 2. Choose one source and publish
 

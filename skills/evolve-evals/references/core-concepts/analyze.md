@@ -75,7 +75,7 @@ Read the current defaults before customizing:
 evolve analyze --show-defaults
 ```
 
-The default rubric covers seven questions:
+The default rubric covers these questions:
 
 | Criterion | Question |
 | --- | --- |
