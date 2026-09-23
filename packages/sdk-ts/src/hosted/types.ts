@@ -1690,7 +1690,7 @@ export interface TrialAnalysis {
    * Provenance: the analyzed trial, its job, and its task. Redundant on
    * `Trial.analysis` (the trial is the enclosing object) and the whole point
    * of a `analyses().list()` row, where nothing else says which run the
-   * verdict judged. Harbor's `trial_name` names the same thing by directory.
+   * result judged. Harbor's `trial_name` names the same thing by directory.
    */
   trial_id: string;
   job_id: string;
@@ -4864,7 +4864,7 @@ export interface AnalysisTranscript {
 }
 
 /**
- * Client for analysis runs — the analyzer's own transcript, verdict document,
+ * Client for analysis runs — the analyzer's own transcript, result document,
  * and stored artifacts, all globally addressable by analysis id.
  *
  * DELIBERATELY OFF-CONTRACT: these three reads ride the dashboard's traces
@@ -4879,7 +4879,7 @@ export interface AnalysisTranscript {
  * GatewayUsageEvent prose, not as an operation. RECORDED TENSION: whether
  * that feed and this one join the contract as operations (spec + both SDK
  * shadows) is an open ruling, not something settled here. The contract-side
- * verdict stays where it always was — `Trial.analysis` on the trial body;
+ * result stays where it always was — `Trial.analysis` on the trial body;
  * this client adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
@@ -4900,7 +4900,7 @@ export interface AnalysesClient {
   /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): model, effort, provider, rubric and the unrendered prompt template. */
   defaults(): Promise<AnalyzeDefaults>;
   /**
-   * The verdict document — the wire's TrialAnalysis, statuses and typed
+   * The result document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same
    * object the analyzed trial serves as `Trial.analysis` when this analysis
    * is its latest; this door answers for earlier analyses too.

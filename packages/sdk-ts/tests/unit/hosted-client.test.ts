@@ -6141,7 +6141,7 @@ async function testTrialArtifact() {
 // =============================================================================
 
 /** The verdict object as the feed's ?what=analysis door serves it. */
-function fixtureAnalysisVerdict(): Record<string, unknown> {
+function fixtureAnalysisResult(): Record<string, unknown> {
   return {
     id: "an-1",
     status: "failed",
@@ -6171,7 +6171,7 @@ async function testAnalysisGet() {
   try {
     setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: fixtureAnalysisVerdict() },
+      body: { analysis: fixtureAnalysisResult() },
     });
     const a = analyses({ apiKey: "test-key", baseUrl: BASE });
     const verdict = await a.get("an-1");
@@ -7331,7 +7331,7 @@ async function testListAnalyses() {
   console.log("\n--- analyses().list() maps the page and rides scope/job/status on every fetch ---");
   installMockFetch();
   try {
-    const row = { ...fixtureAnalysisVerdict(), trial_id: "run-1", job_id: "eval-1", task_name: "abs-module-cache-flags" };
+    const row = { ...fixtureAnalysisResult(), trial_id: "run-1", job_id: "eval-1", task_name: "abs-module-cache-flags" };
     setMockResponse("/api/analyses", {
       status: 200,
       body: { items: [row, { ...row, id: "an-2", usage: null }], nextCursor: "cur-a", hasMore: true },

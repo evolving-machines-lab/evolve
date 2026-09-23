@@ -1874,7 +1874,7 @@ class TrialAnalysis(TypedDict):
     #: Provenance: the analyzed trial, its job, and its task. Redundant on
     #: ``Trial.analysis`` (the trial is the enclosing object) and the whole
     #: point of an ``analyses().list()`` row, where nothing else says which
-    #: run the verdict judged. Harbor's ``trial_name`` names the same thing
+    #: run the result judged. Harbor's ``trial_name`` names the same thing
     #: by directory.
     trial_id: str
     job_id: str
@@ -9378,7 +9378,7 @@ class AnalysesClient:
     Created via the standalone ``analyses()`` factory. Requires
     ``EVOLVE_API_KEY`` unless ``HostedClientConfig(api_key=...)`` is given.
 
-    The per-run reads (the verdict by id, the analyzer's transcript, its
+    The per-run reads (the result by id, the analyzer's transcript, its
     stored artifacts) ride the dashboard's traces feed, which is not part of
     the OpenAPI contract; the TypeScript SDK and the CLI speak those doors.
     This client speaks the contract's one analyses door: the list.

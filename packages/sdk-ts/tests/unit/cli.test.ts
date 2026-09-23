@@ -5475,7 +5475,7 @@ async function testIdPrefixLawEveryNoun() {
   const ghost = "00000000-0000-4000-8000-000000000000";
   installMockFetch();
   try {
-    const verdictA = analysisVerdictFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
+    const verdictA = analysisResultFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
     const notAnAnalysis = { status: 400, body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" } };
     setMockResponse(`/api/traces/trials/${anA}/artifacts?what=analysis`, { status: 200, body: { analysis: verdictA } });
     setMockResponse(`/api/traces/trials/${anA}/artifacts?what=trace-stdout`, { status: 200, body: { log: "analyzer stdout" } });
@@ -5501,7 +5501,7 @@ async function testIdPrefixLawEveryNoun() {
     setMockResponse(`/api/jobs/${regradeJob}`, { status: 200, body: wireJob({ id: regradeJob, is_regrade: true }) });
     setMockResponse("/api/analyses", {
       status: 200,
-      body: page([verdictA, analysisVerdictFixture({ id: anB, trial_id: trialS })]),
+      body: page([verdictA, analysisResultFixture({ id: anB, trial_id: trialS })]),
     });
 
     // A FULL trial id: the verdict door refuses it typed, the trial's own row names its latest analysis.
@@ -5596,7 +5596,7 @@ async function testIdPrefixLawEveryNoun() {
 // =============================================================================
 
 /** The wire verdict the feed's ?what=analysis door serves. */
-function analysisVerdictFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function analysisResultFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "an-1",
     // The provenance trio every wire TrialAnalysis carries (the run it judged).
@@ -5695,7 +5695,7 @@ async function testAnalysisShow() {
   try {
     setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: analysisVerdictFixture() },
+      body: { analysis: analysisResultFixture() },
     });
     const { io, out } = captureIO();
     const code = await runCli(["analysis", "show", "an-1", ...AUTH], io);
@@ -5729,7 +5729,7 @@ async function testAnalysisShow() {
     setMockResponse("/api/traces/trials/an-2/artifacts?what=analysis", {
       status: 200,
       body: {
-        analysis: analysisVerdictFixture({
+        analysis: analysisResultFixture({
           id: "an-2",
           status: "completed",
           summary: "Legitimate solve.",
@@ -5853,7 +5853,7 @@ async function testAnalysisDownloadStream() {
     setMockResponse("/artifacts?what=trace-stderr", { status: 200, body: { log: null } });
     setMockResponse("/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: analysisVerdictFixture() },
+      body: { analysis: analysisResultFixture() },
     });
 
     const stdout = captureIO();
@@ -5989,7 +5989,7 @@ async function testAnalysisDownloadSave() {
     });
     setMockResponse("/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: analysisVerdictFixture({ id: "an-1", status: "completed", summary: "Legitimate solve.", checks: {}, failure: null }) },
+      body: { analysis: analysisResultFixture({ id: "an-1", status: "completed", summary: "Legitimate solve.", checks: {}, failure: null }) },
     });
     const { io, out, err } = captureIO();
     const code = await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], io);
@@ -9529,7 +9529,7 @@ async function testJobListKind() {
 /** One wire TrialAnalysis as GET /api/analyses lists it (provenance included). */
 function analysisListRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    ...analysisVerdictFixture(),
+    ...analysisResultFixture(),
     trial_id: "run-1",
     job_id: "eval-1",
     task_name: "abs-module-cache-flags",

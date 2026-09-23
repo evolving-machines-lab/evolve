@@ -648,7 +648,7 @@ export {
   type HarnessTrialLayout,
   type TrialTreeParts,
   // Analysis runs off the traces feed (deliberately off-contract — see
-  // AnalysesClient): the verdict, the analyzer's transcript, its artifacts.
+  // AnalysesClient): the result, the analyzer's transcript, its artifacts.
   type AnalysisArtifactStream,
   type AnalysisTranscript,
   type AnalysisTranscriptOptions,
