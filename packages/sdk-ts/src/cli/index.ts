@@ -975,7 +975,7 @@ const GROUPS: Record<string, GroupSpec> = {
   },
   // An analysis run is the ANALYZER's own agent run — its id comes from the
   // `analysis` row of `trial show` (or `trial show --json` / the traces
-  // page). These verbs read the analyzer's side of the record: the verdict
+  // page). These verbs read the analyzer's side of the record: the result
   // document, the analyzer's own transcript, and its stored artifacts —
   // never the analyzed trial's, which keep their own verbs above.
   analysis: {
@@ -999,7 +999,7 @@ const GROUPS: Record<string, GroupSpec> = {
         examples: ["evolve analysis list", "evolve analysis list --job 3e1f9a2c --status failed"],
       },
       show: {
-        summary: "Show one analysis run: the verdict",
+        summary: "Show one analysis run: its result",
         notes: ANALYSIS_REF_RULE,
         flags: {},
         minPositionals: 1,
@@ -1025,7 +1025,7 @@ const GROUPS: Record<string, GroupSpec> = {
           stream: {
             kind: "string",
             value: "<artifact>",
-            help: "Print one artifact to stdout instead: analysis (the verdict), trace-parsed, trace-stdout, trace-stderr or agent-home",
+            help: "Print one artifact to stdout instead: analysis (the result document), trace-parsed, trace-stdout, trace-stderr or agent-home",
             group: "Stream",
           },
           since: { ...SINCE_FLAG, help: "With --stream trace-parsed: skip the first N events", group: "Stream" },
@@ -5017,7 +5017,7 @@ async function resolveId(inv: Invocation, noun: IdNoun, ref: string): Promise<st
 
 /**
  * What an analysis verb's positional resolved to: the analysis id the wire
- * gets, and the verdict document when the resolution already read it (null
+ * gets, and the result document when the resolution already read it (null
  * = not read) — so `show` never spends a second read on the same door.
  */
 interface AnalysisRef {
@@ -5031,14 +5031,14 @@ interface AnalysisRef {
  * analysis — the one `trial show` prints on its analysis row, the trial's
  * own Trial.analysis field. A prefix resolves among analysis ids and
  * analyzed trials' ids by the one prefix law, ambiguity named across both. A
- * full id is not walked: the verdict door says which species it is — 200 is
+ * full id is not walked: the analysis door says which species it is — 200 is
  * the analysis itself; its typed 400 ("analysis.json belongs to an analysis
  * run") is the door resolving the id as another species, and the trial's
  * own row then says whether it has an analysis (latestAnalysis; a task
  * check is no trial, so the door's sentence stands); its 404
  * (analysis_not_found) means no species has the id — the refusal every
  * analysis verb inherits, whichever door it would have read next. The
- * verdict a resolution read rides back with the id: the door's 200 and the
+ * result a resolution read rides back with the id: the door's 200 and the
  * trial row's `analysis` are the same document (the server serializes both
  * with one function), so whichever door answered, `show` prints it as is.
  */
@@ -5085,8 +5085,8 @@ async function latestAnalysis(inv: Invocation, trial: Trial): Promise<AnalysisRe
   throw new Error(`trial ${trial.id} has no analysis yet — run: evolve analyze ${trial.job_id}`);
 }
 
-/** The verdict document: the one the resolution read, else one read of the verdict door. */
-function analysisVerdict(client: ReturnType<typeof analyses>, ref: AnalysisRef): Promise<TrialAnalysis> {
+/** The result document: the one the resolution read, else one read of the analysis door. */
+function analysisResult(client: ReturnType<typeof analyses>, ref: AnalysisRef): Promise<TrialAnalysis> {
   return ref.analysis !== null ? Promise.resolve(ref.analysis) : client.get(ref.id);
 }
 
@@ -6171,7 +6171,7 @@ async function cmdCheckTrace(inv: Invocation, io: CliIO): Promise<number> {
 
 /**
  * The five artifact names `check download --stream` accepts — the analysis
- * verb's list with the task check's own verdict name: the result document
+ * verb's list with the task check's own result name: the result document
  * and the parsed transcript, plus the stored selectors (one list, the
  * analysis's — a task check stores exactly the same three).
  */
@@ -7335,7 +7335,7 @@ async function cmdAnalysisList(inv: Invocation, io: CliIO): Promise<number> {
 
 async function cmdAnalysisShow(inv: Invocation, io: CliIO): Promise<number> {
   const client = analyses(clientConfig(inv));
-  const analysis = await analysisVerdict(client, await resolveAnalysisRef(inv, client, inv.positionals[0]));
+  const analysis = await analysisResult(client, await resolveAnalysisRef(inv, client, inv.positionals[0]));
   if (inv.flags.json === true) {
     io.out(JSON.stringify(analysis));
   } else {
@@ -7362,7 +7362,7 @@ async function cmdAnalysisTrace(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 /**
- * The five artifact names `analysis download --stream` accepts: the verdict
+ * The five artifact names `analysis download --stream` accepts: the result
  * document and the parsed transcript (each with its own richer verb), plus
  * the SDK's own stored-selector list — no second copy of that vocabulary.
  * `verifier`/`trace-atif`/`trajectory` are deliberately absent: an analysis
@@ -7400,10 +7400,10 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
       throw new CliUsageError(`--stream must be one of: ${ANALYSIS_STREAM_ARTIFACTS.join(", ")}`);
     }
     if (stream === "analysis") {
-      // The verdict document itself — the same object the feed's
+      // The result document itself — the same object the feed's
       // &format=log form downloads under Harbor's analysis.json name.
       // --json keeps the wire's {analysis} envelope, like {log} below.
-      const analysis = await analysisVerdict(client, ref);
+      const analysis = await analysisResult(client, ref);
       io.out(json ? JSON.stringify({ analysis }) : JSON.stringify(analysis, null, 2));
       return 0;
     }
@@ -7451,14 +7451,14 @@ async function cmdAnalysisDownload(inv: Invocation, io: CliIO): Promise<number> 
   // run, `analyze-<analyzed trial>__<7>/`, the root read off the archive
   // itself (saveArchive) — plus the one enrichment every download adds:
   // evolve.json, the platform record Harbor's layout has no slot for
-  // (analysisEvolveRecord over the verdict the feed serves).
+  // (analysisEvolveRecord over the result the feed serves).
   return saveArchive(inv, io, {
     fetch: (to) => client.download(analysisId, { to }),
     outputDir: (inv.flags["output-dir"] as string | undefined) ?? "analyses",
     scratchPrefix: "evolve-analysis-download-",
     enrich: async (targetDir) => {
       const { join } = await import("node:path");
-      const analysis = await analysisVerdict(client, ref);
+      const analysis = await analysisResult(client, ref);
       await writeRecord(join(targetDir, "evolve.json"), analysisEvolveRecord(analysis, await callerUserId(inv)));
       return ["evolve.json"];
     },

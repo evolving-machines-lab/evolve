@@ -56,7 +56,7 @@ page = await client.list(
 
 Optional `scope`: `my` (default), `shared`, or `org`; `job`: source job id; `status`: list of `queued`, `running`, `completed`, or `failed`. `limit` defaults to 50 (maximum 200); `cursor` continues a page.
 
-Python analysis rows are dictionaries: `row["id"]`, `row["checks"]`. [Analysis result fields](/sdk-reference/types#analysis-and-check-results) include failures and cost as well as results.
+Python analysis rows are dictionaries: `row["id"]`, `row["checks"]`. [Analysis result fields](/sdk-reference/types#analysis-and-check-results) include failures and cost as well as the per-criterion checks.
 
 ## defaults
 

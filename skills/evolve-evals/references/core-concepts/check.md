@@ -80,7 +80,7 @@ The result is this per-criterion JSON and nothing else: Evolve derives no verdic
 
 **Note:**
 
-**Read the five execution criteria** (`reference_solution_is_valid`, `verifier_rejects_non_solutions`, `environment_builds_and_runs`, `verification_is_stable`, `limits_allow_the_task`) before treating a result with no failure as proof that the task runs. They are `unknown` when the checker could not run the environment, and that leaves execution questions unresolved.
+**Read the five execution criteria** (`reference_solution_is_valid`, `verifier_rejects_non_solutions`, `environment_builds_and_runs`, `verification_is_stable`, `limits_allow_the_task`) before treating a result with no failure as proof that the task runs. They are `unknown` when decisive execution evidence is unavailable, for example when the checker could not run the environment, and that leaves execution questions unresolved.
 
 The parent lifecycle is `queued` → `running` → `completed`. A completed check can contain failed task checks; inspect each task's `status` and `failure`.
 
