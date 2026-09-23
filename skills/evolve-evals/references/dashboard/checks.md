@@ -5,7 +5,7 @@ description: "Read task-quality findings and open the evidence behind them."
 
 Find a check in **Jobs** under kind **Check**, or open a job's **Check** tab to see checks of its tasks.
 
-![A task quality report showing its verdict, criterion outcomes, and checker cost.](/images/dashboard-task-check.png)
+![A task quality report showing its chip, criterion outcomes, and checker cost.](/images/dashboard-task-check.png)
 
 *Read the overall finding, then inspect the criterion evidence.*
 
@@ -13,7 +13,7 @@ Find a check in **Jobs** under kind **Check**, or open a job's **Check** tab to 
 Check report
 ├── Source tasks + model + effort + cost
 └── Task results
-    ├── Label and execution findings
+    ├── Summary chip (computed from the outcomes)
     ├── Criterion outcomes and evidence
     └── Checker trace
 ```
@@ -45,9 +45,9 @@ The header identifies the check, source, model, effort, status, and cost. Each t
 | **Has a problem** | Read the failed criterion and its evidence. |
 | **Unclear** | Read what information was missing. |
 | **No problem found** | Check execution findings before treating it as a runtime validation. |
-| Failed task check | Read its failure; this is a failed review, not a task-quality verdict. |
+| Failed task check | Read its failure; this is a failed review, not a task-quality result. |
 
-The `executed` flag is derived from criterion outcomes. It does not independently attest that every relevant command ran. See [how check results are derived](/core-concepts/check#the-result).
+The chip is a summary the dashboard computes from the criterion outcomes. Under a custom rubric the chip reads **Has a problem** when any criterion fails, **Unclear** when none fails but at least one is unknown, and **No problem found** otherwise. Under a rubric with the default criterion names the same rule applies, with two exceptions: an unknown on one of the default rubric's execution criteria does not make the chip unclear but marks it not executed; and `attempt_isolation` counts only when it fails. The chip and its not executed note summarize the outcomes; neither is a separate execution audit. See [the check result](/core-concepts/check#the-result).
 
 **[Check reference](/cli-reference/check)**
 

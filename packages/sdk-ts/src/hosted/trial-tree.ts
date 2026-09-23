@@ -458,7 +458,7 @@ export function assembleTrialTree(parts: TrialTreeParts): Record<string, string>
 /**
  * The analysis run's evolve.json: which run this analysis read (the
  * analyzed trial, its job, its task), the analyzer's model and status,
- * which user downloaded it, and the analyzer's own meter — the verdict's
+ * which user downloaded it, and the analyzer's own meter — the result's
  * one-home `usage` reading restated (never a second meter).
  */
 export function analysisEvolveRecord(analysis: TrialAnalysis, userId: string | null): Record<string, unknown> {

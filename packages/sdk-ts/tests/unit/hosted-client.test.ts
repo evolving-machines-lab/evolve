@@ -1340,7 +1340,7 @@ async function testDatasetsPreflight() {
   try {
     // The server reads the manifest beside the task dirs when both places
     // hold one (dashboard dataset-manifest.ts findDatasetManifestPath: "the
-    // tasks-dir copy wins"), so the dry run must post THAT copy — a verdict
+    // tasks-dir copy wins"), so the dry run must post THAT copy — a result
     // for the root copy would judge a file the import never reads.
     await mkdir(join(both, "tasks", "a"), { recursive: true });
     await writeFile(join(both, "tasks", "a", "task.toml"), "[environment]\n");
@@ -6140,8 +6140,8 @@ async function testTrialArtifact() {
 // ANALYSES TESTS (the traces-feed doors — deliberately off-contract)
 // =============================================================================
 
-/** The verdict object as the feed's ?what=analysis door serves it. */
-function fixtureAnalysisVerdict(): Record<string, unknown> {
+/** The result object as the feed's ?what=analysis door serves it. */
+function fixtureAnalysisResult(): Record<string, unknown> {
   return {
     id: "an-1",
     status: "failed",
@@ -6166,21 +6166,21 @@ function fixtureAnalysisVerdict(): Record<string, unknown> {
 }
 
 async function testAnalysisGet() {
-  console.log("\n--- analyses().get() reads the verdict off the feed's ?what=analysis door ---");
+  console.log("\n--- analyses().get() reads the result off the feed's ?what=analysis door ---");
   installMockFetch();
   try {
     setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: fixtureAnalysisVerdict() },
+      body: { analysis: fixtureAnalysisResult() },
     });
     const a = analyses({ apiKey: "test-key", baseUrl: BASE });
-    const verdict = await a.get("an-1");
-    assertEqual(verdict.id, "an-1", "maps the analysis id");
-    assertEqual(verdict.status, "failed", "wire status rides verbatim (lowercase vocabulary)");
-    assertEqual(verdict.model_name, "glm-5.3-flash", "model rides verbatim");
-    assertEqual(verdict.estimated_cost_usd, 0.0366, "the analyzer's own metered figure rides verbatim");
+    const result = await a.get("an-1");
+    assertEqual(result.id, "an-1", "maps the analysis id");
+    assertEqual(result.status, "failed", "wire status rides verbatim (lowercase vocabulary)");
+    assertEqual(result.model_name, "glm-5.3-flash", "model rides verbatim");
+    assertEqual(result.estimated_cost_usd, 0.0366, "the analyzer's own metered figure rides verbatim");
     assertEqual(
-      verdict.usage,
+      result.usage,
       {
         provisional: true,
         spent_usd: 0.0366,
@@ -6193,7 +6193,7 @@ async function testAnalysisGet() {
       "usage goes through the one-home reading rule"
     );
     assertEqual(
-      verdict.failure,
+      result.failure,
       { phase: "artifact_read", message: "MISSING /app/analysis.json" },
       "a failed analysis carries its typed failure"
     );
@@ -6207,7 +6207,7 @@ async function testAnalysisGet() {
 }
 
 async function testAnalysisGetMalformedFailsClosed() {
-  console.log("\n--- analyses().get() fails closed on a body with no readable verdict ---");
+  console.log("\n--- analyses().get() fails closed on a body with no readable result ---");
   installMockFetch();
   try {
     setMockResponse("/api/traces/trials/an-x/artifacts?what=analysis", {
@@ -6222,10 +6222,10 @@ async function testAnalysisGetMalformedFailsClosed() {
       threw = true;
       assert(
         e instanceof Error && e.message.includes("an-x"),
-        "the refusal names the id — never a fabricated empty verdict"
+        "the refusal names the id — never a fabricated empty result"
       );
     }
-    assert(threw, "malformed verdict throws instead of inventing an object");
+    assert(threw, "malformed result throws instead of inventing an object");
   } finally {
     restoreFetch();
   }
@@ -7331,7 +7331,7 @@ async function testListAnalyses() {
   console.log("\n--- analyses().list() maps the page and rides scope/job/status on every fetch ---");
   installMockFetch();
   try {
-    const row = { ...fixtureAnalysisVerdict(), trial_id: "run-1", job_id: "eval-1", task_name: "abs-module-cache-flags" };
+    const row = { ...fixtureAnalysisResult(), trial_id: "run-1", job_id: "eval-1", task_name: "abs-module-cache-flags" };
     setMockResponse("/api/analyses", {
       status: 200,
       body: { items: [row, { ...row, id: "an-2", usage: null }], nextCursor: "cur-a", hasMore: true },
@@ -7830,7 +7830,7 @@ async function testChecksTaskReads() {
         storedAt: ["2026-09-10T09:00:01.000Z", "2026-09-10T09:00:02.000Z"],
       },
     });
-    // A trial id at the stored selectors: the verdict door refuses it typed
+    // A trial id at the stored selectors: the result door refuses it typed
     // and the SDK inherits the refusal before any byte is read.
     setMockResponse("/api/traces/trials/run-1/artifacts?what=task-check", { status: 400, body: { error: "check-result.json belongs to a task check — open the check row and download it there" } });
     setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", { status: 200, body: { log: "the TRIAL's stdout" } });
