@@ -164,7 +164,7 @@ Hosted requests use `EVOLVE_API_KEY`. Start with Installation if authentication 
 | [Jobs methods](references/sdk-reference/methods/jobs.md) | Every job method: inputs, results, and a small example in each SDK. |
 | [Trials methods](references/sdk-reference/methods/trials.md) | Read attempts, traces, files, and actions by trial id. |
 | [Filesystem methods](references/sdk-reference/methods/filesystem.md) | Read run files, captured changes, sandbox logs, and live processes. |
-| [Analyses methods](references/sdk-reference/methods/analyses.md) | Read the analyzer’s verdict, transcript, files, and current defaults. |
+| [Analyses methods](references/sdk-reference/methods/analyses.md) | Read the analyzer’s verdict, transcript, files, and current defaults, or judge any trajectory. |
 | [Checks methods](references/sdk-reference/methods/checks.md) | Create task quality checks and read each checker’s result. |
 | [Datasets: methods](references/sdk-reference/methods/datasets.md) | Every dataset call, option, and returned field. |
 | [Agents: methods](references/sdk-reference/methods/agents.md) | Register, read, replace, and delete custom agents. |

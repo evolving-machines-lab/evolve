@@ -253,6 +253,9 @@ OPERATION_TO_METHOD = {
     # contract does not declare; this SDK speaks the contract's one door.
     'listAnalyses': (AnalysesClient, 'list'),
     'getAnalyzeDefaults': (AnalysesClient, 'defaults'),
+    # The trajectory judge: LLM-as-a-judge over any trajectory the caller sends.
+    'analyzeTrajectory': (AnalysesClient, 'trajectory'),
+    'getTrajectoryAnalysisDefaults': (AnalysesClient, 'trajectory_defaults'),
     # The one per-analysis door ON the contract: the run as Harbor's
     # wrapper-trial folder (B121).
     'downloadAnalysis': (AnalysesClient, 'download'),

@@ -88,6 +88,9 @@ import type {
   CheckConfigInput,
   AnalyzeDefaults,
   CheckDefaults,
+  TrajectoryAnalysis,
+  TrajectoryAnalysisDefaults,
+  TrajectoryAnalysisRequest,
   CheckStatus,
   TaskCheck,
   AnalyzeConfigInput,
@@ -1798,11 +1801,40 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   // provider's sandbox the analyzer boots — there is no local backend
   // server-side.
   analyze: {
-    summary: "Judge a finished job's trial traces against a rubric",
+    summary: "Judge trial traces or a trajectory file against a rubric",
     notes:
       "Each trial gets its own analysis run; `analysis list --job <id>` finds them again. " +
-      "--show-defaults prints the platform's analyze defaults and exits.",
+      "--show-defaults prints the platform's analyze defaults (with --trajectory, the judge's) and exits. " +
+      "--trajectory <path> (- reads stdin) instead judges any agent trajectory with one LLM-as-a-judge " +
+      "call, by default for reward hacking, false positives and negatives, spec misalignment and untruthful reports.",
     flags: {
+      // The trajectory judge (POST /api/analyses/trajectory): no job, no
+      // box — one model call over a file the caller has, from anywhere.
+      trajectory: {
+        kind: "string",
+        short: "T",
+        value: "<path>",
+        help: "Judge this trajectory file instead of a job's trials; - reads stdin",
+        group: "Trajectory",
+      },
+      task: {
+        kind: "string",
+        value: "<path>",
+        help: "With --trajectory: the instruction the agent was given (e.g. instruction.md)",
+        group: "Trajectory",
+      },
+      grader: {
+        kind: "string",
+        value: "<path>",
+        help: "With --trajectory: how the run was graded (test file, verifier, rubric)",
+        group: "Trajectory",
+      },
+      reward: {
+        kind: "string",
+        value: "<value>",
+        help: "With --trajectory: the reward the grader recorded (a number, or a word like pass)",
+        group: "Trajectory",
+      },
       model: {
         kind: "string",
         short: "m",
@@ -1890,7 +1922,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     examples: [
       "evolve analyze 3e1f9a2c --watch",
       "evolve analyze 3e1f9a2c \\\n-r rubric.toml -p prompt.txt \\\n--failing -l 20 -n 2 \\\n--watch",
-      "evolve analyze 3e1f9a2c -t d1a10c4e -t d1a10f72",
+      "evolve analyze -T trajectory.json \\\n--task instruction.md --reward 1",
     ],
   },
   // Harbor's `check` is a top-level command too (their cli/main.py:163
@@ -5772,6 +5804,10 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const json = inv.flags.json === true;
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
+  if (inv.flags.trajectory !== undefined) return cmdAnalyzeTrajectory(inv, io);
+  for (const flag of ["task", "grader", "reward"]) {
+    if (inv.flags[flag] !== undefined) throw new CliUsageError(`--${flag} goes with --trajectory <path>`);
+  }
   if (inv.flags["show-defaults"] === true) {
     return printDefaults(inv, io, () => analyses(clientConfig(inv)).defaults(), "analyze", "<job-id>");
   }
@@ -5881,6 +5917,112 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   // Harbor's own exit law: any failed analysis is exit 1 — a wave that lost
   // trials never reads as a clean pass.
   return (final.stats.analysis?.n_failed ?? 0) > 0 ? 1 : 0;
+}
+
+/** The flags of `analyze` that belong to the job form only: a trajectory has no trials to select, no box, no wave to watch. */
+const JOB_ONLY_ANALYZE_FLAGS = ["env", "trial", "n-concurrent", "passing", "failing", "n-trials", "watch", "quiet"];
+
+/**
+ * A trajectory file as the request carries it: JSON (an ATIF trajectory, a
+ * chat messages array) rides parsed, so the server lays it out for the
+ * judge; anything else (JSONL, a log, a transcript) rides as its text.
+ */
+export function trajectoryPayload(text: string): string | Record<string, unknown> | unknown[] {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (parsed !== null && typeof parsed === "object") return parsed as Record<string, unknown> | unknown[];
+    } catch {
+      // JSONL or a transcript that happens to open with a brace: the text as-is.
+    }
+  }
+  return text;
+}
+
+function readTextArg(flag: string, path: string, read: (path: string | number) => string): string {
+  let text: string;
+  try {
+    text = path === "-" ? read(0) : read(path);
+  } catch (error) {
+    throw new CliUsageError(`--${flag}: cannot read ${path === "-" ? "stdin" : path}: ${(error as Error).message}`);
+  }
+  if (text.trim().length === 0) {
+    throw new CliUsageError(`--${flag}: ${path === "-" ? "stdin" : path} is empty`);
+  }
+  return text;
+}
+
+/**
+ * The trajectory request from the flags — parsed at the keyboard, every
+ * acceptance refusal the server's (the rubric grammar, the effort
+ * vocabulary, the gateway's word on the model).
+ */
+export function trajectoryAnalysisRequest(
+  inv: Invocation,
+  read: (path: string | number) => string = (p) => readFileSync(p, "utf-8")
+): TrajectoryAnalysisRequest {
+  const stray = JOB_ONLY_ANALYZE_FLAGS.filter((flag) => inv.flags[flag] !== undefined);
+  if (inv.positionals[0] !== undefined || stray.length > 0) {
+    throw new CliUsageError(
+      "--trajectory judges one file and takes no <job-id>" +
+        (stray.length > 0 ? ` and none of the job flags (given: ${stray.map((k) => "--" + k).join(", ")})` : "")
+    );
+  }
+  const req: TrajectoryAnalysisRequest = {
+    trajectory: trajectoryPayload(readTextArg("trajectory", String(inv.flags.trajectory), read)),
+  };
+  if (inv.flags.task !== undefined) req.task = readTextArg("task", String(inv.flags.task), read);
+  if (inv.flags.grader !== undefined) req.grader = readTextArg("grader", String(inv.flags.grader), read);
+  if (inv.flags.reward !== undefined) {
+    const raw = String(inv.flags.reward).trim();
+    if (raw === "") throw new CliUsageError("--reward must not be empty");
+    req.reward = /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
+  }
+  if (inv.flags.model !== undefined) req.model_name = String(inv.flags.model);
+  if (inv.flags.effort !== undefined) req.reasoning_effort = String(inv.flags.effort);
+  if (inv.flags.rubric !== undefined) req.rubric = loadRubricFile(String(inv.flags.rubric));
+  if (inv.flags.prompt !== undefined) req.prompt = loadPromptFile(String(inv.flags.prompt));
+  return req;
+}
+
+/** The verdict as lines: the summary, then the checks table with every evidence entry, then what the call ran under and cost. */
+export function trajectoryAnalysisLines(result: TrajectoryAnalysis): string[] {
+  const lines: string[] = ["Trajectory Analysis", "", ...result.summary.split("\n"), ""];
+  const rows: string[][] = [["CHECK", "OUTCOME", "EXPLANATION"]];
+  for (const [name, verdict] of Object.entries(result.checks)) {
+    rows.push([checkRowLabel(name), verdict.outcome, oneLine(verdict.explanation)]);
+    for (const entry of verdict.evidence ?? []) rows.push(["", "", `${entry.where} — ${oneLine(entry.quote)}`]);
+  }
+  lines.push(...table(rows), "");
+  const counts = outcomeCounts(result.checks);
+  lines.push(
+    `pass ${counts.pass} · fail ${counts.fail} · n/a ${counts.not_applicable} · unknown ${counts.unknown}`,
+    `model ${result.model_name} · effort ${result.reasoning_effort}` +
+      (result.attempts > 1 ? ` · ${result.attempts} attempts` : "") +
+      (result.estimated_cost_usd !== null ? ` · $${result.estimated_cost_usd.toFixed(4)}` : "")
+  );
+  return lines;
+}
+
+async function cmdAnalyzeTrajectory(inv: Invocation, io: CliIO): Promise<number> {
+  const client = analyses(clientConfig(inv));
+  if (inv.flags["show-defaults"] === true) {
+    const defaults = await client.trajectoryDefaults();
+    if (inv.flags.json === true) {
+      io.out(JSON.stringify(defaults));
+    } else {
+      for (const line of rubricDefaultsLines({ ...defaults, sandbox_provider: null })) io.out(line);
+    }
+    return 0;
+  }
+  const result = await client.trajectory(trajectoryAnalysisRequest(inv));
+  if (inv.flags.json === true) {
+    io.out(JSON.stringify(result));
+  } else {
+    for (const line of trajectoryAnalysisLines(result)) io.out(line);
+  }
+  return 0;
 }
 
 /** Python's str.title() over the criterion name with underscores as spaces — Harbor's row label (cli/analyze.py:41). */
@@ -6029,12 +6171,15 @@ async function printDefaults(
 }
 
 /** The policy head, then the prompt template and every criterion in full. */
-function rubricDefaultsLines(defaults: AnalyzeDefaults | CheckDefaults): string[] {
+function rubricDefaultsLines(
+  defaults: AnalyzeDefaults | CheckDefaults | (TrajectoryAnalysisDefaults & { sandbox_provider: null })
+): string[] {
   const criteria = defaults.rubric.criteria.length;
   const lines = table([
     ["model", defaults.model_name],
     ["effort", defaults.reasoning_effort],
-    ["provider", defaults.sandbox_provider],
+    // The trajectory judge boots no box: no provider row.
+    ...(defaults.sandbox_provider !== null ? [["provider", defaults.sandbox_provider]] : []),
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
   ]);
   lines.push("", "PROMPT", ...defaults.prompt.split("\n"), "", "RUBRIC");

@@ -39,6 +39,9 @@ import type {
   AnalyzeConfig,
   AnalyzeConfigInput,
   AnalyzeDefaults,
+  TrajectoryAnalysis,
+  TrajectoryAnalysisDefaults,
+  TrajectoryAnalysisRequest,
   AttemptPhase,
   AuthClient,
   AuthStatus,
@@ -283,6 +286,9 @@ export type {
   AnalyzeConfig,
   AnalyzeConfigInput,
   AnalyzeDefaults,
+  TrajectoryAnalysis,
+  TrajectoryAnalysisDefaults,
+  TrajectoryAnalysisRequest,
   ApiKey,
   AttemptPhase,
   AuthClient,
@@ -4235,6 +4241,22 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
     async defaults(): Promise<AnalyzeDefaults> {
       const res = await request(cfg, "/api/analyses/defaults");
       return (await res.json()) as AnalyzeDefaults;
+    },
+
+    async trajectory(req: TrajectoryAnalysisRequest): Promise<TrajectoryAnalysis> {
+      // The body rides verbatim; the server owns every refusal (the rubric
+      // grammar, the effort vocabulary, the gateway's word on the model).
+      const res = await request(cfg, "/api/analyses/trajectory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return (await res.json()) as TrajectoryAnalysis;
+    },
+
+    async trajectoryDefaults(): Promise<TrajectoryAnalysisDefaults> {
+      const res = await request(cfg, "/api/analyses/trajectory/defaults");
+      return (await res.json()) as TrajectoryAnalysisDefaults;
     },
 
     filesystem: (analysisId: string): RunFilesystem =>

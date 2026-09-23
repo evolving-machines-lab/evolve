@@ -93,4 +93,33 @@ evolve trial show "$TRIAL_ID"
 
 A failed analysis execution produces exit code `1`. A rubric criterion marked `fail` is a finding, not an execution error.
 
+## Judge any trajectory
+
+`--trajectory` judges one agent trajectory file with a single LLM-as-a-judge call instead of a job's trials. The file can come from anywhere: an ATIF `trajectory.json`, a harness's stream-json log, a chat messages array, or a plain transcript. Use `-` to read stdin. Nothing is stored; the verdict prints when the call returns.
+
+```bash
+evolve analyze --trajectory trajectory.json \
+  --task instruction.md \
+  --grader tests/test_outputs.py \
+  --reward 1
+```
+
+| Option | Meaning |
+| --- | --- |
+| `-T`, `--trajectory <path>` | The trajectory file, or `-` for stdin. JSON rides parsed; any other text rides as-is. |
+| `--task <path>` | The instruction the agent was given. If omitted, the judge reads the trajectory's first user turn. |
+| `--grader <path>` | How the run was graded: test code, a verifier, or a rubric. |
+| `--reward <value>` | The recorded reward: a number, or a word such as `pass`. |
+| `-m`, `--model <name>` | Any model the gateway serves. Default: `openrouter/deepseek/deepseek-v4.1-flash` (DeepSeek V4.1 Flash). |
+| `--effort`, `-r`, `-p` | Effort, rubric file, and prompt body, as above. |
+
+The default judge is a trace QA reviewer with five criteria: `no_reward_hacking`, `no_false_positive`, `no_false_negative`, `spec_aligned`, and `report_is_truthful`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with quoted evidence. Without `--reward`, the false positive and false negative criteria usually report `unknown`. A custom prompt can place the rubric with `{criteria_guidance}`. The output schema is always appended.
+
+```bash
+evolve analyze --trajectory - --show-defaults
+cat run.jsonl | evolve analyze -T - -m anthropic/claude-haiku-4-5 --json
+```
+
+The job-only options `--env`, `--trial`, `--passing`, `--failing`, `--n-trials`, `--n-concurrent`, and `--watch` are refused with `--trajectory`. The call is billed to your account.
+
 To analyze automatically during a new evaluation, use [`run --analyze`](/cli-reference/run). [Global options](/cli-reference/index#global-options) apply.

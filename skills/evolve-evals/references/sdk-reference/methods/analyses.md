@@ -1,17 +1,17 @@
 ---
 title: "Analyses methods"
-description: "Read the analyzer’s verdict, transcript, files, and current defaults."
+description: "Read the analyzer’s verdict, transcript, files, and current defaults, or judge any trajectory."
 ---
 
 Create `client` with `analyses()`. Start a wave with [jobs.analyze](/sdk-reference/methods/jobs#analyze), then read its results here.
 
 **Note:**
 
-Python exposes `list`, `defaults`, `download`, and `filesystem`. Direct `get`, `transcript`, and `artifact` reads are TypeScript-only. In Python, `list(job=...)` or `Trial.analysis` gives the verdict; an analysis download gives its stored evidence.
+Python exposes `list`, `defaults`, `trajectory`, `trajectory_defaults`, `download`, and `filesystem`. Direct `get`, `transcript`, and `artifact` reads are TypeScript-only. In Python, `list(job=...)` or `Trial.analysis` gives the verdict; an analysis download gives its stored evidence.
 
 | Both SDKs | TypeScript only |
 | --- | --- |
-| [list](#list), [defaults](#defaults), [download](#download), [filesystem](#filesystem) | [get](#get), [transcript](#transcript), [artifact](#artifact) |
+| [list](#list), [defaults](#defaults), [trajectory](#trajectory), [trajectoryDefaults](#trajectorydefaults), [download](#download), [filesystem](#filesystem) | [get](#get), [transcript](#transcript), [artifact](#artifact) |
 
 ## list
 
@@ -75,6 +75,52 @@ defaults = await client.defaults()
 ```
 
 Python returns a dictionary. These are current defaults; an existing analysis records the policy it actually ran under.
+
+## trajectory
+
+Judge any agent trajectory with one LLM-as-a-judge call. Returns `TrajectoryAnalysis`: `summary`, `checks`, `model_name`, `reasoning_effort`, `rubric`, `usage`, `estimated_cost_usd`, and `attempts`. Nothing is stored.
+
+### Signature
+
+```ts TypeScript signature
+trajectory(req: TrajectoryAnalysisRequest): Promise<TrajectoryAnalysis>;
+```
+
+```python Python signature
+async def trajectory(
+    trajectory: str | dict | list,
+    *,
+    task: str | None = None,
+    grader: str | None = None,
+    reward: float | int | str | None = None,
+    rubric: Rubric | None = None,
+    prompt: str | None = None,
+    model_name: str | None = None,
+    reasoning_effort: str | None = None,
+) -> TrajectoryAnalysis: ...
+```
+
+```ts TypeScript
+const verdict = await client.trajectory({ trajectory: transcript, reward: 0 });
+```
+
+```python Python
+verdict = await client.trajectory(transcript, reward=0)
+```
+
+`trajectory` is a string or a JSON object or array. `model_name` defaults to `openrouter/deepseek/deepseek-v4.1-flash`. The default rubric checks for reward hacking, false positives, false negatives, spec misalignment, and untruthful reports. A reply that fails validation gets one repair turn; `attempts` is `2` when that turn produced the verdict. Python returns a dictionary.
+
+## trajectoryDefaults
+
+Read the trajectory judge's defaults. Returns `TrajectoryAnalysisDefaults`: model, effort, rubric, and unrendered prompt body. Python names it `trajectory_defaults()`.
+
+```ts TypeScript
+const defaults = await client.trajectoryDefaults();
+```
+
+```python Python
+defaults = await client.trajectory_defaults()
+```
 
 ## get
 

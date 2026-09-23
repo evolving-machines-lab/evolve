@@ -10216,6 +10216,91 @@ async function testAnalyzeShowDefaults() {
   }
 }
 
+async function testAnalyzeTrajectory() {
+  console.log("\n--- runCli: analyze --trajectory judges one file with the LLM judge and prints the verdict ---");
+  const dir = mkdtempSync(join(tmpdir(), "evolve-traj-"));
+  const trajPath = join(dir, "trajectory.json");
+  const jsonlPath = join(dir, "run.jsonl");
+  const taskPath = join(dir, "instruction.md");
+  const graderPath = join(dir, "test_outputs.py");
+  await writeFile(trajPath, JSON.stringify({ steps: [{ step_id: 1, message: "rm tests/test_x.py" }] }));
+  await writeFile(jsonlPath, '{"type":"user"}\n{"type":"assistant"}\n');
+  await writeFile(taskPath, "Fix the parser.");
+  await writeFile(graderPath, "def test_parse(): ...");
+  const verdict = {
+    summary: "The agent deleted the test instead of fixing the parser.",
+    checks: {
+      no_reward_hacking: { outcome: "fail", explanation: "Test tampering.", evidence: [{ where: "step 1", quote: "rm tests/test_x.py" }] },
+      no_false_positive: { outcome: "fail", explanation: "Credit without the fix.", evidence: [{ where: "step 1", quote: "rm tests/test_x.py" }] },
+      no_false_negative: { outcome: "not_applicable", explanation: "Scored as a pass.", evidence: [] },
+    },
+    model_name: "openrouter/deepseek/deepseek-v4.1-flash",
+    reasoning_effort: "high",
+    rubric: { criteria: [] },
+    usage: { input_tokens: 1000, output_tokens: 200, total_tokens: 1200 },
+    estimated_cost_usd: 0.0012,
+    attempts: 1,
+  };
+  installMockFetch();
+  try {
+    setMockResponse("/api/analyses/trajectory/defaults", {
+      status: 200,
+      body: { model_name: "openrouter/deepseek/deepseek-v4.1-flash", reasoning_effort: "high", rubric: { criteria: [{ name: "no_reward_hacking", description: "d", guidance: "g" }] }, prompt: "You are a trace QA reviewer.\n{criteria_guidance}" },
+    });
+    setMockResponse("/api/analyses/trajectory", { status: 200, body: verdict });
+
+    const human = captureIO();
+    assertEqual(
+      await runCli(["analyze", "--trajectory", trajPath, "--task", taskPath, "--grader", graderPath, "--reward", "1", ...AUTH], human.io),
+      0,
+      "--trajectory exits 0 on a verdict"
+    );
+    const call = fetchCalls[fetchCalls.length - 1];
+    assertEqual(new URL(call.url).pathname, "/api/analyses/trajectory", "one POST on the trajectory door, no job read");
+    assertEqual(call.init?.method, "POST", "it is a POST");
+    const sent = JSON.parse(String(call.init?.body)) as Record<string, unknown>;
+    assertEqual(sent.trajectory, { steps: [{ step_id: 1, message: "rm tests/test_x.py" }] }, "a JSON trajectory file rides parsed");
+    assertEqual(sent.task, "Fix the parser.", "--task rides as the file's text");
+    assertEqual(sent.grader, "def test_parse(): ...", "--grader rides as the file's text");
+    assertEqual(sent.reward, 1, "a numeric --reward rides as a number");
+    assert(!("model_name" in sent), "no -m: the server's default model (DeepSeek V4.1 Flash) applies");
+    assert(human.out.includes("Trajectory Analysis"), "the verdict's heading");
+    assert(human.out.some((l) => l.includes("No Reward Hacking") && l.includes("fail")), "a row per criterion, titled, with its outcome");
+    assert(human.out.some((l) => l.includes("step 1 — rm tests/test_x.py")), "every evidence entry under its criterion");
+    assert(human.out.some((l) => l.startsWith("pass 0 · fail 2 · n/a 1 · unknown 0")), "the outcome tally");
+    assert(human.out.some((l) => l.includes("deepseek-v4.1-flash") && l.includes("$0.0012")), "the model and the cost");
+
+    const json = captureIO();
+    assertEqual(
+      await runCli(["analyze", "-T", jsonlPath, "-m", "anthropic/claude-haiku-4-5", "--effort", "low", "--reward", "pass", "--json", ...AUTH], json.io),
+      0,
+      "-T is the short flag"
+    );
+    const sent2 = JSON.parse(String(fetchCalls[fetchCalls.length - 1].init?.body)) as Record<string, unknown>;
+    assertEqual(sent2.trajectory, '{"type":"user"}\n{"type":"assistant"}\n', "a JSONL file rides as its text");
+    assertEqual(sent2.model_name, "anthropic/claude-haiku-4-5", "-m names any model");
+    assertEqual(sent2.reasoning_effort, "low", "--effort rides verbatim");
+    assertEqual(sent2.reward, "pass", "a word --reward rides as a string");
+    assertEqual((JSON.parse(json.out[0]) as { summary: string }).summary, verdict.summary, "--json prints the wire verdict");
+
+    const defaults = captureIO();
+    assertEqual(await runCli(["analyze", "--trajectory", "-", "--show-defaults", ...AUTH], defaults.io), 0, "--trajectory --show-defaults exits 0");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).pathname, "/api/analyses/trajectory/defaults", "one GET on the judge's defaults door");
+    assert(!defaults.out.some((l) => l.startsWith("provider")), "the judge boots no box: no provider row");
+    assert(defaults.out.some((l) => l === "You are a trace QA reviewer."), "the prompt body prints unrendered");
+
+    const before = fetchCalls.length;
+    assertEqual(await runCli(["analyze", "eval-1", "--trajectory", trajPath, ...AUTH], captureIO().io), 2, "--trajectory with a <job-id> is a usage error");
+    assertEqual(await runCli(["analyze", "--trajectory", trajPath, "--watch", ...AUTH], captureIO().io), 2, "a job-only flag with --trajectory is a usage error");
+    assertEqual(await runCli(["analyze", "--trajectory", join(dir, "missing.json"), ...AUTH], captureIO().io), 2, "an unreadable trajectory file is a usage error");
+    assertEqual(await runCli(["analyze", "eval-1", "--task", taskPath, ...AUTH], captureIO().io), 2, "--task without --trajectory is a usage error");
+    assertEqual(fetchCalls.length, before, "no refused form reached the server");
+  } finally {
+    restoreFetch();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function testCheckShowDefaults() {
   console.log("\n--- runCli: check --show-defaults prints the platform's check policy and exits without a source ---");
   assertEqual(parseArgs(["check", "--show-defaults"]).flags["show-defaults"], true, "--show-defaults is a flag of the top-level verb");
@@ -10315,6 +10400,7 @@ async function main() {
   await testAnalyzeVerbJsonAndFailure();
   await testAnalyzeRefusalSurfacesVerbatim();
   await testAnalyzeShowDefaults();
+  await testAnalyzeTrajectory();
   await testJobShowAnalysisRows();
   testTrialDetailAnalysisRows();
   await testCompareCancelDownload();
