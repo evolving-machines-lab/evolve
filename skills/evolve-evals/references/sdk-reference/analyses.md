@@ -1,6 +1,6 @@
 ---
 title: "Analyses"
-description: "Analyze trial traces, then inspect the verdict and the analyzer's own run."
+description: "Analyze trial traces, then inspect the result and the analyzer's own run."
 ---
 
 **Note:**
@@ -88,7 +88,7 @@ The response includes `model_name`, `rubric`, `prompt`, `reasoning_effort`, and 
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
-## Read verdicts
+## Read results
 
 ```ts TypeScript
 for await (const result of analyses().list({ job: jobId })) {
@@ -113,7 +113,7 @@ The latest analysis also appears on `trial.analysis`. Each criterion reports `pa
 | Read defaults | `defaults()` | `defaults()` |
 | Download run | `download(analysisId, { to })` | `download(analysis_id, to=...)` |
 | Browse sandbox files | `filesystem(analysisId)` | `filesystem(analysis_id)` |
-| Read one verdict directly | `get(analysisId)` | Use list results or `trial.analysis` |
+| Read one analysis directly | `get(analysisId)` | Use list results or `trial.analysis` |
 | Read analyzer transcript | `transcript(analysisId, { since })` | Not exposed |
 | Read raw stored artifact | `artifact(analysisId, stream)` | Not exposed |
 

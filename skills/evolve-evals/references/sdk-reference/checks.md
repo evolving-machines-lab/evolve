@@ -126,7 +126,7 @@ Watch options are `onProgress`, `pollIntervalMs`, `signal` in TypeScript; `on_pr
 | --- | --- | --- |
 | Download whole check or one task check | `download(id, { to })` | `download(id, to=...)` |
 | Browse a task check's sandbox | `taskFilesystem(checkId, taskCheckId)` | `task_filesystem(check_id, task_check_id)` |
-| Read one task verdict | `task(taskCheckId)` | Read the entry in `check["results"]` |
+| Read one task check | `task(taskCheckId)` | Read the entry in `check["results"]` |
 | Read checker transcript | `transcript(taskCheckId, { since })` | Not exposed |
 | Read checker artifact | `artifact(taskCheckId, stream)` | Not exposed |
 

@@ -1,6 +1,6 @@
 ---
 title: "Returned objects"
-description: "Read jobs, trials, pages, costs, and verdicts without guessing their shape."
+description: "Read jobs, trials, pages, costs, and results without guessing their shape."
 ---
 
 The SDK returns structured data. TypeScript uses objects. Python uses dataclasses for most entities and dictionaries for stats, analyses, checks, and rubric records.
@@ -746,9 +746,9 @@ interface TrialRetryCircuitBrokenData {
 
 Analysis reads a trial’s trajectory. A task check reviews the task itself. Their criterion results share the same four outcomes: `pass`, `fail`, `not_applicable`, and `unknown`.
 
-Python returns verdicts and defaults as dictionaries. `checks` maps criterion names to `{ outcome, explanation, evidence }`; evidence is a list of `{ where, quote }` records. Evolve derives no verdict from a result; compute what you need from the criteria.
+Python returns results and defaults as dictionaries. `checks` maps criterion names to `{ outcome, explanation, evidence }`; evidence is a list of `{ where, quote }` records. Evolve derives no verdict from a result; compute what you need from the criteria.
 
-### Analysis verdict and criterion evidence
+### Analysis result and criterion evidence
 
 ```ts
 interface TrialAnalysis {

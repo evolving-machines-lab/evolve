@@ -9956,6 +9956,7 @@ async function testCheckVerb() {
       status: "completed",
       results: [
         { ...(wireCheck().results as Record<string, unknown>[])[0], status: "failed", failure: { phase: "invalid_result", message: "missing result file: check-result.json" }, finished_at: "2026-09-09T10:05:00.000Z" },
+        { ...(wireCheck().results as Record<string, unknown>[])[0], id: "tc-3", task_name: "third-task", status: "running", checks: null, finished_at: null },
         { ...(wireCheck().results as Record<string, unknown>[])[0], id: "tc-2", task_name: "other-task", status: "completed", checks: { typos: { outcome: "pass", explanation: "none" }, pinned_dependencies: { outcome: "fail", explanation: "unpinned" } }, cost_usd: 0.02, finished_at: "2026-09-09T10:05:00.000Z" },
       ],
       cost_usd: 0.02,
@@ -9980,6 +9981,7 @@ async function testCheckVerb() {
     assert(human.out.some((l) => l.startsWith("TASK") && l.includes("PASS") && l.includes("FAIL") && l.includes("N/A") && l.includes("COST")), "Harbor's summary columns");
     assert(human.out.some((l) => l.startsWith("other-task") && /\b1\b.*\b1\b.*\b0\b.*0\.0200/.test(l)), "a completed task's pass/fail/N-A counts and cost");
     assert(human.out.some((l) => l.startsWith("hello-world") && l.includes("-")), "an errored task's row is dashed");
+    assert(human.out.some((l) => l.startsWith("third-task · running") && /(-\s+){4}-/.test(l)), "a running task keeps its status beside its name, counts dashed");
     assert(human.out.some((l) => l.includes("❌ hello-world: invalid_result: missing result file: check-result.json")), "the typed failure line, Harbor's ❌ shape");
     assert(human.out.some((l) => l === "Total agent cost: $0.0200"), "Harbor's total agent cost line");
   } finally {

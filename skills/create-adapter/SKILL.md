@@ -248,8 +248,8 @@ guarantee that execution.
 
 Read every task's status, findings, and evidence. The result is the
 per-criterion JSON; Evolve derives no verdict from it. The five execution
-criteria say whether the checker ran the task, and `unknown` on them is not a
-separate execution audit.
+criteria say whether the checker ran the task, and `unknown` on them is not
+proof that the solution or verifier ran.
 Use `evolve check trace <task-check-id>` to inspect the checker's work. Test any
 unresolved execution in an environment that can run the task.
 

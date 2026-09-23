@@ -76,7 +76,7 @@ check
     └── ...
 ```
 
-The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes. Under a custom rubric the chip is `has_a_problem` when any criterion fails, `unclear` when none fails but one is unknown, and `no_problem_found` otherwise. Under a rubric with the default criterion names the same rule applies, with two exceptions: an unknown on one of the five execution criteria does not make the chip unclear, it marks the chip not executed; and `attempt_isolation` counts only when it fails. Read the criteria and compute what you need from them.
+The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes. Under a custom rubric the chip is `has_a_problem` when any criterion fails, `unclear` when none fails but at least one is unknown, and `no_problem_found` otherwise. Under a rubric with the default criterion names the same rule applies, with two exceptions: an unknown on one of the five execution criteria does not make the chip unclear but marks it not executed; and `attempt_isolation` counts only when it fails. Read the criteria and compute what you need from them.
 
 **Note:**
 
@@ -93,7 +93,7 @@ evolve check trace "$TASK_CHECK_ID"
 evolve check download "$CHECK_ID" -o checks/
 ```
 
-Use the parent check ID for the whole report. Use a task-check ID for one checker's transcript, filesystem, or individual verdict:
+Use the parent check ID for the whole report. Use a task-check ID for one checker's transcript, filesystem, or individual result:
 
 ```bash
 evolve check download "$TASK_CHECK_ID" --stream task-check

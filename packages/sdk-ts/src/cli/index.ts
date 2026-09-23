@@ -5876,8 +5876,8 @@ function checkRowLabel(name: string): string {
  * | Fail | N/A | Cost ($)) with an errored task's row dashed, then one
  * `❌ task: reason` line per failed task and the total agent cost — their
  * `_render_checks_table` / `_render_check_summary`. A task that is still
- * queued or running has no verdict yet and prints its status in the
- * outcome column.
+ * queued or running has no result yet: its status prints in the OUTCOME
+ * column of the one-task table and beside its name in the summary table.
  */
 export function checkResultLines(check: Check): string[] {
   const lines: string[] = [];

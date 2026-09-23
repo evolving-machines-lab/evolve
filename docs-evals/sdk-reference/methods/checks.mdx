@@ -8,7 +8,7 @@ Create `client` with `checks()`. A **check id** identifies the group. Each `resu
 ```text
 Check: check.id
 └── Task check: check.results[].id
-    ├── Verdict and evidence
+    ├── Result and evidence
     ├── Transcript and logs
     └── Sandbox files
 ```
