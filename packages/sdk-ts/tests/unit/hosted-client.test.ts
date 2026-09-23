@@ -388,7 +388,7 @@ async function testDatasetsGet() {
               providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: false, reason: "multi-container tasks are not supported on modal" } },
             },
             {
-              task_name: "no-result-yet",
+              task_name: "no-verdict-yet",
               agent_timeout_sec: 600,
               verifier_timeout_sec: 600,
               providers: { e2b: { ok: true }, daytona: { ok: true }, modal: { ok: true } },

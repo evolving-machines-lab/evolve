@@ -942,7 +942,7 @@ assert(
 // (AnalysisCheck.outcome: Harbor's three plus `unknown`). Type-only (nothing
 // validates an outcome word at run time), so it is read out of the shipped
 // source and held to the contract's enum member for member. The contract
-// carries no derived result — no `label` on TrialAnalysis or TaskCheck, no
+// carries no derived label — no `label` on TrialAnalysis or TaskCheck, no
 // `executed` on TaskCheck — pinned on both sides so neither creeps back on
 // one side alone. The Python gate pins the same shapes' keys
 // (test_hosted_analysis_typing.py).
@@ -991,7 +991,7 @@ for (const [schema, property] of [
   ["TaskCheck", "label"],
   ["TaskCheck", "executed"],
 ] as const) {
-  assert(!schemaHasProperty(schema, property), `the spec's ${schema} carries no ${property} — the platform derives no result`);
+  assert(!schemaHasProperty(schema, property), `the spec's ${schema} carries no ${property} — the platform derives no label`);
   assert(!interfaceHasProperty(schema, property), `the SDK's ${schema} declares no ${property} either`);
 }
 assert(!/export type (AnalysisLabel|CheckLabel) =/.test(TYPES_SOURCE), "no AnalysisLabel or CheckLabel type ships");
