@@ -159,7 +159,7 @@ CHECK_ID="paste-check-id-here"
 evolve check show "$CHECK_ID"
 ```
 
-Read the criterion findings and `executed` value. A completed check can contain failures; a clean inspection without execution does not establish that the solution and verifier work. See [task checks](/core-concepts/check#the-result) for interpretation.
+Read the criterion findings, the five execution criteria included. A completed check can contain failures; a clean inspection without execution does not establish that the solution and verifier work. See [task checks](/core-concepts/check#the-result) for interpretation.
 
 If you change any task file, publish a new version and use that version in the remaining commands.
 

@@ -502,8 +502,6 @@ export {
   type AnalysisCheck,
   type AnalysisEvidence,
   type AnalysisFailure,
-  type AnalysisLabel,
-  type CheckLabel,
   type CheckDefaults,
   type AnalyzeDefaults,
   type JudgeResult,

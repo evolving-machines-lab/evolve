@@ -4108,8 +4108,8 @@ async function testAnalyzeVerbWatchFollows() {
       body: {
         items: [
           wireAnalyzedTrial("run-1", COMPLETED_WIRE_ANALYSIS),
-          // A second row with a derived label: the table leads its checks cell with the word.
-          wireAnalyzedTrial("run-2", { ...COMPLETED_WIRE_ANALYSIS, id: "an-2", label: "env_fault" }),
+          // A second completed row: every completed checks cell leads with the outcome tally.
+          wireAnalyzedTrial("run-2", { ...COMPLETED_WIRE_ANALYSIS, id: "an-2" }),
         ],
         nextCursor: null,
         hasMore: false,
@@ -4147,12 +4147,12 @@ async function testAnalyzeVerbWatchFollows() {
       "the table carries the criterion outcomes"
     );
     assert(
-      out.some((l) => l.includes("run-2") && l.includes("ENV FAULT · reward_hacking pass")),
-      "a row with a derived label leads its checks cell with the label word (spaces for the underscores)"
+      out.some((l) => l.includes("run-2") && l.includes("pass 1 · fail 0 · unknown 0 · n/a 0 · reward_hacking pass")),
+      "a completed row leads its checks cell with the outcome tally, the per-criterion words after it"
     );
     assert(
-      out.some((l) => l.includes("run-1") && l.includes("reward_hacking pass") && !l.includes("·  reward") && !l.includes("custom rubric")),
-      "a row whose server states no label prints the words alone"
+      !out.some((l) => l.includes("custom rubric") || l.includes("ENV FAULT")),
+      "no label word anywhere: the platform derives none"
     );
     assert(out.some((l) => l.includes("$0.0173")), "the table carries the analyzer's own cost");
     assert(
@@ -4330,13 +4330,13 @@ function testTrialDetailAnalysisRows() {
   assert(analyzed.includes("pass — No verifier writes observed."), "each criterion renders outcome and explanation");
   assert(analyzed.includes("Legitimate solve."), "the summary renders");
   assert(analyzed.includes("$0.0173"), "the analyzer's own spend renders, never folded into the trial's bill");
-  // A server predating the derived label sends none: no label row, no word invented.
-  assert(!analyzed.includes("label"), "no label row when the server stated none");
+  // No derived label anywhere — the outcome tally is the analysis's summary row.
+  assert(!analyzed.includes("label"), "no label row: the platform derives none");
+  assert(analyzed.includes("outcomes") && analyzed.includes("pass 1 · fail 0 · unknown 0 · n/a 0"), "the outcome tally rides its own row");
 
-  // THE DERIVED LABEL (the platform's word for the whole trial) rides its own
-  // row in capitals; `custom rubric` where the run has none; the fourth
-  // outcome renders as its wire word.
-  const labelled = (label: "flagged" | null) =>
+  // THE OUTCOME TALLY counts every criterion (the platform derives no word for
+  // the trial); the fourth outcome renders as its wire word.
+  const detailed = () =>
     trialDetailLines(
       trialFixture({
         status: "SCORED",
@@ -4351,7 +4351,6 @@ function testTrialDetailAnalysisRows() {
             score_is_earned: { outcome: "fail", explanation: "Test tampering: tests/test.sh edited.", evidence: [{ where: "step_id 4", quote: "rm tests/test.sh" }] },
             environment_worked: { outcome: "unknown", explanation: "No trial.log.", evidence: [] },
           },
-          label,
           estimated_cost_usd: 0.01,
           failure: null,
           created_at: "2026-09-14T00:00:00.000Z",
@@ -4359,9 +4358,9 @@ function testTrialDetailAnalysisRows() {
         },
       })
     ).join("\n");
-  assert(labelled("flagged").includes("FLAGGED"), "the derived label renders in capitals");
-  assert(labelled(null).includes("custom rubric"), "a null label reads `custom rubric`");
-  assert(labelled("flagged").includes("unknown — No trial.log."), "the fourth outcome renders as its wire word");
+  assert(detailed().includes("pass 0 · fail 1 · unknown 1 · n/a 0"), "the outcome tally counts every criterion");
+  assert(!detailed().includes("FLAGGED") && !detailed().includes("custom rubric"), "no derived word, no placeholder");
+  assert(detailed().includes("unknown — No trial.log."), "the fourth outcome renders as its wire word");
 
   const failed = trialDetailLines(
     trialFixture({
@@ -10085,7 +10084,7 @@ async function testFilesVerbs() {
 
     // The other owners: the analysis prefix; the task check resolves its check.
     setMockResponse("/api/analyses/an-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
-    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: { id: "tc-1", check_id: "chk-1", task_name: "t", status: "completed", checks: {}, label: null, executed: null, cost_usd: null, attempts: 1, failure: null, created_at: "t", finished_at: "t" } } });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: { id: "tc-1", check_id: "chk-1", task_name: "t", status: "completed", checks: {}, cost_usd: null, attempts: 1, failure: null, created_at: "t", finished_at: "t" } } });
     setMockResponse("/api/checks/chk-1/tasks/tc-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
     const an = captureIO();
     assertEqual(await runCli(["analysis", "files", "status", "an-1", "--json", ...AUTH], an.io), 0, "analysis files status exits 0");
@@ -10131,7 +10130,7 @@ async function testCheckReadVerbs() {
     const done = wireCheck({
       status: "completed",
       results: [
-        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "None found.", evidence: [{ where: "instruction.md line 1", quote: "Write output.csv" }] }, pinned_dependencies: { outcome: "not_applicable", explanation: "No deps.", evidence: [] }, verifier_is_correct: { outcome: "unknown", explanation: "No docker here.", evidence: [] } }, label: "no_problem_found", executed: false, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
+        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "None found.", evidence: [{ where: "instruction.md line 1", quote: "Write output.csv" }] }, pinned_dependencies: { outcome: "not_applicable", explanation: "No deps.", evidence: [] }, verifier_is_correct: { outcome: "unknown", explanation: "No docker here.", evidence: [] } }, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
       ],
       cost_usd: 0.0123,
       finished_at: "2026-09-09T10:05:00.000Z",
@@ -10143,8 +10142,8 @@ async function testCheckReadVerbs() {
     const show = captureIO();
     assertEqual(await runCli(["check", "show", "chk-1", ...AUTH], show.io), 0, "show exits 0 when no task failed");
     assert(show.out.some((l) => l === "Task Quality Checks: hello-world"), "Harbor's single-task table title");
-    // The platform's derived label, with the executed flag beside it, on its own line above Harbor's table.
-    assert(show.out.some((l) => l === "Label: NO PROBLEM FOUND · not executed"), "the derived label line, the executed flag beside it");
+    // The outcome tally on its own line above Harbor's table — the platform derives no label.
+    assert(show.out.some((l) => l === "Outcomes: pass 1 · fail 0 · unknown 1 · n/a 1"), "the outcome tally line");
     assert(show.out.some((l) => l.startsWith("CHECK") && l.includes("OUTCOME") && l.includes("EXPLANATION")), "Harbor's single-task columns");
     assert(show.out.some((l) => l.startsWith("Typos") && l.includes("pass") && l.includes("None found.")), "the criterion is titled like Harbor's row (Pinned Dependencies, Typos)");
     assert(show.out.some((l) => l.includes("instruction.md line 1 — Write output.csv")), "each verdict's evidence rides the rows beneath it");

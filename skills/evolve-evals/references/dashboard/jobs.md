@@ -91,7 +91,7 @@ The summary separates completed, failed, and pending analyses, plus their cost. 
 
 2. Review **criterion totals**: pass, fail, not applicable, and unknown.
 
-3. Open **per-trial findings**: label, evidence, and summary.
+3. Open **per-trial findings**: the summary chip, criterion outcomes, evidence, and summary.
 
 4. Follow the **analyzer trace**.
 

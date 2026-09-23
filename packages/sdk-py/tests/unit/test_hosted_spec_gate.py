@@ -69,10 +69,8 @@ from evolve import (
     HOSTED_ERROR_CODES,
     AgentsClient,
     AnalysesClient,
-    AnalysisLabel,
     AnalysisStatus,
     AuthClient,
-    CheckLabel,
     CheckStatus,
     ChecksClient,
     DatasetsClient,
@@ -633,15 +631,13 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     assert len(check_statuses) >= 3, 'the Check.status parse found too few — spec moved?'
     assert list(typing.get_args(CheckStatus)) == check_statuses
 
-    # The two derived labels: the spec's enum carries null (the wire's "no
-    # label yet, or a custom rubric"), which Optional[...] types here.
-    analysis_labels = _spec_property_enum('TrialAnalysis', 'label')
-    assert len(analysis_labels) >= 4, 'the TrialAnalysis.label parse found too few — spec moved?'
-    assert [*typing.get_args(AnalysisLabel), 'null'] == analysis_labels
+    # The contract carries no derived verdict: neither result shape has a
+    # `label` enum (the parse finds none), and the SDK exports no label type.
+    import evolve
 
-    check_labels = _spec_property_enum('TaskCheck', 'label')
-    assert len(check_labels) >= 3, 'the TaskCheck.label parse found too few — spec moved?'
-    assert [*typing.get_args(CheckLabel), 'null'] == check_labels
+    assert _spec_property_enum('TrialAnalysis', 'label') == []
+    assert _spec_property_enum('TaskCheck', 'label') == []
+    assert not hasattr(evolve, 'AnalysisLabel') and not hasattr(evolve, 'CheckLabel')
 
 
 def _spec_discriminator_mapping(schema: str) -> 'list[str]':

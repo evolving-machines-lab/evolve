@@ -234,7 +234,7 @@ task(taskCheckId: string): Promise<TaskCheck>;
 const result = await client.task(taskCheckId);
 ```
 
-Use `check.results[].id`, not the group’s id. Python reads the same result within `check["results"]`. The result contains `checks`, `label`, `executed`, attempts, measured cost, and typed failure.
+Use `check.results[].id`, not the group’s id. Python reads the same result within `check["results"]`. The result contains `checks`, attempts, measured cost, and typed failure.
 
 ## transcript
 

@@ -4268,32 +4268,17 @@ function outcomeCounts(checks: Record<string, AnalysisCheck> | null): Record<Ana
   return counts;
 }
 
-/**
- * The derived label as the CLI prints it: the wire word in capitals with
- * spaces, `custom rubric` when the run has none (null). A server predating
- * the field sends no `label` at all; that is "not stated", never a word the
- * CLI invents — the callers print nothing for it.
- */
-function labelWord(label: string | null | undefined): string | null {
-  if (label === undefined) return null;
-  return label === null ? "custom rubric" : label.replace(/_/g, " ").toUpperCase();
+/** The per-criterion outcome counts on one line — the platform derives no verdict; a reader counts for itself. */
+function outcomeTally(checks: Record<string, AnalysisCheck> | null): string {
+  const counts = outcomeCounts(checks);
+  return `pass ${counts.pass} · fail ${counts.fail} · unknown ${counts.unknown} · n/a ${counts.not_applicable}`;
 }
 
-/** A task check's label with its executed flag beside it — a reading-only verdict says so; null when the server stated none. */
-function checkLabelWord(check: Pick<TaskCheck, "label" | "executed">): string | null {
-  const word = labelWord(check.label);
-  if (word === null || check.label === null) return word;
-  return `${word}${check.executed === true ? " · executed" : check.executed === false ? " · not executed" : ""}`;
-}
-
-/** One task check's cell — status until completed, then the label and `pass N · fail N · n/a N · unknown N`. */
+/** One task check's cell — status until completed, then the outcome tally. */
 function taskCheckCell(check: TaskCheck | null): string {
   if (check === null) return "-";
   if (check.status !== "completed") return check.status;
-  const counts = outcomeCounts(check.checks);
-  const tally = `pass ${counts.pass} · fail ${counts.fail} · n/a ${counts.not_applicable} · unknown ${counts.unknown}`;
-  const label = checkLabelWord(check);
-  return label === null ? tally : `${label} · ${tally}`;
+  return outcomeTally(check.checks);
 }
 
 const DATASET_COLUMNS: ListColumn<Dataset>[] = [
@@ -4511,10 +4496,8 @@ export function trialDetailLines(run: Trial): string[] {
     // The id closes the loop to the analysis verbs: `evolve analysis
     // show|trace|download <id>` read the ANALYZER's own side of this row.
     rows.push(["analysis", `${analysis.status} · ${analysis.model_name} · ${analysis.id}`]);
-    // The derived label first (the platform's word for the whole trial), then
-    // one row per criterion verdict.
-    const label = analysis.status === "completed" ? labelWord(analysis.label) : null;
-    if (label !== null) rows.push(["  label", label]);
+    // The outcome tally first, then one row per criterion verdict.
+    if (analysis.status === "completed") rows.push(["  outcomes", outcomeTally(analysis.checks)]);
     for (const [name, check] of Object.entries(analysis.checks ?? {})) {
       rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
     }
@@ -4548,11 +4531,8 @@ export function analysisDetailLines(analysis: TrialAnalysis): string[] {
     ["model", analysis.model_name],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
   ];
-  // The derived label (the platform's word for the whole trial; `custom
-  // rubric` when the rubric is not the default one), then one row per
-  // criterion verdict with its evidence beneath.
-  const label = analysis.status === "completed" ? labelWord(analysis.label) : null;
-  if (label !== null) rows.push(["label", label]);
+  // The outcome tally, then one row per criterion verdict with its evidence beneath.
+  if (analysis.status === "completed") rows.push(["outcomes", outcomeTally(analysis.checks)]);
   for (const [name, check] of Object.entries(analysis.checks ?? {})) {
     rows.push([`  ${name}`, `${check.outcome} — ${check.explanation}`]);
     // A server predating the evidence field sends none; nothing is invented.
@@ -5745,15 +5725,12 @@ export function analysisResultLines(runs: Trial[]): string[] {
         );
       }
     } else {
-      // The derived label leads the cell through labelWord (spaces for the
-      // underscores, `custom rubric` for a run without one, nothing for a
-      // server that states none), the way `check --watch` prints Label:.
+      // The outcome tally leads the cell, the per-criterion words follow.
       const words =
         Object.entries(analysis.checks ?? {})
           .map(([name, check]) => `${name} ${check.outcome}`)
           .join(" · ") || analysis.status;
-      const label = labelWord(analysis.label);
-      checks = label ? `${label} · ${words}` : words;
+      checks = analysis.status === "completed" ? `${outcomeTally(analysis.checks)} · ${words}` : words;
     }
     rows.push([
       run.id,
@@ -5912,10 +5889,8 @@ export function checkResultLines(check: Check): string[] {
       return lines;
     }
     lines.push(`Task Quality Checks: ${result.task_name}`);
-    // The derived label and the executed flag first, on their own line
-    // (nothing when the server stated none).
-    const label = result.status === "completed" ? checkLabelWord(result) : null;
-    if (label !== null) lines.push(`Label: ${label}`);
+    // The outcome tally first, on its own line.
+    if (result.status === "completed") lines.push(`Outcomes: ${outcomeTally(result.checks)}`);
     const rows: string[][] = [["CHECK", "OUTCOME", "EXPLANATION"]];
     for (const [name, verdict] of Object.entries(result.checks ?? {})) {
       rows.push([checkRowLabel(name), verdict.outcome, oneLine(verdict.explanation)]);
@@ -5930,22 +5905,20 @@ export function checkResultLines(check: Check): string[] {
     return lines;
   }
   lines.push("Task Quality Checks");
-  // Harbor's columns plus the platform's: the derived LABEL first, and the
-  // fourth outcome's count beside their three.
-  const rows: string[][] = [["TASK", "LABEL", "PASS", "FAIL", "N/A", "UNKNOWN", "COST ($)", "TASK CHECK ID"]];
+  // Harbor's columns plus the fourth outcome's count beside their three.
+  const rows: string[][] = [["TASK", "PASS", "FAIL", "N/A", "UNKNOWN", "COST ($)", "TASK CHECK ID"]];
   for (const result of check.results) {
     if (result.status === "failed") {
-      rows.push([result.task_name, "-", "-", "-", "-", "-", "-", result.id]);
+      rows.push([result.task_name, "-", "-", "-", "-", "-", result.id]);
       continue;
     }
     if (result.status !== "completed") {
-      rows.push([result.task_name, result.status, "", "", "", "", "-", result.id]);
+      rows.push([result.task_name, result.status, "", "", "", "-", result.id]);
       continue;
     }
     const counts = outcomeCounts(result.checks);
     rows.push([
       result.task_name,
-      checkLabelWord(result) ?? "-",
       String(counts.pass),
       String(counts.fail),
       String(counts.not_applicable),

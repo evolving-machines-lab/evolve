@@ -13,7 +13,7 @@ Find a check in **Jobs** under kind **Check**, or open a job's **Check** tab to 
 Check report
 ├── Source tasks + model + effort + cost
 └── Task results
-    ├── Label and execution findings
+    ├── Summary chip (computed from the outcomes)
     ├── Criterion outcomes and evidence
     └── Checker trace
 ```
@@ -47,7 +47,7 @@ The header identifies the check, source, model, effort, status, and cost. Each t
 | **No problem found** | Check execution findings before treating it as a runtime validation. |
 | Failed task check | Read its failure; this is a failed review, not a task-quality verdict. |
 
-The `executed` flag is derived from criterion outcomes. It does not independently attest that every relevant command ran. See [how check results are derived](/core-concepts/check#the-result).
+The chip is a summary the dashboard computes from the criterion outcomes: any fail, else any unknown, else no problem found. For a default-rubric check it also notes whether the five execution criteria were all answered. Neither is a separate execution audit. See [the check result](/core-concepts/check#the-result).
 
 **[Check reference](/cli-reference/check)**
 

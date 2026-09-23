@@ -246,10 +246,10 @@ second runs a paid checker agent against a rubric. It can run the environment,
 reference solution, and verifier when its sandbox supports them; it does not
 guarantee that execution.
 
-Read every task's status, findings, and evidence. Under the default rubric,
-`no_problem_found` means no criterion failed and no file-based criterion is
-unknown. `executed` is true when none of the five execution criteria is
-`unknown`; it is derived from findings, not a separate execution audit.
+Read every task's status, findings, and evidence. The result is the
+per-criterion JSON; Evolve derives no verdict from it. The five execution
+criteria say whether the checker ran the task, and `unknown` on them is not a
+separate execution audit.
 Use `evolve check trace <task-check-id>` to inspect the checker's work. Test any
 unresolved execution in an environment that can run the task.
 
@@ -328,5 +328,5 @@ supported scope before using them:
 |---------|--------------|--------|
 | `evolve: command not found` | The CLI is not installed | `npm install -g @evolvingmachines/evolve`. |
 | `evolve dataset check` refuses a task by name | Its `task.toml` breaks a rule (a field, a value, a name) | Fix the converter, regenerate, check again. The refusal names the field. |
-| A task check comes back `has_a_problem` | One criterion failed | `evolve check show <check-id>` prints the criterion, its explanation and its evidence. |
+| A task check has a `fail` outcome | One criterion failed | `evolve check show <check-id>` prints the criterion, its explanation and its evidence. |
 | Every task fails the check the same way | An error in the task template | Fix `task-template/` in the converter, not the generated tasks. |

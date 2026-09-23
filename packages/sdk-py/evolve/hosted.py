@@ -589,14 +589,6 @@ AnalysisStatus = Literal['queued', 'running', 'completed', 'failed']
 #: ``'completed'`` once every task settled. A check never fails as a whole;
 #: each task carries its own typed failure (``TaskCheck['failure']``).
 CheckStatus = Literal['queued', 'running', 'completed']
-#: The derived label of a trial analysis (spec ``TrialAnalysis.label``;
-#: ``TrialAnalysis`` states the rule). None on the wire until completed and
-#: under a custom rubric.
-AnalysisLabel = Literal['flagged', 'env_fault', 'unclear', 'clean']
-#: The derived label of one task's quality check (spec ``TaskCheck.label``;
-#: ``TaskCheck`` states the rule). None until completed and under a custom
-#: rubric.
-CheckLabel = Literal['has_a_problem', 'unclear', 'no_problem_found']
 #: Which lane a settled trial's cost came from. Only ``'measured'`` is final.
 #: ``'measured_provisional'`` is a real gateway reading taken inside its
 #: asynchronous spend flush — an honest floor a deferred pass later confirms or
@@ -1906,17 +1898,6 @@ class TrialAnalysis(TypedDict):
     #: One entry per rubric criterion, keys exactly the rubric's criterion
     #: names (the frozen-criteria law). None until completed.
     checks: Optional[Dict[str, AnalysisCheck]]
-    #: The derived label — ``'flagged'`` | ``'env_fault'`` | ``'unclear'`` |
-    #: ``'clean'`` — computed by the platform from the outcomes when the
-    #: result is stored, never asked from the model: ``'flagged'`` on a fail
-    #: of score_is_earned, score_is_correct, task_was_fair or
-    #: report_is_truthful; else ``'env_fault'`` on a fail of
-    #: environment_worked; else ``'unclear'`` on an unknown of any of those
-    #: five, or a not_applicable of score_is_earned or score_is_correct;
-    #: else ``'clean'``. None until completed, and None on a completed
-    #: analysis whose rubric is not the default one (a custom rubric carries
-    #: its per-criterion outcomes and no label).
-    label: Optional[AnalysisLabel]
     estimated_cost_usd: Optional[float]
     #: The analyzer's one-home usage reading — the SAME shape, same keys, the
     #: trial and session surfaces serve
@@ -2030,10 +2011,8 @@ class CheckSource(TypedDict):
 class TaskCheck(TypedDict):
     """One task's quality check — Harbor's QualityCheckResult shape (their
     cli/quality_checker/models.py:31-35: ``task_name``, ``checks`` keyed by
-    criterion, ``cost_usd``), its checks extended by the result schema and
-    the derived ``label`` and ``executed`` beside them, plus the hosted
-    provenance: its own id, the
-    check it belongs to, its lifecycle (the analysis ladder's four lowercase
+    criterion, ``cost_usd``), its checks extended by the result schema,
+    plus the hosted provenance: its own id, the check it belongs to, its lifecycle (the analysis ladder's four lowercase
     words), the bounded attempt count, and a typed ``failure`` in place of
     Harbor's ``error`` string.
 
@@ -2052,22 +2031,6 @@ class TaskCheck(TypedDict):
     status: str
     #: One entry per rubric criterion, keys exactly the frozen criteria. None until completed.
     checks: Optional[Dict[str, AnalysisCheck]]
-    #: The derived label — ``'has_a_problem'`` | ``'unclear'`` |
-    #: ``'no_problem_found'`` — computed by the platform from the outcomes
-    #: when the result is stored: ``'has_a_problem'`` on a fail of any
-    #: criterion; else ``'unclear'`` on an unknown of any of the seven
-    #: file-based criteria; else ``'no_problem_found'``. ``attempt_isolation``
-    #: is read for ``'has_a_problem'`` only: its unknown changes neither the
-    #: label nor ``executed``. None until completed, and None under a custom
-    #: rubric.
-    label: Optional[CheckLabel]
-    #: Whether the box ran the task's environment: True when none of the
-    #: five run-based criteria (reference_solution_is_valid,
-    #: verifier_rejects_non_solutions, environment_builds_and_runs,
-    #: verification_is_stable, limits_allow_the_task) is unknown, so a
-    #: reading-only ``'no_problem_found'`` is never mistaken for a run.
-    #: None exactly when ``label`` is None.
-    executed: Optional[bool]
     cost_usd: Optional[float]
     #: 1, or 2 when the one automatic re-run fired.
     attempts: int

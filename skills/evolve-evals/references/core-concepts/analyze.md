@@ -117,16 +117,7 @@ Each criterion has an outcome, explanation, and evidence.
 | `not_applicable` | The criterion has no subject in this trial. |
 | `unknown` | The available record cannot decide it. |
 
-With the default criterion names, Evolve also derives a label, in this order:
-
-| First matching condition | Label |
-| --- | --- |
-| Earned score, correct score, fairness, or truthful report fails | `flagged` |
-| Otherwise, environment fails | `env_fault` |
-| Otherwise, one of those five is unknown, or either score criterion is not applicable | `unclear` |
-| Otherwise | `clean` |
-
-A rubric with different criterion names has no derived label. A missing or extra criterion makes the analysis result invalid. A run without a valid result can retry once.
+The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes (any fail, else any unknown, else clean); read the criteria and compute what you need from them. A missing or extra criterion makes the analysis result invalid. A run without a valid result can retry once.
 
 The analysis's `estimated_cost_usd` and the job's `stats.analysis.cost_usd` are separate from evaluation spend.
 

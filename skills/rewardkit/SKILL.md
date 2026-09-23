@@ -49,8 +49,8 @@ This runs all criteria in `/tests/` against the workspace at `/app` and writes
 
 Run `evolve check "<task-path>" --watch` for task quality review. The checker may
 run the reference solution and verifier when its environment supports them;
-inspect its findings and evidence. The `executed` field is derived from rubric
-outcomes, not an independent execution audit. Read
+inspect its findings and evidence. The five execution criteria say whether it
+ran the task; `unknown` on them is not an execution audit. Read
 `evolve skills get evals core-concepts/check` for the result semantics.
 
 If judge criteria need API keys, request them through `task.toml`:

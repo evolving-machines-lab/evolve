@@ -938,14 +938,13 @@ assert(
 );
 
 // -----------------------------------------------------------------------------
-// 11. RUBRIC VERDICT VOCABULARIES — the outcome a criterion can carry
-// (AnalysisCheck.outcome: Harbor's three plus `unknown`) and the two derived
-// labels (TrialAnalysis.label, TaskCheck.label). All three are type-only
-// (nothing validates a verdict word at run time), so they are read out of
-// the shipped source and held to the contract's enums member for member; the
-// labels' spec enums carry `null` as a member, which the SDK spells as
-// `| null` on the field, not in the union, so it is set aside before the
-// comparison. The Python gate pins the same shapes' keys
+// 11. THE RUBRIC OUTCOME VOCABULARY — the outcome a criterion can carry
+// (AnalysisCheck.outcome: Harbor's three plus `unknown`). Type-only (nothing
+// validates an outcome word at run time), so it is read out of the shipped
+// source and held to the contract's enum member for member. The contract
+// carries no derived verdict — no `label` on TrialAnalysis or TaskCheck, no
+// `executed` on TaskCheck — pinned on both sides so neither creeps back on
+// one side alone. The Python gate pins the same shapes' keys
 // (test_hosted_analysis_typing.py).
 // -----------------------------------------------------------------------------
 
@@ -968,20 +967,34 @@ assert(
     : `outcome words drifted: SDK [${declaredOutcomes.join(", ")}] vs spec [${specOutcomes.join(", ")}]`
 );
 
-for (const [typeName, schema] of [
-  ["AnalysisLabel", "TrialAnalysis"],
-  ["CheckLabel", "TaskCheck"],
-] as const) {
-  const declared = declaredUnion(typeName);
-  const spec = propertyEnum(schema, "label").filter((member) => member !== "null");
-  assert(spec.length >= 3, `the spec's ${schema}.label enum parsed (${spec.length} words)`);
-  assert(
-    JSON.stringify(declared) === JSON.stringify(spec),
-    JSON.stringify(declared) === JSON.stringify(spec)
-      ? `${typeName} is the spec's ${schema}.label enum, byte-exactly (${spec.join(", ")})`
-      : `${typeName} drifted: SDK [${declared.join(", ")}] vs spec [${spec.join(", ")}]`
-  );
+/** True when the spec's schema block declares the property (a `        name:` line at property depth). */
+function schemaHasProperty(schemaName: string, property: string): boolean {
+  let inSchema = false;
+  for (const line of specLines) {
+    if (!inSchema) {
+      if (new RegExp(`^ {4}${schemaName}:\\s*$`).test(line)) inSchema = true;
+      continue;
+    }
+    if (/^ {4}[A-Z]\w*:\s*$/.test(line)) break;
+    if (new RegExp(`^ {8}${property}:\\s*$`).test(line)) return true;
+  }
+  return false;
 }
+/** True when the shipped interface declares the property. */
+function interfaceHasProperty(interfaceName: string, property: string): boolean {
+  const body = new RegExp(`export interface ${interfaceName} \\{([^}]+)\\}`).exec(TYPES_SOURCE)?.[1] ?? "";
+  return new RegExp(`\\n\\s*${property}[?]?:`).test(body);
+}
+assert(schemaHasProperty("TrialAnalysis", "checks") && interfaceHasProperty("TaskCheck", "checks"), "the property parsers see a property that exists (non-vacuity)");
+for (const [schema, property] of [
+  ["TrialAnalysis", "label"],
+  ["TaskCheck", "label"],
+  ["TaskCheck", "executed"],
+] as const) {
+  assert(!schemaHasProperty(schema, property), `the spec's ${schema} carries no ${property} — the platform derives no verdict`);
+  assert(!interfaceHasProperty(schema, property), `the SDK's ${schema} declares no ${property} either`);
+}
+assert(!/export type (AnalysisLabel|CheckLabel) =/.test(TYPES_SOURCE), "no AnalysisLabel or CheckLabel type ships");
 
 console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
 if (failed > 0) process.exit(1);

@@ -18,7 +18,7 @@ const client = checks();
 const check = await client.create({ source: { directory: "./tasks" } });
 const finished = await client.watch(check.id);
 for (const task of finished.results) {
-  console.log(task.task_name, task.label, task.executed);
+  console.log(task.task_name, task.status, task.checks);
 }
 ```
 
@@ -29,7 +29,7 @@ client = checks()
 check = await client.create("./tasks")
 finished = await client.watch(check["id"])
 for task in finished["results"]:
-    print(task["task_name"], task["label"], task["executed"])
+    print(task["task_name"], task["status"], task["checks"])
 ```
 
 For a published dataset:
@@ -95,7 +95,6 @@ Check
     │       ├── outcome
     │       ├── explanation
     │       └── evidence
-    ├── label, executed
     └── failure, cost_usd
 ```
 
@@ -104,13 +103,11 @@ Each task can be `queued`, `running`, `completed`, or `failed`. The check become
 | Field | Read it as |
 | --- | --- |
 | `checks` | Criterion outcomes: `pass`, `fail`, `not_applicable`, `unknown` |
-| `label` | `has_a_problem`, `unclear`, `no_problem_found`, or null |
-| `executed` | Whether execution-based criteria were resolved; inspect it beside the label |
 | `failure` | Why that task check could not produce a result |
 
 **Note:**
 
-`no_problem_found` alone does not prove the task environment ran. Read `executed` and the criterion evidence. Custom rubrics may have no derived label.
+Evolve derives no verdict from a result. Read the criterion outcomes and evidence; the five execution criteria say whether the checker ran the task.
 
 ## Read and follow checks
 
