@@ -506,7 +506,7 @@ export interface RetryConfig {
 export interface RubricCriterion {
   /**
    * Criterion identifier, snake_case (it keys the result's `checks` object).
-   * The platform's default rubrics name seven criteria for analyze and thirteen for check.
+   * The platform's default rubrics are served by `analyses().defaults()` and `checks().defaults()`.
    */
   name: string;
   /** What the criterion evaluates, one sentence. */
@@ -537,8 +537,7 @@ export interface Rubric {
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
  * wave. `{}` is legal and means "all defaults":
  * openrouter/deepseek/deepseek-v4.1-flash at its per-model effort (high)
- * over the platform's default analyze rubric (seven criteria, score_is_earned
- * first) and its default prompt body.
+ * over the platform's default analyze rubric and its default prompt body.
  *
  * The analyzer always runs the claude-code harness (Harbor's default analyze
  * agent) in its own sealed sandbox — on the provider `sandbox_provider`
@@ -4971,7 +4970,7 @@ export interface AnalysesClient {
  * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
  * default for both rubric
  * agents, a recorded deviation), `rubric` (the default is the platform's
- * check rubric, thirteen criteria), and
+ * check rubric), and
  * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing the platform's
  * default check body and rendered with `{task_path}`, `{file_tree}`,
  * `{criteria_guidance}`; the output contract is appended after it exactly
@@ -4993,7 +4992,7 @@ export interface CheckConfigInput {
   name?: string;
   /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
   model_name?: string;
-  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (thirteen criteria). */
+  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (`checks().defaults()`). */
   rubric?: Rubric;
   /** The prompt template — the TEXT of Harbor's `-p/--prompt` file. */
   prompt?: string;

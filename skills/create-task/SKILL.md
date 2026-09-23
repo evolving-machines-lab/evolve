@@ -347,8 +347,8 @@ evolve check show "$CHECK_ID"
 
 `evolve dataset check` sends `task.toml` and any `dataset.toml` to the API for
 validation. It does not upload the full task package or execute the task.
-`evolve check` runs a paid checker agent. It reviews the files against thirteen
-default criteria and can run the environment, solution, and verifier when its
+`evolve check` runs a paid checker agent. It reviews the files against the default
+criteria (`evolve check --show-defaults`) and can run the environment, solution, and verifier when its
 sandbox supports them. It is not a dedicated reference-solution runner; the
 Evolve CLI has no standalone oracle command.
 

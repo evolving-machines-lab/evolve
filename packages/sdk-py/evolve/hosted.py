@@ -1616,8 +1616,8 @@ class RubricCriterion(TypedDict):
     every wire shape here.
     """
     #: Criterion identifier, snake_case (it keys the result's ``checks``).
-    #: The platform's default rubrics name seven criteria for analyze and
-    #: thirteen for check.
+    #: The platform's default rubrics are served by ``analyses().defaults()``
+    #: and ``checks().defaults()``.
     name: str
     #: What the criterion evaluates, one sentence.
     description: str
@@ -1649,7 +1649,7 @@ class AnalyzeConfigInput(TypedDict, total=False):
     after it settles; CANCELLED trials are skipped); ``{}`` is legal and
     means "all defaults" — openrouter/deepseek/deepseek-v4.1-flash at its
     per-model effort (high)
-    over the platform's default analyze rubric (seven criteria) and its
+    over the platform's default analyze rubric and its
     default prompt body. The analyzer always runs the
     claude-code harness in its own sealed sandbox — on the provider
     ``sandbox_provider`` names, or the platform's analysis default when it
@@ -1962,8 +1962,7 @@ class CheckConfigInput(TypedDict, total=False):
     ``claude-sonnet-4-6``; this platform's is the analyzer's
     ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
     for both rubric agents, a
-    recorded deviation), ``rubric`` (default: the platform's check rubric,
-    thirteen criteria) and
+    recorded deviation), ``rubric`` (default: the platform's check rubric) and
     ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing the
     platform's default check body; rendered with ``{task_path}``, ``{file_tree}``,
     ``{criteria_guidance}``; the output contract appended after it exactly
@@ -8272,7 +8271,7 @@ class JobsClient:
         analysis.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at high
-        over the platform's default analyze rubric (seven criteria), on the
+        over the platform's default analyze rubric, on the
         platform's analysis default provider.
         CANCELLED trials are never analyzed.
         Which trials, and how wide, are Harbor's own analyze options with
@@ -9583,8 +9582,8 @@ class ChecksClient:
         first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at its
-        per-model effort over the platform's default check rubric (thirteen
-        criteria), on the platform's analysis default provider.
+        per-model effort over the platform's default check rubric, on the
+        platform's analysis default provider.
 
         THE RESPONSE IS THE ACCEPTED CHECK (202): one ``results`` entry per
         task, each ``'queued'``; follow it with :meth:`watch` or poll
