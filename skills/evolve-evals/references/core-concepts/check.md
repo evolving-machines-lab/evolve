@@ -47,12 +47,12 @@ A check is a hosted model run and incurs cost. `evolve dataset check` is a separ
 
 | Review area | Default criteria |
 | --- | --- |
-| Instructions and tests | Sufficient instructions; tests match instructions; verifier correctness. |
-| Evaluation integrity | No answer leakage; grading is out of the agent's reach. |
+| Instructions and tests | Sufficient instructions; tests match instructions; verifier correctness; data and labels support the work and its grading. |
+| Evaluation integrity | No answer leakage; grading is out of the agent's reach; each attempt starts clean and stays isolated from the others. |
 | Execution | Valid reference solution; rejection of non-solutions; environment works; stable verification; sufficient limits. |
 | Feasibility | The task is solvable. |
 
-The default rubric has eleven criteria. Inspect their complete guidance and the current model, effort, provider, and prompt:
+The default rubric has thirteen criteria. Inspect their complete guidance and the current model, effort, provider, and prompt:
 
 ```bash
 evolve check --show-defaults
@@ -80,7 +80,7 @@ check
 | Label | Rule, in order |
 | --- | --- |
 | `has_a_problem` | Any criterion fails. |
-| `unclear` | Otherwise, a file-based criterion is unknown. |
+| `unclear` | Otherwise, a file-based criterion is unknown (`attempt_isolation` counts only when it fails). |
 | `no_problem_found` | Neither condition above applies. |
 
 **Note:**

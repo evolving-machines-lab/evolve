@@ -1625,7 +1625,7 @@ class RubricCriterion(TypedDict):
     """
     #: Criterion identifier, snake_case (it keys the result's ``checks``).
     #: The platform's default rubrics name seven criteria for analyze and
-    #: eleven for check.
+    #: thirteen for check.
     name: str
     #: What the criterion evaluates, one sentence.
     description: str
@@ -1982,7 +1982,7 @@ class CheckConfigInput(TypedDict, total=False):
     ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
     for both rubric agents, a
     recorded deviation), ``rubric`` (default: the platform's check rubric,
-    eleven criteria) and
+    thirteen criteria) and
     ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing the
     platform's default check body; rendered with ``{task_path}``, ``{file_tree}``,
     ``{criteria_guidance}``; the output contract appended after it exactly
@@ -2055,9 +2055,11 @@ class TaskCheck(TypedDict):
     #: The derived label — ``'has_a_problem'`` | ``'unclear'`` |
     #: ``'no_problem_found'`` — computed by the platform from the outcomes
     #: when the result is stored: ``'has_a_problem'`` on a fail of any
-    #: criterion; else ``'unclear'`` on an unknown of any of the six
-    #: file-based criteria; else ``'no_problem_found'``. None until
-    #: completed, and None under a custom rubric.
+    #: criterion; else ``'unclear'`` on an unknown of any of the seven
+    #: file-based criteria; else ``'no_problem_found'``. ``attempt_isolation``
+    #: is read for ``'has_a_problem'`` only: its unknown changes neither the
+    #: label nor ``executed``. None until completed, and None under a custom
+    #: rubric.
     label: Optional[CheckLabel]
     #: Whether the box ran the task's environment: True when none of the
     #: five run-based criteria (reference_solution_is_valid,
@@ -9618,7 +9620,7 @@ class ChecksClient:
         first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at its
-        per-model effort over the platform's default check rubric (eleven
+        per-model effort over the platform's default check rubric (thirteen
         criteria), on the platform's analysis default provider.
 
         THE RESPONSE IS THE ACCEPTED CHECK (202): one ``results`` entry per

@@ -506,7 +506,7 @@ export interface RetryConfig {
 export interface RubricCriterion {
   /**
    * Criterion identifier, snake_case (it keys the result's `checks` object).
-   * The platform's default rubrics name seven criteria for analyze and eleven for check.
+   * The platform's default rubrics name seven criteria for analyze and thirteen for check.
    */
   name: string;
   /** What the criterion evaluates, one sentence. */
@@ -1663,8 +1663,10 @@ export type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
 
 /**
  * The derived label of a task check — computed the same way. `has_a_problem`
- * on a fail of any criterion; else `unclear` on an unknown of any of the six
- * file-based criteria; else `no_problem_found`. Null under a custom rubric.
+ * on a fail of any criterion; else `unclear` on an unknown of any of the seven
+ * file-based criteria; else `no_problem_found`. `attempt_isolation` is read
+ * for `has_a_problem` only: its unknown changes neither the label nor
+ * `executed`. Null under a custom rubric.
  */
 export type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
 
@@ -4993,7 +4995,7 @@ export interface AnalysesClient {
  * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
  * default for both rubric
  * agents, a recorded deviation), `rubric` (the default is the platform's
- * check rubric, eleven criteria), and
+ * check rubric, thirteen criteria), and
  * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing the platform's
  * default check body and rendered with `{task_path}`, `{file_tree}`,
  * `{criteria_guidance}`; the output contract is appended after it exactly
@@ -5015,7 +5017,7 @@ export interface CheckConfigInput {
   name?: string;
   /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
   model_name?: string;
-  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (eleven criteria). */
+  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (thirteen criteria). */
   rubric?: Rubric;
   /** The prompt template — the TEXT of Harbor's `-p/--prompt` file. */
   prompt?: string;
