@@ -4961,7 +4961,7 @@ async function testGpuSurfaces() {
     const text = show.out.join("\n");
     assert(text.includes("GPU"), "the GPU column appears when a task declares GPUs");
     assert(text.includes("2x H100"), "the requirement renders count and types");
-    assert(text.includes("e2b →modal"), "a degrade verdict renders as an arrow, not a refusal");
+    assert(text.includes("e2b →modal"), "a degrade result renders as an arrow, not a refusal");
     assert(
       text.includes("e2b: runs on modal — e2b offers no GPU allocation"),
       "the limitation line names where the task actually runs and why"
@@ -5475,9 +5475,9 @@ async function testIdPrefixLawEveryNoun() {
   const ghost = "00000000-0000-4000-8000-000000000000";
   installMockFetch();
   try {
-    const verdictA = analysisResultFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
+    const resultA = analysisResultFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
     const notAnAnalysis = { status: 400, body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" } };
-    setMockResponse(`/api/traces/trials/${anA}/artifacts?what=analysis`, { status: 200, body: { analysis: verdictA } });
+    setMockResponse(`/api/traces/trials/${anA}/artifacts?what=analysis`, { status: 200, body: { analysis: resultA } });
     setMockResponse(`/api/traces/trials/${anA}/artifacts?what=trace-stdout`, { status: 200, body: { log: "analyzer stdout" } });
     setMockResponse(`/api/traces/trials/${anA}/events`, {
       status: 200,
@@ -5492,7 +5492,7 @@ async function testIdPrefixLawEveryNoun() {
     });
     setMockResponse(`/api/trials/${trialT}`, {
       status: 200,
-      body: trialFixture({ id: trialT, status: "SCORED", reward: 1, analysis: verdictA as unknown as Trial["analysis"] }),
+      body: trialFixture({ id: trialT, status: "SCORED", reward: 1, analysis: resultA as unknown as Trial["analysis"] }),
     });
     setMockResponse(`/api/trials/${trialN}`, { status: 200, body: trialFixture({ id: trialN, job_id: jobN, status: "SCORED", reward: 0, analysis: null }) });
     setMockResponse(`/api/jobs/${jobN}`, { status: 200, body: wireJob({ id: jobN }) });
@@ -5501,28 +5501,28 @@ async function testIdPrefixLawEveryNoun() {
     setMockResponse(`/api/jobs/${regradeJob}`, { status: 200, body: wireJob({ id: regradeJob, is_regrade: true }) });
     setMockResponse("/api/analyses", {
       status: 200,
-      body: page([verdictA, analysisResultFixture({ id: anB, trial_id: trialS })]),
+      body: page([resultA, analysisResultFixture({ id: anB, trial_id: trialS })]),
     });
 
-    // A FULL trial id: the verdict door refuses it typed, the trial's own row names its latest analysis.
+    // A FULL trial id: the result door refuses it typed, the trial's own row names its latest analysis.
     const byTrial = captureIO();
     const beforeTrial = fetchCalls.length;
     assertEqual(await runCli(["analysis", "show", trialT, "--json", ...AUTH], byTrial.io), 0, "analysis show takes a full trial id");
     assertEqual((JSON.parse(byTrial.out[0]) as { id: string }).id, anA, "and serves the trial's LATEST analysis (trial.analysis)");
     assert(fetchCalls.some((c) => c.url.endsWith(`/api/trials/${trialT}`)), "read off the trial's own row");
-    assertEqual(fetchCalls.length - beforeTrial, 2, "TWO reads: the door's species answer and the trial row — the row's analysis IS the verdict, not read a third time");
+    assertEqual(fetchCalls.length - beforeTrial, 2, "TWO reads: the door's species answer and the trial row — the row's analysis IS the result, not read a third time");
 
     // A full trial id on trace: the same resolution, then the analyzer's transcript.
     const traceByTrial = captureIO();
     assertEqual(await runCli(["analysis", "trace", trialT, "--json", ...AUTH], traceByTrial.io), 0, "analysis trace takes a full trial id");
     assert(fetchCalls[fetchCalls.length - 1].url.includes(`/api/traces/trials/${anA}/events`), "and reads the analysis's transcript");
 
-    // A full analysis id: the verdict door's yes is the answer, no trial read — and the answer is what show prints.
+    // A full analysis id: the result door's yes is the answer, no trial read — and the answer is what show prints.
     const byAnalysis = captureIO();
     const before = fetchCalls.length;
     assertEqual(await runCli(["analysis", "show", anA, ...AUTH], byAnalysis.io), 0, "a full analysis id names that run");
     assert(!fetchCalls.slice(before).some((c) => c.url.includes("/api/trials/")), "without reading any trial");
-    assertEqual(fetchCalls.length - before, 1, "ONE read: the door's verdict is the document printed, never read twice");
+    assertEqual(fetchCalls.length - before, 1, "ONE read: the door's result is the document printed, never read twice");
 
     // A full analysis id on a stream: the resolver's door read is the SDK's species proof — no second gate read.
     const streamed = captureIO();
@@ -5532,13 +5532,13 @@ async function testIdPrefixLawEveryNoun() {
     assertEqual(
       fetchCalls.slice(beforeStream).map((c) => new URL(c.url).search),
       ["?what=analysis", "?what=trace-stdout"],
-      "TWO reads: the verdict door once (resolution and species proof are one read), then the stream"
+      "TWO reads: the result door once (resolution and species proof are one read), then the stream"
     );
 
     // A trial PREFIX: resolved among the analysis list's trial_id column, then the trial's row.
     const byTrialPrefix = captureIO();
     assertEqual(await runCli(["analysis", "show", "d1a10000-cccc", "--json", ...AUTH], byTrialPrefix.io), 0, "a trial prefix resolves to the trial's latest analysis");
-    assertEqual((JSON.parse(byTrialPrefix.out[0]) as { id: string }).id, anA, "the verdict served is the trial's latest analysis");
+    assertEqual((JSON.parse(byTrialPrefix.out[0]) as { id: string }).id, anA, "the result served is the trial's latest analysis");
 
     // An analysis PREFIX: resolved among the analysis list's ids, no trial read.
     const byAnalysisPrefix = captureIO();
@@ -5548,7 +5548,7 @@ async function testIdPrefixLawEveryNoun() {
     assertEqual(
       fetchCalls.slice(beforePrefix).map((c) => new URL(c.url).pathname + new URL(c.url).search),
       [`/api/analyses?limit=200`, `/api/traces/trials/${anA}/artifacts?what=analysis`],
-      "TWO reads: the index walk, then the verdict door once"
+      "TWO reads: the index walk, then the result door once"
     );
 
     // A prefix an analysis AND a trial own is ambiguous, both named.
@@ -5580,7 +5580,7 @@ async function testIdPrefixLawEveryNoun() {
     );
     assert(!regrade.err.some((l) => l.includes("yet") || l.includes("evolve analyze")), "and never calls it a trial awaiting analysis");
 
-    // An id nobody owns: the verdict door's own 404 — the analysis noun, whichever verb asked.
+    // An id nobody owns: the result door's own 404 — the analysis noun, whichever verb asked.
     const miss = captureIO();
     const beforeMiss = fetchCalls.length;
     assertEqual(await runCli(["analysis", "trace", ghost, ...AUTH], miss.io), 1, "a full id no run owns exits 1");
@@ -5595,7 +5595,7 @@ async function testIdPrefixLawEveryNoun() {
 // ANALYSIS — show, trace, download (the traces-feed verbs)
 // =============================================================================
 
-/** The wire verdict the feed's ?what=analysis door serves. */
+/** The wire result the feed's ?what=analysis door serves. */
 function analysisResultFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "an-1",
@@ -5690,7 +5690,7 @@ async function testTraceEventLineGatewayOnly() {
 }
 
 async function testAnalysisShow() {
-  console.log("\n--- runCli: analysis show renders the verdict document; --json is the wire object ---");
+  console.log("\n--- runCli: analysis show renders the result document; --json is the wire object ---");
   installMockFetch();
   try {
     setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
@@ -5702,7 +5702,7 @@ async function testAnalysisShow() {
     assertEqual(code, 0, "exit 0");
     assert(
       fetchCalls[fetchCalls.length - 1].url.endsWith("/api/traces/trials/an-1/artifacts?what=analysis"),
-      "one GET on the feed's verdict door"
+      "one GET on the feed's result door"
     );
     const text = out.join("\n");
     assert(text.includes("an-1"), "renders the analysis id");
@@ -5722,7 +5722,7 @@ async function testAnalysisShow() {
     const json = captureIO();
     assertEqual(await runCli(["analysis", "show", "an-1", "--json", ...AUTH], json.io), 0, "--json exits 0");
     const body = JSON.parse(json.out.join("")) as Record<string, unknown>;
-    assertEqual(body.id, "an-1", "--json is the wire verdict object");
+    assertEqual(body.id, "an-1", "--json is the wire result object");
     assertEqual(body.status, "failed", "--json keeps the wire's lowercase status");
 
     // A completed analysis renders its verdicts and summary, no failure row.
@@ -5748,7 +5748,7 @@ async function testAnalysisShow() {
     assert(completedText.includes("Legitimate solve."), "the summary renders");
     assert(!completedText.includes("failure"), "no failure row on a completed analysis");
 
-    // A TRIAL id at the verdict door refuses server-side in the feed's own
+    // A TRIAL id at the result door refuses server-side in the feed's own
     // grammar ({error: "<sentence>"}, no code). The CLI passes the sentence
     // through clean — human and --json alike — never the JSON blob.
     setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
@@ -5873,16 +5873,16 @@ async function testAnalysisDownloadStream() {
     );
     assert(absent.out[0].includes("No trace-stderr log"), "absence is stated, never an empty print");
 
-    // --stream analysis: the verdict document itself, the bytes the feed's
+    // --stream analysis: the result document itself, the bytes the feed's
     // &format=log form downloads as Harbor's analysis.json.
-    const verdict = captureIO();
+    const result = captureIO();
     assertEqual(
-      await runCli(["analysis", "download", "an-1", "--stream", "analysis", ...AUTH], verdict.io),
+      await runCli(["analysis", "download", "an-1", "--stream", "analysis", ...AUTH], result.io),
       0,
       "--stream analysis is a valid selector"
     );
-    const doc = JSON.parse(verdict.out.join("\n")) as Record<string, unknown>;
-    assertEqual(doc.id, "an-1", "prints the verdict document");
+    const doc = JSON.parse(result.out.join("\n")) as Record<string, unknown>;
+    assertEqual(doc.id, "an-1", "prints the result document");
   } finally {
     restoreFetch();
   }
@@ -5918,15 +5918,15 @@ async function testCheckDatasetAndTaskVerbs() {
     const stream = captureIO();
     assertEqual(await runCli(["check", "download", "tc-1", "--stream", "trace-stdout", ...AUTH], stream.io), 0, "check download --stream exits 0");
     assertEqual(stream.out, ["checker stdout"], "prints the raw log verbatim");
-    const verdict = captureIO();
-    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "task-check", ...AUTH], verdict.io), 0, "--stream task-check is the result document");
-    assertEqual((JSON.parse(verdict.out.join("\n")) as { id: string }).id, "tc-1", "prints the wire TaskCheck");
+    const result = captureIO();
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "task-check", ...AUTH], result.io), 0, "--stream task-check is the result document");
+    assertEqual((JSON.parse(result.out.join("\n")) as { id: string }).id, "tc-1", "prints the wire TaskCheck");
     const misuse = captureIO();
     assertEqual(await runCli(["check", "download", "tc-1", "--stream", "trace-stdout", "-o", "x", ...AUTH], misuse.io), 2, "--stream with -o is a usage error (the analysis verb's law)");
     const badName = captureIO();
-    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "analysis", ...AUTH], badName.io), 2, "the analysis verdict name is not a task check's stream");
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "analysis", ...AUTH], badName.io), 2, "the analysis result name is not a task check's stream");
 
-    // The species gate: a trial id at a stream selector dies at the verdict door.
+    // The species gate: a trial id at a stream selector dies at the result door.
     setMockResponse("/api/traces/trials/run-1/artifacts?what=task-check", { status: 400, body: { error: "check-result.json belongs to a task check — open the check row and download it there" } });
     setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", { status: 200, body: { log: "the TRIAL's stdout" } });
     const wrong = captureIO();
@@ -6003,11 +6003,11 @@ async function testAnalysisDownloadSave() {
       "Legitimate solve.",
       "the deliverable sits under artifacts/, where Harbor's wrapper trial keeps it"
     );
-    assert(!existsSync(join(target, "analysis.json")), "no verdict document at the folder's root: the tree is the server's, not a second assembly");
+    assert(!existsSync(join(target, "analysis.json")), "no result document at the folder's root: the tree is the server's, not a second assembly");
     const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
     assertEqual(evolve.analysis_id, "an-1", "evolve.json names the analysis");
     assertEqual(evolve.analyzed_trial_id, "run-1", "evolve.json names the analyzed trial");
-    assertEqual(evolve.gateway.cost_usd, 0.0366, "evolve.json restates the verdict's meter");
+    assertEqual(evolve.gateway.cost_usd, 0.0366, "evolve.json restates the result's meter");
 
     const refused = captureIO();
     assertEqual(await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], refused.io), 1, "an existing folder refuses without --overwrite");
@@ -10148,7 +10148,7 @@ async function testCheckReadVerbs() {
     assert(show.out.some((l) => l === "Outcomes: pass 1 · fail 0 · unknown 1 · n/a 1"), "the outcome tally line");
     assert(show.out.some((l) => l.startsWith("CHECK") && l.includes("OUTCOME") && l.includes("EXPLANATION")), "Harbor's single-task columns");
     assert(show.out.some((l) => l.startsWith("Typos") && l.includes("pass") && l.includes("None found.")), "the criterion is titled like Harbor's row (Pinned Dependencies, Typos)");
-    assert(show.out.some((l) => l.includes("instruction.md line 1 — Write output.csv")), "each verdict's evidence rides the rows beneath it");
+    assert(show.out.some((l) => l.includes("instruction.md line 1 — Write output.csv")), "each result's evidence rides the rows beneath it");
     assert(show.out.some((l) => l.startsWith("Pinned Dependencies") && l.includes("not_applicable")), "every criterion rows");
     assert(show.out.some((l) => l.startsWith("Verifier Is Correct") && l.includes("unknown")), "the fourth outcome renders as its wire word");
     assert(show.out.some((l) => l === "Agent cost: $0.0123"), "Harbor's agent cost line");

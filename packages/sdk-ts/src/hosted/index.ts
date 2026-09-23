@@ -4148,7 +4148,7 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
       const analysis = mapTrialAnalysis(body.analysis);
       if (analysis === null) {
         // mapTrialAnalysis reads malformed as "never analyzed" for the
-        // OPTIONAL Trial.analysis slot; here the verdict IS the answer, so
+        // OPTIONAL Trial.analysis slot; here the analysis IS the answer, so
         // absence fails closed instead of fabricating an empty object.
         throw new Error(`The analysis feed served no readable analysis object for "${analysisId}"`);
       }

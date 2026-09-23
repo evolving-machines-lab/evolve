@@ -247,7 +247,7 @@ OPERATION_TO_METHOD = {
     'streamTrialSandboxLogs': (TrialsClient, 'filesystem'),
     'getTrialProcs': (TrialsClient, 'filesystem'),
     # Analyses — the catalog of trace-analysis runs. The per-run reads
-    # (verdict, transcript, artifacts) ride the traces feed, which the
+    # (result, transcript, artifacts) ride the traces feed, which the
     # contract does not declare; this SDK speaks the contract's one door.
     'listAnalyses': (AnalysesClient, 'list'),
     'getAnalyzeDefaults': (AnalysesClient, 'defaults'),
@@ -450,7 +450,7 @@ def test_every_spec_operation_is_mapped():
     # spec does not declare — is the phantom assert below, which is where this
     # axis enforces "SDK ahead of spec is a hard fail". The intersection is
     # what goes in here, so a phantom entry is reported once, by that assert.
-    verdict = assess_spec_lag(
+    result = assess_spec_lag(
         sdk=[op for op in OPERATION_TO_METHOD if op in operations],
         spec=list(operations),
         lanes=OPERATION_LAG_LANES,
@@ -458,8 +458,8 @@ def test_every_spec_operation_is_mapped():
         remedy='state their SDK answer in OPERATION_TO_METHOD',
         ordered=False,  # a map has no order to pin
     )
-    announce(verdict)
-    assert verdict.ok, f'spec operations missing from the map: {verdict.failure}'
+    announce(result)
+    assert result.ok, f'spec operations missing from the map: {result.failure}'
     phantom = [op for op in OPERATION_TO_METHOD if op not in operations]
     assert not phantom, f'map entries with no spec operation: {phantom}'
 
@@ -492,7 +492,7 @@ def test_error_codes_match_the_spec_enum_byte_exactly():
     # the enum may carry codes a declared wave added and this SDK has not
     # published yet. A code the SDK has and the spec does not, a reordering of
     # the codes both sides carry, or a lag no lane claims all still fail here.
-    verdict = assess_spec_lag(
+    result = assess_spec_lag(
         sdk=list(HOSTED_ERROR_CODES),
         spec=_spec_error_codes(),
         lanes=ERROR_CODE_LAG_LANES,
@@ -500,8 +500,8 @@ def test_error_codes_match_the_spec_enum_byte_exactly():
         remedy='add them to the HostedErrorCode Literal in evolve/hosted.py',
         ordered=True,
     )
-    announce(verdict)
-    assert verdict.ok, f'HOSTED_ERROR_CODES drifted from the spec enum: {verdict.failure}'
+    announce(result)
+    assert result.ok, f'HOSTED_ERROR_CODES drifted from the spec enum: {result.failure}'
 
 
 def test_artifact_selectors_match_the_spec_stream_enum():
@@ -645,7 +645,7 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     assert len(check_statuses) >= 3, 'the Check.status parse found too few — spec moved?'
     assert list(typing.get_args(CheckStatus)) == check_statuses
 
-    # The contract carries no derived verdict: no label or executed property on
+    # The contract carries no derived result: no label or executed property on
     # either result shape, and the SDK exports no label type.
     import evolve
 
