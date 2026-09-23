@@ -73,6 +73,8 @@ DEFAULT_BASE_URL = 'https://dashboard.evolvingmachines.ai'
 # The SSE socket timeout is not a request budget at all — the server heartbeats
 # every 15s, so 60s of silence only ever means a genuinely dead connection.
 REQUEST_TIMEOUT_SEC = 60
+#: A trajectory analysis is a model call answered synchronously: the web server's request ceiling.
+TRAJECTORY_ANALYSIS_TIMEOUT_SEC = 900
 DOWNLOAD_TIMEOUT_SEC = 600
 # Mirrored by the TS SDK's UPLOAD_TIMEOUT_MS (packages/sdk-ts/src/hosted/
 # upload.ts) — the two SDKs hold ONE bound; change them together or not at all.
@@ -2130,6 +2132,43 @@ class AnalyzeDefaults(TypedDict):
     #: The effort the default model runs at when the config names none.
     reasoning_effort: str
     sandbox_provider: EvalSandboxProvider
+
+
+class TrajectoryAnalysisUsage(TypedDict):
+    """The tokens a trajectory analysis's model call(s) read and wrote; None when the gateway did not report them."""
+    input_tokens: Optional[int]
+    output_tokens: Optional[int]
+    total_tokens: Optional[int]
+
+
+class TrajectoryAnalysis(TypedDict):
+    """The verdict of ``POST /api/analyses/trajectory``: the ``{summary,
+    checks}`` document a trial analysis stores, plus what the call ran under
+    and cost. A plain wire dict at runtime.
+    """
+    summary: str
+    #: One key per rubric criterion, in the rubric's order.
+    checks: Dict[str, AnalysisCheck]
+    model_name: str
+    reasoning_effort: str
+    rubric: Rubric
+    usage: TrajectoryAnalysisUsage
+    #: The gateway's metered cost of the call(s); None when it did not report one.
+    estimated_cost_usd: Optional[float]
+    #: 2 when the first reply did not validate and the repair turn produced the verdict.
+    attempts: int
+
+
+class TrajectoryAnalysisDefaults(TypedDict):
+    """The policy an empty trajectory analysis request (bar its trajectory)
+    resolves to (``GET /api/analyses/trajectory/defaults``). A plain wire
+    dict at runtime.
+    """
+    model_name: str
+    reasoning_effort: str
+    rubric: Rubric
+    #: The built-in system prompt body, unrendered.
+    prompt: str
 
 
 class CheckDefaults(TypedDict):
@@ -9497,6 +9536,80 @@ class AnalysesClient:
         the unrendered prompt template (:class:`AnalyzeDefaults`)."""
         raw = await self._http.request_json('/api/analyses/defaults')
         return cast(AnalyzeDefaults, raw)
+
+    async def trajectory(
+        self,
+        trajectory: Union[str, Dict[str, Any], List[Any]],
+        *,
+        task: Optional[str] = None,
+        grader: Optional[str] = None,
+        reward: Optional[Union[float, int, str]] = None,
+        rubric: Optional[Rubric] = None,
+        prompt: Optional[str] = None,
+        model_name: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
+    ) -> TrajectoryAnalysis:
+        """LLM-as-a-judge over ANY agent trajectory (``POST
+        /api/analyses/trajectory``): one model call through the platform's
+        gateway rules every rubric criterion and answers with the verdict
+        (:class:`TrajectoryAnalysis`) — nothing is stored.
+
+        ``trajectory`` is the run in any form: a string (a transcript, JSONL,
+        a log) as given, or a JSON object or list (an ATIF trajectory, a chat
+        messages array). ``task`` (the instruction the agent was given),
+        ``grader`` (test code, a verifier or a description of the check) and
+        ``reward`` (the score the grader recorded) are optional context that
+        sharpen the verdict. Every other argument omitted means the defaults
+        (:meth:`trajectory_defaults`): DeepSeek V4.1 Flash
+        (openrouter/deepseek/deepseek-v4.1-flash) at its per-model effort,
+        judging the five trace-QA detectors — ``no_reward_hacking``,
+        ``no_false_positive``, ``no_false_negative``, ``spec_aligned`` and
+        ``report_is_truthful``. ``model_name`` may name any model the
+        gateway serves; ``prompt`` replaces the system prompt's body (its
+        ``{criteria_guidance}`` slot renders the rubric); ``rubric``
+        replaces the criteria. Billed to your account.
+
+        The server owns every refusal, surfaced typed: ``invalid_input``
+        (a malformed field, an unknown model — the gateway's own words — or
+        a trajectory past the model's context window, 413),
+        ``invalid_rubric``, ``insufficient_credits`` (402), and
+        ``internal_error`` (502) when the model answers twice with nothing
+        that validates.
+        """
+        body: Dict[str, Any] = {'trajectory': trajectory}
+        if task is not None:
+            body['task'] = task
+        if grader is not None:
+            body['grader'] = grader
+        if reward is not None:
+            body['reward'] = reward
+        if rubric is not None:
+            body['rubric'] = rubric
+        if prompt is not None:
+            body['prompt'] = prompt
+        if model_name is not None:
+            body['model_name'] = model_name
+        if reasoning_effort is not None:
+            body['reasoning_effort'] = reasoning_effort
+        # A model call, not a status read: the JSON budget is too short for
+        # it, so it rides the web server's own request ceiling (900 s).
+        raw = await asyncio.to_thread(
+            self._http._request_sync,
+            '/api/analyses/trajectory',
+            'POST',
+            body,
+            None,
+            False,
+            TRAJECTORY_ANALYSIS_TIMEOUT_SEC,
+        )
+        return cast(TrajectoryAnalysis, raw)
+
+    async def trajectory_defaults(self) -> TrajectoryAnalysisDefaults:
+        """The defaults a trajectory analysis runs under (``GET
+        /api/analyses/trajectory/defaults``): model, effort, the
+        five-detector rubric and the unrendered prompt body."""
+        raw = await self._http.request_json('/api/analyses/trajectory/defaults')
+        return cast(TrajectoryAnalysisDefaults, raw)
 
     async def download(
         self,

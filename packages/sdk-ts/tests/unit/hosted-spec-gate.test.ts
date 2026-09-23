@@ -297,6 +297,9 @@ const OPERATION_TO_METHOD: Record<string, string | null> = {
   // contract does not declare (docs: "not part of the OpenAPI contract").
   listAnalyses: "analyses.list",
   getAnalyzeDefaults: "analyses.defaults",
+  // The trajectory judge: LLM-as-a-judge over any trajectory the caller sends.
+  analyzeTrajectory: "analyses.trajectory",
+  getTrajectoryAnalysisDefaults: "analyses.trajectoryDefaults",
   // The one per-analysis door ON the contract: the run as Harbor's
   // wrapper-trial folder (B121).
   downloadAnalysis: "analyses.download",

@@ -4922,6 +4922,17 @@ export interface AnalysesClient {
   /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): model, effort, provider, rubric and the unrendered prompt template. */
   defaults(): Promise<AnalyzeDefaults>;
   /**
+   * LLM-as-a-judge over ANY agent trajectory (POST /api/analyses/trajectory):
+   * one model call through the platform's gateway rules every rubric
+   * criterion and answers with the verdict — nothing is stored. The default
+   * judge is a trace-QA reviewer (reward hacking, false positive, false
+   * negative, spec alignment, truthful report) on DeepSeek V4.1 Flash; every
+   * knob of the request overrides it. Billed to your account.
+   */
+  trajectory(req: TrajectoryAnalysisRequest): Promise<TrajectoryAnalysis>;
+  /** The defaults a trajectory analysis runs under (GET /api/analyses/trajectory/defaults): model, effort, the five-detector rubric and the unrendered prompt body. */
+  trajectoryDefaults(): Promise<TrajectoryAnalysisDefaults>;
+  /**
    * The verdict document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same
    * object the analyzed trial serves as `Trial.analysis` when this analysis
@@ -5174,6 +5185,53 @@ export interface AnalyzeDefaults {
   /** The effort the default model runs at when the config names none. */
   reasoning_effort: string;
   sandbox_provider: EvalSandboxProvider;
+}
+
+/**
+ * The body of POST /api/analyses/trajectory. `trajectory` is the one
+ * required key; every other key defaults (GET /api/analyses/trajectory/defaults).
+ */
+export interface TrajectoryAnalysisRequest {
+  /** The agent run, in any form: a string (transcript, JSONL, log) as given, or any JSON object/array (ATIF, chat messages), serialized for the model. Never truncated. */
+  trajectory: string | Record<string, unknown> | unknown[];
+  /** The instruction or specification the agent was given; absent, the judge reads the trajectory's first user turn. */
+  task?: string;
+  /** How the run was graded: test code, a verifier, a rubric, or a description of the check. */
+  grader?: string;
+  /** The reward or score the grader recorded (a number, or a word such as "pass"). */
+  reward?: number | string;
+  /** Replaces the default five-detector rubric. */
+  rubric?: Rubric;
+  /** Replaces the system prompt body; `{criteria_guidance}` renders the rubric's guidance. The output section is always appended. */
+  prompt?: string;
+  /** Any model the gateway serves; default openrouter/deepseek/deepseek-v4.1-flash. */
+  model_name?: string;
+  /** One of the platform's effort words; absent, the model's per-model default. */
+  reasoning_effort?: string;
+}
+
+/** The verdict of POST /api/analyses/trajectory: the `{summary, checks}` document a trial analysis stores, plus what the call ran under and cost. */
+export interface TrajectoryAnalysis {
+  summary: string;
+  /** One key per rubric criterion, in the rubric's order. */
+  checks: Record<string, AnalysisCheck>;
+  model_name: string;
+  reasoning_effort: string;
+  rubric: Rubric;
+  usage: { input_tokens: number | null; output_tokens: number | null; total_tokens: number | null };
+  /** The gateway's metered cost of the call(s); null when it did not report one. */
+  estimated_cost_usd: number | null;
+  /** 2 when the first reply did not validate and the repair turn produced the verdict. */
+  attempts: number;
+}
+
+/** The policy an empty TrajectoryAnalysisRequest (bar its trajectory) resolves to. */
+export interface TrajectoryAnalysisDefaults {
+  model_name: string;
+  reasoning_effort: string;
+  rubric: Rubric;
+  /** The built-in system prompt body, unrendered. */
+  prompt: string;
 }
 
 /**
