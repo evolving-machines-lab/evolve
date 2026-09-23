@@ -645,7 +645,7 @@ def test_list_scope_and_analysis_status_literals_match_the_spec_enums():
     assert len(check_statuses) >= 3, 'the Check.status parse found too few — spec moved?'
     assert list(typing.get_args(CheckStatus)) == check_statuses
 
-    # The contract carries no derived result: no label or executed property on
+    # The contract carries no derived label: no label or executed property on
     # either result shape, and the SDK exports no label type.
     import evolve
 
