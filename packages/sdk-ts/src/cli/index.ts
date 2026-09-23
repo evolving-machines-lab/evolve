@@ -5913,7 +5913,7 @@ export function checkResultLines(check: Check): string[] {
       continue;
     }
     if (result.status !== "completed") {
-      rows.push([result.task_name, result.status, "", "", "", "-", result.id]);
+      rows.push([`${result.task_name} · ${result.status}`, "-", "-", "-", "-", "-", result.id]);
       continue;
     }
     const counts = outcomeCounts(result.checks);

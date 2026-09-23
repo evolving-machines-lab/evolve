@@ -76,7 +76,7 @@ check
     └── ...
 ```
 
-The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes. Under a custom rubric: any fail, else any unknown, else no problem found. Under the default rubric an unknown on one of the five execution criteria does not make the chip unclear; it marks the chip not executed, and `attempt_isolation` counts only when it fails. Read the criteria and compute what you need from them.
+The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes. Under a custom rubric the chip is `has_a_problem` when any criterion fails, `unclear` when none fails but one is unknown, and `no_problem_found` otherwise. Under a rubric with the default criterion names the same rule applies, with two exceptions: an unknown on one of the five execution criteria does not make the chip unclear, it marks the chip not executed; and `attempt_isolation` counts only when it fails. Read the criteria and compute what you need from them.
 
 **Note:**
 
