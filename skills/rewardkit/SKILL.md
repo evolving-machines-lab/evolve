@@ -47,12 +47,12 @@ python3 -m rewardkit /tests \
 This runs all criteria in `/tests/` against the workspace at `/app` and writes 
 `/logs/verifier/reward.json`. Adjust `--workspace` if the task uses another directory.
 
-Run `evolve check "<task-path>" --watch` for task quality review. The checker may
-run the reference solution and verifier when its environment supports them;
-inspect its findings and evidence. The default rubric's execution criteria say whether it
-ran the task; `unknown` on them is not proof that the solution or verifier
-ran. Read
-`evolve skills get evals core-concepts/check` for the result semantics.
+Run `evolve check "<task-path>" --watch` for task quality review. The checker
+may run the reference solution and verifier when its environment supports
+them; inspect its findings and evidence. The default rubric's execution
+criteria say whether it ran the task; `unknown` on them is not proof that the
+solution or verifier ran. Read `evolve skills get evals core-concepts/check`
+for the result semantics.
 
 If judge criteria need API keys, request them through `task.toml`:
 ```toml

@@ -349,8 +349,8 @@ evolve check show "$CHECK_ID"
 validation. It does not upload the full task package or execute the task.
 `evolve check` runs a paid checker agent. It reviews the files against the
 default criteria (`evolve check --show-defaults`) and can run the environment,
-solution, and verifier when its sandbox supports them. It is not a dedicated reference-solution runner; the
-Evolve CLI has no standalone oracle command.
+solution, and verifier when its sandbox supports them. It is not a dedicated
+reference-solution runner; the Evolve CLI has no standalone oracle command.
 
 Read each criterion's `outcome`, `explanation`, and `evidence`. The result is
 that per-criterion JSON; Evolve derives no verdict from it. The default rubric's execution
