@@ -8,6 +8,7 @@
 - [Agent Builder](./python/agent-builder) - Build custom agents
 - [HN Time Capsule](./python/hn-time-capsule) - Scrape & analyze 200 Hacker News articles → HTML dashboard
 - [CRE Portfolio](./python/cre-portfolio) - Extract & analyze commercial real estate rent rolls → JSON + dashboard
+- [GEPA for analyzer rubrics](./python/gepa-analyze-rubric) - Tune an `evolve analyze` / `harbor analyze` prompt and rubric against labelled traces (TRACE) with GEPA
 
 ### TypeScript
 - [Quickstart](./typescript/quickstart) - Minimal examples (8 scripts)
