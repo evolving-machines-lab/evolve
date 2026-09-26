@@ -63,9 +63,8 @@ export const template = Template()
   .runCmd('curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/home/user/.kimi-code KIMI_NO_MODIFY_PATH=1 bash && ln -sf /home/user/.kimi-code/bin/kimi /usr/local/bin/kimi && kimi --version && chown -R user:user /home/user/.kimi-code')
 
   // ---------------------------------------------------------------------------
-  // Antigravity CLI (Google): the versioned release tarball from the vendor's
-  // manifest, sha512-verified, placed on PATH as `antigravity`. Never `agy
-  // install` (edits shell profiles, arms the background auto-updater).
+  // Antigravity CLI (Google): the vendor's manifest-named release tarball, sha512-verified, on PATH as `antigravity`.
+  // Never `agy install`: it edits shell profiles and arms the background auto-updater.
   // ---------------------------------------------------------------------------
   .runCmd('curl -fsSL -o /tmp/antigravity-cli.tgz https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.11-6016716732497920/linux-x64/cli_linux_x64.tar.gz && echo "ca12c262343f29a2b87423d1ff1e4244989e936e37fe1f8e56056b0f91cd02f93f133321229ce35c86c2d84b977e919937a3fd9430cfd769a16d6b03ede25081  /tmp/antigravity-cli.tgz" | sha512sum -c - && tar -xzf /tmp/antigravity-cli.tgz -C /usr/local/bin antigravity && chmod 0755 /usr/local/bin/antigravity && rm -f /tmp/antigravity-cli.tgz && AGY_CLI_DISABLE_AUTO_UPDATE=true antigravity --version')
 

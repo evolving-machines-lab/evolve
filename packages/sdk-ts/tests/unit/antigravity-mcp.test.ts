@@ -217,10 +217,10 @@ async function testRegistryHelpers(): Promise<void> {
   assert(antigravityEffort("thinking") === "medium", "the binary spelling lands on medium");
   assert(antigravityEffort("bogus") === "bogus", "a word outside Evolve's vocabulary rides verbatim so the CLI refuses it");
 
-  assert(antigravityModelSlug("gemini-3.8-flash", { isDirectMode: true }) === "gemini-3.8-flash", "direct mode: the bare Google name");
-  assert(antigravityModelSlug("vertex_ai/gemini-3.8-flash", { isDirectMode: false }) === "vertex_ai/gemini-3.8-flash", "gateway mode: the alias table's Vertex spelling, as resolved before the call");
-  assert(antigravityModelSlug("gemini-3.8-flash", { isDirectMode: true, isExternalGateway: true }) === "vertex_ai/gemini-3.8-flash", "external gateway: a roster alias becomes its wire id (the Vertex route on the gateway root)");
-  assert(antigravityModelSlug("gemini-9.9-custom", { isDirectMode: true, isExternalGateway: true }) === "gemini-9.9-custom", "external gateway: a non-roster name rides verbatim");
+  assert(antigravityModelSlug("gemini-3.8-flash", {}) === "gemini-3.8-flash", "direct mode: the bare Google name");
+  assert(antigravityModelSlug("vertex_ai/gemini-3.8-flash", {}) === "vertex_ai/gemini-3.8-flash", "gateway mode: the alias table's Vertex spelling, as resolved before the call");
+  assert(antigravityModelSlug("gemini-3.8-flash", { isExternalGateway: true }) === "vertex_ai/gemini-3.8-flash", "external gateway: a roster alias becomes its wire id (the Vertex route on the gateway root)");
+  assert(antigravityModelSlug("gemini-9.9-custom", { isExternalGateway: true }) === "gemini-9.9-custom", "external gateway: a non-roster name rides verbatim");
 
   const entry = AGENT_REGISTRY.antigravity;
   const command = entry.buildCommand({ prompt: "say 'hi' $HOME", model: "vertex_ai/gemini-3.5-flash-lite", isResume: false, reasoningEffort: "high", isDirectMode: false });

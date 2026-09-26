@@ -131,8 +131,7 @@ type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage
-  | HarnessEvent;
+  | AgentUsage;
 ```
 
 ### Message Events
@@ -208,7 +207,6 @@ completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool sta
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
-| `HarnessEvent` | `"harness_event"` | A line the harness printed that has no slot above — a session fact, or a kind the parser does not know — passed through verbatim. **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -479,23 +477,3 @@ const promptTokens = [...perMessage.values()].reduce((n, u) => n + (u.promptToke
 
 Like `error`, `usage` is **not agent work**: `isAgentWorkUpdate` answers `false` for it, so a
 stream that carries only accounting still counts as a run that did nothing.
-
-## Lines with no slot of their own (`harness_event`)
-
-A harness prints lines that are facts of the run but fit none of the updates above — the session's
-opening `init` line, a retry, a sub-agent's progress — and, because some CLIs are closed source or
-change between releases, lines of a kind the parser has never seen. Neither is dropped or mistaken
-for agent text: it arrives as a `harness_event`, named by the harness's own type word, with the
-line's other fields verbatim. A kind the parser does not know is also logged once per run with
-`console.warn`.
-
-```typescript
-interface HarnessEvent {
-  sessionUpdate: "harness_event";
-  type: string;                      // the harness's own type word for the line, e.g. "init"
-  payload: Record<string, unknown>;  // every other field of the line, verbatim
-}
-```
-
-Like `error` and `usage`, `harness_event` is **not agent work**: `isAgentWorkUpdate` answers `false`
-for it. Every consumer that switches on `sessionUpdate` keeps a default branch for it.

@@ -1,36 +1,9 @@
 /**
- * Antigravity CLI (`antigravity`, Google's `agy`) `--output-format stream-json`
- * → ACP-style events.
- *
- * The CLI is closed source and publishes no schema. Every shape here comes from
- * the live capture of agy 1.2.11 (26 runs, 2026-09-25 — the fixtures of
- * tests/unit/antigravity-parser.test.ts), then from the vendor's headless docs
- * page; the capture wins where they disagree. Three events, every line
- * `{ event, <event>: {...} }`:
- *
- *   init         { conversation_id, init: { model, cwd, tools[], permission_mode } }
- *   step_update  { conversation_id, step_index, state: ACTIVE|DONE, step_type,
- *                  tool_name?, text_delta?, thinking_delta?, duration_seconds?,
- *                  usage?, tool_info?, subagent_info? }
- *                step_type live: user_input, agent_response, tool, error_message,
- *                system_message, subagent; documented, never seen: checkpoint.
- *   result       { conversation_id, status, response, error?, duration_seconds,
- *                  num_turns, usage }          status live: SUCCESS, ERROR
- *
- * and the `--output-format json` envelope: the result object bare.
- *
- * Not on the wire: timestamps (none stamped); text on user_input, system_message
- * and error_message steps (the on-disk transcript has it); tool call ids (a
- * step's ACTIVE and DONE updates pair by step_index); a failing command's exit
- * code or tool_info.error (live E2: `exit 3` → a DONE update with parameters).
- *
- * Usage: a DONE agent_response carries THAT call's usage (output includes
- * thinking; cache_read is disjoint from input); the result's usage is the
- * conversation total. promptTokens = input + cache_read, Harbor's arithmetic.
- *
- * Lines with no ACP slot — init, system_message, checkpoint, any type this file
- * does not know — pass through as harness_event (types.ts), one warning per
- * unknown type; user_input, the turn's own echo of the prompt, stays silent.
+ * Antigravity CLI (`antigravity`, Google's `agy`) `--output-format stream-json` → ACP-style events. The CLI is closed
+ * source: every shape here is from the live capture of agy 1.2.11 (the fixtures of tests/unit/antigravity-parser.test.ts),
+ * then the vendor's headless docs page; the capture wins. Not on the wire: timestamps, text on user_input /
+ * system_message / error_message steps, tool call ids (a step's updates pair by step_index), a failing command's exit
+ * code. Usage rides per call on a DONE agent_response and whole on result; promptTokens = input + cache_read (Harbor).
  */
 
 import { harnessErrorText } from "./types";
@@ -43,11 +16,7 @@ import type {
   ToolKind,
 } from "./types";
 
-/**
- * agy's tool names (the 57 the init line lists, 1.2.11) mapped to ACP kinds.
- * Browser tools stay "other": ACP has no browser kind and "fetch" would claim
- * a network read the tool may not make.
- */
+/** agy's 57 tool names (the 1.2.11 init line) → ACP kinds; browser tools stay "other" (no ACP kind; "fetch" would claim a network read). */
 const TOOL_KINDS: Record<string, ToolKind> = {
   run_command: "execute",
   command_status: "execute",
@@ -187,9 +156,8 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
         return updates;
       }
 
-      // A model API failure the run may recover from (live E1b: one per retry,
-      // then the result; U1: three, then the answer) — never fatal here. The
-      // step carries no text, so the dump stands in (harnessErrorText).
+      // A model API failure the run may recover from (live E1b, U1): never fatal here; the step carries no text, so
+      // harnessErrorText dumps the step.
       case "error_message":
         return [
           {
@@ -230,9 +198,8 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
     if (usage) updates.push({ sessionUpdate: "usage", scope: "run", usage });
     const status = stringField(result, "status");
     if (status !== "SUCCESS") {
-      // The one place a fatal failure's text appears (live E1a, E1b, E3). The
-      // documented CANCELED/INTERRUPTED/INVALID/WAITING/RUNNING were never
-      // observed, so any non-SUCCESS status means only "ended short of an answer".
+      // The one place a fatal failure's text appears (live E1a/E1b/E3); the documented other statuses were never observed,
+      // so any non-SUCCESS means only "ended short of an answer".
       updates.push({
         sessionUpdate: "error",
         message: harnessErrorText(
@@ -338,10 +305,8 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
 }
 
 /**
- * agy's usage object → TokenUsage. promptTokens = input + cache_read (Harbor's
- * arithmetic for this stream; the two are disjoint on the wire), completion =
- * output (which includes thinking), cached = cache_read; thinking_tokens,
- * total_tokens and anything else ride extra verbatim. Null when absent.
+ * agy usage → TokenUsage: promptTokens = input + cache_read (disjoint on the wire; Harbor's arithmetic), completion =
+ * output (includes thinking), cached = cache_read; every other counter rides extra verbatim. Null when absent.
  */
 export function antigravityTokenUsage(usage: unknown): TokenUsage | null {
   const record = asRecord(usage);

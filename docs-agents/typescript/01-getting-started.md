@@ -324,7 +324,7 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"droid"` | `"high"` — matches Droid’s own default for Opus 5, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
-| `"antigravity"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"low"` `"medium"` `"high"` `"max"` (the CLI's own vocabulary); `"xhigh"` is sent as `"max"`, and `"off"` / `"minimal"` as `"low"` — the CLI cannot disable thinking |
+| `"antigravity"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"low"` `"medium"` `"high"` `"max"` (the CLI's own vocabulary); `"xhigh"` is sent as `"max"`, and `"off"` / `"minimal"` (and the legacy spellings `"none"` / `"no-thinking"`) as `"low"` — the CLI cannot disable thinking; the binary spelling `"thinking"` is sent as `"medium"` |
 
 When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
 

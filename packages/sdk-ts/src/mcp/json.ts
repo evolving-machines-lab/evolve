@@ -17,10 +17,8 @@ import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { EvolveConfigError } from "../utils/config";
 import { validateServers, isNotFoundError } from "./validation";
 
-/**
- * An existing config file's object. An empty file is no config (the antigravity CLI leaves a 0-byte
- * mcp_config.json when nothing was written); malformed JSON is refused with the path named, never a bare SyntaxError.
- */
+/** An existing config file's object: an empty file is no config (the antigravity CLI leaves a 0-byte mcp_config.json);
+ *  malformed JSON is refused with the path named, never a bare SyntaxError. */
 function parseExistingJson(text: unknown, path: string, field: string): Record<string, unknown> {
   if (typeof text !== "string" || text.trim() === "") return {};
   let parsed: unknown;
@@ -142,15 +140,8 @@ function toDroidFormat(config: McpServerConfig): Record<string, unknown> {
 }
 
 /**
- * Transform to Antigravity MCP format
- *
- * ~/.gemini/config/mcp_config.json, the file `agy mcp add` writes
- * (antigravity.google/docs/mcp, read 2026-09-25; Harbor antigravity_cli.py
- * _build_mcp_config): a remote server is `{ serverUrl, headers? }` for both
- * streamable HTTP and SSE — the legacy `url`/`httpUrl` keys are rejected,
- * `httpUrl` even parsed as a stdio command — and a stdio server is
- * `{ command, args?, env?, cwd? }`. No transport field exists; the key names
- * decide. Evolve's own `type` and header aliases are folded in, never copied.
+ * ~/.gemini/config/mcp_config.json as `agy mcp add` writes it (docs/mcp; Harbor antigravity_cli.py): remote =
+ * `{ serverUrl, headers? }` (the legacy url/httpUrl keys are rejected), stdio = `{ command, args?, env?, cwd? }`, no type field.
  */
 function toAntigravityFormat(config: McpServerConfig): Record<string, unknown> {
   const transport = detectTransport(config);
@@ -391,22 +382,8 @@ export async function writeAntigravityMcpConfig(
 // =============================================================================
 
 /**
- * Write the Antigravity CLI's own settings file for a run, merged over whatever
- * is there (the CLI rewrites the file at every start, sorting keys and dropping
- * the ones it does not know, so only keys it keeps are written):
- *
- *   modelProvider "gemini"        the documented API-key auth path — without it
- *                                 the CLI falls back to browser sign-in and hangs
- *   telemetryEnabled false        the key the binary keeps (the documented
- *                                 `enableTelemetry` is dropped on rewrite; live)
- *   allowNonWorkspaceAccess true  tasks may touch paths outside the --add-dir root
- *   customModelsConfig            the run's model slug registered under its own
- *                                 name — `--model` refuses any slug outside the
- *                                 CLI's built-in effort-suffixed list otherwise
- *                                 (exit 1, no request); a registered slug is sent
- *                                 to the endpoint unchanged (live T6, V1)
- *
- * Earlier registrations are kept (a resumed conversation may name another slug).
+ * The CLI's settings for a run, merged over the file it rewrites at every start: API-key auth (`modelProvider`), telemetry
+ * off (`telemetryEnabled`, the key the binary keeps), non-workspace paths allowed, the run's slug registered (else `--model` exits 1).
  */
 export async function writeAntigravitySettings(
   sandbox: SandboxInstance,

@@ -152,11 +152,8 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   },
   // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
   droid: { stdoutFile: "droid.txt", harborCopies: [] },
-  // antigravity_cli.py:984 tees the stream-json stdout as antigravity-stream.jsonl;
-  // its brain/ transcript and conversations/ store are copied out as two renamed
-  // FILES (antigravity-cli.trajectory.jsonl, antigravity-conversation.db,
-  // :1323-1343), never a subtree — no copy slot; the captured ~/.gemini sits
-  // at agent/.gemini/ alone (the one home rule).
+  // Harbor antigravity_cli.py:984 tees stdout as antigravity-stream.jsonl; its collector copies RENAMED files
+  // (:1323-1343), never a subtree, so no copy slot — the home sits at agent/.gemini/ alone.
   antigravity: { stdoutFile: "antigravity-stream.jsonl", harborCopies: [] },
 };
 

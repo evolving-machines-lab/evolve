@@ -177,11 +177,8 @@ function providerRuntimeProviderForAgent(
 }
 
 /**
- * The antigravity CLI's background self-updater runs "during regular runs"
- * (its install.sh) and would replace the pinned binary under a running
- * session; this is the documented switch that stops it
- * (antigravity.google/docs/cli/troubleshooting). Set in every mode, at boot
- * and per spawn, so no run can race a stale env.
+ * The CLI's background self-updater would replace the pinned binary mid-run; the documented switch
+ * (antigravity.google/docs/cli/troubleshooting), set at boot and per spawn so no run races a stale env.
  */
 const ANTIGRAVITY_AUTO_UPDATE_OFF = { AGY_CLI_DISABLE_AUTO_UPDATE: "true" } as const;
 
@@ -1722,10 +1719,8 @@ export class Agent {
       // ("Invalid auth method selected"). The env var alone is insufficient.
       await this.writeGeminiGatewayAuthSettings(sandbox);
     }
-    // Antigravity selects API-key auth from its settings file in EVERY mode
-    // (modelProvider "gemini"; without it the CLI falls back to browser
-    // sign-in and hangs on the OAuth URL), and the same file registers the
-    // run's model slug; written again before each run (writeAntigravityRunSettings).
+    // Antigravity takes API-key auth from its settings file in every mode (without `modelProvider` it falls back to
+    // browser sign-in and hangs) and registers the run's slug there; rewritten before each run (writeAntigravityRunSettings).
     await this.writeAntigravityRunSettings(sandbox);
     // Default: run setup command (e.g., "codex login --with-api-key")
     if (this.registry.setupCommand) {
@@ -1780,14 +1775,8 @@ export class Agent {
   }
 
   /**
-   * The antigravity CLI's settings file for this run (registry
-   * antigravitySettings; mcp/json.ts writeAntigravitySettings): API-key
-   * auth, telemetry off, and the model slug the command will name registered
-   * under customModelsConfig — the SAME slug buildCommand sends
-   * (antigravityModelSlug), or `--model` refuses it. The CLI rewrites the
-   * file at every start, keeping these keys; rewriting it before each run
-   * (the droid settings precedent) makes a resumed session as sure as the
-   * first. No-op for every other harness.
+   * Antigravity's settings for this run: API-key auth, telemetry off, and the slug buildCommand will name registered
+   * under customModelsConfig (else `--model` refuses it); rewritten before each run, like droid's settings. No-op elsewhere.
    */
   private async writeAntigravityRunSettings(sandbox: SandboxInstance): Promise<void> {
     const settings = this.registry.antigravitySettings;
@@ -1799,7 +1788,6 @@ export class Agent {
       sandbox,
       settings.settingsPath,
       antigravityModelSlug(model, {
-        isDirectMode: this.agentConfig.isDirectMode,
         isExternalGateway: Boolean(this.agentConfig.externalGateway),
       }),
       this.homeDir,

@@ -84,11 +84,8 @@ RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/ho
     && chown -R user:user /home/user/.kimi-code
 
 # ---------------------------------------------------------------------------
-# Antigravity CLI (Google) — the versioned release tarball named by the
-# vendor's manifest, sha512-verified, its one binary placed on PATH as
-# `antigravity`. Never `agy install`: that script edits every shell profile
-# and arms the background auto-updater. The updater and telemetry are turned
-# off per run by the SDK (AGY_CLI_DISABLE_AUTO_UPDATE, settings.json).
+# Antigravity CLI (Google): the vendor's manifest-named release tarball, sha512-verified, on PATH as `antigravity`.
+# Never `agy install`: it edits every shell profile and arms the background auto-updater.
 # ---------------------------------------------------------------------------
 RUN curl -fsSL -o /tmp/antigravity-cli.tgz https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.11-6016716732497920/linux-x64/cli_linux_x64.tar.gz \
     && echo "ca12c262343f29a2b87423d1ff1e4244989e936e37fe1f8e56056b0f91cd02f93f133321229ce35c86c2d84b977e919937a3fd9430cfd769a16d6b03ede25081  /tmp/antigravity-cli.tgz" | sha512sum -c - \

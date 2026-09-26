@@ -193,11 +193,6 @@ class AgentUsage(TypedDict):
     scope: Literal["call", "run"]  # one LLM inference, or the harness's whole-run total
     usage: TokenUsage
 
-class HarnessEvent(TypedDict):
-    sessionUpdate: Literal["harness_event"]
-    type: str                 # the harness's own type word for the line, e.g. "init"
-    payload: dict[str, Any]   # every other field of the line, verbatim
-
 SessionUpdate = Union[
     AgentMessageChunk,
     AgentThoughtChunk,
@@ -207,7 +202,6 @@ SessionUpdate = Union[
     Plan,
     AgentError,
     AgentUsage,
-    HarnessEvent,
 ]
 
 # =============================================================================
@@ -296,7 +290,6 @@ UI display. For replay after cleanup, use the `session_id` with
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
-| `HarnessEvent` | `"harness_event"` | A line the harness printed that has no slot above — a session fact, or a kind the parser does not know — passed through verbatim. **Not agent work** — see below |
 
 ---
 
@@ -409,7 +402,7 @@ output:
 
 ```python
 def did_work(events):
-    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage", "harness_event") for e in events)
+    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage") for e in events)
 ```
 
 ## Harness-reported usage (`usage`)
@@ -457,25 +450,3 @@ prompt_tokens = sum(u.get("promptTokens", 0) for u in per_message.values())
 
 Like `error`, `usage` is **not agent work**: a stream that carries only accounting still counts as a
 run that did nothing.
-
-## Lines with no slot of their own (`harness_event`)
-
-A harness prints lines that are facts of the run but fit none of the updates above — the session's
-opening `init` line, a retry, a sub-agent's progress — and, because some CLIs are closed source or
-change between releases, lines of a kind the parser has never seen. Neither is dropped or mistaken
-for agent text: it arrives as a `harness_event`, named by the harness's own type word, with the
-line's other fields verbatim. A kind the parser does not know is also logged once per run on the
-bridge's stderr.
-
-```python
-{
-    "update": {
-        "sessionUpdate": "harness_event",
-        "type": "init",  # the harness's own type word for the line
-        "payload": {"conversation_id": "…", "init": {"model": "gemini-3.8-flash", "cwd": "/work"}},  # every other field, verbatim
-    },
-}
-```
-
-Like `error` and `usage`, `harness_event` is **not agent work**: the work predicate answers `False`
-for it. Every consumer that switches on `sessionUpdate` keeps a default branch for it.
