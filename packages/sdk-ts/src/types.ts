@@ -563,7 +563,16 @@ export interface SandboxProvider {
 // =============================================================================
 
 /** Supported agent types (headless CLI agents only, no ACP) */
-export type AgentType = "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
+export type AgentType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "qwen"
+  | "kimi"
+  | "opencode"
+  | "droid"
+  | "pi"
+  | "prime-agent";
 
 /** Agent type constants for use in code */
 export const AGENT_TYPES = {
@@ -574,6 +583,8 @@ export const AGENT_TYPES = {
   KIMI: "kimi",
   OPENCODE: "opencode",
   DROID: "droid",
+  PI: "pi",
+  PRIME_AGENT: "prime-agent",
 } as const;
 
 // =============================================================================
