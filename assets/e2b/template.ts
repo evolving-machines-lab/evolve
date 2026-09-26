@@ -67,8 +67,10 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Pinned (see the Dockerfile's dsh block): the headless --json surface lives
   // only in the `next` prerelease line; npm verifies the registry's sha512
-  // integrity on install; optional deps stay on for the flock addon.
-  .runCmd('npm install -g @deepseek-ai/dsh@0.1.7-rc.2 && dsh --version')
+  // integrity on install; optional deps stay on for the flock addon. dsh needs
+  // node >=22.19 and the base image ships node 20, so it runs on its own
+  // Node v22.23.1 under /opt/node22 (SHASUMS256-verified) behind a launcher.
+  .runCmd('cd /tmp && curl -fsSLO "https://nodejs.org/dist/v22.23.1/node-v22.23.1-linux-x64.tar.xz" && curl -fsSL "https://nodejs.org/dist/v22.23.1/SHASUMS256.txt" | grep " node-v22.23.1-linux-x64.tar.xz$" | sha256sum -c - && mkdir -p /opt/node22 && tar -xJf node-v22.23.1-linux-x64.tar.xz -C /opt/node22 --strip-components=1 && rm node-v22.23.1-linux-x64.tar.xz && /opt/node22/bin/npm install -g --prefix /opt/dsh @deepseek-ai/dsh@0.1.7-rc.2 && printf \'#!/bin/sh\\nexec /opt/node22/bin/node /opt/dsh/lib/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"\\n\' > /usr/local/bin/dsh && chmod 0755 /usr/local/bin/dsh && dsh --version')
 
   // ---------------------------------------------------------------------------
   // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)

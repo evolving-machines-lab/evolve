@@ -90,10 +90,28 @@ RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/ho
 # --session-id, stdin) exists only in the `next` prerelease line; npm `latest`
 # (0.1.5-rc.3) has none of it and a different session format. npm verifies the
 # tarball against the registry's recorded sha512 integrity on install (the
-# vendor publishes no separate checksum file). Needs node >=22.19 or >=24 and
-# pulls the glibc @deepseek-ai/node-addon-system-linux-x64 optional dep (POSIX
-# flock; session writes require it), so optional deps stay ON here.
-RUN npm install -g @deepseek-ai/dsh@0.1.7-rc.2 \
+# vendor publishes no separate checksum file) and pulls the glibc
+# @deepseek-ai/node-addon-system-linux-x64 optional dep (POSIX flock; session
+# writes require it), so optional deps stay ON here.
+#
+# ITS OWN NODE. dsh needs node >=22.19 (or >=24); this base image ships node
+# 20 (probed 2026-09-25: v20.20.2), which every other CLI here runs on. So dsh
+# gets a private Node 22 under /opt/node22 — v22.23.1, the same LTS the hosted
+# eval bundle carries — verified against nodejs.org's published SHASUMS256.txt,
+# and `dsh` on PATH is a two-line launcher onto it. Nothing else in the image
+# changes runtime; the npm bin shim (`#!/usr/bin/env node`, node 20) is not
+# what runs.
+ARG DSH_NODE_VERSION=22.23.1
+RUN cd /tmp \
+    && curl -fsSLO "https://nodejs.org/dist/v${DSH_NODE_VERSION}/node-v${DSH_NODE_VERSION}-linux-x64.tar.xz" \
+    && curl -fsSL "https://nodejs.org/dist/v${DSH_NODE_VERSION}/SHASUMS256.txt" \
+       | grep " node-v${DSH_NODE_VERSION}-linux-x64.tar.xz\$" | sha256sum -c - \
+    && mkdir -p /opt/node22 \
+    && tar -xJf "node-v${DSH_NODE_VERSION}-linux-x64.tar.xz" -C /opt/node22 --strip-components=1 \
+    && rm "node-v${DSH_NODE_VERSION}-linux-x64.tar.xz" \
+    && /opt/node22/bin/npm install -g --prefix /opt/dsh @deepseek-ai/dsh@0.1.7-rc.2 \
+    && printf '#!/bin/sh\nexec /opt/node22/bin/node /opt/dsh/lib/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"\n' > /usr/local/bin/dsh \
+    && chmod 0755 /usr/local/bin/dsh \
     && dsh --version
 
 # ---------------------------------------------------------------------------
