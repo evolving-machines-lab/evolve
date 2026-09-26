@@ -57,8 +57,9 @@ Choose one source. A local check does not first publish a dataset.
 | Option | Purpose |
 | --- | --- |
 | `name` | Check label; defaults to an acceptance timestamp |
-| `model_name` | Checker model |
-| `reasoning_effort` | Supported reasoning effort |
+| `agent` | Agent the checker runs on; default `claude` |
+| `model_name` | Checker model, one of that agent's models |
+| `reasoning_effort` | Effort that agent accepts |
 | `sandbox_provider` | Checker sandbox provider |
 | `rubric` | `{criteria: [{name, description, guidance}, ...]}` |
 | `prompt` | Replacement prompt template |

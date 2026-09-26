@@ -148,7 +148,8 @@ See [Jobs](/core-concepts/jobs) for the retry and spend rules.
 | Option | Meaning |
 | --- | --- |
 | `--analyze` | Enable analysis with the platform defaults. |
-| `--analyze-model <name>` | Analyzer model. |
+| `--analyze-agent <name>` | Agent the analyzer runs on. Default `claude`. |
+| `--analyze-model <name>` | Analyzer model, from that agent's models. |
 | `--analyze-rubric <path>` | TOML, YAML, or JSON rubric. |
 | `--analyze-prompt <path>` | Replacement prompt file. |
 | `--analyze-provider <provider>` | Analyzer sandbox provider. |

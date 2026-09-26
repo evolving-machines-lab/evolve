@@ -18,7 +18,7 @@ evolve analyze --show-defaults
 evolve analyze --show-defaults --json
 ```
 
-This returns the current model, reasoning effort, sandbox provider, prompt, and rubric. Defaults mode takes no job ID or other analysis options.
+This returns the current agent, model, reasoning effort, sandbox provider, prompt, and rubric. Defaults mode takes no job ID or other analysis options.
 
 ## Select trials
 
@@ -52,6 +52,7 @@ Cancelled trials are excluded. `--passing` and `--failing` cannot be combined. T
 
 ```bash
 evolve analyze "$JOB_ID" \
+  --agent codex --model gpt-5.5 \
   --rubric rubric.toml \
   --prompt prompt.txt \
   --watch
@@ -59,7 +60,8 @@ evolve analyze "$JOB_ID" \
 
 | Option | Meaning |
 | --- | --- |
-| `-m`, `--model <name>` | Analyzer model. |
+| `-a`, `--agent <name>` | Agent the analyzer runs on. Default `claude`. |
+| `-m`, `--model <name>` | Analyzer model, from that agent's models. |
 | `--effort <value>` | Reasoning effort. |
 | `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
 | `-p`, `--prompt <path>` | Text file replacing the default prompt. |

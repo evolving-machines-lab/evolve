@@ -1129,12 +1129,13 @@ class CapabilityDocument:
     #: Fleet-wide cap on concurrently in-flight trials of GPU-declaring tasks
     #: (platform-paid GPU compute). None on servers predating the field.
     gpu_concurrency_cap: Optional[int] = None
-    #: The trace analyzer's roster and defaults, the wire's own keys:
-    #: ``default_model`` (what an omitted ``analyze['model_name']`` takes),
-    #: ``reasoning_efforts`` (what ``analyze['reasoning_effort']`` accepts —
-    #: the claude harness's, the analyzer IS that harness) and ``models``
-    #: (every roster model with the effort an omitted ``reasoning_effort``
-    #: takes for it). None on servers predating the field.
+    #: The rubric agents' roster and defaults (the analyzer's and the
+    #: checker's alike), the wire's own keys: ``default_agent`` (what an
+    #: omitted ``agent`` takes), ``default_model`` (what an omitted
+    #: ``model_name`` takes) and ``agents`` (each agent ``agent`` accepts,
+    #: with its ``reasoning_efforts`` and every roster model with the effort
+    #: an omitted ``reasoning_effort`` takes for it). None on servers
+    #: predating the field.
     analyze: Optional[Dict[str, Any]] = None
 
 
@@ -1639,7 +1640,7 @@ class Rubric(TypedDict):
 
 class AnalyzeConfigInput(TypedDict, total=False):
     """Trace-analysis configuration INPUT — Harbor's ``harbor analyze``
-    vocabulary (their cli/analyze.py: ``--model``, ``--rubric``,
+    vocabulary (their cli/analyze.py: ``--agent``, ``--model``, ``--rubric``,
     ``--prompt``, and the selection and width options ``-n/--n-concurrent``,
     ``--passing`` / ``--failing``, ``-l/--n-trials``), the spec's
     ``AnalyzeConfigInput`` schema.
@@ -1650,12 +1651,21 @@ class AnalyzeConfigInput(TypedDict, total=False):
     means "all defaults" — openrouter/deepseek/deepseek-v4.1-flash at its
     per-model effort (high)
     over the platform's default analyze rubric and its
-    default prompt body. The analyzer always runs the
-    claude-code harness in its own sealed sandbox — on the provider
-    ``sandbox_provider`` names, or the platform's analysis default when it
-    names none; its spend is capped per analysis and metered as its own
-    line, never blended into the trial's own bill.
+    default prompt body. The analyzer runs the agent ``agent`` names
+    (claude, Harbor's own default claude-code, when it names none) in its
+    own sealed sandbox — on the provider ``sandbox_provider`` names, or the
+    platform's analysis default when it names none; its spend is capped per
+    analysis and metered as its own line, never blended into the trial's
+    own bill.
     """
+    #: The agent the analyzer runs on — Harbor's ``-a/--agent`` (default
+    #: claude-code), in the ``agents[].name`` vocabulary: any built-in agent
+    #: ``meta().analyze['agents']`` lists. ``model_name`` must be on its
+    #: roster and ``reasoning_effort`` one it accepts; with an agent whose
+    #: roster lacks the default model, ``model_name`` is required. A
+    #: registered (bring-your-own) agent is not accepted. Anything else is
+    #: refused ``invalid_input`` naming ``analyze.agent``. Omitted: claude.
+    agent: str
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
     #: openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
     #: roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
@@ -1671,7 +1681,7 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
-    #: Off-roster models are refused typed (``invalid_input``).
+    #: A model off the agent's roster is refused typed (``invalid_input``).
     model_name: str
     rubric: Rubric
     #: The analyzer's prompt template — the TEXT of Harbor's ``-p/--prompt
@@ -1693,15 +1703,17 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``evolve analyze -p prompt.txt``.
     prompt: str
     #: Reasoning effort the analyzer runs at — the platform's
-    #: ``agents[].reasoning_effort`` vocabulary applied to the analyzer,
-    #: which IS the claude harness: accepted values are ``meta()``'s
-    #: ``analyze['reasoning_efforts']``, an unknown value is refused
-    #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
-    #: default applies (``analyze['models'][i]['default_reasoning_effort']``:
+    #: ``agents[].reasoning_effort`` vocabulary applied to the analyzer's
+    #: agent, held to that agent's own rule: accepted values are ``meta()``'s
+    #: ``analyze['agents'][i]['reasoning_efforts']`` (none for an agent that
+    #: takes no effort, gemini); a refused value answers ``invalid_input``
+    #: exactly as an arm's does. Omitted, the PER-MODEL default applies
+    #: (``analyze['agents'][i]['models'][j]['default_reasoning_effort']``:
     #: high on openrouter/deepseek/deepseek-v4.1-flash, the default model —
     #: DeepSeek's own documented default, the owner's ruling 2026-09-10; max
     #: on glm-5.3-flash — the platform's ruling 2026-09-08, the effort its
-    #: published scores use; the claude harness default elsewhere). Always
+    #: published scores use; the agent's own default elsewhere; none on an
+    #: agent that takes none). Always
     #: passed to the analyzer explicitly and
     #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
     #: hosted extension: Harbor's analyze has no effort option.
@@ -1766,9 +1778,12 @@ class AnalyzeConfig(TypedDict):
     defaults of the day, resolved at accept and stored (same law as
     ``JobRetryConfig``). Echoed as ``Job.analyze`` when the job was created
     with ``analyze``; each analysis additionally carries the exact policy
-    IT ran under (``Trial.analysis['model_name']`` / ``['rubric']`` /
-    ``['prompt']``), which a later manual re-analysis may have changed.
+    IT ran under (``Trial.analysis['agent']`` / ``['model_name']`` /
+    ``['rubric']`` / ``['prompt']``), which a later manual re-analysis may
+    have changed.
     """
+    #: The agent this policy's analyses run on — as named, or the default (claude).
+    agent: str
     model_name: str
     rubric: Rubric
     #: The caller's prompt template as stored; None = the platform's default
@@ -1776,10 +1791,10 @@ class AnalyzeConfig(TypedDict):
     prompt: Optional[str]
     #: The effort this policy's analyses run at. Named at create it is
     #: served as stored; when the create named none, this echoes the
-    #: per-model default of the day for ``model_name`` — the value the next
-    #: enqueue under this policy stamps (the same nuance as
-    #: ``sandbox_provider`` below).
-    reasoning_effort: str
+    #: per-model default of the day for ``model_name`` on ``agent`` — the
+    #: value the next enqueue under this policy stamps (the same nuance as
+    #: ``sandbox_provider`` below). None when the agent takes no effort.
+    reasoning_effort: Optional[str]
     #: The provider this policy's analyses run on. Named at create it is
     #: served as stored, forever. When the create named none, this echoes the
     #: platform's analysis default OF THE DAY — the value the next enqueue
@@ -1858,8 +1873,9 @@ class TrialAnalysis(TypedDict):
     analyze/models.py: ``summary``, ``checks`` keyed by criterion — each
     check extended by the result schema: four outcomes and an evidence list —
     ``estimated_cost_usd``; the enclosing trial is Harbor's ``trial_name``);
-    the rest is provenance — which model, rubric and prompt THIS analysis
-    ran under, its lifecycle status, and its typed failure when it failed.
+    the rest is provenance — which agent, model, rubric and prompt THIS
+    analysis ran under, its lifecycle status, and its typed failure when it
+    failed.
 
     ``estimated_cost_usd`` is the analyzer agent's OWN metered spend — its
     own line, never part of the trial's ``agent_result.cost_usd`` or the
@@ -1883,10 +1899,14 @@ class TrialAnalysis(TypedDict):
     #: non-terminal analysis reaches ``completed`` or ``failed``; a worker
     #: death mid-run is reaped to a typed ``failed``.
     status: str
+    #: The agent THIS analysis ran on; every analysis from before the
+    #: choice existed ran on claude.
+    agent: str
     model_name: str
     #: The reasoning effort THIS analysis ran at — passed to the analyzer
-    #: explicitly, so it is what the model was asked for. None only on
-    #: analyses recorded before the effort was stamped.
+    #: explicitly, so it is what the model was asked for. None when its
+    #: agent takes no effort, or on analyses recorded before the effort was
+    #: stamped.
     reasoning_effort: Optional[str]
     rubric: Rubric
     #: The prompt template THIS analysis ran under, frozen at enqueue
@@ -1956,9 +1976,10 @@ class JobAnalysisStats(TypedDict):
 class CheckConfigInput(TypedDict, total=False):
     """Task-check configuration INPUT — Harbor's ``harbor check`` vocabulary
     (their cli/analyze.py:84-148 check_command), the spec's
-    ``CheckConfigInput`` schema. The rubric-agent trio is the analyze door's
+    ``CheckConfigInput`` schema. The rubric-agent knobs are the analyze door's
     under the same rules (:class:`AnalyzeConfigInput` states them; refusals
-    name ``check.*``): ``model_name`` (Harbor's check default is
+    name ``check.*``): ``agent`` (Harbor's ``-a/--agent``; default claude,
+    Harbor's claude-code), ``model_name`` (Harbor's check default is
     ``claude-sonnet-4-6``; this platform's is the analyzer's
     ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
     for both rubric agents, a
@@ -1979,6 +2000,8 @@ class CheckConfigInput(TypedDict, total=False):
     """
     #: A name for the check (Harbor's ``--job-name``); omitted, the accept timestamp ``YYYY-MM-DD__HH-MM-SS``. 1-120 characters.
     name: str
+    #: The agent the checker runs on — the analyze door's ``agent``, same rule. Omitted: claude.
+    agent: str
     model_name: str
     rubric: Rubric
     prompt: str
@@ -2053,9 +2076,11 @@ class Check(TypedDict):
     #: ``'queued'`` | ``'running'`` | ``'completed'`` (:data:`CheckStatus`).
     status: str
     source: CheckSource
+    #: The agent every task's checker ran on — named at create, or the default (claude).
+    agent: str
     model_name: str
-    #: The effort every task's checker ran at — named at create, or the model's default, resolved at accept.
-    reasoning_effort: str
+    #: The effort every task's checker ran at — named at create, or the model's default on the agent, resolved at accept; None when the agent takes none.
+    reasoning_effort: Optional[str]
     rubric: Rubric
     #: The prompt template as stored; None = the platform's default check body.
     prompt: Optional[str]
@@ -2087,12 +2112,13 @@ class AnalyzeDefaults(TypedDict):
     ``AnalyzeConfig`` serves as None and this serves as the template text. A
     plain wire dict at runtime.
     """
+    agent: str
     model_name: str
     rubric: Rubric
     #: The built-in analyze prompt template, unrendered — pass it as ``prompt`` to run the default body explicitly, or edit it from here.
     prompt: str
-    #: The effort the default model runs at when the config names none.
-    reasoning_effort: str
+    #: The effort the default model runs at on the default agent when the config names none; None if that agent takes none.
+    reasoning_effort: Optional[str]
     sandbox_provider: EvalSandboxProvider
 
 
@@ -2103,12 +2129,13 @@ class CheckDefaults(TypedDict):
     as None and this serves as the template text. A plain wire dict at
     runtime.
     """
+    agent: str
     model_name: str
     rubric: Rubric
     #: The built-in check prompt template, unrendered — pass it as ``prompt`` to run the default body explicitly, or edit it from here.
     prompt: str
-    #: The effort the default model runs at when the config names none.
-    reasoning_effort: str
+    #: The effort the default model runs at on the default agent when the config names none; None if that agent takes none.
+    reasoning_effort: Optional[str]
     sandbox_provider: EvalSandboxProvider
 
 
@@ -2128,10 +2155,12 @@ class CheckRow:
     name: str
     status: CheckStatus
     source: CheckSource
+    #: The checker's agent.
+    agent: str
     #: The checker's model.
     model_name: str
-    #: The effort every task's checker ran at.
-    reasoning_effort: str
+    #: The effort every task's checker ran at; None when its agent takes none.
+    reasoning_effort: Optional[str]
     sandbox_provider: EvalSandboxProvider
     #: The owning organization's slug (every check has one).
     org: str
@@ -4714,8 +4743,9 @@ def _map_check_row(data: Dict[str, Any]) -> CheckRow:
         name=str(data.get('name', '')),
         status=cast(CheckStatus, data.get('status')),
         source=cast(CheckSource, data['source']),
+        agent=str(data.get('agent', '')),
         model_name=str(data.get('model_name', '')),
-        reasoning_effort=str(data.get('reasoning_effort', '')),
+        reasoning_effort=data.get('reasoning_effort'),
         sandbox_provider=cast(EvalSandboxProvider, data.get('sandbox_provider')),
         org=str(data.get('org', '')),
         # The share link's switch; an older server that sends none reads as PRIVATE (_map_job's rule).
@@ -8231,6 +8261,7 @@ class JobsClient:
         self,
         id: str,
         *,
+        agent: Optional[str] = None,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
         prompt: Optional[str] = None,
@@ -8255,6 +8286,9 @@ class JobsClient:
         This is also the RE-analysis path: calling again (same job,
         different rubric or model) runs a fresh wave once the previous one
         has settled.
+        ``agent`` is Harbor's ``-a/--agent``: the built-in agent the analyzer
+        runs on (``meta().analyze['agents']``; omitted, claude), and
+        ``model_name`` must be on its roster.
         ``prompt`` is the TEXT of Harbor's ``-p/--prompt`` file — it
         replaces the built-in analyzer prompt as the instruction template
         (read the file yourself: ``prompt=Path('prompt.txt').read_text()``);
@@ -8263,10 +8297,10 @@ class JobsClient:
         boots — the job lineup; omitted, the platform's analysis default
         applies (daytona unless the operator retuned the fleet).
         ``reasoning_effort`` is the arms' effort vocabulary applied to the
-        analyzer (``meta().analyze['reasoning_efforts']``); omitted, the
-        per-model default applies (high on
+        analyzer's agent (``meta().analyze['agents'][i]['reasoning_efforts']``);
+        omitted, the per-model default applies (high on
         openrouter/deepseek/deepseek-v4.1-flash, max on glm-5.3-flash, the
-        claude harness default elsewhere) —
+        agent's own default elsewhere, none on an agent that takes none) —
         the effort is always passed explicitly and recorded on each
         analysis.
         Every argument omitted means the defaults:
@@ -8294,9 +8328,10 @@ class JobsClient:
         The server owns every acceptance refusal, surfaced typed:
         ``job_not_terminal``, ``invalid_rubric`` (unknown keys named, empty
         or duplicate criteria, or a rubric the row store cannot hold —
-        PostgreSQL's jsonb ceiling, named), ``invalid_input`` (off-roster
-        model, an empty or NUL-bearing prompt or one past the row store's
-        1 GB field ceiling, an effort outside the vocabulary, or a provider
+        PostgreSQL's jsonb ceiling, named), ``invalid_input`` (an agent the
+        analyzer does not run, a model off the agent's roster, an empty or
+        NUL-bearing prompt or one past the row store's 1 GB field ceiling,
+        an effort the agent does not accept, or a provider
         outside the lineup — the message names the roster, the ceiling or
         the legal values; a body past what the server can parse is a 413
         ``invalid_input`` naming the heap reading),
@@ -8305,6 +8340,8 @@ class JobsClient:
         side of the reward filter).
         """
         body: Dict[str, Any] = {}
+        if agent is not None:
+            body['agent'] = agent
         if model_name is not None:
             body['model_name'] = model_name
         if rubric is not None:
@@ -9550,6 +9587,7 @@ class ChecksClient:
         *,
         dataset: Optional[str] = None,
         name: Optional[str] = None,
+        agent: Optional[str] = None,
         model_name: Optional[str] = None,
         rubric: Optional[Rubric] = None,
         prompt: Optional[str] = None,
@@ -9579,7 +9617,8 @@ class ChecksClient:
         environment/ + instruction.md + tests/), else every top-level
         directory that is one, sorted; then ``include_task_names`` (any
         match keeps), ``exclude_task_names`` (any match drops), then the
-        first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s.
+        first ``n_tasks``. The policy knobs are :class:`CheckConfigInput`'s;
+        ``agent`` is Harbor's ``-a/--agent`` (omitted, claude).
         Every argument omitted means the defaults:
         openrouter/deepseek/deepseek-v4.1-flash at its
         per-model effort over the platform's default check rubric, on the
@@ -9589,7 +9628,8 @@ class ChecksClient:
         task, each ``'queued'``; follow it with :meth:`watch` or poll
         :meth:`get`. The server owns every acceptance refusal, surfaced
         typed: ``invalid_rubric`` (unknown keys named, empty or duplicate
-        criteria, bounds), ``invalid_input`` (an off-roster model, a bad
+        criteria, bounds), ``invalid_input`` (an agent the checker does not
+        run, a model off the agent's roster, a bad
         prompt, a provider outside the lineup, an effort outside the
         vocabulary, a malformed glob list, an out-of-range ``n_concurrent``
         or ``n_tasks`` — under ``check.*``), ``invalid_archive`` (not a
@@ -9618,6 +9658,8 @@ class ChecksClient:
         if (directory is None) == (dataset is None):
             raise ValueError('checks().create() takes exactly one source: directory or dataset')
         knobs: Dict[str, Any] = {}
+        if agent is not None:
+            knobs['agent'] = agent
         if model_name is not None:
             knobs['model_name'] = model_name
         if rubric is not None:

@@ -52,13 +52,13 @@ A check is a hosted model run and incurs cost. `evolve dataset check` is a separ
 | Execution | Valid reference solution; rejection of non-solutions; environment works; stable verification; sufficient limits. |
 | Feasibility | The task is solvable. |
 
-Inspect the default rubric's criteria and their complete guidance, and the current model, effort, provider, and prompt:
+Inspect the default rubric's criteria and their complete guidance, and the current agent, model, effort, provider, and prompt:
 
 ```bash
 evolve check --show-defaults
 ```
 
-Use `-r rubric.toml` or `-p prompt.txt` to customize. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically.
+Use `-r rubric.toml` or `-p prompt.txt` to customize. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically. The checker runs on `claude` unless `-a` names another agent; pass a model from that agent's [models](/core-concepts/models#analysis-and-check-models) with `-m`.
 
 ## The result
 

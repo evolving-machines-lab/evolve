@@ -121,6 +121,7 @@ class TestChecksCreate:
         with patch('evolve._http.urlopen', fake):
             accepted = await checks_factory(CONFIG).create(
                 str(task_dir),
+                agent='droid',
                 model_name='glm-5.3',
                 include_task_names=['hello-*'],
                 n_tasks=3,
@@ -135,6 +136,7 @@ class TestChecksCreate:
         # server refuses a bad policy before receiving the upload.
         assert list(parts) == ['config', 'archive']
         assert json.loads(parts['config'].decode('utf-8')) == {
+            'agent': 'droid',
             'model_name': 'glm-5.3',
             'include_task_names': ['hello-*'],
             'n_tasks': 3,

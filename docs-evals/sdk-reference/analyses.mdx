@@ -49,8 +49,9 @@ The field names are the same in both languages. TypeScript passes an object; Pyt
 
 | Field | Purpose |
 | --- | --- |
-| `model_name` | Analyzer model |
-| `reasoning_effort` | Effort supported by the analyzer |
+| `agent` | Agent the analyzer runs on; default `claude` |
+| `model_name` | Analyzer model, one of that agent's models |
+| `reasoning_effort` | Effort that agent accepts |
 | `sandbox_provider` | Analyzer's sandbox provider |
 | `rubric` | `{criteria: [{name, description, guidance}, ...]}` |
 | `prompt` | Replacement prompt template text |
@@ -86,7 +87,7 @@ print(defaults["model_name"], defaults["rubric"], defaults["prompt"])
 ```
 </CodeGroup>
 
-The response includes `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
+The response includes `agent`, `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
