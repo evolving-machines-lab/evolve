@@ -12,7 +12,7 @@ import {
   writePiMcpConfig,
   writePrimeAgentMcpConfig,
 } from "../../src/mcp/json.ts";
-import { homeFileOwnershipCommand } from "../../src/mcp/home-file.ts";
+import { homeFileOwnershipCommand, homeFilePrepareCommand } from "../../src/mcp/home-file.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -164,10 +164,8 @@ async function testModelsJsonRoute(): Promise<void> {
     "pi: the literal URL, $VAR key reference, the model with reasoning on, the headers at provider level; high needs no thinkingLevelMap",
   );
   assert(same(pi.theirs, { baseUrl: "https://x/v1" }), "another provider in the file survives");
-  assert(
-    ran.length === 1 && ran[0] === homeFileOwnershipCommand("/home/user", "/home/user/.pi/agent/models.json"),
-    "models.json and the directories made for it are handed to the home's owner right after the write",
-  );
+  assert(ran.length === 2 && ran[0] === homeFilePrepareCommand("/home/user", "/home/user/.pi/agent/models.json"), "models.json's directories are prepared before the write");
+  assert(ran[1] === homeFileOwnershipCommand("/home/user", "/home/user/.pi/agent/models.json", []), "models.json is handed to the home's owner right after the write");
 
   await writeModelsJsonRoute(
     sandbox,

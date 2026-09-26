@@ -307,6 +307,7 @@ export async function writeJsonSpendHeaders(
   headersPath: string,
   headers: Record<string, string>,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const settingsPath = getMcpSettingsPath(agentType, homeDir);
 
@@ -336,13 +337,14 @@ export async function writeJsonSpendHeaders(
     : {};
   current[leaf] = { ...existing, ...headers };
 
-  await writeHomeFile(sandbox, settingsPath, JSON.stringify(config, null, 2), { homeDir });
+  await writeHomeFile(sandbox, settingsPath, JSON.stringify(config, null, 2), { homeDir, owner: homeOwner });
 }
 
 export async function writeQwenThinkingConfig(
   sandbox: SandboxInstance,
   enableThinking: boolean,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const settingsPath = getMcpSettingsPath("qwen", homeDir);
 
@@ -371,7 +373,7 @@ export async function writeQwenThinkingConfig(
     },
   };
 
-  await writeHomeFile(sandbox, settingsPath, JSON.stringify(config, null, 2), { homeDir });
+  await writeHomeFile(sandbox, settingsPath, JSON.stringify(config, null, 2), { homeDir, owner: homeOwner });
 }
 
 /** Write MCP config for Kimi agent (FastMCP-compatible transport field) */
@@ -405,6 +407,7 @@ export async function writeAntigravitySettings(
   settingsPath: string,
   modelSlug: string,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const path = expandPath(settingsPath, homeDir);
 
@@ -432,7 +435,7 @@ export async function writeAntigravitySettings(
     customModels: { ...customModels, [modelSlug]: { modelName: modelSlug } },
   };
 
-  await writeHomeFile(sandbox, path, JSON.stringify(settings, null, 2), { homeDir });
+  await writeHomeFile(sandbox, path, JSON.stringify(settings, null, 2), { homeDir, owner: homeOwner });
 }
 
 /**
@@ -494,6 +497,7 @@ export async function writeDroidGatewaySettings(
   config: DroidGatewaySettingsConfig,
   headers: Record<string, string>,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const settingsPath = expandPath(config.settingsPath, homeDir);
 
@@ -512,7 +516,7 @@ export async function writeDroidGatewaySettings(
     ],
   };
 
-  await writeHomeFile(sandbox, settingsPath, JSON.stringify(content, null, 2), { homeDir });
+  await writeHomeFile(sandbox, settingsPath, JSON.stringify(content, null, 2), { homeDir, owner: homeOwner });
 }
 
 /**
@@ -584,6 +588,7 @@ export async function writeZcodeProviderConfig(
   sandbox: SandboxInstance,
   config: ZcodeProviderConfigInput,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const filePath = expandPath(config.path, homeDir);
 
@@ -642,7 +647,7 @@ export async function writeZcodeProviderConfig(
   };
 
   // The file holds the literal key: 0600, for the home's owner alone.
-  await writeHomeFile(sandbox, filePath, JSON.stringify(document, null, 2), { homeDir, mode: "600" });
+  await writeHomeFile(sandbox, filePath, JSON.stringify(document, null, 2), { homeDir, owner: homeOwner, mode: "600" });
 }
 
 /**
@@ -877,6 +882,7 @@ export async function writeModelsJsonRoute(
   config: ModelsJsonRouteWrite,
   headers: Record<string, string>,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const agentDir = expandPath(config.agentDir, homeDir);
   const modelsPath = `${agentDir}/models.json`;
@@ -911,7 +917,7 @@ export async function writeModelsJsonRoute(
     sandbox,
     modelsPath,
     JSON.stringify({ ...existing, providers: { ...providers, [config.providerName]: provider } }, null, 2),
-    { homeDir },
+    { homeDir, owner: homeOwner },
   );
 }
 

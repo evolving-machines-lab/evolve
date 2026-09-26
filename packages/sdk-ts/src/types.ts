@@ -245,6 +245,12 @@ export interface SandboxCreateOptions {
    * "/home/user" when no user is given.
    */
   homeDir?: string;
+  /**
+   * The account the agent config files are written for — a user name, a uid,
+   * or uid:gid — when it is not the owner of homeDir. Default: whoever owns
+   * homeDir. The files the SDK writes there are handed to this account.
+   */
+  homeOwner?: string;
 }
 
 /** Options for listing sandboxes (capability: SandboxProvider.list). */

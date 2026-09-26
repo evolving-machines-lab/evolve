@@ -11,7 +11,7 @@
 
 import { parse as parseYaml } from "yaml";
 import { renderDshRoutePatch, writeDshMcpConfig, writeDshRoutePatch } from "../../src/mcp/yaml.ts";
-import { homeFileOwnershipCommand } from "../../src/mcp/home-file.ts";
+import { homeFileOwnershipCommand, homeFilePrepareCommand } from "../../src/mcp/home-file.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -176,7 +176,7 @@ function parseRoutePatch(raw: string): Array<Record<string, any>> {
 async function testRoutePatchManaged(): Promise<void> {
   console.log("\n[3] the route patch for the managed gateway: env reads for key, URL and the three spend headers");
 
-  const { sandbox, dirs, ran, text } = createMockSandbox();
+  const { sandbox, ran, text } = createMockSandbox();
   await writeDshRoutePatch(sandbox, {
     ...ROUTE,
     headerEnvs: {
@@ -185,11 +185,8 @@ async function testRoutePatchManaged(): Promise<void> {
       "x-evolve-provider-runtime-binding": "EVOLVE_PROVIDER_RUNTIME_BINDING",
     },
   });
-  assert(dirs.includes("/home/user/.dsh"), "creates the patch's directory");
-  assert(
-    ran.length === 1 && ran[0] === homeFileOwnershipCommand("/home/user", "/home/user/.dsh/evolve-route.patch.yml"),
-    "the patch and its directory are handed to the home's owner right after the write",
-  );
+  assert(ran.length === 2 && ran[0] === homeFilePrepareCommand("/home/user", "/home/user/.dsh/evolve-route.patch.yml"), "the patch's directory is prepared before the write");
+  assert(ran[1] === homeFileOwnershipCommand("/home/user", "/home/user/.dsh/evolve-route.patch.yml", []), "the patch is handed to the home's owner right after the write");
   const raw = text("/home/user/.dsh/evolve-route.patch.yml");
 
   assert(raw.includes("baseURL: !!js process.env.EVOLVE_DSH_BASE_URL"), "the base URL is a `!!js process.env` read of the SDK's baseUrlEnv");
@@ -238,7 +235,7 @@ async function testRoutePatchWithoutHeaders(): Promise<void> {
   const homed = createMockSandbox();
   await writeDshRoutePatch(homed.sandbox, ROUTE, "/root");
   assert(homed.text("/root/.dsh/evolve-route.patch.yml").length > 0, "the `~` in the path follows the given home");
-  assert(homed.ran[0] === homeFileOwnershipCommand("/root", "/root/.dsh/evolve-route.patch.yml"), "and so does the hand-over");
+  assert(homed.ran[1] === homeFileOwnershipCommand("/root", "/root/.dsh/evolve-route.patch.yml", []), "and so does the hand-over");
 }
 
 async function testEnvNameGuard(): Promise<void> {

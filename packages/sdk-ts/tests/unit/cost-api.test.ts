@@ -11,7 +11,7 @@
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
-import { homeFileOwnershipCommand } from "../../src/mcp/home-file.js";
+import { homeFileOwnershipCommand, homeFilePrepareCommand } from "../../src/mcp/home-file.js";
 import { zcodeEnvPins, zcodeReasoningLevel } from "../../src/registry.js";
 
 let passed = 0;
@@ -424,8 +424,8 @@ async function testTomlFreshConfig(): Promise<void> {
   await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
 
   assertEqual(written.length, 1, "writes config file");
-  assertEqual(ran.length, 1, "one command after the write");
-  assertEqual(ran[0], homeFileOwnershipCommand("/home/user", "/home/user/.codex/config.toml"), "config.toml and ~/.codex are handed to the home's owner");
+  assertEqual(ran.length, 2, "prepare before the write, hand-over after");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.codex/config.toml", []), "config.toml is handed to the home's owner");
   const content = written[0].content;
   assert(content.startsWith('model_provider = "evolve-gateway"'), "root key is first line");
   assert(content.includes("[model_providers.evolve-gateway]"), "has provider section");
@@ -797,7 +797,7 @@ async function testQwenWriteJsonSpendHeaders(): Promise<void> {
   const config = JSON.parse(written[0].content);
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-abc", "customer-id at correct path");
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-tags"], "run:run-123", "run tag at correct path");
-  assertEqual(ran[0], homeFileOwnershipCommand("/home/user", "/home/user/.qwen/settings.json"), "settings.json and ~/.qwen are handed to the home's owner");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.qwen/settings.json", []), "settings.json is handed to the home's owner");
 }
 
 async function testQwenWriteJsonPreservesExistingConfig(): Promise<void> {
@@ -983,7 +983,7 @@ async function testKimiWriteSpendConfigFresh(): Promise<void> {
 
   assertEqual(written.length, 1, "writes one file");
   assertEqual(written[0].path, "/home/user/.kimi-code/config.toml", "writes Kimi Code config path");
-  assertEqual(ran[0], homeFileOwnershipCommand("/home/user", "/home/user/.kimi-code/config.toml"), "config.toml and ~/.kimi-code are handed to the home's owner");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.kimi-code/config.toml", []), "config.toml is handed to the home's owner");
   const content = written[0].content;
   assert(content.includes('default_model = "evolve-default"'), "has default_model");
   assert(content.includes("default_thinking = true"), "enables default thinking");
@@ -1677,7 +1677,7 @@ async function testDroidWriteGatewaySettings(): Promise<void> {
   );
 
   assertEqual(written[0].path, "/home/user/.factory/evolve-settings.json", "writes dedicated Droid settings file");
-  assertEqual(ran[0], homeFileOwnershipCommand("/home/user", "/home/user/.factory/evolve-settings.json"), "the settings file and ~/.factory are handed to the home's owner");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.factory/evolve-settings.json", []), "the settings file is handed to the home's owner");
   const parsed = JSON.parse(written[0].content);
   const model = parsed.customModels?.[0];
   assertEqual(parsed.cloudSessionSync, false, "disables Factory cloud sync for gateway mode");
@@ -1980,7 +1980,7 @@ async function testDshSessionStateRoundTrip(): Promise<void> {
   (agent as any).captureHarnessSessionId(`{"type":"session","sessionId":"session-fab655c4","cwd":"/work"}`, null);
   await (agent as any).writeCapturedSessionId(sandbox);
   assert(files.has("/home/user/.dsh/evolve-session.json"), "the id is persisted at the registry's sessionIdStateFile");
-  assertEqual(ran[0], homeFileOwnershipCommand("/home/user", "/home/user/.dsh/evolve-session.json"), "the state file is handed to the home's owner like every other home write");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.dsh/evolve-session.json", []), "the state file is handed to the home's owner like every other home write");
 
   const agent2 = new Agent(config as any, {});
   await (agent2 as any).loadCapturedSessionId(sandbox);
@@ -2032,7 +2032,11 @@ async function testZcodePerRunProviderFileGateway(): Promise<void> {
   assertEqual(headers["x-evolve-provider-runtime-binding"], "evrb_zcode_binding_secret", "sets the provider runtime binding header");
   assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3", "the default model rides verbatim (a gateway route name)");
   assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "high", "the omitted effort stamps the pin as the reasoning level");
-  assertEqual(ran.join("\n"), homeFileOwnershipCommand("/home/user", "/home/user/.zcode/v2/provider_config.json", "600"), "the file is handed to the home's owner and tightened to 0600 in one command");
+  assertEqual(
+    ran.join("\n"),
+    [homeFilePrepareCommand("/home/user", "/home/user/.zcode/v2/provider_config.json"), homeFileOwnershipCommand("/home/user", "/home/user/.zcode/v2/provider_config.json", [], { mode: "600" })].join("\n"),
+    "the directories are prepared before the write; the file is handed to the home's owner and tightened to 0600 after it",
+  );
 
   const envs = (agent as any).buildRunEnvs("run-zcode-002") as Record<string, string> | undefined;
   assert(!("OPENROUTER_API_KEY" in (envs ?? {})), "no key env in gateway mode: the token lives only in the provider file, which is all the CLI reads");

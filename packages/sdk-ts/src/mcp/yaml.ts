@@ -182,6 +182,7 @@ export async function writeDshRoutePatch(
   sandbox: SandboxInstance,
   config: DshRoutePatchConfig,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
-  await writeHomeFile(sandbox, expandPath(config.path, homeDir), renderDshRoutePatch(config), { homeDir });
+  await writeHomeFile(sandbox, expandPath(config.path, homeDir), renderDshRoutePatch(config), { homeDir, owner: homeOwner });
 }

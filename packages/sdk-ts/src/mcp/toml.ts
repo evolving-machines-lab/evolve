@@ -103,8 +103,9 @@ async function writeTomlDocument(
   path: string,
   doc: TomlTable,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
-  await writeHomeFile(sandbox, path, stringify(doc).trimEnd() + "\n", { homeDir });
+  await writeHomeFile(sandbox, path, stringify(doc).trimEnd() + "\n", { homeDir, owner: homeOwner });
 }
 
 // =============================================================================
@@ -224,6 +225,7 @@ export async function writeCodexSpendProvider(
   spendTrackingEnvs?: { sessionTagEnv: string; runTagEnv: string },
   envHttpHeaders: Record<string, string> = {},
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const settingsPath = getMcpSettingsPath("codex", homeDir);
 
@@ -266,7 +268,7 @@ export async function writeCodexSpendProvider(
   providers["evolve-gateway"] = desiredProvider;
   doc.model_providers = providers;
 
-  await writeTomlDocument(sandbox, settingsPath, doc, homeDir);
+  await writeTomlDocument(sandbox, settingsPath, doc, homeDir, homeOwner);
 }
 
 // =============================================================================
@@ -300,6 +302,7 @@ export async function writeKimiSpendConfig(
     thinkingEffort?: string;
   },
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
   const configPath = expandPath(config.configPath, homeDir);
 
@@ -332,5 +335,5 @@ export async function writeKimiSpendConfig(
     },
   };
 
-  await writeTomlDocument(sandbox, configPath, doc, homeDir);
+  await writeTomlDocument(sandbox, configPath, doc, homeDir, homeOwner);
 }

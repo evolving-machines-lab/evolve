@@ -65,7 +65,7 @@ import {
   writeZcodeProviderConfig,
   writeAntigravitySettings,
 } from "./mcp";
-import { writeHomeFile } from "./mcp/home-file";
+import { validateHomeOwner, writeHomeFile } from "./mcp/home-file";
 import { stringify as stringifyToml } from "smol-toml";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { mountSkills, resolveSkills, type ResolvedSkill, type SkillRef } from "./skills";
@@ -357,6 +357,8 @@ export class Agent {
   private mcpConfigured = false;
   private readonly workingDir: string;
   private readonly homeDir: string;
+  /** The account the config home is written for (sandboxCreateOptions.homeOwner); else its owner. */
+  private readonly homeOwner?: string;
   private lastRunTimestamp?: number;
   private readonly registry: AgentRegistryEntry;
   /** Unified session ID — used for both observability (SessionLogger) and spend tracking (gateway customer-id) */
@@ -425,6 +427,8 @@ export class Agent {
       options.sandboxCreateOptions?.user,
       options.sandboxCreateOptions?.homeDir,
     );
+    const homeOwner = options.sandboxCreateOptions?.homeOwner;
+    this.homeOwner = homeOwner === undefined ? undefined : validateHomeOwner(homeOwner);
     if (this.homeDir !== DEFAULT_HOME_DIR) {
       // Checkpoint storage and managed browser config paths are pinned to the
       // default /home/user home; fail loudly instead of writing to dead paths.
@@ -1605,6 +1609,7 @@ export class Agent {
         undefined,
         undefined,
         this.homeDir,
+        this.homeOwner,
       );
       return;
     }
@@ -1621,6 +1626,7 @@ export class Agent {
         ? { [PROVIDER_RUNTIME_BINDING_HEADER]: PROVIDER_RUNTIME_BINDING_ENV }
         : undefined,
       this.homeDir,
+      this.homeOwner,
     );
   }
 
@@ -1701,6 +1707,7 @@ export class Agent {
     if (!path || !this.capturedSessionId) return;
     await writeHomeFile(sandbox, path, JSON.stringify({ sessionId: this.capturedSessionId }, null, 2), {
       homeDir: this.homeDir,
+      owner: this.homeOwner,
     });
   }
 
@@ -1753,6 +1760,7 @@ export class Agent {
             : undefined,
       },
       this.homeDir,
+      this.homeOwner,
     );
   }
 
@@ -1806,6 +1814,7 @@ export class Agent {
       },
       headers,
       this.homeDir,
+      this.homeOwner,
     );
   }
 
@@ -1943,6 +1952,7 @@ export class Agent {
         isExternalGateway: Boolean(this.agentConfig.externalGateway),
       }),
       this.homeDir,
+      this.homeOwner,
     );
   }
 
@@ -2122,6 +2132,7 @@ export class Agent {
           ...this.providerRuntimeHeaderUpdates(),
         },
         this.homeDir,
+        this.homeOwner,
       );
     }
 
@@ -2374,6 +2385,7 @@ export class Agent {
         thinkingEffort: getKimiCodeThinkingEffort(this.reasoningEffort()),
       },
       this.homeDir,
+      this.homeOwner,
     );
   }
 
@@ -2421,6 +2433,7 @@ export class Agent {
       sandbox,
       { ...config, ...connection, reasoningLevel },
       this.homeDir,
+      this.homeOwner,
     );
   }
 
@@ -2630,6 +2643,7 @@ export class Agent {
           ...this.providerRuntimeHeaderUpdates(),
         },
         this.homeDir,
+        this.homeOwner,
       );
     }
 
@@ -2638,6 +2652,7 @@ export class Agent {
         sandbox,
         isThinkingEnabled(this.reasoningEffort()),
         this.homeDir,
+        this.homeOwner,
       );
     }
 
@@ -2678,6 +2693,7 @@ export class Agent {
               ...this.providerRuntimeHeaderUpdates(),
             },
         this.homeDir,
+        this.homeOwner,
       );
     }
 

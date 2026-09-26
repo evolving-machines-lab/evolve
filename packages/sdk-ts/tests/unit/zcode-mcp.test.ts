@@ -9,7 +9,7 @@
  */
 
 import { writeZcodeMcpConfig, writeZcodeProviderConfig } from "../../src/mcp/json.ts";
-import { homeFileOwnershipCommand } from "../../src/mcp/home-file.ts";
+import { homeFileOwnershipCommand, homeFilePrepareCommand } from "../../src/mcp/home-file.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -161,12 +161,15 @@ async function testProviderFile(): Promise<void> {
   assert(rc.optionSpecs.reasoningLevel.map === 'reasoningLevel == "disabled" ? {} : {"reasoning_effort": reasoningLevel}', "disabled sends no field; a level is reasoning_effort");
   assert(doc.config.defaultModelSelection.modelId === "openrouter/z-ai/glm-5.3-flash" && doc.config.defaultModelSelection.options.reasoningLevel === "high", "the default selection is the run's model at the run's level");
   assert(JSON.stringify(doc.config.modelConfigRules.manualProviderModelRules) === "[]", "no manual rules");
-  assert(ran.length === 1, "one command after the write");
+  assert(ran.length === 2, "two commands around the write: prepare, then hand over");
+  assert(ran[0] === homeFilePrepareCommand("/home/user", "/home/user/.zcode/v2/provider_config.json"), "the directories are prepared first");
   assert(
-    ran[0] === homeFileOwnershipCommand("/home/user", "/home/user/.zcode/v2/provider_config.json", "600"),
-    "the file and the directories made for it are handed to the home's owner, and the file is chmod 600, in the one command",
+    ran[1] === homeFileOwnershipCommand("/home/user", "/home/user/.zcode/v2/provider_config.json", [], { mode: "600" }),
+    "the file is handed to the home's owner and chmod 600 in one command (nothing was made, so nothing else changes hands)",
   );
-  assert(ran[0].endsWith("chmod 600 '/home/user/.zcode/v2/provider_config.json'"), "the mode is set on the file");
+  const named = createMockSandbox();
+  await writeZcodeProviderConfig(named.sandbox, { path: "~/.zcode/v2/provider_config.json", providerId: "evolve", providerName: "Evolve gateway", baseUrl: "https://g/v1", apiKey: "k", model: "m", reasoningLevel: "high", contextWindow: 1, maxOutputTokens: 1, headers: {} }, "/home/agent", "agent");
+  assert(named.ran[1] === homeFileOwnershipCommand("/home/agent", "/home/agent/.zcode/v2/provider_config.json", [], { owner: "agent", mode: "600" }), "a named owner is handed the file by name");
 }
 
 async function testProviderFileWithoutHeaders(): Promise<void> {
