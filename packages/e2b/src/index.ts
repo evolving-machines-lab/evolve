@@ -381,6 +381,8 @@ export interface SandboxCreateOptions {
   user?: string;
   /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
   homeDir?: string;
+  /** Account the SDK hands its agent config files to; not consumed by the provider. */
+  homeOwner?: string;
 }
 
 /** Options for listing sandboxes */
