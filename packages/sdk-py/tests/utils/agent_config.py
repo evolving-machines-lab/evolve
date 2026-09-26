@@ -2,7 +2,7 @@
 
 Creates agent configs based on TEST_AGENT_TYPE environment variable.
 If TEST_AGENT_TYPE is empty, returns None to let Evolve resolve from env.
-Supports: codex, claude, gemini, qwen, kimi, opencode, droid
+Supports: codex, claude, gemini, qwen, kimi, opencode, droid, pi, prime-agent
 """
 
 import os
@@ -87,6 +87,20 @@ def get_agent_config() -> Optional[AgentConfig]:
             model=os.getenv('DROID_MODEL', 'gpt-5.5'),
         )
 
+    elif agent_type == 'pi':
+        return AgentConfig(
+            type='pi',
+            api_key=evolve_api_key,
+            model=os.getenv('PI_MODEL', 'openrouter/anthropic/claude-sonnet-5'),
+        )
+
+    elif agent_type == 'prime-agent':
+        return AgentConfig(
+            type='prime-agent',
+            api_key=evolve_api_key,
+            model=os.getenv('PRIME_AGENT_MODEL', 'openrouter/anthropic/claude-sonnet-5'),
+        )
+
     else:
         raise ValueError(f"Unsupported agent type: {agent_type}")
 
@@ -108,6 +122,8 @@ def get_agent_display_name(agent_type: AgentType) -> str:
         'kimi': 'Kimi',
         'opencode': 'OpenCode',
         'droid': 'Droid',
+        'pi': 'pi',
+        'prime-agent': 'Prime Agent',
     }
     return names.get(agent_type, agent_type)
 

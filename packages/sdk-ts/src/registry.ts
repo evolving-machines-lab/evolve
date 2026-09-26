@@ -298,6 +298,30 @@ export interface AgentRegistryEntry {
     provider: "generic-chat-completion-api" | "openai" | "anthropic";
     maxOutputTokens?: number;
   };
+  /**
+   * Routing through a pi-family `models.json` provider entry — pi and Prime
+   * Agent, which read no base-URL env or flag: the file is the ONLY route,
+   * and pi expands `$VAR` in `apiKey` and header values but never in
+   * `baseUrl` (live finding 2026-09-25), so the SDK writes the literal URL
+   * before every run (agent.ts writePiFamilyModelsJson: the model entry, the
+   * reasoning flag and the LiteLLM spend headers ride the same file) and the
+   * command selects it with `--provider <providerName>`.
+   */
+  modelsJsonRoute?: {
+    /** The agent dir (~ expanded) that holds models.json. */
+    agentDir: string;
+    /** The provider name the command's --provider selects. */
+    providerName: string;
+    /** How the file names the key env: pi wants "$VAR" (docs/models.md), Prime Agent the bare "VAR". */
+    apiKeyRef: "dollar" | "bare";
+  };
+  /**
+   * Platform settings deep-merged into the harness's own settings file once
+   * at setup, after the MCP writer (whose keys survive the merge): a vendor
+   * default that is wrong for a metered, wall-clocked run — never a user
+   * option (those ride `config`).
+   */
+  settingsStamp?: { path: string; document: Record<string, unknown> };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -381,6 +405,81 @@ function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   const variant = getOpenCodeReasoningVariant(reasoningEffort);
   return variant ? ` --variant ${variant} --thinking` : "";
 }
+
+// =============================================================================
+// THE PI FAMILY (pi, Prime Agent): one models.json route, one thinking scale
+// =============================================================================
+
+/** The models.json provider name both CLIs' commands select (`--provider evolve`). */
+export const PI_FAMILY_PROVIDER = "evolve";
+
+/**
+ * Env var naming pi-mcp-adapter's extension entry point. A fleet default,
+ * not a user option: the evolve-all image installs the adapter at
+ * PI_MCP_ADAPTER_EXTENSION, and the hosted bundle (which unpacks to its own
+ * prefix) sets this var in its launcher shim to point at its own copy.
+ */
+export const PI_MCP_ADAPTER_EXTENSION_ENV = "PI_MCP_ADAPTER_EXTENSION";
+
+/** Where the evolve-all image installs pi-mcp-adapter (assets/docker/Dockerfile). */
+export const PI_MCP_ADAPTER_EXTENSION = "/opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts";
+
+/**
+ * The `--thinking` level for a reasoning effort. pi and Prime Agent share the
+ * scale off|minimal|low|medium|high|xhigh|max (pi cli/args.ts, Prime
+ * docs/usage.md), which is the SDK's graded vocabulary; the SDK's binary
+ * spellings map onto it — `thinking` is the vendors' own default level
+ * (medium), `none`/`no-thinking` are `off`.
+ */
+export function piThinkingLevel(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "none" || reasoningEffort === "no-thinking") return "off";
+  if (reasoningEffort === "thinking") return "medium";
+  return reasoningEffort;
+}
+
+/**
+ * The model id the pi family's models.json and `--model` carry. The roster
+ * speaks OpenRouter ids in the gateway's `openrouter/<vendor>/<model>`
+ * spelling, which rides VERBATIM to the Evolve gateway and to a caller's
+ * external gateway (route names are theirs). Direct mode talks to OpenRouter
+ * itself, whose own id has no `openrouter/` prefix — so the prefix comes
+ * off there, and only there; a bare or otherwise-prefixed name is the
+ * caller's explicit id in every mode.
+ */
+export function piFamilyWireModel(
+  model: string,
+  mode: { isDirectMode?: boolean; isExternalGateway?: boolean },
+): string {
+  if (mode.isDirectMode && !mode.isExternalGateway && model.startsWith("openrouter/")) {
+    return model.slice("openrouter/".length);
+  }
+  return model;
+}
+
+/**
+ * The OpenRouter roster pi and Prime Agent carry (owner 2026-09-25: both are
+ * universal harnesses with OpenRouter built in, so they route OpenRouter-only,
+ * like opencode). Alias == wire id: the gateway's `openrouter/*` wildcard
+ * serves every id and bills at OpenRouter's price; direct mode sends the id
+ * to OpenRouter with the prefix removed (piFamilyWireModel).
+ */
+const OPENROUTER_ROSTER: readonly ModelInfo[] = [
+  { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
+  { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
+  { alias: "openrouter/google/gemini-3.6-flash", modelId: "openrouter/google/gemini-3.6-flash", description: "Gemini 3.6 Flash via OpenRouter" },
+  { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
+  { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
+  { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
+  { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)" },
+  { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+];
 
 // =============================================================================
 // AGENT REGISTRY
@@ -940,6 +1039,112 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd ${homeDir}/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
+    },
+  },
+
+  pi: {
+    image: "evolve-all",
+    // The key pi reads through models.json ("apiKey":"$OPENROUTER_API_KEY",
+    // written per run by agent.ts): the runtime token in gateway mode, the
+    // caller's key in externalGateway mode, the user's own OpenRouter key in
+    // direct mode — OpenRouter-only, like opencode (owner 2026-09-25).
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/anthropic/claude-opus-5",
+    // pi's own default level is medium (docs/settings.md defaultThinkingLevel);
+    // owner policy pins graded harnesses at high, stamped via --thinking.
+    defaultReasoningEffort: "high",
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    models: [...OPENROUTER_ROSTER],
+    // pi reads AGENTS.md (and CLAUDE.md) from the cwd (core/resource-loader.ts).
+    systemPromptFile: "AGENTS.md",
+    // pi's core has no MCP: the pi-mcp-adapter extension (2.37.0 in the
+    // image) reads <agent-dir>/mcp.json (mcp/json.ts writePiMcpConfig).
+    mcpConfig: {
+      settingsDir: "~/.pi/agent",
+      filename: "mcp.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.pi/agent/skills",
+    },
+    modelsJsonRoute: { agentDir: "~/.pi/agent", providerName: PI_FAMILY_PROVIDER, apiKeyRef: "dollar" },
+    // cacheWarming "streaming" (pi's default) issues extra provider requests
+    // recorded as usage entries — off for clean accounting; install telemetry off.
+    settingsStamp: {
+      path: "~/.pi/agent/settings.json",
+      document: { cacheWarming: "off", enableInstallTelemetry: false },
+    },
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isDirectMode, isExternalGateway, homeDir = DEFAULT_HOME_DIR }) => {
+      const agentDir = `${homeDir}/.pi/agent`;
+      const continueFlag = isResume ? "--continue " : "";
+      const level = piThinkingLevel(reasoningEffort);
+      const thinkingFlag = level ? ` --thinking ${level}` : "";
+      const wireModel = piFamilyWireModel(model, { isDirectMode, isExternalGateway });
+      // The adapter extension loads only when the MCP writer left an mcp.json,
+      // so a run without MCP servers never pays the adapter's startup.
+      const adapterFlag = `$(if [ -f ${agentDir}/mcp.json ]; then printf ' --extension %s' "\${${PI_MCP_ADAPTER_EXTENSION_ENV}:-${PI_MCP_ADAPTER_EXTENSION}}"; fi)`;
+      // --approve: project-level .pi/ resources and .agents/skills load only
+      // with trust granted, and JSON mode cannot ask (round-2 finding S1).
+      // PI_OFFLINE/PI_TELEMETRY/PI_SKIP_VERSION_CHECK: no pi.dev calls.
+      // --session-dir: one flat dir, deterministic capture (default nests per cwd).
+      // JSON mode exits 0 on failure; success is read from the stream (parsers/pi-family.ts).
+      return `PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 pi --mode json --approve ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} --session-dir ${agentDir}/sessions ${adapterFlag} -- "${prompt}" </dev/null`;
+    },
+  },
+
+  "prime-agent": {
+    image: "evolve-all",
+    // The key Prime reads through models.json ("apiKey":"OPENROUTER_API_KEY",
+    // an env var NAME — Prime's spelling, docs/models.md); the same three
+    // modes as pi. OpenRouter-only (owner 2026-09-25).
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/anthropic/claude-opus-5",
+    // Prime's own default is medium (docs/usage.md --thinking); pinned high.
+    defaultReasoningEffort: "high",
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    models: [...OPENROUTER_ROSTER],
+    systemPromptFile: "AGENTS.md",
+    // MCP is built in and configured in the GLOBAL settings.json mcpServers
+    // map (docs/mcp-integrations.md; project-level mcpServers are ignored).
+    mcpConfig: {
+      settingsDir: "~/.prime/agent",
+      filename: "settings.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.prime/agent/skills",
+    },
+    modelsJsonRoute: { agentDir: "~/.prime/agent", providerName: PI_FAMILY_PROVIDER, apiKeyRef: "bare" },
+    // On a 429 Prime waits up to 15 min for usage and can park a session for
+    // hours until the provider's reset (settings-manager.ts waitForUsage);
+    // a metered run's wall clock is the only budget that may end it.
+    settingsStamp: {
+      path: "~/.prime/agent/settings.json",
+      document: { retry: { provider: { waitForUsage: { enabled: false, pauseUntilReset: false } } } },
+    },
+    // The Python kernel venv (~214 MB, rebuilt from its .bootstrap-version
+    // marker) never rides a checkpoint.
+    checkpointExcludes: [
+      ".prime/agent/kernel-venv",
+    ],
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isDirectMode, isExternalGateway }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      const level = piThinkingLevel(reasoningEffort);
+      const thinkingFlag = level ? ` --thinking ${level}` : "";
+      const wireModel = piFamilyWireModel(model, { isDirectMode, isExternalGateway });
+      // --cwd "$PWD": a daemon-side worker runs the session, so the working
+      // directory travels explicitly — the spawn cwd, never a baked path.
+      // --offline: no telemetry, update check or catalog refresh (model calls unaffected).
+      // JSON mode exits 0 on failure; success is read from the stream (parsers/pi-family.ts).
+      return `PRIME_AGENT_TELEMETRY=0 prime-agent --mode json --offline --cwd "$PWD" ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} -- "${prompt}" </dev/null`;
     },
   },
 };

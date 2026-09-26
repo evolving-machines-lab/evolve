@@ -164,7 +164,31 @@ export type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | HarnessEvent;
+
+/**
+ * A wire line the harness printed that has no ACP slot — kept, never dropped.
+ *
+ * DELIBERATE EXTENSION BEYOND ACP, like AgentError and AgentUsage. Two
+ * harness streams are unversioned or grow between releases (the owner's
+ * ruling 2026-09-25: any event type outside the captured vocabulary is passed
+ * through as a generic event and logged, never a failure), and some captured
+ * types are real facts of the run with no ACP shape — a Prime Agent
+ * sub-agent's progress (`rlm_child_update`), a pi automatic retry
+ * (`auto_retry_start`), a compaction. `type` is the harness's own type word
+ * and `payload` the line's other fields, verbatim.
+ *
+ * Excluded from isAgentWorkUpdate: an unknown line is evidence the harness
+ * PRINTED something, never that the agent did work.
+ */
+export interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  /** The harness's own type word for the line, verbatim. */
+  type: string;
+  /** Every other field of the line, verbatim. */
+  payload: Record<string, unknown>;
+}
 
 /**
  * Token accounting as the harness reported it on one wire line.
@@ -254,7 +278,12 @@ export interface AgentError {
  * cannot drift between callers.
  */
 export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | undefined): boolean {
-  return !!update && update.sessionUpdate !== "error" && update.sessionUpdate !== "usage";
+  return (
+    !!update &&
+    update.sessionUpdate !== "error" &&
+    update.sessionUpdate !== "usage" &&
+    update.sessionUpdate !== "harness_event"
+  );
 }
 
 /**

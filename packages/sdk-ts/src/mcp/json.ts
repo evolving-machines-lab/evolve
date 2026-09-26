@@ -492,3 +492,280 @@ function toOpenCodeFormat(config: McpServerConfig): Record<string, unknown> {
   // Fallback: pass through with type
   return { type: transport === "stdio" ? "local" : "remote", ...config };
 }
+
+// =============================================================================
+// THE PI FAMILY (pi, Prime Agent): models.json route, MCP, settings stamp
+// =============================================================================
+
+/**
+ * Transform to pi-mcp-adapter format (nicobailon/pi-mcp-adapter 2.37.0 README):
+ * a stdio server is `{ command, args?, cwd?, env? }`, a remote one `{ url,
+ * headers? }` — the adapter speaks streamable HTTP with SSE fallback on any
+ * `url`, so both SDK transports collapse onto it.
+ */
+function toPiMcpFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  if (transport === "stdio" && config.command) {
+    const result: Record<string, unknown> = { command: config.command };
+    if (config.args && config.args.length > 0) result.args = config.args;
+    if (config.cwd) result.cwd = config.cwd;
+    if (config.env && Object.keys(config.env).length > 0) result.env = config.env;
+    return result;
+  }
+  const result: Record<string, unknown> = { url: config.url };
+  const headers = config.headers ?? config.httpHeaders;
+  if (headers && Object.keys(headers).length > 0) result.headers = headers;
+  return result;
+}
+
+/**
+ * The adapter settings the SDK pins in pi's mcp.json: no host-config
+ * discovery (the adapter would otherwise also read ~/.config/mcp/mcp.json,
+ * ~/.agents/mcp.json and the project's .mcp.json — Harbor pi.py:290-294
+ * pins the same three), no startup notification, no script mode.
+ */
+export const PI_MCP_ADAPTER_SETTINGS = {
+  hostConfigDiscovery: "off",
+  notifyOnStartupConnect: false,
+  scriptMode: false,
+} as const;
+
+/**
+ * Write MCP config for pi: `<agent-dir>/mcp.json`, read by the pi-mcp-adapter
+ * extension the command loads whenever this file exists (registry.ts pi
+ * buildCommand). pi's own core has no MCP.
+ */
+export async function writePiMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  validateServers(servers);
+
+  const settingsDir = getMcpSettingsDir("pi", homeDir);
+  const settingsPath = getMcpSettingsPath("pi", homeDir);
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const existingSettings =
+    typeof existingConfig.settings === "object" && existingConfig.settings !== null
+      ? (existingConfig.settings as Record<string, unknown>)
+      : {};
+  const transformedServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toPiMcpFormat(config)])
+  );
+
+  await sandbox.files.write(
+    settingsPath,
+    JSON.stringify(
+      {
+        ...existingConfig,
+        settings: { ...existingSettings, ...PI_MCP_ADAPTER_SETTINGS },
+        mcpServers: transformedServers,
+      },
+      null,
+      2
+    )
+  );
+}
+
+/**
+ * Transform to Prime Agent's settings.json `mcpServers` shape
+ * (settings-manager.ts McpServerConfig, v0.9.6): `{ type: "http", url,
+ * headers?, bearerTokenEnvVar? }` or `{ type: "stdio", command, args?, cwd?,
+ * env? }`. Two honesty rules from that type:
+ *   - Prime has no SSE transport; a server declared `sse` is written as
+ *     `http` (its client speaks streamable HTTP), which an SSE-only server
+ *     will refuse at connect — the closest thing Prime can be told.
+ *   - a stdio server's `env` is `Record<name, { env: hostVarName }>`:
+ *     references into the kernel's environment, never literal values, so a
+ *     literal SDK `env` is refused typed rather than silently dropped. The
+ *     SDK's `envVars` (names to pass through) is exactly that shape.
+ */
+function toPrimeAgentMcpFormat(name: string, config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  if (transport === "stdio" && config.command) {
+    if (config.env && Object.keys(config.env).length > 0) {
+      throw new Error(
+        `MCP server "${name}": Prime Agent passes a stdio server's env only as references to the sandbox ` +
+          `environment (its settings.json takes { env: NAME }, never literal values). Set the values in ` +
+          `the sandbox environment and name them with envVars instead of env.`,
+      );
+    }
+    const result: Record<string, unknown> = { type: "stdio", command: config.command };
+    if (config.args && config.args.length > 0) result.args = config.args;
+    if (config.cwd) result.cwd = config.cwd;
+    if (config.envVars && config.envVars.length > 0) {
+      result.env = Object.fromEntries(config.envVars.map((envName) => [envName, { env: envName }]));
+    }
+    return result;
+  }
+  const result: Record<string, unknown> = { type: "http", url: config.url };
+  const headers = config.headers ?? config.httpHeaders;
+  if (headers && Object.keys(headers).length > 0) result.headers = headers;
+  if (config.bearerTokenEnvVar) result.bearerTokenEnvVar = config.bearerTokenEnvVar;
+  return result;
+}
+
+/**
+ * Write MCP config for Prime Agent: the `mcpServers` map of the GLOBAL
+ * ~/.prime/agent/settings.json (docs/mcp-integrations.md — project-level
+ * maps are ignored for execution), the rest of the file preserved.
+ */
+export async function writePrimeAgentMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  validateServers(servers);
+
+  const settingsDir = getMcpSettingsDir("prime-agent", homeDir);
+  const settingsPath = getMcpSettingsPath("prime-agent", homeDir);
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const transformedServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toPrimeAgentMcpFormat(name, config)])
+  );
+
+  await sandbox.files.write(
+    settingsPath,
+    JSON.stringify({ ...existingConfig, mcpServers: transformedServers }, null, 2)
+  );
+}
+
+export interface ModelsJsonRouteWrite {
+  /** The agent dir holding models.json (~ expanded here). */
+  agentDir: string;
+  /** The provider name the command's --provider selects. */
+  providerName: string;
+  /** "$VAR" (pi) or the bare "VAR" (Prime Agent) in the file's apiKey field. */
+  apiKeyRef: "dollar" | "bare";
+  /** The env var the key rides in. */
+  apiKeyEnv: string;
+  /** The LITERAL base URL, `/v1` included (pi never expands a variable here). */
+  baseUrl: string;
+  /** The wire model id, as the command's --model spells it. */
+  model: string;
+  /** Whether thinking is on for this run (the model entry's `reasoning` flag). */
+  reasoning: boolean;
+  /** The --thinking level; xhigh/max need an explicit thinkingLevelMap (Harbor pi.py:235-239). */
+  thinkingLevel?: string;
+}
+
+/**
+ * Write the pi family's models.json: one custom provider on the
+ * `openai-completions` dialect at the literal base URL, the run's model, and
+ * the spend headers at provider level (pi docs/models.md; live-proven to
+ * reach the gateway on both CLIs 2026-09-25). Other providers a caller left
+ * in the file survive; ours is replaced whole every run.
+ */
+export async function writeModelsJsonRoute(
+  sandbox: SandboxInstance,
+  config: ModelsJsonRouteWrite,
+  headers: Record<string, string>,
+  homeDir?: string,
+): Promise<void> {
+  const agentDir = expandPath(config.agentDir, homeDir);
+  const modelsPath = `${agentDir}/models.json`;
+
+  await sandbox.files.makeDir(agentDir);
+
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await sandbox.files.read(modelsPath);
+    if (typeof raw === "string" && raw.trim()) {
+      existing = JSON.parse(raw);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+  const providers =
+    typeof existing.providers === "object" && existing.providers !== null
+      ? (existing.providers as Record<string, unknown>)
+      : {};
+
+  const model: Record<string, unknown> = { id: config.model, reasoning: config.reasoning };
+  if (config.reasoning && (config.thinkingLevel === "xhigh" || config.thinkingLevel === "max")) {
+    model.thinkingLevelMap = { [config.thinkingLevel]: config.thinkingLevel };
+  }
+  const provider: Record<string, unknown> = {
+    baseUrl: config.baseUrl,
+    api: "openai-completions",
+    apiKey: config.apiKeyRef === "dollar" ? `$${config.apiKeyEnv}` : config.apiKeyEnv,
+    models: [model],
+  };
+  if (Object.keys(headers).length > 0) provider.headers = headers;
+
+  await sandbox.files.write(
+    modelsPath,
+    JSON.stringify({ ...existing, providers: { ...providers, [config.providerName]: provider } }, null, 2),
+  );
+}
+
+/**
+ * Deep-merge a platform stamp into a harness's JSON settings file: objects
+ * merge key by key, everything else (scalars, arrays) is the stamp's. The
+ * file's other keys — an MCP writer's `mcpServers`, a user's own settings —
+ * survive untouched.
+ */
+export async function writeJsonSettingsStamp(
+  sandbox: SandboxInstance,
+  path: string,
+  stamp: Record<string, unknown>,
+  homeDir?: string,
+): Promise<void> {
+  const settingsPath = expandPath(path, homeDir);
+  const settingsDir = settingsPath.slice(0, settingsPath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await sandbox.files.read(settingsPath);
+    if (typeof raw === "string" && raw.trim()) {
+      existing = JSON.parse(raw);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  await sandbox.files.write(settingsPath, JSON.stringify(mergeStamp(existing, stamp), null, 2));
+}
+
+function mergeStamp(base: Record<string, unknown>, stamp: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(stamp)) {
+    const current = merged[key];
+    if (isPlainObject(value) && isPlainObject(current)) {
+      merged[key] = mergeStamp(current, value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

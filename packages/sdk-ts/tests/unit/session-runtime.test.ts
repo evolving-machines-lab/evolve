@@ -88,7 +88,9 @@ type RuntimeProvider =
   | "dashscope"
   | "kimi"
   | "openrouter"
-  | "droid";
+  | "droid"
+  | "pi"
+  | "prime-agent";
 
 function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
   const openAiCompatible = new Set<RuntimeProvider>([
@@ -97,6 +99,8 @@ function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
     "kimi",
     "openrouter",
     "droid",
+    "pi",
+    "prime-agent",
   ]);
   const suffix = openAiCompatible.has(provider) ? "/v1" : "";
   const baseUrl = `https://dashboard.test/api/model-proxy/${provider}${suffix}`;
@@ -1971,6 +1975,8 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
     { agentType: "kimi", provider: "kimi", tokenMustBeInSandboxConfig: true },
     { agentType: "opencode", provider: "openrouter", tokenMustBeInSandboxConfig: true },
     { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true },
+    { agentType: "pi", provider: "pi", tokenMustBeInSandboxConfig: true },
+    { agentType: "prime-agent", provider: "prime-agent", tokenMustBeInSandboxConfig: true },
   ];
 
   try {
@@ -2748,7 +2754,7 @@ async function testExternalGatewayMutualExclusivity(): Promise<void> {
 }
 
 async function testExternalGatewayPerHarnessWiring(): Promise<void> {
-  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid)");
+  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/pi/prime-agent)");
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
@@ -2913,6 +2919,36 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
       "kimi-k3",
       "droid externalGateway sends an alias that IS its wire id verbatim — never the gatewayModelAliases route spelling",
     );
+
+    // pi and Prime Agent: routed via a per-run models.json provider entry at
+    // the external base URL VERBATIM (pi never expands $VAR in baseUrl), the
+    // key by env NAME, no LiteLLM headers, the caller's model VERBATIM; the
+    // command selects that provider. pi spells the key reference "$VAR",
+    // Prime the bare name.
+    const PI_FAMILY_EXTERNAL = [
+      { type: "pi", home: "/home/user/.pi/agent", keyRef: "$OPENROUTER_API_KEY" },
+      { type: "prime-agent", home: "/home/user/.prime/agent", keyRef: "OPENROUTER_API_KEY" },
+    ] as const;
+    for (const { type, home, keyRef } of PI_FAMILY_EXTERNAL) {
+      const model = `gw-${type}-model`;
+      const run = await runHarness(type, model);
+      const raw = run.files.get(`${home}/models.json`) ?? "";
+      assert(raw.length > 0, `${type} externalGateway writes ${home}/models.json`);
+      const doc = JSON.parse(raw) as {
+        providers?: Record<string, { baseUrl?: string; api?: string; apiKey?: string; headers?: Record<string, string>; models?: Array<{ id?: string }> }>;
+      };
+      const entry = doc.providers?.evolve;
+      assertEqual(entry?.baseUrl, EXTERNAL_URL, `${type} provider entry points at the external base URL VERBATIM`);
+      assertEqual(entry?.api, "openai-completions", `${type} provider entry speaks OpenAI chat completions`);
+      assertEqual(entry?.apiKey, keyRef, `${type} provider entry references the key by env name (${keyRef})`);
+      assertEqual(entry?.headers, undefined, `${type} external entry carries NO LiteLLM spend headers`);
+      assertEqual(entry?.models?.[0]?.id, model, `${type} provider entry registers the VERBATIM caller model`);
+      assertEqual(run.bootEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, `${type} boot env injects OPENROUTER_API_KEY for the models.json reference`);
+      assertEqual(run.spawnEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, `${type} spawn env injects OPENROUTER_API_KEY for the models.json reference`);
+      assert(!("EVOLVE_API_KEY" in run.bootEnvs), `${type} externalGateway never exposes EVOLVE_API_KEY`);
+      assert(run.command.includes(`--provider evolve --model ${model}`), `${type} command selects the evolve provider and the verbatim model`);
+      assert(!run.command.includes("openrouter/"), `${type} command never rewrites the model to openrouter/`);
+    }
 
     // Plain direct mode is untouched: Factory's own dot id rides --model and
     // no settings file is written.

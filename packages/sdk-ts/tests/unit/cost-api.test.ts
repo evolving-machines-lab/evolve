@@ -97,6 +97,8 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
   assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "high", "opencode pin is high variant");
   assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
+  assertEqual(AGENT_REGISTRY.pi.defaultReasoningEffort, "high", "pi pin is high (owner policy; pi's own default is medium)");
+  assertEqual(AGENT_REGISTRY["prime-agent"].defaultReasoningEffort, "high", "prime-agent pin is high (owner policy; Prime's own default is medium)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -112,6 +114,17 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const droidAgent = new Agent({ type: "droid", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
   const droidCmd = (droidAgent as any).buildCommand("hello") as string;
   assert(droidCmd.includes("--reasoning-effort high"), "droid omitted effort stamps high on the command");
+
+  // pi and Prime Agent: omitted effort stamps --thinking high; the SDK's
+  // binary spellings map onto their shared scale (thinking → medium, no-thinking → off).
+  const piAgent = new Agent({ type: "pi", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  assert(((piAgent as any).buildCommand("hello") as string).includes("--thinking high"), "pi omitted effort stamps --thinking high");
+  const primeAgent = new Agent({ type: "prime-agent", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  assert(((primeAgent as any).buildCommand("hello") as string).includes("--thinking high"), "prime-agent omitted effort stamps --thinking high");
+  const piThinking = new Agent({ type: "pi", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "thinking" } as any, {});
+  assert(((piThinking as any).buildCommand("hello") as string).includes("--thinking medium"), "pi 'thinking' is the vendors' default level, medium");
+  const piOff = new Agent({ type: "pi", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "no-thinking" } as any, {});
+  assert(((piOff as any).buildCommand("hello") as string).includes("--thinking off"), "pi 'no-thinking' is off");
 
   // kimi: omitted effort stamps max thinking in the KIMI_MODEL_* envs
   // (direct wiring path; the config.toml path resolves through the same

@@ -41,6 +41,8 @@ import {
   getAgentConfig,
   getOpenCodeReasoningVariant,
   isThinkingEnabled,
+  piFamilyWireModel,
+  piThinkingLevel,
   registryOwnsModel,
   registryWireId,
   resolveReasoningEffort,
@@ -50,6 +52,8 @@ import {
   writeMcpConfig,
   writeCodexSpendProvider,
   writeJsonSpendHeaders,
+  writeJsonSettingsStamp,
+  writeModelsJsonRoute,
   writeQwenThinkingConfig,
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
@@ -167,6 +171,10 @@ function providerRuntimeProviderForAgent(
       return "openrouter";
     case "droid":
       return "droid";
+    case "pi":
+      return "pi";
+    case "prime-agent":
+      return "prime-agent";
     default:
       return null;
   }
@@ -1638,6 +1646,71 @@ export class Agent {
   }
 
   /**
+   * The pi family's models.json (registry modelsJsonRoute: pi, Prime Agent),
+   * written before every spawn. Neither CLI reads a base-URL env or flag and
+   * pi never expands a variable in `baseUrl`, so the LITERAL URL is written
+   * per mode, the same three shapes droid's settings file takes:
+   *
+   *   gateway mode       the runtime token's door URL (+/v1), the model as
+   *                      resolveCommandModel spells it, the LiteLLM session
+   *                      and run headers plus the runtime binding header;
+   *   external gateway   the caller's base URL VERBATIM, the model verbatim,
+   *                      no headers (route names and metering are theirs);
+   *   direct mode        OpenRouter itself (registry defaultBaseUrl, or the
+   *                      caller's providerBaseUrl), the OpenRouter id
+   *                      (piFamilyWireModel drops the `openrouter/` prefix),
+   *                      no headers.
+   *
+   * The key never enters the file: it names the env var (`$OPENROUTER_API_KEY`
+   * for pi, the bare name for Prime) that buildEnvironmentVariables /
+   * buildProviderRuntimeProcessEnvs inject, exactly as droid's `${FACTORY_API_KEY}`.
+   */
+  private async writePiFamilyModelsJson(sandbox: SandboxInstance, runId: string): Promise<void> {
+    const route = this.registry.modelsJsonRoute;
+    if (!route) return;
+    const isExternalGateway = Boolean(this.agentConfig.externalGateway);
+    const isDirect = this.agentConfig.isDirectMode && !isExternalGateway;
+
+    let baseUrl: string;
+    let headers: Record<string, string> = {};
+    if (isExternalGateway) {
+      baseUrl = this.agentConfig.baseUrl ?? withOpenAiV1Path(getGatewayUrl());
+    } else if (isDirect) {
+      const direct = this.agentConfig.baseUrl ?? this.registry.defaultBaseUrl;
+      if (!direct) {
+        throw new Error(`${this.agentConfig.type} direct mode needs a base URL (providerBaseUrl or the registry defaultBaseUrl)`);
+      }
+      baseUrl = direct;
+    } else {
+      const providerRuntime = this.requireActiveProviderRuntimeToken();
+      baseUrl = withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl());
+      headers = {
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+        [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        ...this.providerRuntimeHeaderUpdates(),
+      };
+    }
+
+    const effort = this.reasoningEffort();
+    await writeModelsJsonRoute(
+      sandbox,
+      {
+        ...route,
+        apiKeyEnv: this.registry.apiKeyEnv,
+        baseUrl,
+        model: piFamilyWireModel(
+          this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+          { isDirectMode: this.agentConfig.isDirectMode, isExternalGateway },
+        ),
+        reasoning: isThinkingEnabled(effort),
+        thinkingLevel: piThinkingLevel(effort),
+      },
+      headers,
+      this.homeDir,
+    );
+  }
+
+  /**
    * The request model the Evolve-owned Droid settings file names. Droid
    * resolves nothing on this route — the custom model's `model` field is the
    * literal name the gateway receives — so the roster word becomes the
@@ -1890,6 +1963,17 @@ export class Agent {
         sandbox,
         this.workingDir,
         mcpServers,
+        this.homeDir,
+      );
+    }
+
+    // Platform settings stamp (pi, Prime Agent): merged into the harness's own
+    // settings file AFTER the MCP writer, whose keys survive the merge.
+    if (this.registry.settingsStamp) {
+      await writeJsonSettingsStamp(
+        sandbox,
+        this.registry.settingsStamp.path,
+        this.registry.settingsStamp.document,
         this.homeDir,
       );
     }
@@ -2403,6 +2487,11 @@ export class Agent {
         this.homeDir,
       );
     }
+
+    // Per-run models.json for the pi family (pi, Prime Agent): the file is the
+    // only route these CLIs take, and it carries the run tag in the provider's
+    // headers, so it is rewritten before every spawn in every mode.
+    await this.writePiFamilyModelsJson(sandbox, runId);
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";

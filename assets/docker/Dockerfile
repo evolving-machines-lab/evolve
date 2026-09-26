@@ -12,6 +12,7 @@
 #   - Google Chrome + Playwright for browser automation
 #   - Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Droid
 #   - Kimi Code
+#   - pi (+ the pi-mcp-adapter extension) and Prime Agent (+ its Python kernel)
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
 #
@@ -75,6 +76,40 @@ RUN npm install -g \
     opencode-ai@latest
 
 # ---------------------------------------------------------------------------
+# Node 22 for the pi family. The base image ships Node 20 (20.20.2 measured
+# in the c-880c264ce574 image, 2026-09-25); pi 0.87.1 requires >= 22.19 (its
+# `legacy-node20` line stopped at 0.74.2) and Prime Agent >= 22.8. A second,
+# pinned runtime under /opt/evolve — the same tarball and sha256 the hosted
+# bundle pins (swarm_dashboard bundle-build-script.ts) — reached ONLY through
+# the two launcher shims below, so the agent's own shell keeps the image's
+# node and every other CLI is untouched.
+# ---------------------------------------------------------------------------
+RUN set -eu; cd /tmp \
+    && curl -fsSL -o node22.tgz https://nodejs.org/dist/v22.23.1/node-v22.23.1-linux-x64.tar.gz \
+    && echo "7a8cb04b4a1df4eaf432125324b81b29a088e73570a23259a8de1c65d07fc129  node22.tgz" | sha256sum -c - \
+    && mkdir -p /opt/evolve/node22 \
+    && tar -xzf node22.tgz -C /opt/evolve/node22 --strip-components=1 \
+    && rm node22.tgz \
+    && /opt/evolve/node22/bin/node -v
+
+# ---------------------------------------------------------------------------
+# pi 0.87.1 (pure JS, its own prefix, Node 22) and its MCP adapter — pi's core
+# has no MCP: pi-mcp-adapter 2.37.0, pinned, into its own prefix, scripts and
+# peers skipped (pi aliases its own @earendil-works/* packages for
+# extensions, so the adapter needs none installed beside it). The SDK loads
+# the adapter with `--extension` from this path (registry.ts
+# PI_MCP_ADAPTER_EXTENSION). The `pi` launcher runs the bundle with Node 22.
+# ---------------------------------------------------------------------------
+RUN set -eu \
+    && /opt/evolve/node22/bin/npm install -g --prefix /opt/evolve/pi --no-audit --no-fund @earendil-works/pi-coding-agent@0.87.1 \
+    && mkdir -p /opt/evolve/pi-mcp-adapter \
+    && /opt/evolve/node22/bin/npm install --prefix /opt/evolve/pi-mcp-adapter --ignore-scripts --legacy-peer-deps --no-audit --no-fund pi-mcp-adapter@2.37.0 \
+    && test -f /opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts \
+    && printf '%s\n' '#!/bin/sh' 'exec /opt/evolve/node22/bin/node /opt/evolve/pi/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js "$@"' > /usr/local/bin/pi \
+    && chmod +x /usr/local/bin/pi \
+    && test "$(pi --version)" = "0.87.1"
+
+# ---------------------------------------------------------------------------
 # Kimi Code
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/home/user/.kimi-code KIMI_NO_MODIFY_PATH=1 bash \
@@ -117,7 +152,10 @@ RUN mkdir -p /home/user/.claude/skills \
              /home/user/.kimi-code/skills \
              /home/user/.agents/skills \
              /home/user/.factory/skills \
-    && chown -R user:user /home/user
+             /home/user/.pi/agent/skills \
+             /home/user/.prime/agent/skills \
+             /opt/evolve/prime-agent \
+    && chown -R user:user /home/user /opt/evolve
 
 # ---------------------------------------------------------------------------
 # Switch to user
@@ -138,6 +176,41 @@ RUN curl -fsSL https://app.factory.ai/cli | sh
 USER root
 RUN ln -sf /home/user/.local/bin/droid /usr/local/bin/droid \
     && chown -R user:user /home/user/.factory /home/user/.local
+USER user
+
+# ---------------------------------------------------------------------------
+# Prime Agent v0.9.6 — not on npm. The GitHub release ships an npm-format
+# tarball plus three renamed internal packages; the main tarball's
+# package.json points those at an R2 URL WITHOUT integrity hashes, so each
+# file is verified here against the release's SHA256SUMS (values copied from
+# the v0.9.6 release, 2026-09-25) and the dependencies are pinned to the
+# verified local files with npm overrides. Installed with the Node 22 runtime
+# above (Prime requires >= 22.8) and as `user`, so the Python kernel bake
+# (PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1: uv, CPython 3.11,
+# prime-agent-runtime and the default packages) lands in this user's home —
+# the venv path derives from $HOME, not from the agent dir — and a run never
+# pays the ~13 s network bootstrap. The uv download cache is dropped after.
+# ---------------------------------------------------------------------------
+RUN set -eu; V=0.9.6; cd /opt/evolve/prime-agent \
+    && for f in prime-agent-$V.tgz prime-agent-ai-$V.tgz prime-agent-core-$V.tgz prime-agent-tui-$V.tgz; do \
+         curl -fsSL -o "$f" "https://github.com/PrimeIntellect-ai/prime-agent/releases/download/v$V/$f"; \
+       done \
+    && printf '%s\n' \
+         "e5bf0e349e55b3f75c79e66006c993b10c51ed1c9bf15863b06658fcaf0232b2  prime-agent-$V.tgz" \
+         "26f2a9ce723b06a000b50619c4873c10fd2692439d65f7430a234ad31216f465  prime-agent-ai-$V.tgz" \
+         "e79c23d2e9b38d168806cd5f3eee643fcadab7f6361cf8e7a2d2e90d00f209d0  prime-agent-core-$V.tgz" \
+         "0a28ef155beb9357c5e0f5848d0f6110dbdd2bff8346a0befba5b209e189c0f2  prime-agent-tui-$V.tgz" \
+       | sha256sum -c - \
+    && printf '%s\n' "{\"private\":true,\"dependencies\":{\"prime-agent\":\"file:./prime-agent-$V.tgz\"},\"overrides\":{\"@earendil-works/pi-ai\":\"file:./prime-agent-ai-$V.tgz\",\"@earendil-works/pi-agent-core\":\"file:./prime-agent-core-$V.tgz\",\"@earendil-works/pi-tui\":\"file:./prime-agent-tui-$V.tgz\"}}" > package.json \
+    && PATH=/opt/evolve/node22/bin:$PATH PRIME_AGENT_TELEMETRY=0 PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1 npm install --no-audit --no-fund \
+    && test -f /home/user/.prime/agent/kernel-venv/.bootstrap-version \
+    && rm -rf /home/user/.cache/uv
+
+# The launcher runs Prime with the Node 22 runtime, PATH untouched for its children.
+USER root
+RUN printf '%s\n' '#!/bin/sh' 'exec /opt/evolve/node22/bin/node /opt/evolve/prime-agent/node_modules/prime-agent/dist/cli.js "$@"' > /usr/local/bin/prime-agent \
+    && chmod +x /usr/local/bin/prime-agent \
+    && test "$(prime-agent --version)" = "0.9.6"
 USER user
 
 # ---------------------------------------------------------------------------
