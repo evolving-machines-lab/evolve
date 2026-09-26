@@ -2,7 +2,7 @@
 """Observability Logging Tests
 
 Tests: SessionLogger behavior, log file creation, tag lifecycle
-Agent Support: All (codex, claude, gemini, qwen)
+Agent Support: All (codex, claude, qwen)
 """
 
 import sys

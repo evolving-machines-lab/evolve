@@ -2,7 +2,7 @@
 
 Creates agent configs based on TEST_AGENT_TYPE environment variable.
 If TEST_AGENT_TYPE is empty, returns None to let Evolve resolve from env.
-Supports: codex, claude, gemini, qwen, kimi, opencode, droid
+Supports: codex, claude, qwen, kimi, opencode, droid
 """
 
 import os
@@ -52,13 +52,6 @@ def get_agent_config() -> Optional[AgentConfig]:
             model=os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
         )
 
-    elif agent_type == 'gemini':
-        return AgentConfig(
-            type='gemini',
-            api_key=evolve_api_key,
-            model=os.getenv('GEMINI_MODEL', 'gemini-3.6-flash'),
-        )
-
     elif agent_type == 'qwen':
         return AgentConfig(
             type='qwen',
@@ -103,7 +96,6 @@ def get_agent_display_name(agent_type: AgentType) -> str:
     names = {
         'codex': 'Codex',
         'claude': 'Claude',
-        'gemini': 'Gemini',
         'qwen': 'Qwen',
         'kimi': 'Kimi',
         'opencode': 'OpenCode',

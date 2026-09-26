@@ -31,7 +31,7 @@ To bring your own provider billing while keeping gateway features, save an Anthr
 For fully local direct provider keys:
 ```bash
 # .env - Direct Provider Key Mode (local BYOK)
-ANTHROPIC_API_KEY=sk-ant-...         # or CLAUDE_CODE_OAUTH_TOKEN (Claude Max), OPENAI_API_KEY, GEMINI_API_KEY
+ANTHROPIC_API_KEY=sk-ant-...         # or CLAUDE_CODE_OAUTH_TOKEN (Claude Max), OPENAI_API_KEY
 E2B_API_KEY=e2b_...                  # sandbox provider, get at https://e2b.dev
 ```
 

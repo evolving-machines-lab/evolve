@@ -36,7 +36,6 @@ brave_api_key = os.getenv('BRAVE_API_KEY')
 MCP_CONFIG_FILES = {
     'codex': '~/.codex/config.toml',
     'claude': '/home/user/workspace/.mcp.json',
-    'gemini': '~/.gemini/settings.json',
     'qwen': '~/.qwen/settings.json',
 }
 

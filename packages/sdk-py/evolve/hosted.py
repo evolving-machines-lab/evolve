@@ -247,6 +247,7 @@ HostedErrorCode = Literal[
     'agent_config_unsupported',
     'agent_config_key_refused',
     'agent_preset_unsupported',
+    'agent_retired',
     'provider_unsupported',
     'job_not_found',
     'job_not_terminal',
@@ -1021,6 +1022,13 @@ class AgentModelOption:
 
 
 @dataclass
+class RetiredAgent:
+    """One retired built-in agent and the agent to use instead."""
+    name: str
+    replaced_by: str
+
+
+@dataclass
 class AgentCapability:
     """One built-in agent's declared capabilities."""
     name: str
@@ -1111,7 +1119,7 @@ class CapabilityDocument:
     coupling this document exists to remove.
     """
     schema_version: int
-    #: Built-in agents and their declared capabilities.
+    #: Built-in agents a new job may name, and their declared capabilities.
     agents: List[AgentCapability]
     #: Rules a bring-your-own agent registration must satisfy.
     agent_registration: Dict[str, Any]
@@ -1136,6 +1144,10 @@ class CapabilityDocument:
     #: (every roster model with the effort an omitted ``reasoning_effort``
     #: takes for it). None on servers predating the field.
     analyze: Optional[Dict[str, Any]] = None
+    #: Retired built-in agents, left out of ``agents``: a new job, resume or
+    #: retry naming one is refused ``agent_retired``, while its records stay
+    #: readable. Empty on servers predating the field.
+    retired_agents: List[RetiredAgent] = field(default_factory=list)
 
 
 @dataclass
@@ -3945,6 +3957,13 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
             if isinstance(raw.get('gpu_concurrency_cap'), int)
             else None
         ),
+        retired_agents=[
+            RetiredAgent(name=item['name'], replaced_by=item['replaced_by'])
+            for item in raw.get('retired_agents', [])
+            if isinstance(item, dict)
+            and isinstance(item.get('name'), str)
+            and isinstance(item.get('replaced_by'), str)
+        ],
     )
 
 

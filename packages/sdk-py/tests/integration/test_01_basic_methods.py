@@ -2,7 +2,7 @@
 """Basic SDK Method Tests
 
 Tests: run(), execute_command(), withSecrets(), get_host()
-Agent Support: All (codex, claude, gemini, qwen)
+Agent Support: All (codex, claude, qwen)
 """
 
 import sys

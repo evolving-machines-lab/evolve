@@ -52,12 +52,13 @@ TypeScript returns the typed object below. Python uses dataclasses for the docum
 
 <Accordion title="CapabilityDocument: SDK field definitions">
 
-`limits` reports current values for this deployment. `default_model` is a picker suggestion; managed evaluation jobs still require a model. Optional fields may be absent on older servers; Python maps missing `analyze` and `gpu_concurrency_cap` to `None`.
+`limits` reports current values for this deployment. `default_model` is a picker suggestion; managed evaluation jobs still require a model. Optional fields may be absent on older servers; Python maps missing `analyze` and `gpu_concurrency_cap` to `None`, and missing `retired_agents` to an empty list.
 
 ```ts Fields
 interface CapabilityDocument {
   schema_version: number;
   agents: AgentCapability[];
+  retired_agents?: RetiredAgent[];
   agent_registration: {
     name_pattern: string;
     max_name_length: number;
@@ -147,13 +148,18 @@ The API also returns the fields below. TypeScript keeps them in the response, al
 
 <Accordion title="Harnesses and models">
 
-`effort_support` is `level`, `binary`, or `none`. `runnable: false` includes a reason. `supports_config` controls native settings support; `presets` lists accepted named presets. Python defaults missing `supports_config` to `False` and `presets` to an empty list. `latest_version: null` means unknown, not current.
+`agents` lists the harnesses a new job may name; a retired harness appears only in `retired_agents`, with the harness that replaces it. `effort_support` is `level`, `binary`, or `none`. `runnable: false` includes a reason. `supports_config` controls native settings support; `presets` lists accepted named presets. Python defaults missing `supports_config` to `False` and `presets` to an empty list. `latest_version: null` means unknown, not current.
 
 ```ts Fields
 interface AgentModelOption {
   alias: string;
   model_id: string;
   description: string | null;
+}
+
+interface RetiredAgent {
+  name: string;
+  replaced_by: string;
 }
 
 interface AgentCapability {

@@ -95,6 +95,7 @@ These codes apply to chunked dataset and job uploads. They describe the transfer
 | `agent_config_unsupported` | This harness does not support a native config. Omit it or choose a harness listed in `details.config_supporting_agents`. |
 | `agent_config_key_refused` | Native config contains settings that Evolve controls, such as routing or credentials. Remove the keys named in `details.refused_keys`. |
 | `agent_preset_unsupported` | This harness cannot apply the requested preset. Choose a supported harness or remove the preset. |
+| `agent_retired` | The harness is retired. Use the harness in `details.retired_agents[].replaced_by`; its past runs stay readable. |
 
 ## Registered agents
 

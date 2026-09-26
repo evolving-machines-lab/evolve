@@ -2,7 +2,7 @@
 """Session Management Tests
 
 Tests: get_session(), set_session(), status(), interrupt(), pause(), resume(), kill()
-Agent Support: All (codex, claude, gemini, qwen)
+Agent Support: All (codex, claude, qwen)
 """
 
 import os
