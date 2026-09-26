@@ -10,13 +10,17 @@ import type { OutputEvent } from "./types";
 import { createClaudeParser } from "./claude";
 import { createCodexParser } from "./codex";
 import { createDroidParser } from "./droid";
+import { createDshParser } from "./dsh";
 import { createGeminiParser } from "./gemini";
 import { createKimiParser } from "./kimi";
 import { createOpenCodeParser } from "./opencode";
+import { createPiParser } from "./pi";
+import { createPrimeAgentParser } from "./prime-agent";
 import { createQwenParser } from "./qwen";
+import { createZcodeParser } from "./zcode";
 
 // Re-export types for convenience
-export type { OutputEvent, SessionUpdate, AgentError, AgentUsage, TokenUsage } from "./types";
+export type { OutputEvent, SessionUpdate, AgentError, AgentUsage, HarnessEvent, TokenUsage } from "./types";
 // The one predicate callers must use to ask "did the harness do work" — a
 // harness-reported failure is an event but is NOT work (see types.ts).
 export { isAgentWorkUpdate } from "./types";
@@ -53,6 +57,17 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "droid":
       return createDroidParser();
+
+    case "pi":
+      return createPiParser();
+
+    case "prime-agent":
+      return createPrimeAgentParser();
+
+    case "dsh":
+      return createDshParser();
+    case "zcode":
+      return createZcodeParser();
 
     default:
       return () => null;
@@ -113,7 +128,11 @@ export function parseNdjsonOutput(
 export { createClaudeParser } from "./claude";
 export { createCodexParser } from "./codex";
 export { createDroidParser } from "./droid";
+export { createDshParser } from "./dsh";
 export { createGeminiParser } from "./gemini";
 export { createKimiParser } from "./kimi";
 export { createOpenCodeParser } from "./opencode";
+export { createPiParser } from "./pi";
+export { createPrimeAgentParser } from "./prime-agent";
 export { createQwenParser, parseQwenOutput } from "./qwen";
+export { createZcodeParser } from "./zcode";

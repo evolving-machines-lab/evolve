@@ -1,6 +1,6 @@
 # Evolve SDK
 
-Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes with built-in observability, and score them against datasets on hosted infrastructure.
+Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid, pi, Prime Agent, DeepSeek Harness, Z Code) in secure sandboxes with built-in observability, and score them against datasets on hosted infrastructure.
 
 ## Contributing & branches
 
@@ -24,14 +24,14 @@ evolve/
 │   │       ├── index.ts         # Public exports
 │   │       ├── cli/             # The `evolve` CLI binary (src/cli/index.ts; skills.ts serves the bundled skills)
 │   │       ├── hosted/          # Hosted evals client (datasets/agents/jobs/trials/auth)
-│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid)
+│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode; pi-family.ts is the core the last two share)
 │   │       ├── integrations.ts  # Managed integration helpers
 │   │       ├── managed-secrets.ts   # Dashboard-stored secrets attached by name
 │   │       ├── provider-secrets.ts  # Managed BYO provider keys + runtime tokens
 │   │       ├── browser.ts, browser-credentials.ts, browser-profiles.ts
 │   │       ├── sandbox-artifacts.ts # Artifact collection from a sandbox
 │   │       ├── sessions/        # Historical sessions + trace download
-│   │       ├── mcp/             # MCP server config (json, toml, validation)
+│   │       ├── mcp/             # MCP server config (json, toml, yaml for dsh, validation)
 │   │       ├── swarm/           # Swarm (map/filter/reduce/bestOf/verify, semaphore)
 │   │       ├── pipeline/        # Pipeline (fluent chaining)
 │   │       ├── storage/         # Cloud-backed filesystem (S3 snapshots)

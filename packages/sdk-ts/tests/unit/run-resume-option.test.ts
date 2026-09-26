@@ -85,6 +85,8 @@ const HARNESS_RESUME_MARKERS: Array<{
   { harness: "kimi", marker: "--continue" },
   { harness: "opencode", marker: "--continue" },
   { harness: "droid", marker: "--session-id", extra: { sessionId: "droid-session-123" } },
+  { harness: "pi", marker: "--continue" },
+  { harness: "prime-agent", marker: "--continue" },
 ];
 
 for (const { harness, marker, extra } of HARNESS_RESUME_MARKERS) {

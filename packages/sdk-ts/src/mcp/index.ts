@@ -6,8 +6,19 @@
  */
 
 import type { AgentType, SandboxInstance, McpServerConfig } from "../types";
-import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig } from "./json";
+import {
+  writeClaudeMcpConfig,
+  writeGeminiMcpConfig,
+  writeQwenMcpConfig,
+  writeKimiMcpConfig,
+  writeOpenCodeMcpConfig,
+  writeDroidMcpConfig,
+  writePiMcpConfig,
+  writePrimeAgentMcpConfig,
+  writeZcodeMcpConfig,
+} from "./json";
 import { writeCodexMcpConfig } from "./toml";
+import { writeDshMcpConfig } from "./yaml";
 
 /**
  * Write MCP server configuration for an agent
@@ -19,6 +30,10 @@ import { writeCodexMcpConfig } from "./toml";
  * - Qwen: JSON to ~/.qwen/settings.json
  * - Droid: JSON to ${workingDir}/.factory/mcp.json
  * - OpenCode: JSON to ${workingDir}/opencode.json (mcp key)
+ * - pi: JSON to ~/.pi/agent/mcp.json (the pi-mcp-adapter extension's file)
+ * - Prime Agent: JSON to ~/.prime/agent/settings.json (mcpServers key)
+ * - dsh: YAML patch rows to ~/.dsh/evolve-mcp.patch.yml
+ * - Z Code: JSON to ~/.zcode/cli/config.json (mcp.servers key)
  */
 export async function writeMcpConfig(
   agentType: AgentType,
@@ -60,11 +75,44 @@ export async function writeMcpConfig(
       await writeDroidMcpConfig(sandbox, workingDir, servers);
       break;
 
+    case "pi":
+      await writePiMcpConfig(sandbox, servers, homeDir);
+      break;
+
+    case "prime-agent":
+      await writePrimeAgentMcpConfig(sandbox, servers, homeDir);
+      break;
+
+    case "dsh":
+      await writeDshMcpConfig(sandbox, servers, homeDir);
+    case "zcode":
+      await writeZcodeMcpConfig(sandbox, servers, homeDir);
+      break;
+
     default:
       throw new Error(`Unknown agent type for MCP config: ${agentType}`);
   }
 }
 
 // Re-export individual writers for direct use if needed
-export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writeJsonSpendHeaders, writeQwenThinkingConfig, writeDroidGatewaySettings } from "./json";
+export {
+  writeClaudeMcpConfig,
+  writeGeminiMcpConfig,
+  writeQwenMcpConfig,
+  writeKimiMcpConfig,
+  writeOpenCodeMcpConfig,
+  writeDroidMcpConfig,
+  writePiMcpConfig,
+  writePrimeAgentMcpConfig,
+  writeZcodeMcpConfig,
+  writeZcodeProviderConfig,
+  writeJsonSpendHeaders,
+  writeQwenThinkingConfig,
+  writeDroidGatewaySettings,
+  writeModelsJsonRoute,
+  writeJsonSettingsStamp,
+  PI_MCP_ADAPTER_SETTINGS,
+  type ModelsJsonRouteWrite,
+} from "./json";
 export { writeCodexMcpConfig, writeCodexSpendProvider, writeKimiSpendConfig } from "./toml";
+export { writeDshMcpConfig, writeDshRoutePatch, renderDshRoutePatch, type DshRoutePatchConfig } from "./yaml";
