@@ -9494,10 +9494,10 @@ class AnalysesClient:
         wrapper trial (``analyze-<analyzed trial dir>__<7 chars>/``):
         ``config.json``, ``lock.json``, ``result.json``, ``trial.log``,
         ``exception.txt`` (an infrastructure failure only),
-        ``agent/claude-code.txt`` (Harbor's tee name for claude-code),
+        ``agent/<Harbor's tee name for its agent>`` (``claude-code.txt``, ``codex.txt``, …),
         ``agent/stderr.log``, ``agent/trace-parsed.jsonl``, the captured
         home at its real names with ``agent/agent-home.json`` beside it and
-        Harbor's copy at ``agent/sessions/``, ``verifier/test-stdout.txt``,
+        Harbor's copy at its per-agent slot (``agent/sessions/`` for claude and codex), ``verifier/test-stdout.txt``,
         ``verifier/reward.txt`` and ``verifier/reward.json`` when the
         validator ruled (reward 1 = a valid ``analysis.json``, 0 = it was
         refused), and ``artifacts/manifest.json`` with
@@ -9803,10 +9803,10 @@ class ChecksClient:
         (``check['results'][i]['id']``). Each folder is Harbor's TrialPaths
         for the checker's run: ``config.json``, ``lock.json``,
         ``result.json``, ``trial.log``, ``exception.txt`` (an infrastructure
-        failure only), ``agent/claude-code.txt``, ``agent/stderr.log``,
+        failure only), ``agent/<its agent's tee name>``, ``agent/stderr.log``,
         ``agent/trace-parsed.jsonl``, the captured home at its real names
-        with ``agent/agent-home.json`` and Harbor's copy at
-        ``agent/sessions/``, ``verifier/test-stdout.txt``,
+        with ``agent/agent-home.json`` and Harbor's copy at its per-agent
+        slot (``agent/sessions/`` for claude and codex), ``verifier/test-stdout.txt``,
         ``verifier/reward.txt`` and ``verifier/reward.json`` when the
         validator ruled (reward 1 = a valid ``check-result.json``, 0 = it was
         refused), ``artifacts/manifest.json`` and
