@@ -1215,7 +1215,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     providerEnvMap: {
       openrouter: { keyEnv: "OPENROUTER_API_KEY" },
     },
-    // Owner decision 2026-09-25 (recon README): V4.1 Flash and V4 Pro on both
+    // Owner decision 2026-09-25: V4.1 Flash and V4 Pro on both
     // routes; alias == wire id, the gateway's exact entry for each name.
     models: [
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
@@ -1345,7 +1345,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // Graded-effort harnesses pin "high" (owner policy); --effort is stamped per run, never baked into the slug.
     defaultReasoningEffort: "high",
     // Roster (owner 2026-09-25): the latest Flash, Flash-Lite and Pro, Google models only. Alias = the bare name direct
-    // mode sends; wire id = the gateway's Vertex route, which the CLI names once registered (live T6/V1).
+    // mode sends; wire id = the gateway's Vertex route, which the CLI names once registered (measured live 2026-09-25).
     models: [
       { alias: "gemini-3.8-flash", modelId: "vertex_ai/gemini-3.8-flash", description: "Latest Flash on Vertex AI: coding + agentic planning" },
       { alias: "gemini-3.5-flash-lite", modelId: "vertex_ai/gemini-3.5-flash-lite", description: "Latest Flash-Lite on Vertex AI: most cost-effective" },
@@ -1353,13 +1353,13 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     ],
     // The CLI reads AGENTS.md or GEMINI.md from the workspace root (docs/rules); AGENTS.md is the cross-vendor name.
     systemPromptFile: "AGENTS.md",
-    // The file `agy mcp add` writes (docs/mcp; live M1).
+    // The file `agy mcp add` writes (vendor docs, confirmed live 2026-09-25).
     mcpConfig: {
       settingsDir: "~/.gemini/config",
       filename: "mcp_config.json",
       format: "json",
     },
-    // The shared dir every Antigravity product reads; antigravity-cli/skills is a symlink onto it (live round 2).
+    // The shared dir every Antigravity product reads; antigravity-cli/skills is a symlink onto it (measured live 2026-09-25).
     skillsConfig: {
       targetDir: "~/.gemini/config/skills",
     },
@@ -1372,7 +1372,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "gemini-3.1-pro-preview": "vertex_ai/gemini-3.1-pro-preview",
     },
     // No spend-tracking path (the CLI sends no custom headers, probed live 2026-09-25): attribution is per session; its
-    // hidden title call is not routed and fails harmlessly (live V1). ~/.gemini whole is the state minus the CLI's own installs and caches.
+    // hidden title call is not routed and fails harmlessly (measured live 2026-09-25). ~/.gemini whole is the state minus the CLI's own installs and caches.
     checkpointDirs: ["~/.gemini"],
     checkpointExcludes: [
       ".gemini/antigravity-cli/bin",

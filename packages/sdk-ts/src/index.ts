@@ -301,6 +301,8 @@ export {
 
 export {
   writeMcpConfig,
+  writeAntigravityMcpConfig,
+  writeAntigravitySettings,
   writeClaudeMcpConfig,
   writeCodexMcpConfig,
   writeDroidGatewaySettings,
@@ -308,6 +310,10 @@ export {
   writeDshMcpConfig,
   writeDshRoutePatch,
   writeGeminiMcpConfig,
+  writeKimiMcpConfig,
+  writeOpenCodeMcpConfig,
+  writePiMcpConfig,
+  writePrimeAgentMcpConfig,
   writeQwenMcpConfig,
   writeZcodeMcpConfig,
   writeZcodeProviderConfig,
