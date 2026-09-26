@@ -135,14 +135,10 @@ async function testMcp(): Promise<void> {
   assert(call?.toolName === "mcp__everything__get-sum", "the verbatim MCP tool name is carried");
   assert(call?.kind === "other", "an MCP tool is kind other");
   assert(JSON.stringify(call?.rawInput) === JSON.stringify({ a: 40, b: 2 }), "the MCP input rides rawInput");
-  assert(call?.title === "mcp__everything__get-sum", "the title is the verbatim name, like every other parser's");
+  assert(call?.title === "everything get-sum (MCP)", "the tool_call's title names the server and tool, read from the mcp__<server>__<tool> name (the model's line comes first)");
   const started = ofKind(events, "tool_call_update").find((e) => e.update.status === "in_progress");
   const done = ofKind(events, "tool_call_update").find((e) => e.update.status === "completed");
-  assert(started?.update.title === "mcp__everything__get-sum" && done?.update.title === "mcp__everything__get-sum", "every update carries the same verbatim title");
-  const display = (e: OutputEvent | undefined) => e?.extra?.display as Record<string, unknown> | undefined;
-  assert(display(started)?.kind === "mcp_tool" && display(started)?.serverName === "everything" && display(started)?.toolName === "get-sum", "the scheduled line's display (server, tool) rides the update's extra, verbatim");
-  assert(display(done)?.serverName === "everything" && display(done)?.toolName === "get-sum", "…on the result update as well");
-  assert(call !== undefined && ofKind(events, "tool_call")[0].extra?.display === undefined, "the model's own line comes first and carries no display");
+  assert(started?.update.title === "everything get-sum (MCP)" && done?.update.title === "everything get-sum (MCP)", "the scheduled line's display confirms it; every later update carries the same title");
   assert(textOf(done?.update ?? {}) === "The sum of 40 and 2 is 42.", "the MCP result text is the tool's own");
   assert(joinedAgentText(events).includes("42"), "the answer follows");
 }
@@ -344,6 +340,46 @@ async function testFactsAndUnknown(): Promise<void> {
   assert(warned.length === 1 && warned[0] === "[zcode parser] unknown event type session.closed", "one warning for the one unknown type");
 }
 
+async function testMcpTitleSetOnce(): Promise<void> {
+  console.log("\n[13] an MCP title is set once by the first line naming the call, whichever order the lines come in");
+  const env = (seq: number, type: string, payload: Record<string, unknown>) =>
+    JSON.stringify({ type, sessionId: "sess_t", turnId: "turn_1", seq, timestamp: 1, payload });
+  const display = { kind: "mcp_tool", serverName: "my__srv", toolName: "get", description: "d" };
+  const result = { kind: "result", toolCallId: "c1", result: { success: true, content: "ok" }, duration: 1 };
+  const titles = (events: OutputEvent[]) => ({
+    call: ofKind(events, "tool_call").map((e) => e.update.title),
+    updates: ofKind(events, "tool_call_update").map((e) => e.update.title),
+  });
+
+  // The model's line first (every capture): the name split at the first "__" after the prefix; the
+  // scheduled line's display, which splits the "__" server differently, does not overwrite it.
+  const modelFirst = parseAll([
+    env(1, "model.streaming", { kind: "tool_call", toolCallId: "c1", toolName: "mcp__my__srv__get", input: { a: 1 }, assistantMessageId: "msg_1" }),
+    env(2, "tool.updated", { kind: "scheduled", toolCallId: "c1", toolName: "mcp__my__srv__get", input: { a: 1 }, display }),
+    env(3, "tool.updated", { kind: "started", toolCallId: "c1", toolName: "mcp__my__srv__get", startedAt: 1 }),
+    env(4, "tool.updated", result),
+  ]);
+  let t = titles(modelFirst);
+  assert(t.call.length === 1 && t.call[0] === "my srv__get (MCP)", `model line first: the name split sets the title (got ${JSON.stringify(t.call)})`);
+  assert(t.updates.length === 2 && t.updates.every((x) => x === "my srv__get (MCP)"), `…and every update carries that same title, the display never overwrites it (got ${JSON.stringify(t.updates)})`);
+  assert(ofKind(modelFirst, "tool_call")[0].update.toolName === "mcp__my__srv__get", "toolName stays verbatim");
+
+  // The scheduled line first: its display is the authoritative split and sets the title.
+  const scheduledFirst = parseAll([
+    env(1, "tool.updated", { kind: "scheduled", toolCallId: "c1", toolName: "mcp__my__srv__get", input: { a: 1 }, display }),
+    env(2, "model.streaming", { kind: "tool_call", toolCallId: "c1", toolName: "mcp__my__srv__get", input: { a: 1 }, assistantMessageId: "msg_1" }),
+    env(3, "tool.updated", { kind: "started", toolCallId: "c1", toolName: "mcp__my__srv__get", startedAt: 1 }),
+    env(4, "tool.updated", result),
+  ]);
+  t = titles(scheduledFirst);
+  assert(t.call.length === 1 && t.call[0] === "my__srv get (MCP)", `scheduled line first: the display sets the title (got ${JSON.stringify(t.call)})`);
+  assert(t.updates.length === 2 && t.updates.every((x) => x === "my__srv get (MCP)"), "…and every update carries that same title");
+
+  // A non-MCP name and a malformed mcp__ name keep the ordinary title.
+  const plain = parseAll([env(1, "model.streaming", { kind: "tool_call", toolCallId: "c2", toolName: "mcp__lonely", input: {}, assistantMessageId: "msg_1" })]);
+  assert(ofKind(plain, "tool_call")[0]?.update.title === "mcp__lonely", "a name with no server/tool split keeps the verbatim title");
+}
+
 async function testModelCompleteWithoutDeltas(): Promise<void> {
   console.log("\n[12] model_complete carries the text when nothing was streamed for the message");
   const parse = createZcodeParser();
@@ -377,6 +413,7 @@ async function main(): Promise<void> {
   await testNoProviderFile();
   await testFactsAndUnknown();
   await testModelCompleteWithoutDeltas();
+  await testMcpTitleSetOnce();
 
   console.log("\n" + "=".repeat(60));
   console.log(`Results: ${passed} passed, ${failed} failed`);

@@ -1824,6 +1824,19 @@ async function testZcodePerRunProviderFileGateway(): Promise<void> {
   const envs = (agent as any).buildRunEnvs("run-zcode-002") as Record<string, string> | undefined;
   assert(!("OPENROUTER_API_KEY" in (envs ?? {})), "no key env in gateway mode: the token lives only in the provider file, which is all the CLI reads");
   assert(!("x-litellm-tags" in (envs ?? {})), "no header env: the headers ride the provider file");
+
+  // The same rule in the other two modes: the caller's or the user's key rides the provider file only.
+  const external = new Agent(
+    { type: "zcode", apiKey: "sk-litellm-task", isDirectMode: true, baseUrl: "https://litellm.test/v1", externalGateway: { apiKey: "sk-litellm-task", baseUrl: "https://litellm.test/v1", revoke: async () => {} } } as any,
+    {},
+  );
+  const externalBoot = (external as any).buildEnvironmentVariables() as Record<string, string>;
+  const externalRun = ((external as any).buildRunEnvs("run-zcode-004") ?? {}) as Record<string, string>;
+  assert(!("OPENROUTER_API_KEY" in externalBoot) && !("OPENROUTER_API_KEY" in externalRun), "external-gateway mode: no key env at boot or per run");
+  const direct = new Agent({ type: "zcode", apiKey: "sk-or-user", isDirectMode: true, model: "openrouter/z-ai/glm-5.3" } as any, {});
+  const directBoot = (direct as any).buildEnvironmentVariables() as Record<string, string>;
+  assert(!("OPENROUTER_API_KEY" in directBoot), "direct mode: no key env at boot either");
+  assert(!Object.values(externalBoot).includes("sk-litellm-task") && !Object.values(directBoot).includes("sk-or-user"), "the key appears in no env value in either mode");
 }
 
 async function testZcodePerRunProviderFileEffort(): Promise<void> {

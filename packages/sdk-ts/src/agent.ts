@@ -816,6 +816,8 @@ export class Agent {
       for (const mapping of Object.values(this.registry.providerEnvMap)) {
         envVars[mapping.keyEnv] = this.agentConfig.apiKey;
       }
+    } else if (this.credentialRidesProviderFile()) {
+      // The CLI reads its key from the provider file the SDK writes, in every mode: no key env.
     } else {
       // Single-provider: resolve model-specific key env for multi-provider CLIs in direct mode
       const providerPrefix = this.agentConfig.model?.split("/")[0];
@@ -1421,9 +1423,13 @@ export class Agent {
     return (
       this.agentConfig.type !== "kimi" &&
       !this.registry.gatewayConfigEnv &&
-      // The credential is literal in the provider file; the CLI reads no key env.
-      !this.registry.zcodeProviderConfig
+      !this.credentialRidesProviderFile()
     );
+  }
+
+  /** Z Code: the literal key lives in the per-run provider file, so no mode puts a key env in the process. */
+  private credentialRidesProviderFile(): boolean {
+    return this.registry.zcodeProviderConfig !== undefined;
   }
 
   private buildProviderRuntimeProcessEnvs(): Record<string, string> {
@@ -1436,9 +1442,9 @@ export class Agent {
       if (this.agentConfig.type === "kimi") {
         return this.buildKimiDirectModelEnvs();
       }
-      const envs: Record<string, string> = {
-        [this.registry.apiKeyEnv]: this.agentConfig.apiKey,
-      };
+      const envs: Record<string, string> = this.credentialRidesProviderFile()
+        ? {}
+        : { [this.registry.apiKeyEnv]: this.agentConfig.apiKey };
       if (this.registry.baseUrlEnv && this.agentConfig.baseUrl) {
         envs[this.registry.baseUrlEnv] = this.agentConfig.baseUrl;
       }

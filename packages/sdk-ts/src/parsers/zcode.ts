@@ -68,8 +68,8 @@ interface ToolCallRecord {
   name: string;
   input: Record<string, unknown>;
   emitted: boolean;
-  /** The scheduled line's `display{kind:"mcp_tool", serverName, toolName}`, verbatim, for the updates' extra. */
-  display?: Record<string, unknown>;
+  /** The scheduled line's MCP display (server + tool), when it named one. */
+  title?: string;
 }
 
 export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null {
@@ -295,18 +295,15 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
         if (assistantMessageId) messageId = assistantMessageId;
         switch (kind) {
           case "scheduled": {
+            // The title is set once, by the first line naming the call; a later line never changes it.
+            if (toolCalls.get(toolCallId)?.emitted) break;
             const update = recordToolCall(
               toolCalls,
               toolCallId,
               stringField(payload, "toolName"),
               asRecord(payload.input) ?? {},
+              mcpDisplayTitle(payload.display),
             );
-            const display = asRecord(payload.display);
-            const record = toolCalls.get(toolCallId);
-            if (record && display?.kind === "mcp_tool") {
-              record.display = display;
-              extra.display = display;
-            }
             if (update) updates.push(update);
             break;
           }
@@ -316,9 +313,8 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               sessionUpdate: "tool_call_update",
               toolCallId,
               status: "in_progress",
-              title: toolCalls.get(toolCallId)?.name || stringField(payload, "toolName") || undefined,
+              title: titleOf(toolCalls.get(toolCallId)) || stringField(payload, "toolName") || undefined,
             });
-            stampMcpDisplay(toolCalls.get(toolCallId), extra);
             break;
           }
           case "progress": {
@@ -330,7 +326,6 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               status: "in_progress",
               content: text ? contentList(text) : undefined,
             });
-            stampMcpDisplay(toolCalls.get(toolCallId), extra);
             break;
           }
           case "result": {
@@ -343,11 +338,10 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               sessionUpdate: "tool_call_update",
               toolCallId,
               status: result.success === false ? "failed" : "completed",
-              title: toolCalls.get(toolCallId)?.name || undefined,
+              title: titleOf(toolCalls.get(toolCallId)) || undefined,
               content: contentList(result.content),
               rawOutput: payload.result,
             });
-            stampMcpDisplay(toolCalls.get(toolCallId), extra);
             toolCalls.delete(toolCallId);
             break;
           }
@@ -358,11 +352,10 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               sessionUpdate: "tool_call_update",
               toolCallId,
               status: "failed",
-              title: toolCalls.get(toolCallId)?.name || undefined,
+              title: titleOf(toolCalls.get(toolCallId)) || undefined,
               content: contentList(harnessErrorText([error?.message, error?.code], payload.error ?? payload)),
               rawOutput: payload.error,
             });
-            stampMcpDisplay(toolCalls.get(toolCallId), extra);
             toolCalls.delete(toolCallId);
             break;
           }
@@ -480,12 +473,14 @@ function recordToolCall(
   toolCallId: string,
   name: string,
   input: Record<string, unknown>,
+  mcpTitle?: string,
 ): SessionUpdate | null {
   if (!toolCallId) return null;
   const existing = toolCalls.get(toolCallId);
   if (existing?.emitted) return null;
   const toolName = name || existing?.name || "Tool";
-  toolCalls.set(toolCallId, { name: toolName, input, emitted: true, display: existing?.display });
+  const title0 = mcpTitle ?? mcpNameTitle(toolName);
+  toolCalls.set(toolCallId, { name: toolName, input, emitted: true, title: title0 });
 
   if (normalizeToolName(toolName) === "todowrite") {
     const plan = handleTodoWrite(input);
@@ -496,7 +491,7 @@ function recordToolCall(
   return {
     sessionUpdate: "tool_call",
     toolCallId,
-    title,
+    title: title0 ?? title,
     toolName,
     kind,
     status: "pending",
@@ -506,9 +501,28 @@ function recordToolCall(
   };
 }
 
-/** The MCP server behind an `mcp__` call rides every update's extra, verbatim from the scheduled line. */
-function stampMcpDisplay(record: ToolCallRecord | undefined, extra: Record<string, unknown>): void {
-  if (record?.display) extra.display = record.display;
+/**
+ * One title for an MCP call and its updates, `<server> <tool> (MCP)`, set once by whichever line
+ * names the call first: the scheduled line's `display{kind:"mcp_tool", serverName, toolName}`, else
+ * the `mcp__<server>__<tool>` name split at the first `__` after the prefix.
+ */
+function mcpNameTitle(toolName: string): string | undefined {
+  if (!toolName.startsWith("mcp__")) return undefined;
+  const rest = toolName.slice("mcp__".length);
+  const split = rest.indexOf("__");
+  return split > 0 && split + 2 < rest.length ? `${rest.slice(0, split)} ${rest.slice(split + 2)} (MCP)` : undefined;
+}
+
+function mcpDisplayTitle(display: unknown): string | undefined {
+  const record = asRecord(display);
+  if (record?.kind !== "mcp_tool") return undefined;
+  const server = stringField(record, "serverName");
+  const tool = stringField(record, "toolName");
+  return server && tool ? `${server} ${tool} (MCP)` : undefined;
+}
+
+function titleOf(record: ToolCallRecord | undefined): string {
+  return record?.title ?? record?.name ?? "";
 }
 
 function handleTodoWrite(input: Record<string, unknown>): SessionUpdate | null {
