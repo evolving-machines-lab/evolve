@@ -1129,13 +1129,8 @@ class CapabilityDocument:
     #: Fleet-wide cap on concurrently in-flight trials of GPU-declaring tasks
     #: (platform-paid GPU compute). None on servers predating the field.
     gpu_concurrency_cap: Optional[int] = None
-    #: The rubric agents' roster and defaults (the analyzer's and the
-    #: checker's alike), the wire's own keys: ``default_agent`` (what an
-    #: omitted ``agent`` takes), ``default_model`` (what an omitted
-    #: ``model_name`` takes) and ``agents`` (each agent ``agent`` accepts,
-    #: with its ``reasoning_efforts`` and every roster model with the effort
-    #: an omitted ``reasoning_effort`` takes for it). None on servers
-    #: predating the field.
+    #: The rubric agents' roster and defaults (the wire's ``default_agent``, ``default_model``, ``agents``),
+    #: so a client knows what "omitted" meant. None on servers predating the field.
     analyze: Optional[Dict[str, Any]] = None
 
 
@@ -1651,20 +1646,14 @@ class AnalyzeConfigInput(TypedDict, total=False):
     means "all defaults" — openrouter/deepseek/deepseek-v4.1-flash at its
     per-model effort (high)
     over the platform's default analyze rubric and its
-    default prompt body. The analyzer runs the agent ``agent`` names
-    (claude, Harbor's own default claude-code, when it names none) in its
-    own sealed sandbox — on the provider ``sandbox_provider`` names, or the
-    platform's analysis default when it names none; its spend is capped per
-    analysis and metered as its own line, never blended into the trial's
-    own bill.
+    default prompt body. The analyzer runs on the ``agent`` harness (default
+    claude) in its own sealed sandbox — on the provider
+    ``sandbox_provider`` names, or the platform's analysis default when it
+    names none; its spend is capped per analysis and metered as its own
+    line, never blended into the trial's own bill.
     """
-    #: The agent the analyzer runs on — Harbor's ``-a/--agent`` (default
-    #: claude-code), in the ``agents[].name`` vocabulary: any built-in agent
-    #: ``meta().analyze['agents']`` lists. ``model_name`` must be on its
-    #: roster and ``reasoning_effort`` one it accepts; with an agent whose
-    #: roster lacks the default model, ``model_name`` is required. A
-    #: registered (bring-your-own) agent is not accepted. Anything else is
-    #: refused ``invalid_input`` naming ``analyze.agent``. Omitted: claude.
+    #: Harbor's ``-a/--agent``, spelled as the arms spell it (claude, not claude-code) so one set of names
+    #: covers arms and reviewers; omitted: claude. The agents: ``meta().analyze['agents']``.
     agent: str
     #: Model the analyzer agent runs — Harbor's ``--model``; the default is
     #: openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
@@ -1703,17 +1692,14 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: ``evolve analyze -p prompt.txt``.
     prompt: str
     #: Reasoning effort the analyzer runs at — the platform's
-    #: ``agents[].reasoning_effort`` vocabulary applied to the analyzer's
-    #: agent, held to that agent's own rule: accepted values are ``meta()``'s
-    #: ``analyze['agents'][i]['reasoning_efforts']`` (none for an agent that
-    #: takes no effort, gemini); a refused value answers ``invalid_input``
-    #: exactly as an arm's does. Omitted, the PER-MODEL default applies
-    #: (``analyze['agents'][i]['models'][j]['default_reasoning_effort']``:
+    #: ``agents[].reasoning_effort`` vocabulary applied to the analyzer's agent: accepted values are ``meta()``'s
+    #: ``analyze['agents'][i]['reasoning_efforts']``, an unknown value is refused
+    #: ``invalid_input`` exactly as an arm's is. Omitted, the PER-MODEL
+    #: default applies (``analyze['agents'][i]['models'][j]['default_reasoning_effort']``:
     #: high on openrouter/deepseek/deepseek-v4.1-flash, the default model —
     #: DeepSeek's own documented default, the owner's ruling 2026-09-10; max
     #: on glm-5.3-flash — the platform's ruling 2026-09-08, the effort its
-    #: published scores use; the agent's own default elsewhere; none on an
-    #: agent that takes none). Always
+    #: published scores use; the agent's own default elsewhere, none where it takes none). Always
     #: passed to the analyzer explicitly and
     #: recorded on the analysis (``TrialAnalysis['reasoning_effort']``). A
     #: hosted extension: Harbor's analyze has no effort option.
@@ -1778,9 +1764,8 @@ class AnalyzeConfig(TypedDict):
     defaults of the day, resolved at accept and stored (same law as
     ``JobRetryConfig``). Echoed as ``Job.analyze`` when the job was created
     with ``analyze``; each analysis additionally carries the exact policy
-    IT ran under (``Trial.analysis['agent']`` / ``['model_name']`` /
-    ``['rubric']`` / ``['prompt']``), which a later manual re-analysis may
-    have changed.
+    IT ran under (``Trial.analysis['agent']`` / ``['model_name']`` / ``['rubric']`` /
+    ``['prompt']``), which a later manual re-analysis may have changed.
     """
     #: The agent this policy's analyses run on — as named, or the default (claude).
     agent: str
@@ -1791,8 +1776,8 @@ class AnalyzeConfig(TypedDict):
     prompt: Optional[str]
     #: The effort this policy's analyses run at. Named at create it is
     #: served as stored; when the create named none, this echoes the
-    #: per-model default of the day for ``model_name`` on ``agent`` — the
-    #: value the next enqueue under this policy stamps (the same nuance as
+    #: per-model default of the day for ``model_name`` on ``agent`` — the value the next
+    #: enqueue under this policy stamps (the same nuance as
     #: ``sandbox_provider`` below). None when the agent takes no effort.
     reasoning_effort: Optional[str]
     #: The provider this policy's analyses run on. Named at create it is
@@ -1873,9 +1858,8 @@ class TrialAnalysis(TypedDict):
     analyze/models.py: ``summary``, ``checks`` keyed by criterion — each
     check extended by the result schema: four outcomes and an evidence list —
     ``estimated_cost_usd``; the enclosing trial is Harbor's ``trial_name``);
-    the rest is provenance — which agent, model, rubric and prompt THIS
-    analysis ran under, its lifecycle status, and its typed failure when it
-    failed.
+    the rest is provenance — which agent, model, rubric and prompt THIS analysis
+    ran under, its lifecycle status, and its typed failure when it failed.
 
     ``estimated_cost_usd`` is the analyzer agent's OWN metered spend — its
     own line, never part of the trial's ``agent_result.cost_usd`` or the
@@ -1899,14 +1883,12 @@ class TrialAnalysis(TypedDict):
     #: non-terminal analysis reaches ``completed`` or ``failed``; a worker
     #: death mid-run is reaped to a typed ``failed``.
     status: str
-    #: The agent THIS analysis ran on; every analysis from before the
-    #: choice existed ran on claude.
+    #: Every analysis from before the choice existed ran on claude.
     agent: str
     model_name: str
     #: The reasoning effort THIS analysis ran at — passed to the analyzer
-    #: explicitly, so it is what the model was asked for. None when its
-    #: agent takes no effort, or on analyses recorded before the effort was
-    #: stamped.
+    #: explicitly, so it is what the model was asked for. None when its agent takes none, or on
+    #: analyses recorded before the effort was stamped.
     reasoning_effort: Optional[str]
     rubric: Rubric
     #: The prompt template THIS analysis ran under, frozen at enqueue
@@ -2155,7 +2137,6 @@ class CheckRow:
     name: str
     status: CheckStatus
     source: CheckSource
-    #: The checker's agent.
     agent: str
     #: The checker's model.
     model_name: str
