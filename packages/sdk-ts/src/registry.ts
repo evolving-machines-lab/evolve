@@ -112,7 +112,7 @@ export interface McpConfigInfo {
   /** Config filename (e.g., "settings.json" or "config.toml") */
   filename: string;
   /** Config format */
-  format: "json" | "toml";
+  format: "json" | "toml" | "yaml";
   /** Whether to use workingDir for project-level config (Claude only) */
   projectConfig?: boolean;
 }
@@ -346,6 +346,30 @@ export interface AgentRegistryEntry {
   checkpointDirs?: string[];
   /** Additional relative paths to exclude from checkpoint tar. */
   checkpointExcludes?: string[];
+  /**
+   * Sandbox path where the SDK persists the session id it captured from the
+   * CLI's own stream, for CLIs whose resume flag needs that id (droid
+   * `--session-id`, dsh `--session-id`) rather than a "most recent" flag.
+   * Read back on every run so a later Agent on the same sandbox resumes.
+   */
+  sessionIdStateFile?: string;
+  /**
+   * dsh-only: the Evolve-owned `--patch` file that routes the CLI. dsh has no
+   * model, effort or base-URL flag — a YAML patch on top of its composition is
+   * the one routing surface (mcp/yaml.ts writeDshRoutePatch). The file names
+   * ENV VARIABLES for the key and the base URL (`!!js process.env.X`), never
+   * values, so it holds no secret and one shape serves every mode.
+   */
+  dshRoutePatch?: {
+    /** Sandbox path of the patch file the command passes with `--patch`. */
+    path: string;
+    /** The pi-ai provider route name the patch declares and the default model selects. */
+    providerName: string;
+    /** `contextWindow` the model row declares (dsh's compaction budget). */
+    contextWindow: number;
+    /** `maxTokens` the model row declares — the request's `max_tokens`. */
+    maxTokens: number;
+  };
 }
 
 /**
@@ -381,6 +405,25 @@ function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   const variant = getOpenCodeReasoningVariant(reasoningEffort);
   return variant ? ` --variant ${variant} --thinking` : "";
 }
+
+/**
+ * The pi-ai thinking level dsh's patch names for an Evolve effort. pi-ai's
+ * vocabulary is off/minimal/low/medium/high/xhigh/max (deepseek-harness
+ * packages/llm/llm-pi-ai/src/catalog.ts THINKING_LEVEL_GATE), so every
+ * graded Evolve value rides verbatim; the on/off spellings fold onto the two
+ * levels that mean the same thing. `off` makes dsh OMIT the effort field, so
+ * the provider's own default applies (deepseek-harness docs/user/guide/
+ * providers.md "Reasoning effort").
+ */
+export function getDshReasoningEffort(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "off" || reasoningEffort === "none" || reasoningEffort === "no-thinking") return "off";
+  if (reasoningEffort === "thinking") return "medium";
+  return reasoningEffort;
+}
+
+/** Every pi-ai thinking level, in escalation order — the `reasoningEfforts` keys dsh's patch declares. */
+export const DSH_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 // =============================================================================
 // AGENT REGISTRY
@@ -930,6 +973,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     checkpointDirs: [
       "~/.factory",
     ],
+    // Droid resumes by the id its stream announced; the SDK keeps it here
+    // between runs (agent.ts captureHarnessSessionId).
+    sessionIdStateFile: "~/.factory/evolve-session.json",
     buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode, isExternalGateway, homeDir = DEFAULT_HOME_DIR }) => {
       // Gateway AND external-gateway modes route through the Evolve-owned
       // settings file (custom model at the gateway); only plain direct mode
@@ -940,6 +986,107 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd ${homeDir}/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
+    },
+  },
+
+  // DeepSeek Harness (`dsh`, npm @deepseek-ai/dsh, pinned 0.1.7-rc.2 — the
+  // `next` line; npm `latest` 0.1.5-rc.3 has no --json, no --session-id).
+  // Recon and live captures: team/dev-items/harness-recon-2026-09-25/
+  // 01-deepseek.md and 06-live-tests/dsh/. dsh has NO model, effort or
+  // base-URL flag: routing is a YAML `--patch` on its composition, written
+  // per run by the SDK (dshRoutePatch below; mcp/yaml.ts writeDshRoutePatch)
+  // on the pi-ai `openai-completions` route — the OpenAI-compatible dialect
+  // the gateway serves at `<gateway>/v1`, proven live on both DeepSeek
+  // routes. The native `deepseek-official` route (DeepSeek's Anthropic
+  // dialect) is not used: it uploads the whole session log inside every
+  // model request unless disabled.
+  dsh: {
+    image: "evolve-all",
+    // SDK-facing: dsh itself reads no OPENROUTER_API_KEY. The patch names this
+    // env as the route's `apiKeyEnv`, so the CLI reads whatever the SDK put
+    // here — the OpenRouter key in direct mode, the runtime token in gateway
+    // mode, the caller's key in externalGateway mode. Never DEEPSEEK_API_KEY:
+    // dsh's `web_search` tool would send that one to DeepSeek's search API.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    // Read by the patch as `baseURL: !!js process.env.EVOLVE_DSH_BASE_URL`;
+    // every mode sets it to a URL ending in /v1 (the door provider's
+    // baseUrlPath, the caller's externalGateway URL, OpenRouter's API root).
+    baseUrlEnv: "EVOLVE_DSH_BASE_URL",
+    defaultModel: "openrouter/deepseek/deepseek-v4.1-flash",
+    // DeepSeek's documented default effort (the same pin the claude roster's
+    // DeepSeek rows record); owner policy: graded harnesses pin high. Stamped
+    // as `agent-default-model.reasoningEffort` in the patch on every run.
+    defaultReasoningEffort: "high",
+    // Direct mode is OpenRouter-only, like opencode: the Fireworks spellings
+    // are gateway routes (utils/config.ts assertDirectModeServesModel refuses
+    // them typed with your own OPENROUTER_API_KEY).
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    // Owner decision 2026-09-25 (harness-recon README): DeepSeek V4.1 Flash
+    // and V4 Pro on Fireworks and OpenRouter. Alias == wire id: the gateway's
+    // exact entry for each name (the same spellings the claude, droid and
+    // opencode rosters carry for V4.1 Flash). The three proven live with dsh
+    // itself: openrouter v4.1-flash (T1–T5, round 2), fireworks v4.1-flash
+    // and openrouter v4-pro (round-2 routes R1/R2); fireworks v4-pro is the
+    // route the gateway is gaining in the same wave.
+    models: [
+      { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
+      { alias: "openrouter/deepseek/deepseek-v4-pro-0813", modelId: "openrouter/deepseek/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via OpenRouter" },
+      { alias: "fireworks/deepseek-v4-pro-0813", modelId: "fireworks/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via Fireworks" },
+    ],
+    // dsh reads AGENTS.md (and CLAUDE.md) from the project root down to cwd
+    // (deepseek-harness packages/agent-instructions/src/config.ts:11-13).
+    systemPromptFile: "AGENTS.md",
+    // MCP servers are `- insert:` rows of @deepseek-ai/dsh-mcp-client in a
+    // patch of their own (mcp/yaml.ts writeDshMcpConfig); the command adds
+    // `--patch` for it when the file exists. dsh reads no .mcp.json.
+    mcpConfig: {
+      settingsDir: "~/.dsh",
+      filename: "evolve-mcp.patch.yml",
+      format: "yaml",
+    },
+    // $DSH_HOME/skills (rank 400 of dsh-skill-filesystem) — inside the home
+    // the platform captures, proven live (round 2, S1).
+    skillsConfig: {
+      targetDir: "~/.dsh/skills",
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    // Direct mode sends the id OpenRouter itself knows: the roster's
+    // `openrouter/` prefix is the gateway's route spelling.
+    directModelAliases: {
+      "openrouter/deepseek/deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+      "openrouter/deepseek/deepseek-v4-pro-0813": "deepseek/deepseek-v4-pro-0813",
+    },
+    // Spend tracking rides the pi-ai route's `headers` map, each value a
+    // `!!js process.env.X` read of these envs (the codex env_http_headers
+    // shape): the SDK sets both per run, so the patch stays static.
+    spendTrackingEnvs: {
+      sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID",
+      runTagEnv: "EVOLVE_LITELLM_TAGS",
+    },
+    dshRoutePatch: {
+      path: "~/.dsh/evolve-route.patch.yml",
+      providerName: "evolve",
+      // The proven window (every live run); dsh compacts against it.
+      contextWindow: 128000,
+      maxTokens: 32000,
+    },
+    // dsh resumes only by `--session-id <id>` (refuses another cwd); the id
+    // comes from its opening `session` line, kept here between runs.
+    sessionIdStateFile: "~/.dsh/evolve-session.json",
+    buildCommand: ({ prompt, isResume, sessionId, homeDir = DEFAULT_HOME_DIR }) => {
+      const dshHome = `${homeDir}/.dsh`;
+      const routePatch = `${dshHome}/evolve-route.patch.yml`;
+      const mcpPatch = `${dshHome}/evolve-mcp.patch.yml`;
+      const mcpFlag = `$(if [ -f ${mcpPatch} ]; then printf ' --patch ${mcpPatch}'; fi)`;
+      const resumeFlag = isResume && sessionId ? ` --session-id ${shellSingleQuote(sessionId)}` : "";
+      // Permission bypass is an env, not a flag (DSH_PERMISSION_MODE; the
+      // default approval policy fails closed headless); telemetry off; the
+      // home pinned so `~` never decides. Model and effort ride the patch.
+      return `DSH_HOME=${dshHome} DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1 dsh --profile headless --patch ${routePatch}${mcpFlag} --json${resumeFlag} -- "${prompt}"`;
     },
   },
 };

@@ -1,6 +1,6 @@
 # Evolve TypeScript SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -301,6 +301,7 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | `"kimi"` | `"kimi-k3"` `"kimi-k2.7-code"` `"kimi-k3-raptor"` `"kimi-k2p7-code-raptor"` | `"kimi-k3"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
 | `"opencode"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-5.6-luna"` `"openrouter/google/gemini-3.6-flash"` `"openrouter/qwen/qwen3.7-max"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"droid"` | `"claude-fable-5.1"` `"claude-opus-5"` `"claude-sonnet-5"` `"claude-haiku-4-5"` `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gemini-3.6-flash"` `"qwen3.7-max"` `"kimi-k3"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"claude-opus-5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
+| `"dsh"` | `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` `"openrouter/deepseek/deepseek-v4-pro-0813"` `"fireworks/deepseek-v4-pro-0813"` | `"openrouter/deepseek/deepseek-v4.1-flash"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 
 `"gemini-3.7-flash"` is named here for completeness: the gateway carries it as a correctly priced entry and serves it under its own name on a raw call. It is not selectable through the `gemini` agent, and nothing rejects it if you pass it anyway — the stable `gemini` CLI (0.55.1) rewrites the model client-side before the request ever leaves the sandbox, collapsing every name ending in `flash` onto its own current flash model. Ask for `"gemini-3.7-flash"` (or `"gemini-3.6-flash"`) today and you are silently served, and billed for, `gemini-3.5-flash`. Names that do not end in `flash` skip that rewrite, which is why `"gemini-3.5-flash-lite"` and `"gemini-3.1-pro-preview"` serve under their own names. A newer CLI release is not enough on its own, because the swap follows the CLI's own default flash, so a `-flash` name joins the selectable set only once a live probe shows the CLI actually serving it. On the hosted platform the wrong-model integrity guard refuses such a trial rather than scoring it; with your own provider key there is no backstop, so treat the three names above as the gemini lineup you can really run.
 
@@ -308,9 +309,11 @@ Model names route by themselves: pass just the name from the table and Evolve se
 
 `"glm-5.3-flash"` is GLM-5.3 Flash served from one pinned Fireworks host through the gateway: $0.15/M input and $0.50/M output ($0.03/M cached input); `"glm-5.3"` is the full model on OpenRouter.
 
-`"openrouter/deepseek/deepseek-v4.1-flash"` is DeepSeek V4.1 Flash served through OpenRouter, under the same spelling on `"claude"`, `"droid"` and `"opencode"`. The `openrouter/<vendor>/<model>` form is OpenRouter's own model id: the gateway routes any id in that form to OpenRouter and bills the call at OpenRouter's price for it, so other OpenRouter models work the same way — the table lists the supported ones. It is also the default model of the hosted evals analyzer (its default reasoning effort is `"high"`).
+`"openrouter/deepseek/deepseek-v4.1-flash"` is DeepSeek V4.1 Flash served through OpenRouter, under the same spelling on `"claude"`, `"droid"`, `"opencode"` and `"dsh"`. The `openrouter/<vendor>/<model>` form is OpenRouter's own model id: the gateway routes any id in that form to OpenRouter and bills the call at OpenRouter's price for it, so other OpenRouter models work the same way — the table lists the supported ones. It is also the default model of the hosted evals analyzer (its default reasoning effort is `"high"`).
 
-`"fireworks/deepseek-v4.1-flash"` is the same DeepSeek V4.1 Flash on a second route, served from Fireworks through the gateway, on the same three agents: $0.22/M input and $0.66/M output ($0.007/M cached input). Pick it when you want the Fireworks host; `"openrouter/deepseek/deepseek-v4.1-flash"` remains the default model of the hosted evals analyzer and task checker. It is served through the Evolve gateway; direct mode has no Fireworks key, so `"opencode"` with your own `OPENROUTER_API_KEY` refuses the name at configuration (`EvolveConfigError`, naming the model) instead of sending it.
+`"fireworks/deepseek-v4.1-flash"` is the same DeepSeek V4.1 Flash on a second route, served from Fireworks through the gateway, on the same four agents: $0.22/M input and $0.66/M output ($0.007/M cached input). Pick it when you want the Fireworks host; `"openrouter/deepseek/deepseek-v4.1-flash"` remains the default model of the hosted evals analyzer and task checker. It is served through the Evolve gateway; direct mode has no Fireworks key, so `"opencode"` with your own `OPENROUTER_API_KEY` refuses the name at configuration (`EvolveConfigError`, naming the model) instead of sending it.
+
+`"dsh"` is DeepSeek's own harness (DeepSeek Harness, `@deepseek-ai/dsh`, pinned at 0.1.7-rc.2 — the `next` prerelease line, the only one with a headless JSON mode). Its roster is DeepSeek V4.1 Flash and V4 Pro on the two routes above, under the same spellings. It has no model, effort or base-URL flag: before every run Evolve writes a small YAML patch into the sandbox (`~/.dsh/evolve-route.patch.yml`) naming the model, the effort and the environment variables that hold the key and the gateway URL — the file itself never holds a secret. Direct mode uses your `OPENROUTER_API_KEY` and reaches OpenRouter only, so the two `fireworks/…` names are gateway-only there and refused at configuration, like `"opencode"`. MCP servers go into a second patch (`~/.dsh/evolve-mcp.patch.yml`); dsh speaks stdio and streamable-http, so an `sse` server is refused by name. Skills mount at `~/.dsh/skills`; instructions come from `AGENTS.md`.
 
 Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
 
@@ -323,6 +326,7 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"droid"` | `"high"` — matches Droid’s own default for Opus 5, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
+| `"dsh"` | `"high"` — DeepSeek's documented default, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; `"off"` sends no effort field, so the provider's own default applies |
 
 When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
 
@@ -384,7 +388,7 @@ ANTHROPIC_API_KEY=sk-...   # claude
 OPENAI_API_KEY=sk-...      # codex, qwen
 GEMINI_API_KEY=...         # gemini
 KIMI_API_KEY=...           # kimi
-OPENROUTER_API_KEY=sk-...  # opencode
+OPENROUTER_API_KEY=sk-...  # opencode, dsh
 FACTORY_API_KEY=...        # droid
 E2B_API_KEY=e2b_...        # sandbox
 ```
@@ -481,6 +485,15 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "droid", model: "gpt-5.5" });
+```
+
+```ts
+// dsh — DeepSeek Harness (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "dsh" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "dsh", model: "openrouter/deepseek/deepseek-v4-pro-0813" });
 ```
 
 ---

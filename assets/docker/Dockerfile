@@ -12,6 +12,7 @@
 #   - Google Chrome + Playwright for browser automation
 #   - Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Droid
 #   - Kimi Code
+#   - DeepSeek Harness (dsh, pinned)
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
 #
@@ -83,6 +84,19 @@ RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/ho
     && chown -R user:user /home/user/.kimi-code
 
 # ---------------------------------------------------------------------------
+# DeepSeek Harness (dsh)
+# ---------------------------------------------------------------------------
+# PINNED, not @latest: the headless surface the SDK drives (--json,
+# --session-id, stdin) exists only in the `next` prerelease line; npm `latest`
+# (0.1.5-rc.3) has none of it and a different session format. npm verifies the
+# tarball against the registry's recorded sha512 integrity on install (the
+# vendor publishes no separate checksum file). Needs node >=22.19 or >=24 and
+# pulls the glibc @deepseek-ai/node-addon-system-linux-x64 optional dep (POSIX
+# flock; session writes require it), so optional deps stay ON here.
+RUN npm install -g @deepseek-ai/dsh@0.1.7-rc.2 \
+    && dsh --version
+
+# ---------------------------------------------------------------------------
 # MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
 # ---------------------------------------------------------------------------
 RUN npm install -g mcp-remote
@@ -117,6 +131,7 @@ RUN mkdir -p /home/user/.claude/skills \
              /home/user/.kimi-code/skills \
              /home/user/.agents/skills \
              /home/user/.factory/skills \
+             /home/user/.dsh/skills \
     && chown -R user:user /home/user
 
 # ---------------------------------------------------------------------------

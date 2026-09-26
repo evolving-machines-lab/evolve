@@ -19,6 +19,7 @@
  *   opencode  run --format json (step_finish tokens/cost, tool_use state)
  *   droid     exec --output-format stream-json, droid 0.182.0 (completion.usage)
  *   kimi      -p --output-format stream-json, kimi-code 0.41.0 (no usage line)
+ *   dsh       --profile headless --json, @deepseek-ai/dsh@0.1.7-rc.2 (step_end.usage)
  *
  * The other half of the law: accounting is NEVER work (isAgentWorkUpdate),
  * so a usage-only stream still trips the eval runner's harnessNeverRan.
@@ -27,6 +28,7 @@
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
+import { createDshParser } from "../../src/parsers/dsh.ts";
 import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
@@ -393,6 +395,36 @@ async function testKimi(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// dsh
+// ---------------------------------------------------------------------------
+
+async function testDsh(): Promise<void> {
+  console.log("\n[dsh] the session line names the id; step_end.usage is per call; no clock, model or message id");
+  // Live capture T2 (2026-09-25), the first step: uncached input + cache read.
+  const events = parseAll(createDshParser(), [
+    `{"type":"session","sessionId":"session-fab655c4-d085-41e0-adf5-11880872873c","cwd":"/work"}`,
+    `{"type":"status","phase":"turn_start","turn":1}`,
+    `{"type":"status","phase":"step_start","turn":1,"step":1}`,
+    `{"type":"thinking","text":"Simple task. Create file with write tool, then read/print."}`,
+    `{"type":"tool_call","callId":"call_8f1b268a3e504b39bb2aa64d","tool":"write","input":{"file_path":"hello.txt","content":"hello from dsh"}}`,
+    `{"type":"tool_result","callId":"call_8f1b268a3e504b39bb2aa64d","status":"completed","result":"<path>/work/hello.txt</path>\\n<type>file</type>\\n<content>\\nCreated file\\n</content>"}`,
+    `{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":210,"outputTokens":74,"totalTokens":5660,"cacheReadTokens":5376}}`,
+  ]);
+  assert(events.every((e) => e.sessionId === "session-fab655c4-d085-41e0-adf5-11880872873c"), "dsh: the opening session line's id is stamped on every event");
+  assert(events.every((e) => e.timestamp === undefined && e.model === undefined && e.messageId === undefined), "dsh: no clock, model or message id — the stream carries none");
+  const usage = ofKind(events, "usage");
+  assert(usage.length === 1 && usage[0].update.scope === "call", "dsh: step_end.usage → one call-scoped usage event per step");
+  assert(
+    same(usage[0]?.update.usage, { promptTokens: 5586, completionTokens: 74, cachedTokens: 5376, extra: { totalTokens: 5660 } }),
+    "dsh: prompt = inputTokens + cacheReadTokens (disjoint counts), cached = cacheReadTokens, totalTokens rides extra verbatim",
+  );
+  assert(same(usage[0]?.extra, { turn: 1, step: 1 }), "dsh: the step's turn and step ride the envelope extra");
+  const result = ofKind(events, "tool_call_update")[0];
+  assert(result !== undefined && result.update.rawOutput === undefined, "dsh: tool_result carries text only — no structured record, so no rawOutput");
+  assert(events.every((e) => e.parentToolCallId === undefined), "dsh: no subagent lines exist on the stream (a child's answer is the parent's tool result)");
+}
+
+// ---------------------------------------------------------------------------
 // the law
 // ---------------------------------------------------------------------------
 
@@ -412,6 +444,7 @@ async function main(): Promise<void> {
   await testOpenCode();
   await testDroid();
   await testKimi();
+  await testDsh();
   await testLaw();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

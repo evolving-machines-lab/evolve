@@ -477,8 +477,9 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     kimi: [],
     opencode: [{ sandboxRoot: "/root/.local/share/opencode", agentDir: "opencode/xdg-data/opencode" }],
     droid: [],
+    dsh: [],
   };
-  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the seven harnesses");
+  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the eight harnesses");
   for (const [id, copies] of Object.entries(expected)) {
     assertEqual(HARNESS_TRIAL_LAYOUTS[id].harborCopies, copies, `${id}: Harbor's copies mirror the server's table`);
   }

@@ -6,12 +6,13 @@
  * harness put on the wire, verbatim. Consumers that render a trajectory need
  * the real name ("mcp__mcp-server__get_secret"); `kind` only says "other".
  *
- * Covers all 7 parsers, each with an MCP call and a non-MCP call.
+ * Covers all 8 parsers, each with an MCP call and a non-MCP call.
  */
 
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
+import { createDshParser } from "../../src/parsers/dsh.ts";
 import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
@@ -117,6 +118,25 @@ async function testDroid(): Promise<void> {
         parameters: { file_path: "/tmp/a.txt" },
       })
     ) === "Read",
+    "non-MCP tool carries its native name"
+  );
+}
+
+async function testDsh(): Promise<void> {
+  console.log("\n[3b] dsh");
+
+  // dsh spells MCP tools mcp__<serverName>__<tool> (round-2 live capture M1:
+  // mcp__everything__get-sum); every tool arrives as {type:"tool_call", callId, tool, input}.
+  assert(
+    toolNameOf(
+      feed(createDshParser(), { type: "tool_call", callId: "call_1", tool: MCP_NAME, input: {} })
+    ) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(
+      feed(createDshParser(), { type: "tool_call", callId: "call_2", tool: "read", input: { file_path: "/tmp/a.txt" } })
+    ) === "read",
     "non-MCP tool carries its native name"
   );
 }
@@ -233,6 +253,7 @@ async function main(): Promise<void> {
   await testClaude();
   await testCodex();
   await testDroid();
+  await testDsh();
   await testGemini();
   await testKimi();
   await testOpenCode();

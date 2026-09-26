@@ -13,6 +13,7 @@ import { Template } from 'e2b'
 //   - OpenCode (opencode-ai)
 //   - Droid CLI
 //   - Kimi Code
+//   - DeepSeek Harness (dsh, pinned @deepseek-ai/dsh@0.1.7-rc.2)
 //   - ACP adapters for Claude and Codex
 //   - Google Chrome for browser automation
 //   - Skills cloned from github.com/evolving-machines-lab/evolve
@@ -62,6 +63,14 @@ export const template = Template()
   .runCmd('curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/home/user/.kimi-code KIMI_NO_MODIFY_PATH=1 bash && ln -sf /home/user/.kimi-code/bin/kimi /usr/local/bin/kimi && kimi --version && chown -R user:user /home/user/.kimi-code')
 
   // ---------------------------------------------------------------------------
+  // DeepSeek Harness (dsh)
+  // ---------------------------------------------------------------------------
+  // Pinned (see the Dockerfile's dsh block): the headless --json surface lives
+  // only in the `next` prerelease line; npm verifies the registry's sha512
+  // integrity on install; optional deps stay on for the flock addon.
+  .runCmd('npm install -g @deepseek-ai/dsh@0.1.7-rc.2 && dsh --version')
+
+  // ---------------------------------------------------------------------------
   // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
   // ---------------------------------------------------------------------------
   .runCmd('npm install -g mcp-remote')
@@ -85,7 +94,7 @@ export const template = Template()
   // Create skills directories for all CLIs. No baked catalog: skills are
   // resolved at run time by the SDK resolver (packages/sdk-ts/src/skills.ts)
   // from real references and mounted into these directories.
-  .runCmd('mkdir -p ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills')
+  .runCmd('mkdir -p ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills ~/.dsh/skills')
 
   // ---------------------------------------------------------------------------
   // Factory Droid CLI

@@ -8,6 +8,7 @@
 import type { AgentType, SandboxInstance, McpServerConfig } from "../types";
 import { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig } from "./json";
 import { writeCodexMcpConfig } from "./toml";
+import { writeDshMcpConfig } from "./yaml";
 
 /**
  * Write MCP server configuration for an agent
@@ -19,6 +20,7 @@ import { writeCodexMcpConfig } from "./toml";
  * - Qwen: JSON to ~/.qwen/settings.json
  * - Droid: JSON to ${workingDir}/.factory/mcp.json
  * - OpenCode: JSON to ${workingDir}/opencode.json (mcp key)
+ * - dsh: YAML patch rows to ~/.dsh/evolve-mcp.patch.yml
  */
 export async function writeMcpConfig(
   agentType: AgentType,
@@ -60,6 +62,10 @@ export async function writeMcpConfig(
       await writeDroidMcpConfig(sandbox, workingDir, servers);
       break;
 
+    case "dsh":
+      await writeDshMcpConfig(sandbox, servers, homeDir);
+      break;
+
     default:
       throw new Error(`Unknown agent type for MCP config: ${agentType}`);
   }
@@ -68,3 +74,4 @@ export async function writeMcpConfig(
 // Re-export individual writers for direct use if needed
 export { writeClaudeMcpConfig, writeGeminiMcpConfig, writeQwenMcpConfig, writeKimiMcpConfig, writeOpenCodeMcpConfig, writeDroidMcpConfig, writeJsonSpendHeaders, writeQwenThinkingConfig, writeDroidGatewaySettings } from "./json";
 export { writeCodexMcpConfig, writeCodexSpendProvider, writeKimiSpendConfig } from "./toml";
+export { writeDshMcpConfig, writeDshRoutePatch, renderDshRoutePatch, type DshRoutePatchConfig } from "./yaml";

@@ -87,6 +87,13 @@ def get_agent_config() -> Optional[AgentConfig]:
             model=os.getenv('DROID_MODEL', 'gpt-5.5'),
         )
 
+    elif agent_type == 'dsh':
+        return AgentConfig(
+            type='dsh',
+            api_key=evolve_api_key,
+            model=os.getenv('DSH_MODEL', 'openrouter/deepseek/deepseek-v4.1-flash'),
+        )
+
     else:
         raise ValueError(f"Unsupported agent type: {agent_type}")
 
@@ -108,6 +115,7 @@ def get_agent_display_name(agent_type: AgentType) -> str:
         'kimi': 'Kimi',
         'opencode': 'OpenCode',
         'droid': 'Droid',
+        'dsh': 'DeepSeek Harness',
     }
     return names.get(agent_type, agent_type)
 

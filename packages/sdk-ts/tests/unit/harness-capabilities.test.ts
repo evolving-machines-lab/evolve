@@ -136,14 +136,15 @@ for (const name of registryNames) {
 }
 
 // --- 5. DeepSeek V4.1 Flash: two routes, two route-visible names, one default --
-// The model is on the claude, droid and opencode rosters under its OpenRouter
+// The model is on the claude, droid, opencode and dsh rosters under its OpenRouter
 // id `openrouter/deepseek/deepseek-v4.1-flash` (owner 2026-09-10; the trace
 // analyzer's and the check agent's default, swarm_dashboard
 // lib/evaluations/analysis.ts DEFAULT_ANALYZE_MODEL) and, since 2026-09-11
 // (owner: "a further option"), under `fireworks/deepseek-v4.1-flash` — the
 // same model served from Fireworks through the gateway's exact entry for that
-// name. Alias == wire id on both, the same spelling on all three rosters,
-// neither a harness default; the retired Fireworks name `deepseek-flash` and
+// name. Alias == wire id on both, the same spelling on all four rosters,
+// a harness default only on dsh (whose roster is DeepSeek); the retired
+// Fireworks name `deepseek-flash` and
 // the older `deepseek-v4-flash-vision` may not be advertised or sent (one
 // name per route). Checked on both the registry and the artifact: the
 // dashboard reads the artifact.
@@ -157,7 +158,7 @@ const carries = (models: readonly { alias: string; modelId: string }[], name: st
 const names = (models: readonly { alias: string; modelId: string }[], name: string) =>
   models.some((model) => model.alias === name || model.modelId === name);
 
-for (const harness of ["claude", "droid", "opencode"] as const) {
+for (const harness of ["claude", "droid", "opencode", "dsh"] as const) {
   for (const route of DEEPSEEK_FLASH_ROUTES) {
     assert(
       carries(AGENT_REGISTRY[harness].models, route),
@@ -222,6 +223,39 @@ assert(
 assert(
   AGENT_REGISTRY.opencode.models.every((row) => row.alias === row.modelId),
   "every opencode roster alias equals its wire id (what makes 'a roster id rides verbatim' the whole rule)",
+);
+
+// --- 6. dsh: a DeepSeek-only roster, every id spelling its route -------------
+// Owner decision 2026-09-25: DeepSeek V4.1 Flash and V4 Pro on Fireworks and
+// OpenRouter, nothing else. Alias == wire id on every row, so the patch the
+// SDK writes names the gateway's exact entry verbatim (the same rule the
+// droid settings file and the opencode command line follow), and the
+// OpenRouter Flash route is the default (the analyzer's own model).
+assert(
+  JSON.stringify(AGENT_REGISTRY.dsh.models.map((row) => row.alias)) ===
+    JSON.stringify([
+      "openrouter/deepseek/deepseek-v4.1-flash",
+      "fireworks/deepseek-v4.1-flash",
+      "openrouter/deepseek/deepseek-v4-pro-0813",
+      "fireworks/deepseek-v4-pro-0813",
+    ]),
+  "the dsh roster is exactly DeepSeek V4.1 Flash and V4 Pro on OpenRouter and Fireworks",
+);
+assert(
+  AGENT_REGISTRY.dsh.models.every((row) => row.alias === row.modelId),
+  "every dsh roster alias equals its wire id",
+);
+assert(
+  AGENT_REGISTRY.dsh.defaultModel === OPENROUTER_DEEPSEEK_FLASH && artifact.harnesses.dsh.defaultModel === OPENROUTER_DEEPSEEK_FLASH,
+  `dsh defaults to "${OPENROUTER_DEEPSEEK_FLASH}" (registry and artifact)`,
+);
+assert(
+  artifact.harnesses.dsh.effortSupport === "level" && artifact.harnesses.dsh.defaultEffort === "high",
+  "dsh advertises graded effort pinned at high (DeepSeek's documented default)",
+);
+assert(
+  artifact.harnesses.dsh.supportsConfig === false && artifact.harnesses.dsh.presets.length === 0,
+  "dsh advertises no native config document and no presets",
 );
 assert(
   opencodeCommand("glm-5.3-flash", false).includes("--model litellm/openrouter/glm-5.3-flash ") &&

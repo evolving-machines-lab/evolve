@@ -409,7 +409,7 @@ async function runTests(): Promise<void> {
   }
 
   clearEnv();
-  for (const type of ["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid"] as const) {
+  for (const type of ["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "dsh"] as const) {
     const result = resolveAgentConfig({
       type,
       apiKey: `gateway-key-${type}`,
@@ -534,6 +534,18 @@ async function runTests(): Promise<void> {
   }
 
   clearEnv();
+  process.env.OPENROUTER_API_KEY = "env-openrouter-key";
+  {
+    // dsh's direct mode is OpenRouter-only, like opencode's: the SDK-facing
+    // key env is OPENROUTER_API_KEY and the base URL is OpenRouter's API root
+    // (the patch names both as env variables).
+    const result = resolveAgentConfig({ type: "dsh" });
+    assertEqual(result.apiKey, "env-openrouter-key", "uses OPENROUTER_API_KEY for dsh");
+    assertEqual(result.isDirectMode, true, "isDirectMode is true");
+    assertEqual(result.baseUrl, "https://openrouter.ai/api/v1", "dsh uses OpenRouter's API root as the direct-mode base URL");
+  }
+
+  clearEnv();
   process.env.ANTHROPIC_API_KEY = "env-anthropic-key";
   process.env.ANTHROPIC_BASE_URL = "https://custom.anthropic.com";
   {
@@ -585,6 +597,20 @@ async function runTests(): Promise<void> {
       resolveAgentConfig({ type: "opencode", providerApiKey: "explicit-openrouter-key", model: GATEWAY_ONLY }),
     );
     assert(error instanceof EvolveConfigError, `explicit providerApiKey + "${GATEWAY_ONLY}" is refused the same way`);
+  }
+
+  // dsh: the same OpenRouter-only direct mode, so the same refusal for its
+  // Fireworks routes and the same pass for its OpenRouter ids.
+  clearEnv();
+  process.env.OPENROUTER_API_KEY = "env-openrouter-key";
+  {
+    const served = resolveAgentConfig({ type: "dsh", model: "openrouter/deepseek/deepseek-v4-pro-0813" });
+    assertEqual(served.isDirectMode, true, "dsh: OPENROUTER_API_KEY serves an OpenRouter roster id in direct mode");
+    for (const gatewayOnly of ["fireworks/deepseek-v4.1-flash", "fireworks/deepseek-v4-pro-0813"]) {
+      const error = refusal(() => resolveAgentConfig({ type: "dsh", model: gatewayOnly }));
+      assert(error instanceof EvolveConfigError, `dsh: OPENROUTER_API_KEY + "${gatewayOnly}" is refused with EvolveConfigError`);
+      assert(((error as Error)?.message ?? "").includes("fireworks"), "dsh: …the message names the route that has no direct-mode key");
+    }
   }
 
   clearEnv();

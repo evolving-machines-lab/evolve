@@ -238,6 +238,15 @@ async function testBuildTarCommandDroid(): Promise<void> {
   assert(cmd.includes(".factory/"), "Includes .factory/ settings, skills, and session state");
 }
 
+async function testBuildTarCommandDsh(): Promise<void> {
+  console.log("\n[6e] buildTarCommand() - dsh");
+
+  const cmd = buildTarCommand("dsh", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  assert(cmd.includes(".dsh/"), "Includes .dsh/ (sessions, profiles, skills, the Evolve patches)");
+}
+
 // =============================================================================
 // TESTS: Cache excludes in tar command
 // =============================================================================
@@ -338,6 +347,7 @@ async function main(): Promise<void> {
   await testBuildTarCommandKimi();
   await testBuildTarCommandOpencode();
   await testBuildTarCommandDroid();
+  await testBuildTarCommandDsh();
   await testTarExcludes();
   await testCustomWorkingDir();
   await testInvalidWorkingDir();
