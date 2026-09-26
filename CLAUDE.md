@@ -24,7 +24,7 @@ evolve/
 │   │       ├── index.ts         # Public exports
 │   │       ├── cli/             # The `evolve` CLI binary (src/cli/index.ts; skills.ts serves the bundled skills)
 │   │       ├── hosted/          # Hosted evals client (datasets/agents/jobs/trials/auth)
-│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity; pi-family.ts is the core the last two share)
+│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity; pi-family.ts is the core pi and prime-agent share)
 │   │       ├── integrations.ts  # Managed integration helpers
 │   │       ├── managed-secrets.ts   # Dashboard-stored secrets attached by name
 │   │       ├── provider-secrets.ts  # Managed BYO provider keys + runtime tokens

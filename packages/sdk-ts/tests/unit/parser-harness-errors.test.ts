@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: THE HARNESS-ERROR LAW, across all eight parsers.
+ * Unit Test: THE HARNESS-ERROR LAW, across all twelve parsers.
  *
  * The law lives in parsers/types.ts (AgentError): a failure the HARNESS itself
  * reported is the `error` variant — never an agent_message_chunk, never
@@ -11,7 +11,7 @@
  * diagnosis on codex.
  *
  * codex was the only parser that obeyed. This suite pins the same two
- * properties for all eight:
+ * properties for all twelve:
  *   1. the failure is surfaced, with the harness's own text VERBATIM;
  *   2. it is never counted as agent work (isAgentWorkUpdate === false).
  *
@@ -634,7 +634,7 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("=".repeat(60));
-  console.log("THE HARNESS-ERROR LAW — all eight parsers");
+  console.log("THE HARNESS-ERROR LAW — all twelve parsers");
   console.log("=".repeat(60));
 
   await testClaude();

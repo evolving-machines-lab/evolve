@@ -92,7 +92,6 @@
     "test:unit:kimi-mcp": "tsx tests/unit/kimi-mcp.test.ts",
     "test:unit:dsh-parser": "tsx tests/unit/dsh-parser.test.ts",
     "test:unit:dsh-mcp": "tsx tests/unit/dsh-mcp.test.ts",
-    "test:unit:uniformity": "tsx tests/unit/harness-uniformity.test.ts",
     "test:unit:codex-toml": "tsx tests/unit/codex-toml.test.ts",
     "pretest:integration": "npm run build",
     "test:integration": "npm run test:01",

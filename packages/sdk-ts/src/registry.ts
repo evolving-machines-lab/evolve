@@ -1198,8 +1198,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       return `PRIME_AGENT_TELEMETRY=0 TMPDIR=/tmp prime-agent --mode json --offline --cwd "$PWD" ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} -- "${prompt}" </dev/null`;
     },
   },
-  // dsh: routing rides an Evolve-owned --patch file (dshRoutePatch), never
-  // flags; recon team/dev-items/harness-recon-2026-09-25/01-deepseek.md.
+  // dsh: routing rides an Evolve-owned --patch file (dshRoutePatch), never flags.
   dsh: {
     image: "evolve-all",
     // The patch's apiKeyEnv names this env; never DEEPSEEK_API_KEY, which
@@ -1210,7 +1209,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // Read by the patch as `!!js process.env.EVOLVE_DSH_BASE_URL`; every mode sets it ending in /v1.
     baseUrlEnv: "EVOLVE_DSH_BASE_URL",
     defaultModel: "openrouter/deepseek/deepseek-v4.1-flash",
-    // DeepSeek's documented default (01-deepseek.md §C); owner policy pins graded harnesses high.
+    // DeepSeek's documented default; owner policy pins graded harnesses high.
     defaultReasoningEffort: "high",
     // Direct mode is OpenRouter-only, like opencode; the fireworks/ names are gateway routes.
     providerEnvMap: {
@@ -1224,7 +1223,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "openrouter/deepseek/deepseek-v4-pro-0813", modelId: "openrouter/deepseek/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via OpenRouter" },
       { alias: "fireworks/deepseek-v4-pro-0813", modelId: "fireworks/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via Fireworks" },
     ],
-    // AGENTS.md then CLAUDE.md from the project root down to cwd (01-deepseek.md §F).
+    // AGENTS.md then CLAUDE.md from the project root down to cwd.
     systemPromptFile: "AGENTS.md",
     // MCP rows are a second patch file (mcp/yaml.ts); dsh reads no .mcp.json.
     mcpConfig: {
@@ -1232,7 +1231,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       filename: "evolve-mcp.patch.yml",
       format: "yaml",
     },
-    // $DSH_HOME/skills, inside the captured home (§F; live S1).
+    // $DSH_HOME/skills, inside the captured home.
     skillsConfig: {
       targetDir: "~/.dsh/skills",
     },
@@ -1254,7 +1253,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       contextWindow: 128000,
       maxTokens: 32000,
     },
-    // dsh resumes only by `--session-id <id>` from its opening `session` line (§B).
+    // dsh resumes only by `--session-id <id>` from its opening `session` line.
     sessionIdStateFile: "~/.dsh/evolve-session.json",
     buildCommand: ({ prompt, isResume, sessionId, homeDir = DEFAULT_HOME_DIR }) => {
       const dshHome = `${homeDir}/.dsh`;
@@ -1262,7 +1261,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const mcpPatch = `${dshHome}/evolve-mcp.patch.yml`;
       const mcpFlag = `$(if [ -f ${mcpPatch} ]; then printf ' --patch ${mcpPatch}'; fi)`;
       const resumeFlag = isResume && sessionId ? ` --session-id ${shellSingleQuote(sessionId)}` : "";
-      // No permission flag exists: the env unconfines the sandbox and never asks (§B).
+      // No permission flag exists: the env unconfines the sandbox and never asks.
       return `DSH_HOME=${dshHome} DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1 dsh --profile headless --patch ${routePatch}${mcpFlag} --json${resumeFlag} -- "${prompt}"`;
     },
   },

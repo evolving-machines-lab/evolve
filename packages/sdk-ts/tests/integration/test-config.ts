@@ -211,6 +211,8 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         type: "dsh",
         apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
         model: process.env.DSH_MODEL || "openrouter/deepseek/deepseek-v4.1-flash",
+      };
+
     case "zcode":
       return {
         type: "zcode",
