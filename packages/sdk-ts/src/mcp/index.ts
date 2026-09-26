@@ -16,6 +16,7 @@ import {
   writePiMcpConfig,
   writePrimeAgentMcpConfig,
   writeZcodeMcpConfig,
+  writeAntigravityMcpConfig,
 } from "./json";
 import { writeCodexMcpConfig } from "./toml";
 import { writeDshMcpConfig } from "./yaml";
@@ -34,6 +35,7 @@ import { writeDshMcpConfig } from "./yaml";
  * - Prime Agent: JSON to ~/.prime/agent/settings.json (mcpServers key)
  * - dsh: YAML patch rows to ~/.dsh/evolve-mcp.patch.yml
  * - Z Code: JSON to ~/.zcode/cli/config.json (mcp.servers key)
+ * - Antigravity: JSON to ~/.gemini/config/mcp_config.json
  */
 export async function writeMcpConfig(
   agentType: AgentType,
@@ -85,8 +87,14 @@ export async function writeMcpConfig(
 
     case "dsh":
       await writeDshMcpConfig(sandbox, servers, homeDir);
+      break;
+
     case "zcode":
       await writeZcodeMcpConfig(sandbox, servers, homeDir);
+      break;
+
+    case "antigravity":
+      await writeAntigravityMcpConfig(sandbox, servers, homeDir);
       break;
 
     default:
@@ -105,6 +113,8 @@ export {
   writePiMcpConfig,
   writePrimeAgentMcpConfig,
   writeZcodeMcpConfig,
+  writeAntigravityMcpConfig,
+  writeAntigravitySettings,
   writeZcodeProviderConfig,
   writeJsonSpendHeaders,
   writeQwenThinkingConfig,

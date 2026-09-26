@@ -18,6 +18,40 @@
   ],
   "defaultReasoningEffort": "medium",
   "harnesses": {
+    "antigravity": {
+      "defaultModel": "gemini-3.8-flash",
+      "models": [
+        {
+          "alias": "gemini-3.8-flash",
+          "modelId": "vertex_ai/gemini-3.8-flash",
+          "description": "Latest Flash on Vertex AI: coding + agentic planning"
+        },
+        {
+          "alias": "gemini-3.5-flash-lite",
+          "modelId": "vertex_ai/gemini-3.5-flash-lite",
+          "description": "Latest Flash-Lite on Vertex AI: most cost-effective"
+        },
+        {
+          "alias": "gemini-3.1-pro-preview",
+          "modelId": "vertex_ai/gemini-3.1-pro-preview",
+          "description": "Latest Pro on Vertex AI: complex agentic + coding"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
     "claude": {
       "defaultModel": "opus",
       "models": [

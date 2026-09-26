@@ -334,6 +334,10 @@ export interface AgentRegistryEntry {
     /** Cap on `max_tokens` per request. */
     maxOutputTokens: number;
   };
+  /** Antigravity-only: the CLI's settings file, rewritten before every run (mcp/json.ts writeAntigravitySettings). */
+  antigravitySettings?: {
+    settingsPath: string;
+  };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -535,6 +539,40 @@ export function zcodeEnvPins(homeDir: string): Record<string, string> {
     ZCODE_AGENT_CA_CERT: "",
     ZCODE_MODEL_TELEMETRY_ENABLED: "0",
   };
+}
+
+/**
+ * agy's `--effort` word: low|medium|high|max (`agy --help`, 1.2.11), no off switch — off/minimal → low, xhigh → max,
+ * thinking → medium; a word outside Evolve's vocabulary rides verbatim so the CLI refuses it loudly (exit 2).
+ */
+export function antigravityEffort(reasoningEffort: string): string {
+  switch (reasoningEffort) {
+    case "off":
+    case "none":
+    case "no-thinking":
+    case "minimal":
+    case "low":
+      return "low";
+    case "medium":
+    case "thinking":
+      return "medium";
+    case "high":
+      return "high";
+    case "xhigh":
+    case "max":
+      return "max";
+    default:
+      return reasoningEffort;
+  }
+}
+
+/**
+ * The `--model` slug: a roster alias becomes its wire id on an external gateway (the SDK's own gateway already applied
+ * gatewayModelAliases; direct mode keeps the bare name). One function, so settings.json and the command never differ.
+ */
+export function antigravityModelSlug(model: string, mode: { isExternalGateway?: boolean }): string {
+  if (mode.isExternalGateway) return registryWireId(AGENT_REGISTRY.antigravity, model);
+  return model;
 }
 
 // =============================================================================
@@ -1292,6 +1330,65 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
         .map(([name, value]) => `${name}=${shellSingleQuote(value)}`)
         .join(" ");
       return `${pins} zcode -p "${prompt}" ${continueFlag}--output-format stream-json`;
+    },
+  },
+
+  antigravity: {
+    image: "evolve-all",
+    // Closed source (agy 1.2.11). The one headless auth path is the Gemini API key (GOOGLE_API_KEY is ignored) with
+    // modelProvider "gemini" in its settings and GOOGLE_GEMINI_BASE_URL as the documented endpoint override (docs/cli/install).
+    apiKeyEnv: "GEMINI_API_KEY",
+    effortSupport: "level",
+    baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
+    // No gatewayPath: the gateway ROOT, not the /gemini passthrough (owner 2026-09-25: Vertex AI). LiteLLM's root Gemini
+    // endpoint resolves `vertex_ai/<model>` against the model list; under /gemini the same slug is a 404 (live-proven).
+    defaultModel: "gemini-3.8-flash",
+    // Graded-effort harnesses pin "high" (owner policy); --effort is stamped per run, never baked into the slug.
+    defaultReasoningEffort: "high",
+    // Roster (owner 2026-09-25): the latest Flash, Flash-Lite and Pro, Google models only. Alias = the bare name direct
+    // mode sends; wire id = the gateway's Vertex route, which the CLI names once registered (live T6/V1).
+    models: [
+      { alias: "gemini-3.8-flash", modelId: "vertex_ai/gemini-3.8-flash", description: "Latest Flash on Vertex AI: coding + agentic planning" },
+      { alias: "gemini-3.5-flash-lite", modelId: "vertex_ai/gemini-3.5-flash-lite", description: "Latest Flash-Lite on Vertex AI: most cost-effective" },
+      { alias: "gemini-3.1-pro-preview", modelId: "vertex_ai/gemini-3.1-pro-preview", description: "Latest Pro on Vertex AI: complex agentic + coding" },
+    ],
+    // The CLI reads AGENTS.md or GEMINI.md from the workspace root (docs/rules); AGENTS.md is the cross-vendor name.
+    systemPromptFile: "AGENTS.md",
+    // The file `agy mcp add` writes (docs/mcp; live M1).
+    mcpConfig: {
+      settingsDir: "~/.gemini/config",
+      filename: "mcp_config.json",
+      format: "json",
+    },
+    // The shared dir every Antigravity product reads; antigravity-cli/skills is a symlink onto it (live round 2).
+    skillsConfig: {
+      targetDir: "~/.gemini/config/skills",
+    },
+    antigravitySettings: {
+      settingsPath: "~/.gemini/antigravity-cli/settings.json",
+    },
+    gatewayModelAliases: {
+      "gemini-3.8-flash": "vertex_ai/gemini-3.8-flash",
+      "gemini-3.5-flash-lite": "vertex_ai/gemini-3.5-flash-lite",
+      "gemini-3.1-pro-preview": "vertex_ai/gemini-3.1-pro-preview",
+    },
+    // No spend-tracking path (the CLI sends no custom headers, probed live 2026-09-25): attribution is per session; its
+    // hidden title call is not routed and fails harmlessly (live V1). ~/.gemini whole is the state minus the CLI's own installs and caches.
+    checkpointDirs: ["~/.gemini"],
+    checkpointExcludes: [
+      ".gemini/antigravity-cli/bin",
+      ".gemini/antigravity-cli/builtin",
+      ".gemini/antigravity-cli/cache",
+    ],
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isExternalGateway }) => {
+      // `--continue` resumes the most recent conversation in this home — the
+      // one the previous run left, since a sandbox home holds no other.
+      const continueFlag = isResume ? "--continue " : "";
+      const effortFlag = reasoningEffort ? ` --effort ${antigravityEffort(reasoningEffort)}` : "";
+      const slug = antigravityModelSlug(model, { isExternalGateway });
+      // Harbor's headless shape (antigravity_cli.py:1528-1558): --add-dir (else bare-filename files land in the CLI's scratch
+      // dir), </dev/null (agy waits for EOF on an open stdin), no --print-timeout (the SDK's run clock bounds), prompt raw.
+      return `antigravity ${continueFlag}--prompt ${shellSingleQuote(prompt)} --model ${shellSingleQuote(slug)}${effortFlag} --dangerously-skip-permissions --output-format stream-json --add-dir "$PWD" < /dev/null`;
     },
   },
 };

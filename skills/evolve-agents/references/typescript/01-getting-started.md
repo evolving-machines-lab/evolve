@@ -1,6 +1,6 @@
 # Evolve TypeScript SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -305,6 +305,7 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | `"prime-agent"` | the same fourteen OpenRouter ids as `"pi"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"dsh"` | `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` `"openrouter/deepseek/deepseek-v4-pro-0813"` `"fireworks/deepseek-v4-pro-0813"` | `"openrouter/deepseek/deepseek-v4.1-flash"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"zcode"` | `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"fireworks/glm-5.3"` `"fireworks/glm-5.3-flash"` | `"openrouter/z-ai/glm-5.3"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"antigravity"` | `"gemini-3.8-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` | `"gemini-3.8-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` |
 
 `"gemini-3.7-flash"` is named here for completeness: the gateway carries it as a correctly priced entry and serves it under its own name on a raw call. It is not selectable through the `gemini` agent, and nothing rejects it if you pass it anyway — the stable `gemini` CLI (0.55.1) rewrites the model client-side before the request ever leaves the sandbox, collapsing every name ending in `flash` onto its own current flash model. Ask for `"gemini-3.7-flash"` (or `"gemini-3.6-flash"`) today and you are silently served, and billed for, `gemini-3.5-flash`. Names that do not end in `flash` skip that rewrite, which is why `"gemini-3.5-flash-lite"` and `"gemini-3.1-pro-preview"` serve under their own names. A newer CLI release is not enough on its own, because the swap follows the CLI's own default flash, so a `-flash` name joins the selectable set only once a live probe shows the CLI actually serving it. On the hosted platform the wrong-model integrity guard refuses such a trial rather than scoring it; with your own provider key there is no backstop, so treat the three names above as the gemini lineup you can really run.
 
@@ -335,6 +336,7 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"prime-agent"` | `"high"` — pinned by Evolve (Prime Agent's own default is `"medium"`) | the same scale as `"pi"` |
 | `"dsh"` | `"high"` — DeepSeek's documented default, pinned by Evolve | `"low"` `"medium"` `"high"` only; `"off"` (and its spellings) is refused at configuration — dsh sends the effort on every request, so it cannot be switched off |
 | `"zcode"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; Z Code's provider file has four levels, so `"off"` and `"minimal"` send no reasoning field (the model's own default), `"xhigh"` and `"max"` are sent as `high` |
+| `"antigravity"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"low"` `"medium"` `"high"` `"max"` (the CLI's own vocabulary); `"xhigh"` is sent as `"max"`, and `"off"` / `"minimal"` (and the legacy spellings `"none"` / `"no-thinking"`) as `"low"` — the CLI cannot disable thinking; the binary spelling `"thinking"` is sent as `"medium"` |
 
 When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
 
@@ -398,6 +400,7 @@ GEMINI_API_KEY=...         # gemini
 KIMI_API_KEY=...           # kimi
 OPENROUTER_API_KEY=sk-...  # opencode, pi, prime-agent, dsh, zcode
 FACTORY_API_KEY=...        # droid
+GEMINI_API_KEY=...         # antigravity (the same variable gemini reads)
 E2B_API_KEY=e2b_...        # sandbox
 ```
 
@@ -520,6 +523,13 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "zcode", model: "openrouter/z-ai/glm-5.3-flash" });
+
+// antigravity (auto-picks GEMINI_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "antigravity" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "antigravity", model: "gemini-3.5-flash-lite", reasoningEffort: "low" });
 ```
 
 `"pi"` and `"prime-agent"` share one wire format — Prime Agent is built on pi's core — and one routing rule. On every run Evolve writes a provider entry named `evolve` into the agent's `models.json` (the gateway URL, and the key read from `OPENROUTER_API_KEY` by name; with your own key, OpenRouter itself) and starts the CLI with `--provider evolve`. Evolve's agent instructions go to `AGENTS.md` in the working directory, which both CLIs read; skills install to `~/.pi/agent/skills` and `~/.prime/agent/skills`. pi's tools are `read`, `bash`, `edit` and `write` (its default set; `grep`, `find` and `ls` stay off); MCP servers reach it through the pi-mcp-adapter extension (2.37.0, in the image) as one `mcp` proxy tool, written to `~/.pi/agent/mcp.json`. Prime Agent has one tool, `ipython`: every action is a cell in a persistent Python kernel that ships in the image, and MCP servers are written to `~/.prime/agent/settings.json` — a stdio server's environment must be given as `envVars`, since Prime reads values by variable name and never literally. Both CLIs exit 0 even when every model call failed, so Evolve does not take their exit code as the verdict: when the last model call of a run failed, the run ends `run_failed` (the `lifecycle` event; `status()` then reports the agent as `error`) and the failures arrive as `error` updates on the stream (see Streaming). The `exitCode` on the response stays the CLI's own 0.

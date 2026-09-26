@@ -36,6 +36,8 @@
  *             packages/opencode/src/cli/cmd/run.ts:678-691, 776-786
  *   qwen      SDKResultMessageError, qwen-code
  *             packages/sdk-typescript/src/types/protocol.ts:152-170
+ *   antigravity  live capture, agy 1.2.11 (`--output-format stream-json`,
+ *             round-2 E1a: the result line of a 500 from the model endpoint)
  *
  * ONE TRAP WORTH NAMING: {"type":"error"} does NOT mean the same thing in
  * every harness. In gemini it is a non-fatal warning and the run continues;
@@ -43,6 +45,7 @@
  * from each harness's own terminal signal rather than from the event name.
  */
 
+import { createAntigravityParser } from "../../src/parsers/antigravity.ts";
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
@@ -579,6 +582,14 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
       parse: createZcodeParser(),
       lines: [`{"type":"turn.failed","sessionId":"sess_s","seq":1,"timestamp":1,"payload":{"error":{"type":"unknown_error","code":"internal_error","message":"boom"},"turnPhase":"processing_input"}}`],
     },
+    {
+      name: "antigravity",
+      parse: createAntigravityParser(),
+      // The run total rides beside it as a usage line (never work); the
+      // error_message step that precedes it live is text-less and is
+      // covered by antigravity-parser.test.ts.
+      lines: [`{"event":"result","result":{"conversation_id":"c","status":"ERROR","response":"","error":"boom","duration_seconds":0,"num_turns":1,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}`],
+    },
   ];
 
   for (const { name, parse, lines } of cases) {
@@ -589,7 +600,7 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
     assert(errorsOf(events)[0]?.message === "boom", `${name}: the message is exactly what the harness said`);
   }
 
-  assert(cases.length === 11, "all eleven harnesses are covered");
+  assert(cases.length === 12, "all twelve harnesses are covered");
 }
 
 async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
@@ -610,6 +621,8 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
     { name: "dsh/max-tokens", parse: createDshParser(), line: `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"max-tokens"}}` },
     { name: "zcode", parse: createZcodeParser(), line: `{"type":"turn.failed","sessionId":"sess_s","seq":1,"timestamp":1,"payload":{"error":{},"turnPhase":"model_creation"}}` },
     { name: "zcode/request", parse: createZcodeParser(), line: `{"type":"session.updated","sessionId":"sess_s","seq":1,"timestamp":1,"payload":{"type":"model_request_failed","attempt":1,"maxAttempts":3}}` },
+    { name: "antigravity/result", parse: createAntigravityParser(), line: `{"event":"result","result":{"conversation_id":"c","status":"ERROR","response":""}}` },
+    { name: "antigravity/step", parse: createAntigravityParser(), line: `{"event":"step_update","step_update":{"conversation_id":"c","step_index":1,"state":"DONE","step_type":"error_message"}}` },
   ];
 
   for (const { name, parse, line } of cases) {

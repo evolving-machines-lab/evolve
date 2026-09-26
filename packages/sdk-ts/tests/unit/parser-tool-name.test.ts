@@ -6,9 +6,10 @@
  * harness put on the wire, verbatim. Consumers that render a trajectory need
  * the real name ("mcp__mcp-server__get_secret"); `kind` only says "other".
  *
- * Covers all 11 parsers, each with an MCP call and a non-MCP call.
+ * Covers all 12 parsers, each with an MCP call and a non-MCP call.
  */
 
+import { createAntigravityParser } from "../../src/parsers/antigravity.ts";
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
@@ -140,6 +141,46 @@ async function testDsh(): Promise<void> {
     toolNameOf(
       feed(createDshParser(), { type: "tool_call", callId: "call_2", tool: "read", input: { file_path: "/tmp/a.txt" } })
     ) === "read",
+    "non-MCP tool carries its native name"
+  );
+}
+
+async function testAntigravity(): Promise<void> {
+  console.log("\n[8] antigravity");
+
+  // MCP is one generic tool on this CLI (live M1): the wire name IS
+  // call_mcp_tool, and the server and tool names live in its parameters.
+  const mcp = feed(createAntigravityParser(), {
+    event: "step_update",
+    step_update: {
+      conversation_id: "c",
+      step_index: 10,
+      state: "ACTIVE",
+      step_type: "tool",
+      tool_name: "call_mcp_tool",
+      tool_info: { name: "call_mcp_tool", parameters: { ServerName: "mcp-server", ToolName: "get_secret", Arguments: {} } },
+    },
+  });
+  assert(toolNameOf(mcp) === "call_mcp_tool", "MCP call carries the verbatim wire name (the CLI's generic MCP tool)");
+  const mcpCall = mcp?.[0]?.update;
+  assert(
+    mcpCall?.sessionUpdate === "tool_call" && (mcpCall.rawInput as { ToolName: string }).ToolName === "get_secret",
+    "the MCP tool itself is named in rawInput.ToolName",
+  );
+  assert(
+    toolNameOf(
+      feed(createAntigravityParser(), {
+        event: "step_update",
+        step_update: {
+          conversation_id: "c",
+          step_index: 2,
+          state: "ACTIVE",
+          step_type: "tool",
+          tool_name: "view_file",
+          tool_info: { name: "view_file", parameters: { AbsolutePath: "/tmp/a.txt" } },
+        },
+      })
+    ) === "view_file",
     "non-MCP tool carries its native name"
   );
 }
@@ -331,6 +372,7 @@ async function main(): Promise<void> {
   await testPi();
   await testPrimeAgent();
   await testZcode();
+  await testAntigravity();
 
   console.log(`\n=== Summary ===`);
   console.log(`Passed: ${passed}`);

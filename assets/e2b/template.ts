@@ -16,6 +16,7 @@ import { Template } from 'e2b'
 //   - pi (@earendil-works/pi-coding-agent + pi-mcp-adapter) and Prime Agent (+ its Python kernel)
 //   - DeepSeek Harness (dsh, pinned @deepseek-ai/dsh@0.1.7-rc.2)
 //   - Z Code (from the official .deb, on the image's Node 24)
+//   - Antigravity CLI
 //   - ACP adapters for Claude and Codex
 //   - Google Chrome for browser automation
 //   - Skills cloned from github.com/evolving-machines-lab/evolve
@@ -119,6 +120,12 @@ export const template = Template()
   })
 
   // ---------------------------------------------------------------------------
+  // Antigravity CLI (Google): the vendor's manifest-named release tarball, sha512-verified, on PATH as `antigravity`.
+  // Never `agy install`: it edits shell profiles and arms the background auto-updater.
+  // ---------------------------------------------------------------------------
+  .runCmd('curl -fsSL -o /tmp/antigravity-cli.tgz https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.11-6016716732497920/linux-x64/cli_linux_x64.tar.gz && echo "ca12c262343f29a2b87423d1ff1e4244989e936e37fe1f8e56056b0f91cd02f93f133321229ce35c86c2d84b977e919937a3fd9430cfd769a16d6b03ede25081  /tmp/antigravity-cli.tgz" | sha512sum -c - && tar -xzf /tmp/antigravity-cli.tgz -C /usr/local/bin antigravity && chmod 0755 /usr/local/bin/antigravity && rm -f /tmp/antigravity-cli.tgz && AGY_CLI_DISABLE_AUTO_UPDATE=true antigravity --version')
+
+  // ---------------------------------------------------------------------------
   // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
   // ---------------------------------------------------------------------------
   .runCmd('npm install -g mcp-remote')
@@ -142,7 +149,7 @@ export const template = Template()
   // Create skills directories for all CLIs. No baked catalog: skills are
   // resolved at run time by the SDK resolver (packages/sdk-ts/src/skills.ts)
   // from real references and mounted into these directories.
-  .runCmd('mkdir -p ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills ~/.pi/agent/skills ~/.prime/agent/skills ~/.dsh/skills ~/.zcode/skills')
+  .runCmd('mkdir -p ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills ~/.pi/agent/skills ~/.prime/agent/skills ~/.dsh/skills ~/.zcode/skills ~/.gemini/config/skills')
 
   // ---------------------------------------------------------------------------
   // Factory Droid CLI

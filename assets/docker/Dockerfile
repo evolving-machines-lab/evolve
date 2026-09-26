@@ -15,6 +15,7 @@
 #   - pi (+ the pi-mcp-adapter extension) and Prime Agent (+ its Python kernel)
 #   - DeepSeek Harness (dsh, pinned)
 #   - Z Code (from the official .deb, on the image's Node 24)
+#   - Antigravity CLI
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
 #
@@ -154,6 +155,17 @@ ENV ZCODE_BUILTIN_PROVIDER_CONFIG_FILE=/opt/zcode/glm/provider/zcode-builtin.jso
     ZCODE_UGREP_BINARY=/opt/zcode/tools/ugrep/ugrep
 
 # ---------------------------------------------------------------------------
+# Antigravity CLI (Google): the vendor's manifest-named release tarball, sha512-verified, on PATH as `antigravity`.
+# Never `agy install`: it edits every shell profile and arms the background auto-updater.
+# ---------------------------------------------------------------------------
+RUN curl -fsSL -o /tmp/antigravity-cli.tgz https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.11-6016716732497920/linux-x64/cli_linux_x64.tar.gz \
+    && echo "ca12c262343f29a2b87423d1ff1e4244989e936e37fe1f8e56056b0f91cd02f93f133321229ce35c86c2d84b977e919937a3fd9430cfd769a16d6b03ede25081  /tmp/antigravity-cli.tgz" | sha512sum -c - \
+    && tar -xzf /tmp/antigravity-cli.tgz -C /usr/local/bin antigravity \
+    && chmod 0755 /usr/local/bin/antigravity \
+    && rm -f /tmp/antigravity-cli.tgz \
+    && AGY_CLI_DISABLE_AUTO_UPDATE=true antigravity --version
+
+# ---------------------------------------------------------------------------
 # MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
 # ---------------------------------------------------------------------------
 RUN npm install -g mcp-remote
@@ -192,6 +204,7 @@ RUN mkdir -p /home/user/.claude/skills \
              /home/user/.prime/agent/skills \
              /home/user/.dsh/skills \
              /home/user/.zcode/skills \
+             /home/user/.gemini/config/skills \
              /opt/evolve/prime-agent \
     && chown -R user:user /home/user /opt/evolve/prime-agent
 

@@ -515,8 +515,9 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     "prime-agent": [],
     dsh: [],
     zcode: [],
+    antigravity: [],
   };
-  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the eleven harnesses");
+  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the twelve harnesses");
   assertEqual(HARNESS_TRIAL_LAYOUTS.pi.stdoutFile, "pi.txt", "pi's tee is Harbor's pi.txt (pi.py:100)");
   assertEqual(HARNESS_TRIAL_LAYOUTS["prime-agent"].stdoutFile, "prime-agent.txt", "prime-agent has no Harbor adapter: the platform's own <harness>.txt");
   assertEqual(harborCopyPath(harnessTrialLayout("pi"), "/root/.pi/agent/sessions/2026-09-25T20-10-24-177Z_x.jsonl"), "pi/sessions/2026-09-25T20-10-24-177Z_x.jsonl", "pi's session files are copied to Harbor's pi/sessions/ slot");
@@ -528,6 +529,8 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
   assertEqual(harborCopyPath(harnessTrialLayout("kimi"), "/root/.kimi-code/x"), null, "kimi has no Harbor copy: the home at .kimi-code/ is the whole record");
   assertEqual(harnessTrialLayout("zcode").stdoutFile, "zcode.txt", "zcode has no Harbor adapter: the tee follows the <harness>.txt pattern");
   assertEqual(harborCopyPath(harnessTrialLayout("zcode"), "/root/.zcode/cli/db/db.sqlite"), null, "zcode has no Harbor copy: the home at .zcode/ is the whole record");
+  assertEqual(harnessTrialLayout("antigravity-cli").stdoutFile, "antigravity-stream.jsonl", "Harbor's antigravity-cli label finds the SDK id and its tee name (antigravity_cli.py:984)");
+  assertEqual(harborCopyPath(harnessTrialLayout("antigravity"), "/root/.gemini/antigravity-cli/brain/x"), null, "antigravity has no Harbor copy slot: Harbor copies renamed files, not a subtree");
   assertEqual(harborCopyPath(DEFAULT_HARNESS_TRIAL_LAYOUT, "/root/.claude/x"), null, "the default layout copies nothing");
 }
 

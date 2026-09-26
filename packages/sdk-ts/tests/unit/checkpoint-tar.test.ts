@@ -272,6 +272,19 @@ async function testBuildTarCommandZcode(): Promise<void> {
   assert(cmd.includes("--exclude='.zcode/v2/runtime'"), "Excludes the provider catalog cache");
 }
 
+async function testBuildTarCommandAntigravity(): Promise<void> {
+  console.log("\n[6f] buildTarCommand() - antigravity");
+
+  const cmd = buildTarCommand("antigravity", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  assert(cmd.includes("'.gemini/'"), "Includes the whole .gemini/ tree (settings, brain/ transcripts, conversations/ store, shared config/)");
+  assert(!cmd.includes("'.gemini/config/'"), "Does not include '.gemini/config/' alone (mcpConfig.settingsDir overridden by checkpointDirs)");
+  assert(cmd.includes("--exclude='.gemini/antigravity-cli/bin'"), "Excludes the CLI's extracted encoder binary");
+  assert(cmd.includes("--exclude='.gemini/antigravity-cli/builtin'"), "Excludes the shipped built-in skills the CLI rewrites at start");
+  assert(cmd.includes("--exclude='.gemini/antigravity-cli/cache'"), "Excludes the CLI's cache");
+}
+
 // =============================================================================
 // TESTS: Cache excludes in tar command
 // =============================================================================
@@ -375,6 +388,7 @@ async function main(): Promise<void> {
   await testBuildTarCommandPiFamily();
   await testBuildTarCommandDsh();
   await testBuildTarCommandZcode();
+  await testBuildTarCommandAntigravity();
   await testTarExcludes();
   await testCustomWorkingDir();
   await testInvalidWorkingDir();

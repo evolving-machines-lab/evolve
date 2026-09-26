@@ -128,8 +128,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "pi", "prime-agent", "dsh", "zcode"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode`);
+  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "pi", "prime-agent", "dsh", "zcode", "antigravity"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity`);
   }
   return type as AgentType;
 }
@@ -216,6 +216,13 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         type: "zcode",
         apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
         model: process.env.ZCODE_MODEL || "openrouter/z-ai/glm-5.3-flash",
+      };
+
+    case "antigravity":
+      return {
+        type: "antigravity",
+        apiKey: env.EVOLVE_API_KEY || env.GEMINI_API_KEY || "",
+        model: process.env.ANTIGRAVITY_MODEL || "gemini-3.8-flash",
       };
 
     default:

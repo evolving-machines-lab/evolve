@@ -7,6 +7,7 @@
 
 import type { AgentType } from "../types";
 import type { OutputEvent } from "./types";
+import { createAntigravityParser } from "./antigravity";
 import { createClaudeParser } from "./claude";
 import { createCodexParser } from "./codex";
 import { createDroidParser } from "./droid";
@@ -69,6 +70,9 @@ export function createAgentParser(agentType: AgentType): AgentParser {
     case "zcode":
       return createZcodeParser();
 
+    case "antigravity":
+      return createAntigravityParser();
+
     default:
       return () => null;
   }
@@ -125,6 +129,7 @@ export function parseNdjsonOutput(
 }
 
 // Re-export parser factory functions for direct use if needed
+export { createAntigravityParser } from "./antigravity";
 export { createClaudeParser } from "./claude";
 export { createCodexParser } from "./codex";
 export { createDroidParser } from "./droid";

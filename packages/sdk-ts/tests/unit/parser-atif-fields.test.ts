@@ -24,11 +24,14 @@
  *   dsh       --profile headless --json, @deepseek-ai/dsh@0.1.7-rc.2 (step_end.usage)
  *   zcode     -p --output-format stream-json, ZCode 3.14.3 / CLI 0.16.9
  *             (model_request_completed usage per request, result.usage per run)
+ *   antigravity  --output-format stream-json, agy 1.2.11 (per-call usage on
+ *             every DONE agent_response; result.usage the conversation total)
  *
  * The other half of the law: accounting is NEVER work (isAgentWorkUpdate),
  * so a usage-only stream still trips the eval runner's harnessNeverRan.
  */
 
+import { createAntigravityParser } from "../../src/parsers/antigravity.ts";
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
@@ -510,6 +513,34 @@ async function testZcode(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// antigravity
+// ---------------------------------------------------------------------------
+
+async function testAntigravity(): Promise<void> {
+  console.log("\n[antigravity] init names the model and conversation; no clock on the wire; per-call usage per agent_response step, the result the conversation total");
+  const events = parseAll(createAntigravityParser(), [
+    `{"event":"init","conversation_id":"6f91d324-96f8-4334-ac1f-853c9e7c444e","init":{"model":"gemini-3.8-flash-low","cwd":"/work","tools":["run_command"],"permission_mode":"always-proceed"}}`,
+    `{"event":"step_update","step_update":{"conversation_id":"6f91d324-96f8-4334-ac1f-853c9e7c444e","step_index":0,"state":"DONE","step_type":"user_input"}}`,
+    `{"event":"step_update","step_update":{"conversation_id":"6f91d324-96f8-4334-ac1f-853c9e7c444e","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"OK\\n","duration_seconds":1.915566,"usage":{"input_tokens":12572,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12573}}}`,
+    `{"event":"result","result":{"conversation_id":"6f91d324-96f8-4334-ac1f-853c9e7c444e","status":"SUCCESS","response":"OK\\n","duration_seconds":1.96051,"num_turns":1,"usage":{"input_tokens":12572,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12573}}}`,
+  ]);
+  const message = ofKind(events, "agent_message_chunk")[0];
+  assert(message?.model === "gemini-3.8-flash-low", "antigravity: the init model is stamped on later events");
+  assert(message?.sessionId === "6f91d324-96f8-4334-ac1f-853c9e7c444e", "antigravity: the conversation id is the session id on every event");
+  assert(message?.timestamp === undefined, "antigravity: no timestamp — the wire stamps none, none is invented");
+  assert(message?.messageId === "6f91d324-96f8-4334-ac1f-853c9e7c444e:1", "antigravity: the agent_response step is the message id (one inference per step)");
+  const usage = ofKind(events, "usage");
+  assert(usage.length === 2 && usage[0].update.scope === "call" && usage[1].update.scope === "run", "antigravity: the DONE agent_response's usage is per-call, the result's is the run total");
+  assert(usage[0]?.messageId === message?.messageId, "antigravity: the per-call usage line shares the step's message id");
+  assert(
+    same(usage[0]?.update.usage, { promptTokens: 12572, completionTokens: 1, cachedTokens: 0, extra: { thinking_tokens: 0, total_tokens: 12573 } }),
+    "antigravity: input+cache_read → prompt, output → completion, cache_read → cached; thinking_tokens and total_tokens ride extra verbatim",
+  );
+  assert(ofKind(events, "agent_message_chunk").length === 1, "antigravity: the result's response (the same text) is not published twice");
+  assert(same(message?.extra, { step_index: 1, step_type: "agent_response", state: "DONE", duration_seconds: 1.915566 }), "antigravity: the step's own facts ride extra under agy's key names");
+}
+
+// ---------------------------------------------------------------------------
 // the law
 // ---------------------------------------------------------------------------
 
@@ -533,6 +564,7 @@ async function main(): Promise<void> {
   await testPi();
   await testDsh();
   await testZcode();
+  await testAntigravity();
   await testLaw();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

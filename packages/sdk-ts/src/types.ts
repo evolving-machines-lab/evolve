@@ -574,7 +574,8 @@ export type AgentType =
   | "pi"
   | "prime-agent"
   | "dsh"
-  | "zcode";
+  | "zcode"
+  | "antigravity";
 
 /** Agent type constants for use in code */
 export const AGENT_TYPES = {
@@ -589,6 +590,7 @@ export const AGENT_TYPES = {
   PRIME_AGENT: "prime-agent",
   DSH: "dsh",
   ZCODE: "zcode",
+  ANTIGRAVITY: "antigravity",
 } as const;
 
 // =============================================================================

@@ -262,6 +262,7 @@ export {
 
 // Individual parser factory functions (for advanced use cases)
 export {
+  createAntigravityParser,
   createClaudeParser,
   createCodexParser,
   createDroidParser,

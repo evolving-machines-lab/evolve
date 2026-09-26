@@ -1,8 +1,8 @@
 /**
  * MCP JSON Configuration Writer
  *
- * Handles MCP config for Claude, Gemini, Qwen, Kimi, Droid, and OpenCode agents.
- * Uses registry for paths - no hardcoded values.
+ * Handles MCP config for Claude, Gemini, Qwen, Kimi, Droid, OpenCode, and
+ * Antigravity agents. Uses registry for paths - no hardcoded values.
  *
  * Transport formats by agent:
  * - Claude: { type: "http"|"sse"|"stdio", url: "..." }
@@ -10,12 +10,27 @@
  * - Qwen:   { httpUrl: "..." } | { url: "..." } | { command: "..." }
  * - Kimi Code: { url: "...", transport?: "http"|"sse" } | { command: "...", transport: "stdio" }
  * - Z Code: { type: "stdio", command, args, env } | { type: "http"|"sse", url, headers } under `mcp.servers`
+ * - Antigravity: { serverUrl: "...", headers? } | { command: "...", args?, env?, cwd? }
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
 import { shellSingleQuote } from "../utils/shell";
 import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
+import { EvolveConfigError } from "../utils/config";
 import { validateServers, isNotFoundError } from "./validation";
+
+/** An existing config file's object: an empty file is no config (the antigravity CLI leaves a 0-byte mcp_config.json);
+ *  malformed JSON is refused with the path named, never a bare SyntaxError. */
+function parseExistingJson(text: unknown, path: string, field: string): Record<string, unknown> {
+  if (typeof text !== "string" || text.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new EvolveConfigError(field, `Existing config at ${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+}
 
 // =============================================================================
 // FORMAT TRANSFORMERS
@@ -145,6 +160,25 @@ function toZcodeFormat(config: McpServerConfig): Record<string, unknown> {
   return result;
 }
 
+/**
+ * ~/.gemini/config/mcp_config.json as `agy mcp add` writes it (docs/mcp; Harbor antigravity_cli.py): remote =
+ * `{ serverUrl, headers? }` (the legacy url/httpUrl keys are rejected), stdio = `{ command, args?, env?, cwd? }`, no type field.
+ */
+function toAntigravityFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  const { type, url, httpHeaders, envHttpHeaders, bearerTokenEnvVar, envVars, headers, ...rest } = config;
+  if (transport === "stdio" && config.command) {
+    return { ...rest };
+  }
+  if (url) {
+    const result: Record<string, unknown> = { ...rest, serverUrl: url };
+    const merged = headers ?? httpHeaders;
+    if (merged && Object.keys(merged).length > 0) result.headers = merged;
+    return result;
+  }
+  return { ...rest };
+}
+
 // =============================================================================
 // GENERIC JSON WRITER
 // =============================================================================
@@ -153,7 +187,7 @@ type ConfigTransformer = (config: McpServerConfig) => Record<string, unknown>;
 
 async function writeJsonMcpConfig(
   sandbox: SandboxInstance,
-  agentType: "gemini" | "qwen" | "kimi",
+  agentType: "gemini" | "qwen" | "kimi" | "antigravity",
   servers: Record<string, McpServerConfig>,
   transform: ConfigTransformer,
   homeDir?: string
@@ -167,10 +201,7 @@ async function writeJsonMcpConfig(
 
   let existingConfig: Record<string, unknown> = {};
   try {
-    const existing = await sandbox.files.read(settingsPath);
-    if (typeof existing === "string") {
-      existingConfig = JSON.parse(existing);
-    }
+    existingConfig = parseExistingJson(await sandbox.files.read(settingsPath), settingsPath, "mcpServers");
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
   }
@@ -356,6 +387,61 @@ export async function writeKimiMcpConfig(
   homeDir?: string
 ): Promise<void> {
   await writeJsonMcpConfig(sandbox, "kimi", servers, toKimiFormat, homeDir);
+}
+
+/** Write MCP config for the Antigravity agent (~/.gemini/config/mcp_config.json) */
+export async function writeAntigravityMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  await writeJsonMcpConfig(sandbox, "antigravity", servers, toAntigravityFormat, homeDir);
+}
+
+// =============================================================================
+// ANTIGRAVITY SETTINGS (~/.gemini/antigravity-cli/settings.json)
+// =============================================================================
+
+/**
+ * The CLI's settings for a run, merged over the file it rewrites at every start: API-key auth (`modelProvider`), telemetry
+ * off (`telemetryEnabled`, the key the binary keeps), non-workspace paths allowed, the run's slug registered (else `--model` exits 1).
+ */
+export async function writeAntigravitySettings(
+  sandbox: SandboxInstance,
+  settingsPath: string,
+  modelSlug: string,
+  homeDir?: string,
+): Promise<void> {
+  const path = expandPath(settingsPath, homeDir);
+  const dir = path.slice(0, path.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(dir);
+
+  let settings: Record<string, unknown> = {};
+  try {
+    settings = parseExistingJson(await sandbox.files.read(path), path, "antigravitySettings");
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const customModelsConfig =
+    typeof settings.customModelsConfig === "object" && settings.customModelsConfig !== null
+      ? (settings.customModelsConfig as Record<string, unknown>)
+      : {};
+  const customModels =
+    typeof customModelsConfig.customModels === "object" && customModelsConfig.customModels !== null
+      ? (customModelsConfig.customModels as Record<string, unknown>)
+      : {};
+
+  settings.modelProvider = "gemini";
+  settings.telemetryEnabled = false;
+  settings.allowNonWorkspaceAccess = true;
+  settings.customModelsConfig = {
+    ...customModelsConfig,
+    customModels: { ...customModels, [modelSlug]: { modelName: modelSlug } },
+  };
+
+  await sandbox.files.write(path, JSON.stringify(settings, null, 2));
 }
 
 /**

@@ -54,10 +54,10 @@
  *   agent/<harness>.txt       the harness process's stdout stream at Harbor's
  *                             own tee name for the harness (claude-code.txt,
  *                             codex.txt, gemini-cli.txt, qwen-code.txt,
- *                             kimi-code.txt, opencode.txt, pi.txt; droid.txt,
- *                             prime-agent.txt and dsh.txt are the platform's own,
- *                             and stdout.log serves a harness Harbor has no name
- *                             for), when stored
+ *                             kimi-code.txt, opencode.txt, pi.txt,
+ *                             antigravity-stream.jsonl; droid.txt, prime-agent.txt,
+ *                             dsh.txt and zcode.txt are the platform's own, and
+ *                             stdout.log serves a harness Harbor has no name for), when stored
  *   agent/stderr.log          the harness process's stderr stream, when stored
  *   agent/trace-parsed.jsonl  the parsed event trace (Evolve's own artifact,
  *                             riding inside agent/ — Harbor has no slot for
@@ -162,6 +162,9 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   // No Harbor adapter: zcode.txt, the same pattern; the captured ~/.zcode
   // (SQLite session store) sits at agent/.zcode/ alone.
   zcode: { stdoutFile: "zcode.txt", harborCopies: [] },
+  // Harbor antigravity_cli.py:984 tees stdout as antigravity-stream.jsonl; its collector copies RENAMED files
+  // (:1323-1343), never a subtree, so no copy slot — the home sits at agent/.gemini/ alone.
+  antigravity: { stdoutFile: "antigravity-stream.jsonl", harborCopies: [] },
 };
 
 /**
@@ -176,6 +179,7 @@ const HARBOR_AGENT_NAMES: Record<string, string> = {
   "qwen-coder": "qwen",
   "kimi-code": "kimi",
   opencode: "opencode",
+  "antigravity-cli": "antigravity",
 };
 
 /** The layout for a harness LABEL: an SDK id, Harbor's name for one, else the default. */

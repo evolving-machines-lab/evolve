@@ -102,6 +102,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY["prime-agent"].defaultReasoningEffort, "high", "prime-agent pin is high (owner policy; Prime's own default is medium)");
   assertEqual(AGENT_REGISTRY.dsh.defaultReasoningEffort, "high", "dsh pin is high (DeepSeek's documented default)");
   assertEqual(AGENT_REGISTRY.zcode.defaultReasoningEffort, "high", "zcode pin is high (owner policy: graded harnesses run high)");
+  assertEqual(AGENT_REGISTRY.antigravity.defaultReasoningEffort, "high", "antigravity pin is high (owner policy: graded harnesses run high)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -139,6 +140,15 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
     piMcp.includes('--extension "${PI_MCP_ADAPTER_EXTENSION:-/opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts}"'),
     "pi with MCP servers loads the adapter from the fleet path, an env override allowed",
   );
+
+  // antigravity: omitted effort stamps --effort high; the gateway-mode model
+  // is the Vertex route spelling of the default alias.
+  const agyAgent = new Agent({ type: "antigravity", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const agyCmd = (agyAgent as any).buildCommand("hello") as string;
+  assert(agyCmd.includes("--effort high"), "antigravity omitted effort stamps high on the command");
+  assert(agyCmd.includes("--model 'vertex_ai/gemini-3.8-flash'"), "antigravity gateway mode names the default model's Vertex route");
+  const agyMax = new Agent({ type: "antigravity", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "xhigh" } as any, {});
+  assert(((agyMax as any).buildCommand("hello") as string).includes("--effort max"), "antigravity maps xhigh onto the CLI's max");
 
   // kimi: omitted effort stamps max thinking in the KIMI_MODEL_* envs
   // (direct wiring path; the config.toml path resolves through the same
