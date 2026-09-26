@@ -220,7 +220,8 @@ class OutputEvent(TypedDict):
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
+clock (claude, gemini, opencode and droid stamp every line; pi and prime-agent stamp every message;
+qwen and kimi stamp none); `model` is
 the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets
 you tell which lines belong to one LLM message (claude prints one line per content block, all with
 the same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the
@@ -290,6 +291,7 @@ UI display. For replay after cleanup, use the `session_id` with
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `HarnessEvent` | `"harness_event"` | A line about the harness's own run (a retry, a sub-agent step, an unknown type). **Not agent work** — see below |
 
 ---
 
@@ -402,16 +404,39 @@ output:
 
 ```python
 def did_work(events):
-    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage") for e in events)
+    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage", "harness_event") for e in events)
 ```
+
+## Harness-reported events (`harness_event`)
+
+A harness also prints lines that describe its own run rather than the agent's work — a retry it is
+about to make, a sub-agent's progress, a compaction, a title call — and any harness can add a new
+line type in a release. None of those fit an ACP update, and none is dropped: each rides through
+as its own update with the harness's own type word and the line's other fields, verbatim. A type the
+parser has never seen is passed through the same way and logged once per type.
+
+```python
+{
+    "update": {
+        "sessionUpdate": "harness_event",
+        "type": "auto_retry_start",          # the harness's own type word, verbatim
+        "payload": {"attempt": 1, "maxAttempts": 3, "delayMs": 2271},  # the line's other fields, verbatim
+    }
+}
+```
+
+**It is not agent work either.** Exclude it exactly as `did_work` above excludes `error` and
+`usage`: a harness that printed a retry schedule has not done anything for the task yet.
 
 ## Harness-reported usage (`usage`)
 
 Every harness prints its own token accounting on the stream, and it arrives as its own update so
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
-opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
-whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
-simply has no `usage` events.
+opencode prints each step's tokens and cost, pi and prime-agent print each model call's tokens on
+its `message_end` line (prompt tokens are input plus cache reads plus cache writes, as Harbor counts
+them; a cost is reported only when the harness prices the call itself), and codex, gemini, claude,
+qwen and droid print a whole-run total on their terminal line. Kimi's stream-json prints no usage at
+all, so a kimi run simply has no `usage` events.
 
 ```python
 {

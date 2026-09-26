@@ -2,7 +2,7 @@
   "name": "evolve-workspace",
   "private": true,
   "type": "module",
-  "version": "0.0.66",
+  "version": "0.0.67",
   "license": "Apache-2.0",
   "workspaces": [
     "packages/e2b",

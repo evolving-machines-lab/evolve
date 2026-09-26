@@ -11,7 +11,9 @@ export type ProviderRuntimeToken = {
     | "dashscope"
     | "kimi"
     | "openrouter"
-    | "droid";
+    | "droid"
+    | "pi"
+    | "prime-agent";
   credentialMode: "provider_key" | "evolve_key";
   token: string;
   bindingSecret: string;
@@ -95,7 +97,9 @@ function isRuntimeTokenResponse(value: unknown): value is ProviderRuntimeToken {
       record.provider === "dashscope" ||
       record.provider === "kimi" ||
       record.provider === "openrouter" ||
-      record.provider === "droid"
+      record.provider === "droid" ||
+      record.provider === "pi" ||
+      record.provider === "prime-agent"
     ) &&
     (record.credentialMode === "provider_key" ||
       record.credentialMode === "evolve_key") &&
