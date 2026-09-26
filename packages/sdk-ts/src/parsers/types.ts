@@ -18,7 +18,6 @@
  * plan                 → TodoWrite updates
  * error                → A failure the harness reported (never work)
  * usage                → Token accounting the harness reported (never work)
- * harness_event        → A line of the harness's own with no slot above (never work)
  * ```
  *
  * @example UI Integration
@@ -169,6 +168,29 @@ export type SessionUpdate =
   | HarnessEvent;
 
 /**
+ * A wire line the harness printed that has no ACP slot — kept, never dropped.
+ *
+ * DELIBERATE EXTENSION BEYOND ACP, like AgentError and AgentUsage. Two
+ * harness streams are unversioned or grow between releases (the owner's
+ * ruling 2026-09-25: any event type outside the captured vocabulary is passed
+ * through as a generic event and logged, never a failure), and some captured
+ * types are real facts of the run with no ACP shape — a Prime Agent
+ * sub-agent's progress (`rlm_child_update`), a pi automatic retry
+ * (`auto_retry_start`), a compaction. `type` is the harness's own type word
+ * and `payload` the line's other fields, verbatim.
+ *
+ * Excluded from isAgentWorkUpdate: an unknown line is evidence the harness
+ * PRINTED something, never that the agent did work.
+ */
+export interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  /** The harness's own type word for the line, verbatim. */
+  type: string;
+  /** Every other field of the line, verbatim. */
+  payload: Record<string, unknown>;
+}
+
+/**
  * Token accounting as the harness reported it on one wire line.
  *
  * The field names are Harbor's ATIF `Metrics` (harbor/models/trajectories/
@@ -249,19 +271,6 @@ export interface AgentError {
   /** True when the harness treated it as terminal for the turn. */
   fatal: boolean;
 }
-
-/**
- * A line the harness wrote that has no slot above — a retry, a sub-agent's
- * status, a title or compaction record, or a type the parser does not know.
- *
- * DELIBERATE EXTENSION BEYOND ACP, shared by every parser (decision
- * 2026-09-25). Dropping such a line hides that the harness said something;
- * folding it into agent text would count it as work. So it passes through
- * under the harness's own `type` word with the line's other fields verbatim
- * in `payload`, excluded from isAgentWorkUpdate. Loop punctuation (turn or
- * agent start and end) stays silent, as in every parser before it.
- */
-export interface HarnessEvent { sessionUpdate: "harness_event"; type: string; payload: Record<string, unknown> }
 
 /**
  * Is this update evidence the harness did WORK, as opposed to reporting a
