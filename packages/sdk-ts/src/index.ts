@@ -250,7 +250,7 @@ export type {
 // =============================================================================
 
 // Output event types
-export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, TokenUsage } from "./parsers";
+export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, HarnessEvent, TokenUsage } from "./parsers";
 export { isAgentWorkUpdate } from "./parsers";
 
 // Parser functions
@@ -262,10 +262,15 @@ export {
 
 // Individual parser factory functions (for advanced use cases)
 export {
+  createAntigravityParser,
   createClaudeParser,
   createCodexParser,
   createDroidParser,
+  createDshParser,
   createGeminiParser,
+  createPiParser,
+  createPrimeAgentParser,
+  createZcodeParser,
   parseQwenOutput,
 } from "./parsers";
 
@@ -300,8 +305,12 @@ export {
   writeCodexMcpConfig,
   writeDroidGatewaySettings,
   writeDroidMcpConfig,
+  writeDshMcpConfig,
+  writeDshRoutePatch,
   writeGeminiMcpConfig,
   writeQwenMcpConfig,
+  writeZcodeMcpConfig,
+  writeZcodeProviderConfig,
 } from "./mcp";
 
 // =============================================================================
