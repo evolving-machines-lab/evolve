@@ -309,6 +309,32 @@ async function testFactsAndUnknown(): Promise<void> {
   assert(warnings.every((w) => w.startsWith("[zcode parser] unknown event type ")), "the log line names the parser and says what it is");
   assert(warnings[0].endsWith("permission.requested") && warnings[1].endsWith("something.new") && warnings[2].endsWith("session.updated/{compactedMessages,summary}"), "the log names the type (a catch-all payload by its key set)");
   assert(parse("not json") === null && parse("{}") === null, "a non-JSON line and a line with no type are ignored");
+
+  // On a real capture: one envelope of the tool run re-typed to a documented
+  // but never-seen type (session.closed) rides through as a harness_event and
+  // changes nothing else.
+  const lines = fixture("glm-T2-flash");
+  const at = lines.findIndex((line) => JSON.parse(line).type === "checkpoint.created");
+  const unseen = JSON.stringify({ ...JSON.parse(lines[at]), type: "session.closed", payload: { reason: "idle" } });
+  const spliced = [...lines.slice(0, at), unseen, ...lines.slice(at)];
+  const warned: string[] = [];
+  console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(" ")); };
+  let plain: OutputEvent[] = [];
+  let withUnseen: OutputEvent[] = [];
+  try {
+    plain = parseAll(lines);
+    withUnseen = parseAll(spliced);
+  } finally {
+    console.warn = previous;
+  }
+  const added = withUnseen.find((e) => e.update.sessionUpdate === "harness_event" && e.update.type === "session.closed");
+  assert(withUnseen.length === plain.length + 1 && added !== undefined, "on the real capture the unknown line adds exactly one event, a harness_event under its own type word");
+  assert(
+    added?.sessionId === plain[0].sessionId && added?.model === "openrouter/z-ai/glm-5.3-flash" && added.update.sessionUpdate === "harness_event" && JSON.stringify(added.update.payload.payload) === JSON.stringify({ reason: "idle" }),
+    "…on the run's session, stamped with the model already named, payload verbatim",
+  );
+  assert(JSON.stringify(withUnseen.filter((e) => e !== added)) === JSON.stringify(plain), "every other event of the capture is byte-identical to the plain parse");
+  assert(warned.length === 1 && warned[0] === "[zcode parser] unknown event type session.closed", "one warning for the one unknown type");
 }
 
 async function testModelCompleteWithoutDeltas(): Promise<void> {
