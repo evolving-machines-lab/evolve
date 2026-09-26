@@ -1,26 +1,26 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: a managed sandbox create survives the door's 429/503
+ * Unit Test: a managed sandbox create survives the door's 429/503 on the ONE request that creates the box
  *
- * The door can refuse a create with a 429/503 and Retry-After before any box
- * exists; the create waits the server's delay and tries again, bounded, then
- * throws the refusal it still gets. A 401 is never retried. The pacing is the
- * hosted client's one law; the vendor error shapes the reader depends on are
- * pinned here against @daytonaio/sdk 0.203 and e2b 2.39.
+ * The door can refuse that request with a 429/503 and Retry-After before any box exists; the request
+ * is sent again after the server's delay, bounded, then the refusal it still gets is thrown. A 401 is
+ * never retried, and a refusal on any call after the box exists never makes a second box. The pacing
+ * is the hosted client's one law; the reader's vendor shapes are pinned by the real clients in the
+ * e2b and daytona packages, and driven end to end here over a local door.
  *
  * Usage:
  *   npx tsx tests/unit/managed-create-retry.test.ts
  */
 
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   MANAGED_CREATE_RETRY,
   readManagedCreateRefusal,
   resolveManagedSandbox,
-  withTransientCreateRetry,
 } from "../../src/utils/sandbox";
 import { ManagedModalDoorError, ManagedModalProvider } from "../../src/utils/managed-modal";
 import { retryAfterSecFromHeader, retryTransient } from "../../src/hosted/retry-after";
-import type { SandboxCreateOptions, SandboxInstance, SandboxProvider } from "../../src/types";
 
 // =============================================================================
 // TEST HELPERS
@@ -50,6 +50,9 @@ function assertEqual(actual: unknown, expected: unknown, message: string): void 
     console.log(`  ✗ ${message} (expected ${e}, got ${a})`);
   }
 }
+
+/** Timers may land a hair early against a wall clock; two milliseconds of grace keep the law provable. */
+const CLOCK_GRACE_MS = 2;
 
 interface RecordedRequest {
   url: string;
@@ -102,27 +105,13 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 /** Waits of a few ms so the pacing law is measured, never waited out. */
 const FAST = { attempts: 3, baseDelayMs: 10, maxDelayMs: 1_000 };
 
-/** The Modal transport over the scripted door, paced fast. */
-function fastModal(): SandboxProvider {
-  return withTransientCreateRetry(
-    new ManagedModalProvider({ apiKey: "sk-evolve-key", baseUrl: "https://dashboard.test/api/managed/modal" }),
-    FAST,
-  );
-}
-
-/** A provider whose create throws the scripted errors in order, then resolves. */
-function scriptedProvider(errors: unknown[]): { provider: SandboxProvider; calls: () => number } {
-  let calls = 0;
-  const provider = {
-    providerType: "daytona",
-    name: "scripted",
-    async create(_options: SandboxCreateOptions): Promise<SandboxInstance> {
-      const err = errors[calls++];
-      if (err !== undefined) throw err;
-      return { sandboxId: "box-1" } as unknown as SandboxInstance;
-    },
-  } as unknown as SandboxProvider;
-  return { provider, calls: () => calls };
+/** The Modal transport with the real reader and law on its create request, paced fast. */
+function fastModal(): ManagedModalProvider {
+  return new ManagedModalProvider({
+    apiKey: "sk-evolve-key",
+    baseUrl: "https://dashboard.test/api/managed/modal",
+    retryCreateRequest: (send) => retryTransient(send, readManagedCreateRefusal, FAST),
+  });
 }
 
 /** Daytona 0.203's translated server error: `statusCode` and the response `headers` ride on it. */
@@ -130,11 +119,11 @@ function daytonaShaped(statusCode: number, headers?: Record<string, string>): Er
   return Object.assign(new Error(SERVER_TEXT), { name: "DaytonaServiceUnavailableError", statusCode, headers });
 }
 
-/** e2b 2.39's `handleApiError`: a 429 is a RateLimitError, every other status a SandboxError "<status>: <message>". */
+/** e2b 2.39's API error: a 429 is a RateLimitError, a 401 an AuthenticationError, the rest a SandboxError "<status>: …". */
 function e2bShaped(status: number): Error {
-  if (status === 429) return Object.assign(new Error(`Rate limit exceeded, please try again later - ${SERVER_TEXT}`), { name: "RateLimitError" });
-  if (status === 401) return Object.assign(new Error(`Unauthorized, please check your credentials. - ${SERVER_TEXT}`), { name: "AuthenticationError" });
-  return Object.assign(new Error(`${status}: ${SERVER_TEXT}`), { name: "SandboxError" });
+  if (status === 429) return Object.assign(new Error("Rate limit exceeded, please try again later - [object Object]"), { name: "RateLimitError" });
+  if (status === 401) return Object.assign(new Error("Unauthorized, please check your credentials. - [object Object]"), { name: "AuthenticationError" });
+  return Object.assign(new Error(`${status}: [object Object]`), { name: "SandboxError" });
 }
 
 // =============================================================================
@@ -144,7 +133,7 @@ function e2bShaped(status: number): Error {
 async function testLawHonorsRetryAfter(): Promise<void> {
   console.log("\n[1a] retryTransient - waits the server's Retry-After when it exceeds the backoff");
   let tries = 0;
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   const result = await retryTransient(
     async () => {
       tries++;
@@ -154,16 +143,16 @@ async function testLawHonorsRetryAfter(): Promise<void> {
     () => ({ retryAfterSec: 0.08 }),
     { attempts: 2, baseDelayMs: 1, maxDelayMs: 1_000 },
   );
-  const elapsedMs = Date.now() - startedAt;
+  const elapsedMs = performance.now() - startedAt;
   assertEqual(result, "ok", "resolves with the second try's value");
   assertEqual(tries, 2, "one refusal, one retry");
-  assert(elapsedMs >= 80, `slept the 80ms Retry-After, not the 1ms backoff (waited ${elapsedMs}ms)`);
+  assert(elapsedMs >= 80 - CLOCK_GRACE_MS, `slept the 80ms Retry-After, not the 1ms backoff (waited ${elapsedMs.toFixed(1)}ms)`);
 }
 
 async function testLawFloorsAtBackoff(): Promise<void> {
   console.log("\n[1b] retryTransient - no Retry-After: the backoff paces, doubling");
   let tries = 0;
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   await retryTransient(
     async () => {
       tries++;
@@ -173,15 +162,15 @@ async function testLawFloorsAtBackoff(): Promise<void> {
     () => ({}),
     { attempts: 3, baseDelayMs: 20, maxDelayMs: 1_000 },
   );
-  const elapsedMs = Date.now() - startedAt;
+  const elapsedMs = performance.now() - startedAt;
   assertEqual(tries, 3, "two refusals, two retries");
-  assert(elapsedMs >= 60, `slept 20ms then 40ms (waited ${elapsedMs}ms)`);
+  assert(elapsedMs >= 60 - CLOCK_GRACE_MS, `slept 20ms then 40ms (waited ${elapsedMs.toFixed(1)}ms)`);
 }
 
 async function testLawCapsTheWait(): Promise<void> {
   console.log("\n[1c] retryTransient - a Retry-After past the cap waits only the cap");
   let tries = 0;
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   await retryTransient(
     async () => {
       tries++;
@@ -191,8 +180,11 @@ async function testLawCapsTheWait(): Promise<void> {
     () => ({ retryAfterSec: 5 }),
     { attempts: 2, baseDelayMs: 1, maxDelayMs: 30 },
   );
-  const elapsedMs = Date.now() - startedAt;
-  assert(elapsedMs >= 30 && elapsedMs < 1_000, `waited the 30ms cap, not the 5s asked (waited ${elapsedMs}ms)`);
+  const elapsedMs = performance.now() - startedAt;
+  assert(
+    elapsedMs >= 30 - CLOCK_GRACE_MS && elapsedMs < 1_000,
+    `waited the 30ms cap, not the 5s asked (waited ${elapsedMs.toFixed(1)}ms)`
+  );
 }
 
 async function testLawIsBounded(): Promise<void> {
@@ -295,7 +287,7 @@ function testReaderRejectsTheRest(): void {
 }
 
 // =============================================================================
-// [3] The wiring — resolveManagedSandbox("modal") over a scripted door
+// [3] The Modal door — the wiring through resolveManagedSandbox, and the seam
 // =============================================================================
 
 function testDefaultPolicyPins(): void {
@@ -308,20 +300,20 @@ async function testManagedCreateSurvivesOneRefusal(): Promise<void> {
   const { requests, restore } = withMockDoor([() => refusal(503, 0.05), created]);
   try {
     const provider = await resolveManagedSandbox("sk-evolve-key", "modal", { timeoutMs: 60_000 });
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     const sandbox = await provider.create({ image: "evolve-all" });
-    const elapsedMs = Date.now() - startedAt;
+    const elapsedMs = performance.now() - startedAt;
 
     assertEqual(sandbox.sandboxId, "modal-sb-1", "the create resolves with the box the retry got");
-    assertEqual(requests.length, 2, "the refused create was sent again, once");
+    assertEqual(requests.length, 2, "the refused create request was sent again, once");
     assert(
       requests.every((r) => r.method === "POST" && r.url.endsWith("/sandboxes")),
       "both attempts are the same create request"
     );
     assertEqual(requests[0].body, requests[1].body, "the retry re-sends the same body, defaults folded in");
     assert(
-      elapsedMs >= 1_000,
-      `the wait is at least the create's base delay of 1 s (waited ${elapsedMs}ms)`
+      elapsedMs >= 1_000 - CLOCK_GRACE_MS,
+      `the wait is at least the create's base delay of 1 s (waited ${elapsedMs.toFixed(1)}ms)`
     );
   } finally {
     restore();
@@ -363,7 +355,7 @@ async function testManagedCreateNeverRetriesUnauthorized(): Promise<void> {
 }
 
 async function testManagedCreateRetriesOnlyCreate(): Promise<void> {
-  console.log("\n[3e] the retry wraps create alone: a 503 on connect surfaces at once");
+  console.log("\n[3e] the seam wraps the create request alone: a 503 on connect surfaces at once");
   const { requests, restore } = withMockDoor([() => refusal(503, 0.01)]);
   try {
     const err = await rejection(fastModal().connect("modal-sb-1"));
@@ -375,50 +367,163 @@ async function testManagedCreateRetriesOnlyCreate(): Promise<void> {
 }
 
 // =============================================================================
-// [4] The other two doors — vendor-shaped refusals through the same wrapper
+// [4] The other two doors — the REAL vendor clients over a local door, end to end
 // =============================================================================
 
-async function testDaytonaShapedRefusalIsRetriedWithItsDelay(): Promise<void> {
-  console.log("\n[4a] a Daytona-shaped 503 with Retry-After is retried after that delay");
-  const { provider, calls } = scriptedProvider([daytonaShaped(503, { "retry-after": "0.05" })]);
-  const startedAt = Date.now();
-  const sandbox = await withTransientCreateRetry(provider, { ...FAST, baseDelayMs: 1 }).create({});
-  const elapsedMs = Date.now() - startedAt;
-  assertEqual(sandbox.sandboxId, "box-1", "the create resolves");
-  assertEqual(calls(), 2, "one refusal, one retry");
-  assert(elapsedMs >= 50, `slept the 50ms Retry-After off the headers (waited ${elapsedMs}ms)`);
+interface DoorRequest {
+  method: string;
+  url: string;
 }
 
-async function testDaytonaShapedUnauthorizedIsFinal(): Promise<void> {
-  console.log("\n[4b] a Daytona-shaped 401 is thrown at once");
-  const refused = daytonaShaped(401);
-  const { provider, calls } = scriptedProvider([refused, refused, refused]);
-  const err = await rejection(withTransientCreateRetry(provider, FAST).create({}));
-  assertEqual(calls(), 1, "one try");
-  assert(err === refused, "the same instance surfaces");
+interface DoorAnswer {
+  status: number;
+  body?: unknown;
+  headers?: Record<string, string>;
 }
 
-async function testE2BShapedRefusalsAreRetried(): Promise<void> {
-  console.log("\n[4c] e2b-shaped refusals: RateLimitError and \"503: …\" are retried, then the last one surfaces");
-  const okAfterOne = scriptedProvider([e2bShaped(429)]);
-  await withTransientCreateRetry(okAfterOne.provider, FAST).create({});
-  assertEqual(okAfterOne.calls(), 2, "a RateLimitError is retried");
-
-  const last = e2bShaped(503);
-  const spent = scriptedProvider([e2bShaped(503), e2bShaped(503), last]);
-  const err = await rejection(withTransientCreateRetry(spent.provider, FAST).create({}));
-  assertEqual(spent.calls(), 3, "three 503s spend the tries");
-  assert(err === last, "the third SandboxError surfaces, server text in its message");
-  assert((err as Error).message === `503: ${SERVER_TEXT}`, "e2b's own message shape is untouched");
+/** A local HTTP door the real vendor clients talk to; every request is recorded, `answer` scripts each reply. */
+async function localDoor(
+  answer: (req: DoorRequest) => DoorAnswer,
+): Promise<{ url: string; requests: DoorRequest[]; close: () => Promise<void> }> {
+  const requests: DoorRequest[] = [];
+  const server = createServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      const record = { method: req.method ?? "GET", url: req.url ?? "/" };
+      requests.push(record);
+      const reply = answer(record);
+      res.writeHead(reply.status, { "content-type": "application/json", ...(reply.headers ?? {}) });
+      res.end(reply.body === undefined ? "" : JSON.stringify(reply.body));
+    });
+  });
+  // The Daytona client also tries a websocket upgrade; refusing it keeps the door a plain HTTP server.
+  server.on("upgrade", (_req, socket) => socket.destroy());
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    requests,
+    close: () => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
 }
 
-async function testE2BShapedUnauthorizedIsFinal(): Promise<void> {
-  console.log("\n[4d] an e2b-shaped AuthenticationError is thrown at once");
-  const refused = e2bShaped(401);
-  const { provider, calls } = scriptedProvider([refused]);
-  const err = await rejection(withTransientCreateRetry(provider, FAST).create({}));
-  assertEqual(calls(), 1, "one try");
-  assert(err === refused, "the same instance surfaces");
+async function withEnv<T>(vars: Record<string, string>, run: () => Promise<T>): Promise<T> {
+  const previous = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, vars);
+  try {
+    return await run();
+  } finally {
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+const DAYTONA_BOX = {
+  id: "dtn-1",
+  state: "started",
+  toolboxProxyUrl: "https://runner.test",
+  labels: {},
+  createdAt: "2026-09-26T00:00:00.000Z",
+  updatedAt: "2026-09-26T00:00:00.000Z",
+};
+
+const E2B_BOX = {
+  sandboxID: "sbx-1",
+  templateID: "evolve-all",
+  envdVersion: "0.2.0",
+  envdAccessToken: "envd-token",
+  clientID: "c1",
+  startedAt: "2026-09-26T00:00:00.000Z",
+  endAt: "2026-09-26T01:00:00.000Z",
+};
+
+const isDaytonaCreate = (r: DoorRequest) => r.method === "POST" && r.url.endsWith("/sandbox");
+const isE2BCreate = (r: DoorRequest) => r.method === "POST" && r.url.endsWith("/sandboxes");
+
+async function testDaytonaCreateRequestIsRetried(): Promise<void> {
+  console.log("\n[4a] Daytona: the create request refused once with Retry-After, then answered — one box");
+  let creates = 0;
+  const door = await localDoor((req) => {
+    if (!isDaytonaCreate(req)) return { status: 200, body: {} };
+    return ++creates === 1
+      ? { status: 503, body: { error: SERVER_TEXT }, headers: { "retry-after": "0.05" } }
+      : { status: 200, body: DAYTONA_BOX };
+  });
+  try {
+    const sandbox = await withEnv({ EVOLVE_DASHBOARD_URL: door.url }, async () => {
+      const provider = await resolveManagedSandbox("sk-evolve-key", "daytona");
+      return provider.create({ image: "evolve-all" });
+    });
+    assertEqual(sandbox.sandboxId, "dtn-1", "the create resolves with the box the retry got");
+    assertEqual(door.requests.filter(isDaytonaCreate).length, 2, "the refused create request was sent again, once");
+  } finally {
+    await door.close();
+  }
+}
+
+async function testDaytonaRefusalAfterTheBoxNeverRecreates(): Promise<void> {
+  console.log("\n[4b] Daytona: a 503 after the box exists (the toolbox call) never issues a second create");
+  const door = await localDoor((req) =>
+    isDaytonaCreate(req)
+      ? { status: 200, body: DAYTONA_BOX }
+      : { status: 503, body: { error: SERVER_TEXT }, headers: { "retry-after": "0.05" } },
+  );
+  try {
+    const err = await withEnv({ EVOLVE_DASHBOARD_URL: door.url }, async () => {
+      const provider = await resolveManagedSandbox("sk-evolve-key", "daytona");
+      return rejection(provider.create({ image: "evolve-all", workingDirectory: "/work" }));
+    });
+    assert(err instanceof Error, "the create rejects");
+    assertEqual((err as { statusCode?: unknown })?.statusCode, 503, "with the refusal the toolbox call got");
+    assertEqual(door.requests.filter(isDaytonaCreate).length, 1, "exactly ONE create request: the box is never made twice");
+  } finally {
+    await door.close();
+  }
+}
+
+async function testE2BCreateRequestIsRetried(): Promise<void> {
+  console.log("\n[4c] e2b: the create request refused once, then answered — one box");
+  let creates = 0;
+  const door = await localDoor((req) => {
+    if (!isE2BCreate(req)) return { status: 200, body: {} };
+    return ++creates === 1
+      ? { status: 503, body: { error: SERVER_TEXT }, headers: { "retry-after": "0.05" } }
+      : { status: 201, body: E2B_BOX };
+  });
+  try {
+    const sandbox = await withEnv({ EVOLVE_DASHBOARD_URL: door.url, E2B_SANDBOX_URL: door.url }, async () => {
+      const provider = await resolveManagedSandbox("sk-evolve-key", "e2b");
+      return provider.create({ image: "evolve-all" });
+    });
+    assertEqual(sandbox.sandboxId, "sbx-1", "the create resolves with the box the retry got");
+    assertEqual(door.requests.filter(isE2BCreate).length, 2, "the refused create request was sent again, once");
+  } finally {
+    await door.close();
+  }
+}
+
+async function testE2BRefusalAfterTheBoxNeverRecreates(): Promise<void> {
+  console.log("\n[4d] e2b: a 503 after the box exists (the envd makeDir) never issues a second create");
+  const door = await localDoor((req) =>
+    isE2BCreate(req)
+      ? { status: 201, body: E2B_BOX }
+      : { status: 503, body: { error: SERVER_TEXT }, headers: { "retry-after": "0.05" } },
+  );
+  try {
+    const err = await withEnv({ EVOLVE_DASHBOARD_URL: door.url, E2B_SANDBOX_URL: door.url }, async () => {
+      const provider = await resolveManagedSandbox("sk-evolve-key", "e2b");
+      return rejection(provider.create({ image: "evolve-all", workingDirectory: "/work" }));
+    });
+    assert(err instanceof Error, `the create rejects (${(err as Error)?.name})`);
+    assertEqual(door.requests.filter(isE2BCreate).length, 1, "exactly ONE create request: the box is never made twice");
+  } finally {
+    await door.close();
+  }
 }
 
 // =============================================================================
@@ -441,10 +546,10 @@ const tests = [
   testManagedCreateGivesUpAfterThree,
   testManagedCreateNeverRetriesUnauthorized,
   testManagedCreateRetriesOnlyCreate,
-  testDaytonaShapedRefusalIsRetriedWithItsDelay,
-  testDaytonaShapedUnauthorizedIsFinal,
-  testE2BShapedRefusalsAreRetried,
-  testE2BShapedUnauthorizedIsFinal,
+  testDaytonaCreateRequestIsRetried,
+  testDaytonaRefusalAfterTheBoxNeverRecreates,
+  testE2BCreateRequestIsRetried,
+  testE2BRefusalAfterTheBoxNeverRecreates,
 ];
 
 (async () => {
@@ -454,7 +559,8 @@ const tests = [
       await test();
     }
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
-    if (failed > 0) process.exit(1);
+    // Explicit exit: the real Daytona client keeps a socket.io reconnect alive after the door closes.
+    process.exit(failed > 0 ? 1 : 0);
   } catch (err) {
     console.error("Unexpected error:", err);
     process.exit(1);

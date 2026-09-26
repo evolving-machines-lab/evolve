@@ -136,25 +136,11 @@ export function readManagedCreateRefusal(error: unknown): TransientRefusal | und
 }
 
 /**
- * Retry a managed create the door refused with a 429/503; past the bound the refusal is thrown unchanged.
- * Create alone: it is the one request the platform refuses before any box exists.
+ * What every managed provider wraps around the ONE request that creates a box: the door's 429/503 is
+ * tried again under MANAGED_CREATE_RETRY, then thrown unchanged; a refusal after the box exists is never retried.
  */
-export function withTransientCreateRetry(
-  provider: SandboxProvider,
-  policy: TransientRetryPolicy = MANAGED_CREATE_RETRY,
-): SandboxProvider {
-  const createDirect = provider.create.bind(provider);
-  provider.create = (options: SandboxCreateOptions = {}) =>
-    retryTransient(() => createDirect(options), readManagedCreateRefusal, policy);
-  return provider;
-}
-
-/** What every managed provider gets: the mark, the create retry, then the create defaults folded under. */
-function managed(
-  provider: SandboxProvider,
-  defaults?: ManagedSandboxCreateDefaults,
-): SandboxProvider {
-  return withCreateDefaults(withTransientCreateRetry(markEvolveManagedSandbox(provider)), defaults);
+export function retryManagedCreateRequest<T>(send: () => Promise<T>): Promise<T> {
+  return retryTransient(send, readManagedCreateRefusal, MANAGED_CREATE_RETRY);
 }
 
 /**
@@ -190,12 +176,15 @@ export async function resolveManagedSandbox(
       // credential for. The Evolve key travels as the Daytona apiKey because
       // that is the header the Daytona client puts it in and the header both
       // managed doors read.
-      return managed(
-        createDaytonaProvider({
-          apiKey,
-          apiUrl: getManagedProviderUrl("daytona"),
-          managedToolboxUrl: getManagedDaytonaToolboxUrl(),
-        }),
+      return withCreateDefaults(
+        markEvolveManagedSandbox(
+          createDaytonaProvider({
+            apiKey,
+            apiUrl: getManagedProviderUrl("daytona"),
+            managedToolboxUrl: getManagedDaytonaToolboxUrl(),
+            retryCreateRequest: retryManagedCreateRequest,
+          }),
+        ),
         defaults,
       );
     } catch (e) {
@@ -219,16 +208,28 @@ export async function resolveManagedSandbox(
     // utils/managed-modal.ts for the wire, which the Dashboard's twin routes
     // are built against).
     const { ManagedModalProvider } = await import("./managed-modal");
-    return managed(
-      new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
+    return withCreateDefaults(
+      markEvolveManagedSandbox(
+        new ManagedModalProvider({
+          apiKey,
+          baseUrl: getManagedProviderUrl("modal"),
+          retryCreateRequest: retryManagedCreateRequest,
+        }),
+      ),
       defaults,
     );
   }
 
   try {
     const { createE2BProvider } = await import("@evolvingmachines/e2b");
-    return managed(
-      createE2BProvider({ apiKey: toManagedE2BKey(apiKey), apiUrl: getE2BGatewayUrl() }),
+    return withCreateDefaults(
+      markEvolveManagedSandbox(
+        createE2BProvider({
+          apiKey: toManagedE2BKey(apiKey),
+          apiUrl: getE2BGatewayUrl(),
+          retryCreateRequest: retryManagedCreateRequest,
+        }),
+      ),
       defaults,
     );
   } catch (e) {

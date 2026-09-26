@@ -1,18 +1,12 @@
 /**
- * The ONE Retry-After reading: the envelope's `retryAfterSec` first and the
- * `Retry-After` header second, because a cross-origin browser fetch cannot
- * always see the header. Every retry path reads the delay through here — the
- * typed error, the SSE follow's own backoff, and the resumable upload's
- * rate-limit waits — so the same 429 delays the same amount whichever half
- * of the wire carries the number.
+ * The ONE Retry-After reading, body first because a cross-origin browser fetch cannot always see the
+ * header: the typed error, the SSE follow, the resumable upload and the managed doors all read the delay here.
  */
 export function readRetryAfterSec(text: string, res: Response): number | undefined {
   try {
     const body = JSON.parse(text) as { error?: { retryAfterSec?: unknown } };
     const fromBody = body?.error?.retryAfterSec;
-    // Finite or absent, in the BODY too: `JSON.parse('1e400')` is Infinity, and
-    // a caller sleeping Infinity is parked forever with no bound and no output.
-    // A delay that cannot be waited is no reading at all.
+    // Finite or absent: `JSON.parse('1e400')` is Infinity, and a caller sleeping Infinity is parked forever.
     if (typeof fromBody === "number" && Number.isFinite(fromBody)) return fromBody;
   } catch {
     // Unparseable body: the header is the only reading left.
@@ -20,13 +14,9 @@ export function readRetryAfterSec(text: string, res: Response): number | undefin
   return retryAfterSecFromHeader(res.headers?.get?.("retry-after"));
 }
 
-/**
- * The header half of the reading on its own, for a client that keeps the
- * response headers but not the Response (an axios error does).
- */
+/** The header half on its own, for a client that keeps the response headers but not the Response. */
 export function retryAfterSecFromHeader(raw: unknown): number | undefined {
-  // An ABSENT header is no reading at all, never zero: `Number(null)` is 0, which told the caller
-  // to retry instantly. Empty is absent and the HTTP-date form is unreadable; both leave "retry shortly".
+  // Absent, empty or an HTTP-date is no reading, never zero: `Number(null)` is 0, which meant "retry now".
   if (typeof raw !== "string" || raw.trim() === "") return undefined;
   const fromHeader = Number(raw);
   return Number.isFinite(fromHeader) ? fromHeader : undefined;
@@ -37,20 +27,14 @@ export interface TransientRefusal {
   retryAfterSec?: number;
 }
 
-/** How many tries a transient refusal gets and how the waits between them are paced. */
+/** `attempts` tries in all; the wait starts at `baseDelayMs`, doubles per refusal, never exceeds `maxDelayMs`. */
 export interface TransientRetryPolicy {
-  /** Total tries, the first included. */
   attempts: number;
-  /** Wait before the second try; doubles after each further refusal. */
   baseDelayMs: number;
-  /** Longest single wait, whatever Retry-After asked for. */
   maxDelayMs: number;
 }
 
-/**
- * Run `attempt` until it resolves, an error `readRefusal` does not recognize is thrown, or the tries are
- * spent; then the last refusal is thrown as is. Retry-After floored by the backoff (the watch loops' law), capped.
- */
+/** Tries `attempt` until it resolves or the tries are spent; an unrecognized error is thrown at once, the last refusal as is. */
 export async function retryTransient<T>(
   attempt: () => Promise<T>,
   readRefusal: (error: unknown) => TransientRefusal | undefined,

@@ -123,11 +123,16 @@ function toUint8(content: string | Buffer | ArrayBuffer | Uint8Array): Uint8Arra
   throw new Error(`Unsupported data type: ${typeof content}`);
 }
 
+/** Wraps the one request that creates a box, for the SDK to retry a door's 429/503 before any box exists. */
+export type CreateRequestRetry = <T>(send: () => Promise<T>) => Promise<T>;
+
 interface ManagedModalConfig {
   /** The Evolve API key; the door authenticates it, never Modal. */
   apiKey: string;
   /** The door's base URL (getManagedProviderUrl("modal")). */
   baseUrl: string;
+  /** @internal Resolved by the Evolve SDK; unset means the create request is sent once. */
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 /** One fetch seam for the whole transport, with the door's error body surfaced. */
@@ -441,9 +446,11 @@ export class ManagedModalProvider implements SandboxProvider {
   readonly providerType = "modal" as const;
   readonly name = "Managed Modal";
   private readonly door: ManagedModalDoor;
+  private readonly retryCreateRequest?: CreateRequestRetry;
 
   constructor(config: ManagedModalConfig) {
     this.door = new ManagedModalDoor(config);
+    this.retryCreateRequest = config.retryCreateRequest;
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
@@ -476,17 +483,16 @@ export class ManagedModalProvider implements SandboxProvider {
       );
     }
 
-    const response = await this.door.request(
-      "create",
-      "/sandboxes",
-      this.door.json({
-        ...(options.image ? { image: options.image } : {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-        ...(options.workingDirectory ? { workingDirectory: options.workingDirectory } : {}),
-        ...(options.envs ? { envs: options.envs } : {}),
-        ...(options.metadata ? { metadata: options.metadata } : {}),
-      }),
-    );
+    const body = this.door.json({
+      ...(options.image ? { image: options.image } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.workingDirectory ? { workingDirectory: options.workingDirectory } : {}),
+      ...(options.envs ? { envs: options.envs } : {}),
+      ...(options.metadata ? { metadata: options.metadata } : {}),
+    });
+    // The one request the door may refuse before a box exists; everything after it acts on the box.
+    const send = () => this.door.request("create", "/sandboxes", body);
+    const response = await (this.retryCreateRequest ? this.retryCreateRequest(send) : send());
     const payload = (await response.json()) as ManagedModalSandboxPayload;
     return new ManagedModalSandbox(this.door, payload.sandboxId);
   }
