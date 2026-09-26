@@ -104,7 +104,7 @@ evolve analyze "$JOB_ID" -r rubric.toml -p prompt.txt --watch
 
 An analyzer prompt can use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. Evolve appends the required output format.
 
-Use `-m`, `--effort`, `-e`, and `-n` for model, effort, provider, and concurrency. On job creation, use the corresponding `--analyze-*` flags. See the [full reference](/cli-reference/analyze).
+Use `-a`, `-m`, `--effort`, `-e`, and `-n` for agent, model, effort, provider, and concurrency. The analyzer runs on `claude` unless `-a` names another agent; the model must be one of that agent's [models](/core-concepts/models#analysis-and-check-models). On job creation, use the corresponding `--analyze-*` flags. See the [full reference](/cli-reference/analyze).
 
 ## The result
 

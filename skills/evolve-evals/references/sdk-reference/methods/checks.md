@@ -37,6 +37,7 @@ async def create(
     *,
     dataset: Optional[str] = None,
     name: Optional[str] = None,
+    agent: Optional[str] = None,
     model_name: Optional[str] = None,
     rubric: Optional[Rubric] = None,
     prompt: Optional[str] = None,
@@ -80,6 +81,7 @@ Optional `onUploadProgress(sent, total)` / `on_upload_progress(sent, total)` rep
 ```ts
 interface CheckConfigInput {
   name?: string;
+  agent?: string;
   model_name?: string;
   rubric?: Rubric;
   prompt?: string;

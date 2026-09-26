@@ -528,6 +528,7 @@ analyze(
 async def analyze(
     id: str,
     *,
+    agent: Optional[str] = None,
     model_name: Optional[str] = None,
     rubric: Optional[Rubric] = None,
     prompt: Optional[str] = None,
@@ -556,7 +557,7 @@ job = await client.analyze(
 )
 ```
 
-All options are optional. `analyses().defaults()` reads the current model, effort, provider, rubric, and prompt defaults.
+All options are optional. `analyses().defaults()` reads the current agent, model, effort, provider, rubric, and prompt defaults.
 
 | Selection | Meaning |
 | --- | --- |
@@ -572,6 +573,7 @@ Cancelled trials are excluded. `trial_ids` is accepted here, but refused inside 
 
 ```ts
 interface AnalyzeConfigInput {
+  agent?: string;
   model_name?: string;
   rubric?: Rubric;
   prompt?: string;
