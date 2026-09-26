@@ -183,8 +183,9 @@ assert(
 // legacy rows that pinned Fable 5 by its explicit id are retired names.
 const RETIRED_FABLE_5_NAMES = ["claude-fable-5", "openrouter/anthropic/claude-fable-5"];
 // Retired 2026-09-26: the `[1m]` aliases resolved to Claude Code's own id (every hosted run 403'd) and
-// the roster's wire ids already carry 1M; the K2.7 Raptor route is no longer served (404).
-const RETIRED_ROSTER_NAMES = ["opus[1m]", "sonnet[1m]", "kimi-k2p7-code-raptor"];
+// the roster's wire ids already carry 1M; the K2.7 Raptor route is no longer served (404); Fireworks
+// serves DeepSeek V4 Pro on dedicated deployments only, never serverless (404 on every run).
+const RETIRED_ROSTER_NAMES = ["opus[1m]", "sonnet[1m]", "kimi-k2p7-code-raptor", "fireworks/deepseek-v4-pro-0813"];
 for (const retired of [...RETIRED_DEEPSEEK_NAMES, ...RETIRED_FABLE_5_NAMES, ...RETIRED_ROSTER_NAMES]) {
   assert(
     registryNames.every(
@@ -229,20 +230,20 @@ assert(
 );
 
 // --- 6. dsh: a DeepSeek-only roster, every id spelling its route -------------
-// Owner decision 2026-09-25: DeepSeek V4.1 Flash and V4 Pro on Fireworks and
-// OpenRouter, nothing else. Alias == wire id on every row, so the patch the
-// SDK writes names the gateway's exact entry verbatim (the same rule the
-// droid settings file and the opencode command line follow), and the
-// OpenRouter Flash route is the default (the analyzer's own model).
+// Owner decision 2026-09-25: DeepSeek V4.1 Flash on Fireworks and OpenRouter
+// and V4 Pro on OpenRouter (Fireworks has no serverless route for it),
+// nothing else. Alias == wire id on every row, so the patch the SDK writes
+// names the gateway's exact entry verbatim (the same rule the droid settings
+// file and the opencode command line follow), and the OpenRouter Flash route
+// is the default (the analyzer's own model).
 assert(
   JSON.stringify(AGENT_REGISTRY.dsh.models.map((row) => row.alias)) ===
     JSON.stringify([
       "openrouter/deepseek/deepseek-v4.1-flash",
       "fireworks/deepseek-v4.1-flash",
       "openrouter/deepseek/deepseek-v4-pro-0813",
-      "fireworks/deepseek-v4-pro-0813",
     ]),
-  "the dsh roster is exactly DeepSeek V4.1 Flash and V4 Pro on OpenRouter and Fireworks",
+  "the dsh roster is exactly DeepSeek V4.1 Flash on OpenRouter and Fireworks and V4 Pro on OpenRouter",
 );
 assert(
   AGENT_REGISTRY.dsh.models.every((row) => row.alias === row.modelId),
