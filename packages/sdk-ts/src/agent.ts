@@ -1656,11 +1656,7 @@ export class Agent {
     return aliases?.[model] ?? model;
   }
 
-  /**
-   * The pi family's models.json, written before every spawn with the LITERAL
-   * base URL of the mode (door, caller's gateway, or OpenRouter) and the key
-   * by env NAME — pi never expands a variable in baseUrl.
-   */
+  /** The pi family's per-run models.json: the mode's LITERAL base URL (pi never expands $VAR there), the key by env name. */
   private async writePiFamilyModelsJson(sandbox: SandboxInstance, runId: string): Promise<void> {
     const route = this.registry.modelsJsonRoute;
     if (!route) return;
@@ -1954,7 +1950,7 @@ export class Agent {
     // work. Gateway mode and managed integrations both produce session-scoped URLs.
     if (Object.keys(mcpServers).length > 0) {
       this.assertProviderRuntimeDoesNotExposeGatewayKey(mcpServers);
-      this.mcpConfigured = Object.keys(mcpServers).length > 0;
+      this.mcpConfigured = true;
       await writeMcpConfig(
         this.agentConfig.type,
         sandbox,

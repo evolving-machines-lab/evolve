@@ -425,13 +425,8 @@ parser has never seen is passed through the same way and logged once per type.
 }
 ```
 
-**It is not agent work either.** Exclude it exactly as you exclude `error` and `usage` when counting
-work — a harness that printed a retry schedule has not done anything for the task yet:
-
-```python
-def did_work(events):
-    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage", "harness_event") for e in events)
-```
+**It is not agent work either.** Exclude it exactly as `did_work` above excludes `error` and
+`usage`: a harness that printed a retry schedule has not done anything for the task yet.
 
 ## Harness-reported usage (`usage`)
 

@@ -152,10 +152,8 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   },
   // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
   droid: { stdoutFile: "droid.txt", harborCopies: [] },
-  // pi.py:100 tee pi.txt; :102 _SESSIONS_DIRECTORY = agent/pi/sessions is the
-  // --session-dir Harbor passes (:447), where pi writes its session files
-  // flat — the captured ~/.pi/agent/sessions/ (the SDK's own --session-dir)
-  // is written a second time there.
+  // pi.py:100 tees pi.txt; :102/:447 keep the flat --session-dir at agent/pi/sessions,
+  // so the captured ~/.pi/agent/sessions/ is written a second time there.
   pi: { stdoutFile: "pi.txt", harborCopies: [{ sandboxRoot: "/root/.pi/agent/sessions", agentDir: "pi/sessions" }] },
   // No Harbor adapter: prime-agent.txt follows their pattern, recorded as ours.
   "prime-agent": { stdoutFile: "prime-agent.txt", harborCopies: [] },

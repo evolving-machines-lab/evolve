@@ -362,10 +362,7 @@ export interface AgentRegistryEntry {
   checkpointDirs?: string[];
   /** Additional relative paths to exclude from checkpoint tar. */
   checkpointExcludes?: string[];
-  /**
-   * The CLI exits 0 whatever happened, so at exit 0 the SDK takes the last
-   * assistant message_end's stop reason as the run's verdict (agent.ts).
-   */
+  /** The CLI exits 0 whatever happened: at exit 0 the last assistant message_end is the verdict (agent.ts). */
   verdictFromStream?: true;
 }
 
@@ -1078,11 +1075,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const level = piThinkingLevel(reasoningEffort);
       const thinkingFlag = level ? ` --thinking ${level}` : "";
       const wireModel = piFamilyWireModel(model, { isDirectMode, isExternalGateway });
-      // --cwd "$PWD": a daemon-side worker runs the session, so the working
-      // directory travels explicitly — the spawn cwd, never a baked path.
-      // --offline: no telemetry, update check or catalog refresh (model calls unaffected).
-      // JSON mode exits 0 on failure; success is read from the stream (parsers/pi-family.ts).
-      // TMPDIR: Prime's daemon socket lives under it, and a long path hits the 108-byte socket limit (live EINVAL).
+      // --cwd "$PWD": a daemon-side worker runs the session, so the spawn cwd travels explicitly.
+      // TMPDIR: the daemon socket lives under it (108-byte socket path limit). Exit 0 is no verdict (verdictFromStream).
       return `PRIME_AGENT_TELEMETRY=0 TMPDIR=/tmp prime-agent --mode json --offline --cwd "$PWD" ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} -- "${prompt}" </dev/null`;
     },
   },
