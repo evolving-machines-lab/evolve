@@ -16,7 +16,7 @@ import { createAgentParser } from "../../src/parsers/index";
 import { isAgentWorkUpdate, type OutputEvent } from "../../src/parsers/types";
 import { assembleTrialTree, harnessTrialLayout } from "../../src/hosted/trial-tree";
 import type { Job, Trial } from "../../src/hosted/types";
-import { AGENT_REGISTRY } from "../../src/registry";
+import { AGENT_REGISTRY, isValidAgentType } from "../../src/registry";
 import { ARTIFACT_PATH, type HarnessCapabilitiesArtifact } from "../../scripts/generate-harness-capabilities";
 
 let passed = 0;
@@ -126,6 +126,19 @@ for (const label of ["gemini", "gemini-cli"]) {
   assert(
     Object.entries(artifact.harnesses).every(([name, harness]) => (harness.retired === undefined) === !AGENT_REGISTRY[name as keyof typeof AGENT_REGISTRY].retired),
     "the artifact marks exactly the registry's retired entries",
+  );
+}
+
+// --- 4. The replacement is a harness a new run may name ----------------------
+// RED on a branch cut before the replacement lands (antigravity is not yet an
+// AgentType); the rebase onto that trunk turns it green and types replacedBy as AgentType.
+
+for (const [name, entry] of Object.entries(AGENT_REGISTRY)) {
+  const replacedBy = entry.retired?.replacedBy;
+  if (replacedBy === undefined) continue;
+  assert(
+    isValidAgentType(replacedBy) && !AGENT_REGISTRY[replacedBy].retired,
+    `${name}: replacedBy "${replacedBy}" names a registered, non-retired harness`,
   );
 }
 
