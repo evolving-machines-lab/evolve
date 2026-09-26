@@ -1129,8 +1129,9 @@ class CapabilityDocument:
     #: Fleet-wide cap on concurrently in-flight trials of GPU-declaring tasks
     #: (platform-paid GPU compute). None on servers predating the field.
     gpu_concurrency_cap: Optional[int] = None
-    #: The rubric agents' roster and defaults (the wire's ``default_agent``, ``default_model``, ``agents``),
-    #: so a client knows what "omitted" meant. None on servers predating the field.
+    #: The rubric agents' roster and defaults (the wire's ``default_agent``, ``default_model``, ``agents`` — each
+    #: agent with its own ``default_model``, the model an omitted ``model_name`` takes on it), so a client knows
+    #: what "omitted" meant. None on servers predating the field.
     analyze: Optional[Dict[str, Any]] = None
 
 
@@ -1655,22 +1656,25 @@ class AnalyzeConfigInput(TypedDict, total=False):
     #: Harbor's ``-a/--agent``, spelled as the arms spell it (claude, not claude-code) so one set of names
     #: covers arms and reviewers; omitted: claude. The agents: ``meta().analyze['agents']``.
     agent: str
-    #: Model the analyzer agent runs — Harbor's ``--model``; the default is
-    #: openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
-    #: roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
-    #: effort high — the owner's ruling 2026-09-10: far more parallel capacity
-    #: through OpenRouter's provider pool than one pinned Fireworks host; a
-    #: recorded deviation from Harbor's claude-haiku-4-5 default — analysis
-    #: is input-dominated, and this is the roster's
-    #: intelligence-per-input-dollar pick; glm-5.3-flash (at max, the effort
-    #: its published scores use) and haiku stay as alternatives, glm-5.3 to
-    #: escalate, and the same model on its Fireworks route,
-    #: fireworks/deepseek-v4.1-flash, is a further option — the OpenRouter id
-    #: stays the default).
+    #: Model the analyzer agent runs — Harbor's ``--model``. Omitted, the
+    #: agent's default: the platform's pick,
+    #: openrouter/deepseek/deepseek-v4.1-flash (``meta().analyze['default_model']``),
+    #: on every agent whose roster carries it, else that agent's own default
+    #: (``meta().analyze['agents'][i]['default_model']``, the model the SDK runs
+    #: that agent on when none is named). The platform's pick is DeepSeek V4.1
+    #: Flash served through OpenRouter, at its default effort high (the owner's
+    #: ruling 2026-09-10: far more parallel capacity through OpenRouter's
+    #: provider pool than one pinned Fireworks host; a recorded deviation from
+    #: Harbor's claude-haiku-4-5 default — analysis is input-dominated, and
+    #: this is the roster's intelligence-per-input-dollar pick; glm-5.3-flash
+    #: (at max, the effort its published scores use) and haiku stay on the
+    #: claude roster as alternatives, glm-5.3 to escalate, and the same model
+    #: on its Fireworks route, fireworks/deepseek-v4.1-flash, is a further
+    #: option — the OpenRouter id stays the pick).
     #: Same vocabulary as ``agents[].model_name``: either advertised
     #: spelling is accepted and stored as given (the default is the roster
     #: alias); stored analyses serve the spelling they were created under.
-    #: A model off the agent's roster is refused typed (``invalid_input``).
+    #: A named model off the agent's roster is refused typed (``invalid_input``).
     model_name: str
     rubric: Rubric
     #: The analyzer's prompt template — the TEXT of Harbor's ``-p/--prompt
@@ -1962,10 +1966,9 @@ class CheckConfigInput(TypedDict, total=False):
     under the same rules (:class:`AnalyzeConfigInput` states them; refusals
     name ``check.*``): ``agent`` (Harbor's ``-a/--agent``; default claude,
     Harbor's claude-code), ``model_name`` (Harbor's check default is
-    ``claude-sonnet-4-6``; this platform's is the analyzer's
-    ``openrouter/deepseek/deepseek-v4.1-flash`` — one roster, one default
-    for both rubric agents, a
-    recorded deviation), ``rubric`` (default: the platform's check rubric) and
+    ``claude-sonnet-4-6``; this platform's is the analyzer's — the agent's
+    default per :class:`AnalyzeConfigInput`, one rule for both rubric
+    agents, a recorded deviation), ``rubric`` (default: the platform's check rubric) and
     ``prompt`` (the TEXT of Harbor's ``-p/--prompt`` file, replacing the
     platform's default check body; rendered with ``{task_path}``, ``{file_tree}``,
     ``{criteria_guidance}``; the output contract appended after it exactly
@@ -2089,34 +2092,38 @@ class Check(TypedDict):
 
 class AnalyzeDefaults(TypedDict):
     """The policy an empty analyze config resolves to (``GET
-    /api/analyses/defaults``): each key the value :class:`AnalyzeConfig`
-    echoes for a job created with ``analyze={}``, except ``prompt``, which
+    /api/analyses/defaults``), or one naming only ``agent`` when
+    ``defaults(agent=...)`` names it: each key the value :class:`AnalyzeConfig`
+    echoes for a job created with that config, except ``prompt``, which
     ``AnalyzeConfig`` serves as None and this serves as the template text. A
     plain wire dict at runtime.
     """
     agent: str
+    #: The model an omitted ``model_name`` takes on ``agent`` (``meta().analyze['agents'][i]['default_model']``).
     model_name: str
     rubric: Rubric
     #: The built-in analyze prompt template, unrendered — pass it as ``prompt`` to run the default body explicitly, or edit it from here.
     prompt: str
-    #: The effort the default model runs at on the default agent when the config names none; None if that agent takes none.
+    #: The effort ``model_name`` runs at on ``agent`` when the config names none; None if that agent takes none.
     reasoning_effort: Optional[str]
     sandbox_provider: EvalSandboxProvider
 
 
 class CheckDefaults(TypedDict):
     """The policy an empty check config resolves to (``GET
-    /api/checks/defaults``): each key the value :class:`Check` echoes for a
-    check created with no config, except ``prompt``, which ``Check`` serves
-    as None and this serves as the template text. A plain wire dict at
+    /api/checks/defaults``), or one naming only ``agent`` when
+    ``defaults(agent=...)`` names it: each key the value :class:`Check` echoes
+    for a check created with that config, except ``prompt``, which ``Check``
+    serves as None and this serves as the template text. A plain wire dict at
     runtime.
     """
     agent: str
+    #: The model an omitted ``model_name`` takes on ``agent`` (``meta().analyze['agents'][i]['default_model']``).
     model_name: str
     rubric: Rubric
     #: The built-in check prompt template, unrendered — pass it as ``prompt`` to run the default body explicitly, or edit it from here.
     prompt: str
-    #: The effort the default model runs at on the default agent when the config names none; None if that agent takes none.
+    #: The effort ``model_name`` runs at on ``agent`` when the config names none; None if that agent takes none.
     reasoning_effort: Optional[str]
     sandbox_provider: EvalSandboxProvider
 
@@ -3807,6 +3814,11 @@ class SkillUploadPage:
 # =============================================================================
 # MAPPERS
 # =============================================================================
+
+def _defaults_query(agent: Optional[str]) -> str:
+    """Both defaults doors' ``?agent=`` — the server resolves the named agent's policy; the client names it, nothing more."""
+    return '' if agent is None else f'?{urllib.parse.urlencode({"agent": agent})}'
+
 
 def _map_dataset_ref(data: Dict[str, Any]) -> DatasetRef:
     return DatasetRef(name=data.get('name', ''), version=data.get('version', ''))
@@ -9473,11 +9485,13 @@ class AnalysesClient:
             fetch_page, lambda page: page.items, limit=limit, cursor=cursor
         )
 
-    async def defaults(self) -> AnalyzeDefaults:
+    async def defaults(self, *, agent: Optional[str] = None) -> AnalyzeDefaults:
         """The defaults an analysis runs under when its config names nothing
-        (``GET /api/analyses/defaults``): model, effort, provider, rubric and
-        the unrendered prompt template (:class:`AnalyzeDefaults`)."""
-        raw = await self._http.request_json('/api/analyses/defaults')
+        (``GET /api/analyses/defaults``): agent, model, effort, provider, rubric
+        and the unrendered prompt template (:class:`AnalyzeDefaults`). ``agent``
+        reads what that agent runs under instead — its default model and the
+        effort it takes; an unknown name is refused ``invalid_input``."""
+        raw = await self._http.request_json(f'/api/analyses/defaults{_defaults_query(agent)}')
         return cast(AnalyzeDefaults, raw)
 
     async def download(
@@ -9697,11 +9711,13 @@ class ChecksClient:
         raw = await self._http.request_json(f'/api/checks/{urllib.parse.quote(check_id)}')
         return _map_check(raw)
 
-    async def defaults(self) -> CheckDefaults:
+    async def defaults(self, *, agent: Optional[str] = None) -> CheckDefaults:
         """The defaults a check runs under when its config names nothing
-        (``GET /api/checks/defaults``): model, effort, provider, rubric and
-        the unrendered prompt template (:class:`CheckDefaults`)."""
-        raw = await self._http.request_json('/api/checks/defaults')
+        (``GET /api/checks/defaults``): agent, model, effort, provider, rubric
+        and the unrendered prompt template (:class:`CheckDefaults`). ``agent``
+        reads what that agent runs under instead — its default model and the
+        effort it takes; an unknown name is refused ``invalid_input``."""
+        raw = await self._http.request_json(f'/api/checks/defaults{_defaults_query(agent)}')
         return cast(CheckDefaults, raw)
 
     def list(

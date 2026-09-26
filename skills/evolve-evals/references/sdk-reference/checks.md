@@ -74,14 +74,20 @@ TypeScript places these alongside `source` in the input object. Python takes key
 ```ts TypeScript
 const defaults = await client.defaults();
 console.log(defaults.rubric, defaults.prompt);
+
+const codex = await client.defaults({ agent: "codex" });
+console.log(codex.model_name, codex.reasoning_effort);
 ```
 
 ```python Python
 defaults = await client.defaults()
 print(defaults["rubric"], defaults["prompt"])
+
+codex = await client.defaults(agent="codex")
+print(codex["model_name"], codex["reasoning_effort"])
 ```
 
-Defaults include model, rubric, prompt, effort, and provider. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
+Defaults include agent, model, rubric, prompt, effort, and provider. Pass an agent to read what that agent runs under when you name no model: its default model and the effort that model takes. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
 
 ## Understand the result
 
@@ -117,7 +123,7 @@ Evolve derives no verdict from a result. Read the criterion outcomes and evidenc
 | `get(id)` | Full check and its task results |
 | `list(...)` | `scope`, `status` list, `dataset`, `limit`, `cursor`; paginated handle |
 | `watch(id, ...)` | Wait until completed; callback on changes |
-| `defaults()` | Current policy and editable prompt |
+| `defaults({ agent })` | Current policy and editable prompt; with an agent, what that agent runs under |
 
 Watch options are `onProgress`, `pollIntervalMs`, `signal` in TypeScript; `on_progress`, `poll_interval_s`, `timeout_s` in Python. Polling starts at 2 seconds and slows to 30 seconds while unchanged.
 

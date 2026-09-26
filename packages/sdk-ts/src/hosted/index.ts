@@ -790,6 +790,11 @@ function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedCo
   return { apiKey, baseUrl, ...(config?.org ? { org: config.org } : {}) };
 }
 
+/** Both defaults doors' `?agent=` — the server resolves the named agent's policy; the client names it, nothing more. */
+function defaultsQuery(options?: { agent?: string }): string {
+  return options?.agent === undefined ? "" : `?${new URLSearchParams({ agent: options.agent })}`;
+}
+
 async function request(
   cfg: ResolvedConfig,
   path: string,
@@ -4230,8 +4235,8 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
         `analysis-${analysisId}.tar.gz`
       )) as AnalysesClient["download"],
 
-    async defaults(): Promise<AnalyzeDefaults> {
-      const res = await request(cfg, "/api/analyses/defaults");
+    async defaults(options?: { agent?: string }): Promise<AnalyzeDefaults> {
+      const res = await request(cfg, `/api/analyses/defaults${defaultsQuery(options)}`);
       return (await res.json()) as AnalyzeDefaults;
     },
 
@@ -4395,8 +4400,8 @@ export function checks(config?: HostedClientConfig): ChecksClient {
 
     get: getCheck,
 
-    async defaults(): Promise<CheckDefaults> {
-      const res = await request(cfg, "/api/checks/defaults");
+    async defaults(options?: { agent?: string }): Promise<CheckDefaults> {
+      const res = await request(cfg, `/api/checks/defaults${defaultsQuery(options)}`);
       return (await res.json()) as CheckDefaults;
     },
 

@@ -299,6 +299,11 @@ class TestChecksRead:
         assert fake.requests[0].full_url.endswith('/api/checks/defaults')
         assert fake.requests[0].get_method() == 'GET'
         assert got == defaults
+        # A named agent rides ?agent=: the server answers that agent's own default model and effort.
+        fake = FakeUrlopen([('/api/checks/defaults', defaults), ('/api/checks', {})])
+        with patch('evolve._http.urlopen', fake):
+            await checks_factory(CONFIG).defaults(agent='codex')
+        assert fake.requests[0].full_url.endswith('/api/checks/defaults?agent=codex')
 
     @pytest.mark.asyncio
     async def test_watch_polls_to_completed_and_reports_progress(self):

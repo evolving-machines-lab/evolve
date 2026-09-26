@@ -4656,6 +4656,11 @@ class TestAnalyses:
         assert fake.requests[0].full_url.endswith('/api/analyses/defaults')
         assert fake.requests[0].get_method() == 'GET'
         assert got == defaults
+        # A named agent rides ?agent=: the server answers that agent's own default model and effort.
+        fake = FakeUrlopen([('/api/analyses/defaults', defaults), ('/api/analyses', {})])
+        with patch('evolve._http.urlopen', fake):
+            await analyses_factory(CONFIG).defaults(agent='kimi')
+        assert fake.requests[0].full_url.endswith('/api/analyses/defaults?agent=kimi')
 
     @pytest.mark.asyncio
     async def test_download_rides_the_contract_door_and_verifies_the_bytes(self, tmp_path):

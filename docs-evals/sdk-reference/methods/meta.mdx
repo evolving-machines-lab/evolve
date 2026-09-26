@@ -85,6 +85,7 @@ interface CapabilityDocument {
     default_model: string;
     agents: {
       name: string;
+      default_model: string;
       reasoning_efforts: string[];
       models: { alias: string; model_id: string; default_reasoning_effort: string | null }[];
     }[];

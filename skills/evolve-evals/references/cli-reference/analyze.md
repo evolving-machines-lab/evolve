@@ -15,10 +15,11 @@ Each selected trial gets its own analysis run. Read those runs with [`evolve ana
 
 ```bash
 evolve analyze --show-defaults
+evolve analyze --show-defaults -a codex
 evolve analyze --show-defaults --json
 ```
 
-This returns the current agent, model, reasoning effort, sandbox provider, prompt, and rubric. Defaults mode takes no job ID or other analysis options.
+This returns the agent, model, reasoning effort, sandbox provider, prompt, and rubric an analysis runs under when you name none of them. With `-a`, it returns what that agent runs under: its default model and the effort that model takes. Defaults mode takes no job ID and no other analysis options.
 
 ## Select trials
 
@@ -60,12 +61,12 @@ evolve analyze "$JOB_ID" \
 | Option | Meaning |
 | --- | --- |
 | `-a`, `--agent <name>` | Agent the analyzer runs on. Default `claude`. |
-| `-m`, `--model <name>` | Analyzer model, from that agent's models. |
+| `-m`, `--model <name>` | Analyzer model, from that agent's models. Default: the agent's default model. |
 | `--effort <value>` | Reasoning effort. |
 | `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
 | `-p`, `--prompt <path>` | Text file replacing the default prompt. |
 | `-e`, `--env <provider>` | Sandbox provider for analysis. |
-| `--show-defaults` | Print the default policy and exit. |
+| `--show-defaults` | Print the default policy and exit. `-a` picks the agent. |
 
 A rubric contains a `criteria` list. Every criterion needs `name`, `description`, and `guidance`.
 
