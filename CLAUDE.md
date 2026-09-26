@@ -1,6 +1,6 @@
 # Evolve SDK
 
-Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid, DeepSeek Harness) in secure sandboxes with built-in observability, and score them against datasets on hosted infrastructure.
+Run CLI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid, pi, Prime Agent, DeepSeek Harness) in secure sandboxes with built-in observability, and score them against datasets on hosted infrastructure.
 
 ## Contributing & branches
 
@@ -24,7 +24,7 @@ evolve/
 │   │       ├── index.ts         # Public exports
 │   │       ├── cli/             # The `evolve` CLI binary (src/cli/index.ts; skills.ts serves the bundled skills)
 │   │       ├── hosted/          # Hosted evals client (datasets/agents/jobs/trials/auth)
-│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid, dsh)
+│   │       ├── parsers/         # CLI output parsers (claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh; pi-family.ts is the core the last two share)
 │   │       ├── integrations.ts  # Managed integration helpers
 │   │       ├── managed-secrets.ts   # Dashboard-stored secrets attached by name
 │   │       ├── provider-secrets.ts  # Managed BYO provider keys + runtime tokens

@@ -170,14 +170,13 @@ export type SessionUpdate =
 /**
  * A wire line the harness printed that has no ACP slot — kept, never dropped.
  *
- * DELIBERATE EXTENSION BEYOND ACP, like AgentError and AgentUsage. Two
- * harness streams are unversioned or grow between releases (the owner's
- * ruling 2026-09-25: any event type outside the captured vocabulary is passed
+ * DELIBERATE EXTENSION BEYOND ACP, like AgentError and AgentUsage. Harness
+ * streams are unversioned and grow between releases (the owner's ruling
+ * 2026-09-25: any event type outside the captured vocabulary is passed
  * through as a generic event and logged, never a failure), and some captured
- * types are real facts of the run with no ACP shape — a Prime Agent
- * sub-agent's progress (`rlm_child_update`), a pi automatic retry
- * (`auto_retry_start`), a compaction. `type` is the harness's own type word
- * and `payload` the line's other fields, verbatim.
+ * types are real facts of the run with no ACP shape — a sub-agent's
+ * progress, an automatic retry, a compaction. `type` is the harness's own
+ * type word and `payload` the line's other fields, verbatim.
  *
  * Excluded from isAgentWorkUpdate: an unknown line is evidence the harness
  * PRINTED something, never that the agent did work.
@@ -289,7 +288,7 @@ export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | u
 /**
  * The harness's failure text for an AgentError.message, in ITS OWN WORDS.
  *
- * The seven harnesses put that text in seven different places — codex in
+ * Every harness puts that text in a place of its own — codex in
  * `message`, gemini in `error.message`, opencode in `error.data.message` (and
  * in `error.name` when data is empty), claude in an `errors: string[]`, droid
  * in `message`, kimi in `error_message`, qwen in `error.message` — so each

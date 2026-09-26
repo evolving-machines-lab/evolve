@@ -6,7 +6,7 @@
  * harness put on the wire, verbatim. Consumers that render a trajectory need
  * the real name ("mcp__mcp-server__get_secret"); `kind` only says "other".
  *
- * Covers all 8 parsers, each with an MCP call and a non-MCP call.
+ * Covers all 10 parsers, each with an MCP call and a non-MCP call.
  */
 
 import { createClaudeParser } from "../../src/parsers/claude.ts";
@@ -16,6 +16,8 @@ import { createDshParser } from "../../src/parsers/dsh.ts";
 import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
+import { createPiParser } from "../../src/parsers/pi.ts";
+import { createPrimeAgentParser } from "../../src/parsers/prime-agent.ts";
 import { createQwenParser } from "../../src/parsers/qwen.ts";
 import type { OutputEvent } from "../../src/parsers/types.ts";
 
@@ -247,6 +249,43 @@ async function testQwen(): Promise<void> {
   );
 }
 
+/** pi / Prime Agent: {type:"tool_execution_start", toolCallId, toolName, args} (pi-family core). */
+function piFamilyLine(toolName: string): Record<string, unknown> {
+  return { type: "tool_execution_start", toolCallId: `call_${toolName}`, toolName, args: { command: "ls" } };
+}
+
+async function testPi(): Promise<void> {
+  console.log("\n[8] pi");
+
+  // With the adapter's directTools on, an MCP tool arrives under its own name.
+  assert(
+    toolNameOf(feed(createPiParser(), piFamilyLine(MCP_NAME))) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(feed(createPiParser(), piFamilyLine("bash"))) === "bash",
+    "non-MCP tool carries its native name"
+  );
+  // The adapter's default proxy tool is literally `mcp`.
+  assert(
+    toolNameOf(feed(createPiParser(), { type: "tool_execution_start", toolCallId: "c", toolName: "mcp", args: { tool: "everything_get-sum", args: {} } })) === "mcp",
+    "the adapter's proxy tool keeps its own name"
+  );
+}
+
+async function testPrimeAgent(): Promise<void> {
+  console.log("\n[9] prime-agent");
+
+  assert(
+    toolNameOf(feed(createPrimeAgentParser(), piFamilyLine(MCP_NAME))) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(feed(createPrimeAgentParser(), { type: "tool_execution_start", toolCallId: "c", toolName: "ipython", args: { code: "print(1)" } })) === "ipython",
+    "the one native tool carries its name"
+  );
+}
+
 async function main(): Promise<void> {
   console.log("\n=== Parser Tool Name Unit Tests ===");
 
@@ -258,6 +297,8 @@ async function main(): Promise<void> {
   await testKimi();
   await testOpenCode();
   await testQwen();
+  await testPi();
+  await testPrimeAgent();
 
   console.log(`\n=== Summary ===`);
   console.log(`Passed: ${passed}`);

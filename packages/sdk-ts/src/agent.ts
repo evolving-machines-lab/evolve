@@ -42,6 +42,8 @@ import {
   getDshReasoningEffort,
   getOpenCodeReasoningVariant,
   isThinkingEnabled,
+  piFamilyWireModel,
+  piThinkingLevel,
   registryOwnsModel,
   registryWireId,
   resolveReasoningEffort,
@@ -51,6 +53,8 @@ import {
   writeMcpConfig,
   writeCodexSpendProvider,
   writeJsonSpendHeaders,
+  writeJsonSettingsStamp,
+  writeModelsJsonRoute,
   writeQwenThinkingConfig,
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
@@ -169,6 +173,10 @@ function providerRuntimeProviderForAgent(
       return "openrouter";
     case "droid":
       return "droid";
+    case "pi":
+      return "pi";
+    case "prime-agent":
+      return "prime-agent";
     case "dsh":
       return "dsh";
     default:
@@ -312,11 +320,22 @@ function withOpenAiV1Path(baseUrl: string): string {
  * Uses registry lookup for agent-specific behavior.
  * Tracks hasRun state for continue flag handling.
  */
+/** Every message_end-derived event carries the message's stop reason in extra; the last one is the verdict. */
+function lastModelCallFailedAfter(events: OutputEvent[] | null, previous: boolean): boolean {
+  let failed = previous;
+  for (const event of events ?? []) {
+    const stop = event.extra?.stopReason;
+    if (typeof stop === "string") failed = stop === "error" || stop === "aborted";
+  }
+  return failed;
+}
+
 export class Agent {
   private agentConfig: ResolvedAgentConfig;
   private options: AgentOptions;
   private sandbox?: SandboxInstance;
   private hasRun: boolean = false;
+  private mcpConfigured = false;
   private readonly workingDir: string;
   private readonly homeDir: string;
   private lastRunTimestamp?: number;
@@ -537,6 +556,7 @@ export class Agent {
     handle: SandboxCommandHandle,
     callbacks?: StreamCallbacks,
     sandbox?: SandboxInstance,
+    streamFailed: () => boolean = () => false,
   ): void {
     const completeReason: LifecycleReason =
       kind === "run"
@@ -564,9 +584,8 @@ export class Agent {
         if (kind === "run" && sandbox) {
           await this.writeCapturedSessionId(sandbox);
         }
-        const reason = result.exitCode === 0 ? completeReason : failedReason;
-        const nextState = result.exitCode === 0 ? "idle" : "error";
-        this.finalizeOperation(opId, callbacks, reason, nextState);
+        const succeeded = result.exitCode === 0 && !streamFailed();
+        this.finalizeOperation(opId, callbacks, succeeded ? completeReason : failedReason, succeeded ? "idle" : "error");
       })
       .catch(() => {
         this.interruptedOperations.delete(opId);
@@ -1703,6 +1722,52 @@ export class Agent {
     return aliases?.[model] ?? model;
   }
 
+  /** The pi family's per-run models.json: the mode's LITERAL base URL (pi never expands $VAR there), the key by env name. */
+  private async writePiFamilyModelsJson(sandbox: SandboxInstance, runId: string): Promise<void> {
+    const route = this.registry.modelsJsonRoute;
+    if (!route) return;
+    const isExternalGateway = Boolean(this.agentConfig.externalGateway);
+    const isDirect = this.agentConfig.isDirectMode && !isExternalGateway;
+
+    let baseUrl: string;
+    let headers: Record<string, string> = {};
+    if (isExternalGateway) {
+      baseUrl = this.agentConfig.baseUrl ?? withOpenAiV1Path(getGatewayUrl());
+    } else if (isDirect) {
+      const direct = this.agentConfig.baseUrl ?? this.registry.defaultBaseUrl;
+      if (!direct) {
+        throw new Error(`${this.agentConfig.type} direct mode needs a base URL (providerBaseUrl or the registry defaultBaseUrl)`);
+      }
+      baseUrl = direct;
+    } else {
+      const providerRuntime = this.requireActiveProviderRuntimeToken();
+      baseUrl = withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl());
+      headers = {
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+        [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        ...this.providerRuntimeHeaderUpdates(),
+      };
+    }
+
+    const effort = this.reasoningEffort();
+    await writeModelsJsonRoute(
+      sandbox,
+      {
+        ...route,
+        apiKeyEnv: this.registry.apiKeyEnv,
+        baseUrl,
+        model: piFamilyWireModel(
+          this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+          { isDirectMode: this.agentConfig.isDirectMode, isExternalGateway },
+        ),
+        reasoning: isThinkingEnabled(effort),
+        thinkingLevel: piThinkingLevel(effort),
+      },
+      headers,
+      this.homeDir,
+    );
+  }
+
   /**
    * The request model the Evolve-owned Droid settings file names. Droid
    * resolves nothing on this route — the custom model's `model` field is the
@@ -1951,11 +2016,23 @@ export class Agent {
     // work. Gateway mode and managed integrations both produce session-scoped URLs.
     if (Object.keys(mcpServers).length > 0) {
       this.assertProviderRuntimeDoesNotExposeGatewayKey(mcpServers);
+      this.mcpConfigured = true;
       await writeMcpConfig(
         this.agentConfig.type,
         sandbox,
         this.workingDir,
         mcpServers,
+        this.homeDir,
+      );
+    }
+
+    // Platform settings stamp (pi, Prime Agent): merged into the harness's own
+    // settings file AFTER the MCP writer, whose keys survive the merge.
+    if (this.registry.settingsStamp) {
+      await writeJsonSettingsStamp(
+        sandbox,
+        this.registry.settingsStamp.path,
+        this.registry.settingsStamp.document,
         this.homeDir,
       );
     }
@@ -2166,6 +2243,7 @@ export class Agent {
       // shared box passes `resume: false` to keep each one fresh — see
       // RunOptions.resume for why that could not be expressed before.
       isResume: resume ?? this.hasRun,
+      mcpConfigured: this.mcpConfigured,
       // Set only for harnesses with a sessionIdStateFile (droid, dsh); the
       // other command builders ignore it.
       sessionId: this.capturedSessionId,
@@ -2472,8 +2550,14 @@ export class Agent {
       );
     }
 
+    // Per-run models.json for the pi family (pi, Prime Agent): the file is the
+    // only route these CLIs take, and it carries the run tag in the provider's
+    // headers, so it is rewritten before every spawn in every mode.
+    await this.writePiFamilyModelsJson(sandbox, runId);
+
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
+    let lastModelCallFailed = false;
 
     // Create parser once (shared by onContent callback and session logger)
     const parser = createAgentParser(this.agentConfig.type);
@@ -2490,6 +2574,7 @@ export class Agent {
 
         // Parse once, use for both session logger and onContent
         const events = parser(line);
+        lastModelCallFailed = lastModelCallFailedAfter(events, lastModelCallFailed);
         this.captureHarnessSessionId(line, events);
 
         // Log to session logger with pre-parsed events (non-blocking)
@@ -2525,7 +2610,9 @@ export class Agent {
     this.hasRun = true;
 
     if (background) {
-      this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox);
+      this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox, () =>
+        this.registry.verdictFromStream === true && lastModelCallFailed,
+      );
       return {
         sandboxId: sandbox.sandboxId,
         sessionId: this.managedBrowserSession?.sessionId,
@@ -2546,20 +2633,11 @@ export class Agent {
       throw error;
     }
 
-    const interrupted =
-      this.interruptedOperations.delete(opId) || result.exitCode === 130;
-    if (interrupted) {
-      this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
-    } else if (result.exitCode === 0) {
-      this.finalizeOperation(opId, callbacks, "run_complete", "idle");
-    } else {
-      this.finalizeOperation(opId, callbacks, "run_failed", "error");
-    }
-
-    // Process any remaining buffered content
+    // Process any remaining buffered content (before the verdict: it may be the last assistant message_end)
     if (lineBuffer.trim()) {
       // Parse once, use for both session logger and onContent
       const events = parser(lineBuffer);
+      lastModelCallFailed = lastModelCallFailedAfter(events, lastModelCallFailed);
       this.captureHarnessSessionId(lineBuffer, events);
 
       // Log to session logger with pre-parsed events (non-blocking)
@@ -2576,6 +2654,19 @@ export class Agent {
       }
     }
 
+    // pi and Prime Agent exit 0 whatever happened (registry verdictFromStream):
+    // the last assistant message_end decides, never their exit code alone.
+    const succeeded = result.exitCode === 0 && !(this.registry.verdictFromStream && lastModelCallFailed);
+    const interrupted =
+      this.interruptedOperations.delete(opId) || result.exitCode === 130;
+    if (interrupted) {
+      this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
+    } else if (succeeded) {
+      this.finalizeOperation(opId, callbacks, "run_complete", "idle");
+    } else {
+      this.finalizeOperation(opId, callbacks, "run_failed", "error");
+    }
+
     await this.writeCapturedSessionId(sandbox);
 
     // Flush observability events so dashboard is complete before returning.
@@ -2590,7 +2681,7 @@ export class Agent {
     // AUTO-CHECKPOINT: after successful foreground run with storage configured
     // =========================================================================
     let checkpoint: CheckpointInfo | undefined;
-    if (this.storage && !background && result.exitCode === 0) {
+    if (this.storage && !background && succeeded) {
       try {
         checkpoint = await createCheckpoint(
           sandbox,

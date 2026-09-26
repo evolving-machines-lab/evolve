@@ -150,6 +150,8 @@ export interface BuildCommandOptions {
    * names belong to the caller's gateway, never to Evolve's alias maps).
    */
   isExternalGateway?: boolean;
+  /** Whether the run configured MCP servers (pi loads its adapter extension only then). */
+  mcpConfigured?: boolean;
   /** Skills enabled for this run */
   skills?: string[];
   /** Sandbox home directory (default: "/home/user") */
@@ -304,6 +306,20 @@ export interface AgentRegistryEntry {
     provider: "generic-chat-completion-api" | "openai" | "anthropic";
     maxOutputTokens?: number;
   };
+  /**
+   * The pi family's only route: a models.json provider entry written per run
+   * with the LITERAL base URL (pi never expands $VAR there), selected by --provider.
+   */
+  modelsJsonRoute?: {
+    /** The agent dir (~ expanded) that holds models.json. */
+    agentDir: string;
+    /** The provider name the command's --provider selects. */
+    providerName: string;
+    /** How the file names the key env: pi wants "$VAR" (docs/models.md), Prime Agent the bare "VAR". */
+    apiKeyRef: "dollar" | "bare";
+  };
+  /** Vendor defaults wrong for a metered run, deep-merged into the settings file at setup. */
+  settingsStamp?: { path: string; document: Record<string, unknown> };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -352,6 +368,8 @@ export interface AgentRegistryEntry {
   checkpointDirs?: string[];
   /** Additional relative paths to exclude from checkpoint tar. */
   checkpointExcludes?: string[];
+  /** The CLI exits 0 whatever happened: at exit 0 the last assistant message_end is the verdict (agent.ts). */
+  verdictFromStream?: true;
   /** Where the SDK keeps the stream-captured session id for CLIs that resume by `--session-id` (droid, dsh). */
   sessionIdStateFile?: string;
   /** dsh only: the Evolve-owned `--patch` that routes the CLI (mcp/yaml.ts); it names env variables, never values. */
@@ -411,6 +429,66 @@ export function getDshReasoningEffort(reasoningEffort?: string): string | undefi
       `"${reasoningEffort}" is not one of them and would be recorded but never applied.`,
   );
 }
+
+// =============================================================================
+// THE PI FAMILY (pi, Prime Agent): one models.json route, one thinking scale
+// =============================================================================
+
+/** The models.json provider name both CLIs' commands select (`--provider evolve`). */
+export const PI_FAMILY_PROVIDER = "evolve";
+
+/** Where pi-mcp-adapter's entry point is; a fleet default (the image's path below), never a user option. */
+export const PI_MCP_ADAPTER_EXTENSION_ENV = "PI_MCP_ADAPTER_EXTENSION";
+
+/** Where the evolve-all image installs pi-mcp-adapter (assets/docker/Dockerfile). */
+export const PI_MCP_ADAPTER_EXTENSION = "/opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts";
+
+/** --thinking takes the SDK's graded words as they are; the binary spellings map onto the vendors' scale. */
+export function piThinkingLevel(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "none" || reasoningEffort === "no-thinking") return "off";
+  if (reasoningEffort === "thinking") return "medium";
+  return reasoningEffort;
+}
+
+/**
+ * The wire model: the roster's `openrouter/<vendor>/<model>` rides verbatim to
+ * either gateway; OpenRouter itself (direct mode) wants the id without the prefix.
+ */
+export function piFamilyWireModel(
+  model: string,
+  mode: { isDirectMode?: boolean; isExternalGateway?: boolean },
+): string {
+  if (mode.isDirectMode && !mode.isExternalGateway && model.startsWith("openrouter/")) {
+    return model.slice("openrouter/".length);
+  }
+  return model;
+}
+
+/**
+ * The OpenRouter roster the OpenRouter-only harnesses share (opencode, pi,
+ * Prime Agent); alias == wire id, the gateway's `openrouter/*` wildcard serves each.
+ */
+const OPENROUTER_ROSTER: readonly ModelInfo[] = [
+  // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models, read 2026-09-15).
+  { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
+  // GPT-6 Astra under OpenRouter's id (read 2026-09-15, listed at OpenAI's own rate).
+  { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
+  { alias: "openrouter/google/gemini-3.6-flash", modelId: "openrouter/google/gemini-3.6-flash", description: "Gemini 3.6 Flash via OpenRouter" },
+  { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
+  { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
+  { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
+  // Through the Evolve gateway this id reaches the platform's one GLM-5.3-Flash, served from Fireworks (ruling 2026-09-08).
+  { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)" },
+  // The analyzer's default (owner 2026-09-10), priced from OpenRouter's own bill.
+  { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+];
 
 // =============================================================================
 // AGENT REGISTRY
@@ -806,37 +884,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
-      // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models,
-      // read 2026-09-15: anthropic/claude-fable-5.1).
-      { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
-      // GPT-6 Astra under OpenRouter's id (openrouter.ai/api/v1/models, read
-      // 2026-09-15: openai/gpt-6-astra, listed at OpenAI's own rate).
-      { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
-      { alias: "openrouter/google/gemini-3.6-flash", modelId: "openrouter/google/gemini-3.6-flash", description: "Gemini 3.6 Flash via OpenRouter" },
-      { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
-      { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
-      { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
-      // The OpenRouter spelling is the only one this harness can carry: its
-      // roster speaks OpenRouter ids and buildCommand below prefixes
-      // `openrouter/` onto any bare name (direct mode sends the id to
-      // OpenRouter itself). Through the Evolve gateway the name reaches the
-      // platform's one GLM-5.3-Flash, served from Fireworks (the ruling
-      // 2026-09-08), exactly like the bare `glm-5.3-flash` elsewhere.
-      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)" },
-      // DeepSeek V4.1 Flash under its OpenRouter id (the owner's ruling
-      // 2026-09-10; the analyzer's default), which is this harness's native
-      // OpenRouter form: direct mode sends the id to OpenRouter itself;
-      // through the Evolve gateway the litellm provider carries it verbatim
-      // (agent.ts buildGatewayConfigJson keys the model by this id,
-      // buildCommand sends `litellm/openrouter/...`) onto the gateway's
-      // exact entry for it, priced from OpenRouter's own bill.
-      { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      ...OPENROUTER_ROSTER,
       // The same model on its second route, Fireworks (owner 2026-09-11: a
       // further option). Gateway-only: a roster id rides the command line
       // verbatim (opencodeRoutedModel below), so buildCommand sends
@@ -976,6 +1024,95 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
   },
 
+  pi: {
+    image: "evolve-all",
+    // OpenRouter-only, like opencode (owner 2026-09-25); models.json names this var.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/anthropic/claude-opus-5",
+    // pi's own default is medium; owner policy pins graded harnesses at high.
+    defaultReasoningEffort: "high",
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    models: [...OPENROUTER_ROSTER],
+    // pi reads AGENTS.md (and CLAUDE.md) from the cwd (core/resource-loader.ts).
+    systemPromptFile: "AGENTS.md",
+    // pi's core has no MCP: the pi-mcp-adapter extension reads this file.
+    mcpConfig: {
+      settingsDir: "~/.pi/agent",
+      filename: "mcp.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.pi/agent/skills",
+    },
+    modelsJsonRoute: { agentDir: "~/.pi/agent", providerName: PI_FAMILY_PROVIDER, apiKeyRef: "dollar" },
+    verdictFromStream: true,
+    // pi's default cache warming issues extra requests that show up as usage.
+    settingsStamp: {
+      path: "~/.pi/agent/settings.json",
+      document: { cacheWarming: "off", enableInstallTelemetry: false },
+    },
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isDirectMode, isExternalGateway, mcpConfigured, homeDir = DEFAULT_HOME_DIR }) => {
+      const agentDir = `${homeDir}/.pi/agent`;
+      const continueFlag = isResume ? "--continue " : "";
+      const level = piThinkingLevel(reasoningEffort);
+      const thinkingFlag = level ? ` --thinking ${level}` : "";
+      const wireModel = piFamilyWireModel(model, { isDirectMode, isExternalGateway });
+      // The adapter loads only when MCP servers were configured; a run without them never pays its startup.
+      const adapterFlag = mcpConfigured ? ` --extension "\${${PI_MCP_ADAPTER_EXTENSION_ENV}:-${PI_MCP_ADAPTER_EXTENSION}}"` : "";
+      // --approve: project resources and skills load only with trust granted, and JSON mode cannot ask.
+      // --session-dir: one flat dir (the default nests per cwd). The PI_* vars stop every pi.dev call.
+      return `PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 pi --mode json --approve ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} --session-dir ${agentDir}/sessions${adapterFlag} -- "${prompt}" </dev/null`;
+    },
+  },
+
+  "prime-agent": {
+    image: "evolve-all",
+    // OpenRouter-only (owner 2026-09-25); models.json names this var, bare (Prime's spelling).
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/anthropic/claude-opus-5",
+    // Prime's own default is medium; owner policy pins graded harnesses at high.
+    defaultReasoningEffort: "high",
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    models: [...OPENROUTER_ROSTER],
+    systemPromptFile: "AGENTS.md",
+    // Prime reads MCP servers from the GLOBAL settings.json only (project-level maps are ignored).
+    mcpConfig: {
+      settingsDir: "~/.prime/agent",
+      filename: "settings.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.prime/agent/skills",
+    },
+    modelsJsonRoute: { agentDir: "~/.prime/agent", providerName: PI_FAMILY_PROVIDER, apiKeyRef: "bare" },
+    verdictFromStream: true,
+    // Prime's waitForUsage parks a 429'd session until the provider's reset; a metered run's clock is the only budget.
+    settingsStamp: {
+      path: "~/.prime/agent/settings.json",
+      document: { retry: { provider: { waitForUsage: { enabled: false, pauseUntilReset: false } } } },
+    },
+    // The Python kernel venv (~214 MB, a reproducible install) never rides a checkpoint.
+    checkpointExcludes: [
+      ".prime/agent/kernel-venv",
+    ],
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isDirectMode, isExternalGateway }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      const level = piThinkingLevel(reasoningEffort);
+      const thinkingFlag = level ? ` --thinking ${level}` : "";
+      const wireModel = piFamilyWireModel(model, { isDirectMode, isExternalGateway });
+      // --cwd "$PWD": a daemon-side worker runs the session, so the spawn cwd travels explicitly.
+      // TMPDIR: the daemon socket lives under it (108-byte socket path limit). Exit 0 is no verdict (verdictFromStream).
+      return `PRIME_AGENT_TELEMETRY=0 TMPDIR=/tmp prime-agent --mode json --offline --cwd "$PWD" ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} -- "${prompt}" </dev/null`;
+    },
+  },
   // dsh: routing rides an Evolve-owned --patch file (dshRoutePatch), never
   // flags; recon team/dev-items/harness-recon-2026-09-25/01-deepseek.md.
   dsh: {

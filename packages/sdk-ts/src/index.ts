@@ -267,6 +267,8 @@ export {
   createDroidParser,
   createDshParser,
   createGeminiParser,
+  createPiParser,
+  createPrimeAgentParser,
   parseQwenOutput,
 } from "./parsers";
 

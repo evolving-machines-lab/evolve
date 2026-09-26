@@ -14,6 +14,8 @@ import { createDshParser } from "./dsh";
 import { createGeminiParser } from "./gemini";
 import { createKimiParser } from "./kimi";
 import { createOpenCodeParser } from "./opencode";
+import { createPiParser } from "./pi";
+import { createPrimeAgentParser } from "./prime-agent";
 import { createQwenParser } from "./qwen";
 
 // Re-export types for convenience
@@ -54,6 +56,12 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "droid":
       return createDroidParser();
+
+    case "pi":
+      return createPiParser();
+
+    case "prime-agent":
+      return createPrimeAgentParser();
 
     case "dsh":
       return createDshParser();
@@ -121,4 +129,6 @@ export { createDshParser } from "./dsh";
 export { createGeminiParser } from "./gemini";
 export { createKimiParser } from "./kimi";
 export { createOpenCodeParser } from "./opencode";
+export { createPiParser } from "./pi";
+export { createPrimeAgentParser } from "./prime-agent";
 export { createQwenParser, parseQwenOutput } from "./qwen";

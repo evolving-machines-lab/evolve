@@ -264,7 +264,7 @@ evolve = Evolve(
 
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     config=AgentConfig(
-        type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'dsh' - defaults to 'claude'
+        type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'pi' | 'prime-agent' | 'dsh' - defaults to 'claude'
         model='gpt-5.3-codex',               # (optional) Uses default if omitted. Use 'fable' for Claude Fable 5.1 or 'sonnet[1m]' / 'opus[1m]' for 1M context (Claude only)
         reasoning_effort='medium',           # (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve stamps its pinned per-harness default (see Getting Started → Agent Reference)
         # max_context_size=128000,           # (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
@@ -375,6 +375,7 @@ McpServerConfig = {
     'command': str, 'args': list, 'cwd': str,        # STDIO
     'url': str, 'headers': dict[str, str],           # HTTP/SSE
     'env': dict[str, str],                           # Common
+    'envVars': list[str],                            # Names of sandbox env vars the server reads by name (codex, prime-agent)
 }
 ```
 

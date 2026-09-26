@@ -7,4 +7,4 @@
  * packages/daytona/tests/unit/daytona-image-version.test.ts fails the
  * suite whenever this checked-in copy is stale.
  */
-export const EVOLVE_IMAGE_VERSION = "c-e3f112684ca1";
+export const EVOLVE_IMAGE_VERSION = "c-4daa4e5f4f5d";
