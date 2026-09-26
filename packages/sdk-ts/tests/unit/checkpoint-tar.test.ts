@@ -238,6 +238,27 @@ async function testBuildTarCommandDroid(): Promise<void> {
   assert(cmd.includes(".factory/"), "Includes .factory/ settings, skills, and session state");
 }
 
+async function testBuildTarCommandPiFamily(): Promise<void> {
+  console.log("\n[6e] buildTarCommand() - pi and prime-agent");
+
+  const pi = buildTarCommand("pi", "/home/user/workspace");
+  assert(pi.includes("workspace/"), "pi: includes workspace/ directory");
+  assert(pi.includes(".pi/agent/"), "pi: includes .pi/agent/ (sessions, models.json, mcp.json, settings, skills)");
+
+  const prime = buildTarCommand("prime-agent", "/home/user/workspace");
+  assert(prime.includes(".prime/agent/"), "prime-agent: includes .prime/agent/ (sessions, session-artifacts, settings, skills)");
+  assert(prime.includes("--exclude='.prime/agent/kernel-venv'"), "prime-agent: excludes the ~214 MB Python kernel venv (rebuilt from its marker)");
+}
+
+async function testBuildTarCommandDsh(): Promise<void> {
+  console.log("\n[6e] buildTarCommand() - dsh");
+
+  const cmd = buildTarCommand("dsh", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  assert(cmd.includes(".dsh/"), "Includes .dsh/ (sessions, profiles, skills, the Evolve patches)");
+}
+
 async function testBuildTarCommandZcode(): Promise<void> {
   console.log("\n[6e] buildTarCommand() - zcode");
 
@@ -351,6 +372,8 @@ async function main(): Promise<void> {
   await testBuildTarCommandKimi();
   await testBuildTarCommandOpencode();
   await testBuildTarCommandDroid();
+  await testBuildTarCommandPiFamily();
+  await testBuildTarCommandDsh();
   await testBuildTarCommandZcode();
   await testTarExcludes();
   await testCustomWorkingDir();

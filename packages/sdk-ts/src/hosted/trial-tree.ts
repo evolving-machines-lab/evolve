@@ -54,9 +54,10 @@
  *   agent/<harness>.txt       the harness process's stdout stream at Harbor's
  *                             own tee name for the harness (claude-code.txt,
  *                             codex.txt, gemini-cli.txt, qwen-code.txt,
- *                             kimi-code.txt, opencode.txt; droid.txt is the
- *                             platform's own, and stdout.log serves a harness
- *                             Harbor has no name for), when stored
+ *                             kimi-code.txt, opencode.txt, pi.txt; droid.txt,
+ *                             prime-agent.txt and dsh.txt are the platform's own,
+ *                             and stdout.log serves a harness Harbor has no name
+ *                             for), when stored
  *   agent/stderr.log          the harness process's stderr stream, when stored
  *   agent/trace-parsed.jsonl  the parsed event trace (Evolve's own artifact,
  *                             riding inside agent/ — Harbor has no slot for
@@ -69,8 +70,8 @@
  *   agent/sessions/…          Harbor's own copies of the subtrees its adapter
  *   agent/qwen-sessions/…     keeps (claude and codex: sessions/; qwen:
  *   agent/opencode/…          qwen-sessions/; opencode: opencode/xdg-data/
- *                             opencode/) — the same text a second time at
- *                             Harbor's slot (harborCopyPath)
+ *   agent/pi/sessions/…       opencode/; pi: pi/sessions/) — the same text a
+ *                             second time at Harbor's slot (harborCopyPath)
  *   verifier/test-stdout.txt  the stored verifier log, when stored
  *   verifier/reward.json      the rewards map, when the verifier produced one
  *   exception.txt             when the trial carries an exception
@@ -151,6 +152,13 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   },
   // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
   droid: { stdoutFile: "droid.txt", harborCopies: [] },
+  // pi.py:100 tees pi.txt; :102/:447 keep the flat --session-dir at agent/pi/sessions,
+  // so the captured ~/.pi/agent/sessions/ is written a second time there.
+  pi: { stdoutFile: "pi.txt", harborCopies: [{ sandboxRoot: "/root/.pi/agent/sessions", agentDir: "pi/sessions" }] },
+  // No Harbor adapter: prime-agent.txt follows their pattern, recorded as ours.
+  "prime-agent": { stdoutFile: "prime-agent.txt", harborCopies: [] },
+  // No Harbor adapter either (Harbor's installed/ has no deepseek entry): dsh.txt, ours.
+  dsh: { stdoutFile: "dsh.txt", harborCopies: [] },
   // No Harbor adapter: zcode.txt, the same pattern; the captured ~/.zcode
   // (SQLite session store) sits at agent/.zcode/ alone.
   zcode: { stdoutFile: "zcode.txt", harborCopies: [] },
@@ -158,7 +166,8 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
 
 /**
  * Harbor's own names for the harnesses above (their models/agent/name.py) —
- * the `agent_info.name` a `harbor run` record carries.
+ * the `agent_info.name` a `harbor run` record carries. pi's Harbor name is
+ * the SDK id itself (name.py:38), so it needs no row.
  */
 const HARBOR_AGENT_NAMES: Record<string, string> = {
   "claude-code": "claude",

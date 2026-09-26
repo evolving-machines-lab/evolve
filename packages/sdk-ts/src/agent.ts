@@ -40,8 +40,11 @@ import { VALIDATION_PRESETS } from "./types";
 import {
   expandPath,
   getAgentConfig,
+  getDshReasoningEffort,
   getOpenCodeReasoningVariant,
   isThinkingEnabled,
+  piFamilyWireModel,
+  piThinkingLevel,
   registryOwnsModel,
   registryWireId,
   resolveReasoningEffort,
@@ -52,9 +55,12 @@ import {
   writeMcpConfig,
   writeCodexSpendProvider,
   writeJsonSpendHeaders,
+  writeJsonSettingsStamp,
+  writeModelsJsonRoute,
   writeQwenThinkingConfig,
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
+  writeDshRoutePatch,
   writeZcodeProviderConfig,
 } from "./mcp";
 import { stringify as stringifyToml } from "smol-toml";
@@ -170,6 +176,12 @@ function providerRuntimeProviderForAgent(
       return "openrouter";
     case "droid":
       return "droid";
+    case "pi":
+      return "pi";
+    case "prime-agent":
+      return "prime-agent";
+    case "dsh":
+      return "dsh";
     case "zcode":
       return "zcode";
     default:
@@ -313,11 +325,36 @@ function withOpenAiV1Path(baseUrl: string): string {
  * Uses registry lookup for agent-specific behavior.
  * Tracks hasRun state for continue flag handling.
  */
+/** The stream's verdict at exit 0 (registry verdictFromStream), read line by line. */
+interface StreamVerdict {
+  failed: boolean;
+  /** A failure has been judged by a stop reason: the stream speaks that vocabulary. */
+  stopReasonJudged: boolean;
+}
+
+/** Every message_end-derived event carries the message's stop reason in extra; the last one is the verdict. */
+function streamVerdictAfter(events: OutputEvent[] | null, previous: StreamVerdict): StreamVerdict {
+  let { failed, stopReasonJudged } = previous;
+  for (const event of events ?? []) {
+    const stop = event.extra?.stopReason;
+    if (typeof stop === "string") {
+      failed = stop === "error" || stop === "aborted";
+      if (failed) stopReasonJudged = true;
+    }
+    // Harnesses that never print a stop reason report failure as a fatal error. Once a stop
+    // reason has judged a failure, a later fatal repeats it (pi's agent_end) and cannot
+    // overturn a recovered call.
+    if (!stopReasonJudged && event.update.sessionUpdate === "error" && event.update.fatal) failed = true;
+  }
+  return { failed, stopReasonJudged };
+}
+
 export class Agent {
   private agentConfig: ResolvedAgentConfig;
   private options: AgentOptions;
   private sandbox?: SandboxInstance;
   private hasRun: boolean = false;
+  private mcpConfigured = false;
   private readonly workingDir: string;
   private readonly homeDir: string;
   private lastRunTimestamp?: number;
@@ -336,7 +373,7 @@ export class Agent {
   private interruptedOperations = new Set<number>();
   private sandboxState: SandboxLifecycleState;
   private agentState: AgentRuntimeState = "idle";
-  private droidSessionId?: string;
+  private capturedSessionId?: string;
   private managedBrowserSession?: ManagedBrowserSession;
   private providerRuntimeToken?: ProviderRuntimeToken;
   private managedSecretRuntimeToken?: ManagedSecretRuntimeToken;
@@ -538,6 +575,7 @@ export class Agent {
     handle: SandboxCommandHandle,
     callbacks?: StreamCallbacks,
     sandbox?: SandboxInstance,
+    streamFailed: () => boolean = () => false,
   ): void {
     const completeReason: LifecycleReason =
       kind === "run"
@@ -566,11 +604,10 @@ export class Agent {
           return;
         }
         if (kind === "run" && sandbox) {
-          await this.writeDroidSessionState(sandbox);
+          await this.writeCapturedSessionId(sandbox);
         }
-        const reason = result.exitCode === 0 ? completeReason : failedReason;
-        const nextState = result.exitCode === 0 ? "idle" : "error";
-        this.finalizeOperation(opId, callbacks, reason, nextState);
+        const succeeded = result.exitCode === 0 && !streamFailed();
+        this.finalizeOperation(opId, callbacks, succeeded ? completeReason : failedReason, succeeded ? "idle" : "error");
       })
       .catch(async () => {
         if (kind === "run" && sandbox) {
@@ -651,7 +688,7 @@ export class Agent {
         this.sandbox = await provider.connect(this.options.sandboxId);
         // Existing sandbox may have prior runs - use resume/continue command
         this.hasRun = true;
-        await this.loadDroidSessionState(this.sandbox);
+        await this.loadCapturedSessionId(this.sandbox);
         this.sandboxState = "ready";
         this.agentState = "idle";
         this.emitLifecycle(callbacks, "sandbox_connected");
@@ -1577,36 +1614,43 @@ export class Agent {
     );
   }
 
-  private captureDroidSession(
+  /**
+   * The session id the CLI's own stream announced, for harnesses that resume
+   * by id (registry sessionIdStateFile: droid `--session-id`, dsh
+   * `--session-id`). Read off the parsed events first (every parser stamps
+   * `sessionId`), else off the raw line for lines the parser drops (dsh's
+   * opening `session` line, droid's JSON-RPC envelopes).
+   */
+  private captureHarnessSessionId(
     rawLine: string,
     events: OutputEvent[] | null,
   ): void {
-    if (this.agentConfig.type !== "droid") return;
+    if (!this.registry.sessionIdStateFile) return;
 
     const eventSessionId = events?.find(
       (event) =>
         typeof event.sessionId === "string" && event.sessionId.length > 0,
     )?.sessionId;
     if (eventSessionId) {
-      this.droidSessionId = eventSessionId;
+      this.capturedSessionId = eventSessionId;
       return;
     }
 
-    const rawSessionId = this.extractDroidSessionId(rawLine);
+    const rawSessionId = this.extractSessionIdFromLine(rawLine);
     if (rawSessionId) {
-      this.droidSessionId = rawSessionId;
+      this.capturedSessionId = rawSessionId;
     }
   }
 
-  private extractDroidSessionId(rawLine: string): string | undefined {
+  private extractSessionIdFromLine(rawLine: string): string | undefined {
     try {
-      return this.findDroidSessionId(JSON.parse(rawLine));
+      return this.findSessionIdInLine(JSON.parse(rawLine));
     } catch {
       return undefined;
     }
   }
 
-  private findDroidSessionId(value: unknown): string | undefined {
+  private findSessionIdInLine(value: unknown): string | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value))
       return undefined;
     const record = value as Record<string, unknown>;
@@ -1614,38 +1658,93 @@ export class Agent {
     if (typeof direct === "string" && direct.length > 0) return direct;
 
     return (
-      this.findDroidSessionId(record.result) ??
-      this.findDroidSessionId(record.params) ??
-      this.findDroidSessionId(record.notification)
+      this.findSessionIdInLine(record.result) ??
+      this.findSessionIdInLine(record.params) ??
+      this.findSessionIdInLine(record.notification)
     );
   }
 
-  private droidSessionStatePath(): string {
-    return `${this.homeDir}/.factory/evolve-session.json`;
+  private sessionIdStatePath(): string | undefined {
+    const file = this.registry.sessionIdStateFile;
+    return file ? expandPath(file, this.homeDir) : undefined;
   }
 
-  private async loadDroidSessionState(sandbox: SandboxInstance): Promise<void> {
-    if (this.agentConfig.type !== "droid" || this.droidSessionId) return;
+  private async loadCapturedSessionId(sandbox: SandboxInstance): Promise<void> {
+    const path = this.sessionIdStatePath();
+    if (!path || this.capturedSessionId) return;
     try {
-      const existing = await sandbox.files.read(this.droidSessionStatePath());
+      const existing = await sandbox.files.read(path);
       if (typeof existing !== "string") return;
       const parsed = JSON.parse(existing) as { sessionId?: unknown };
       if (typeof parsed.sessionId === "string" && parsed.sessionId.length > 0) {
-        this.droidSessionId = parsed.sessionId;
+        this.capturedSessionId = parsed.sessionId;
       }
     } catch {
-      // Missing or invalid session state means the next Droid run starts fresh.
+      // Missing or invalid session state means the next run starts fresh.
     }
   }
 
-  private async writeDroidSessionState(
+  private async writeCapturedSessionId(
     sandbox: SandboxInstance,
   ): Promise<void> {
-    if (this.agentConfig.type !== "droid" || !this.droidSessionId) return;
-    await sandbox.files.makeDir(`${this.homeDir}/.factory`);
+    const path = this.sessionIdStatePath();
+    if (!path || !this.capturedSessionId) return;
+    await sandbox.files.makeDir(path.slice(0, path.lastIndexOf("/")));
     await sandbox.files.write(
-      this.droidSessionStatePath(),
-      JSON.stringify({ sessionId: this.droidSessionId }, null, 2),
+      path,
+      JSON.stringify({ sessionId: this.capturedSessionId }, null, 2),
+    );
+  }
+
+  /**
+   * The model dsh's route patch names — the one string the provider receives
+   * (dsh resolves nothing itself on the pi-ai route), per route, the droid
+   * settings-file rule verbatim (droidSettingsModel): external gateway sends
+   * the roster wire id (alias == id on this roster, so verbatim); gateway
+   * mode the gatewayModelAliases spelling (none: verbatim); plain direct mode
+   * the directModelAliases spelling — OpenRouter's own id without the
+   * `openrouter/` route prefix.
+   */
+  private dshPatchModel(): string {
+    const model = this.agentConfig.model || this.registry.defaultModel;
+    return this.agentConfig.externalGateway
+      ? registryWireId(this.registry, model)
+      : this.resolveCommandModel(model);
+  }
+
+  /**
+   * dsh's route patch, rewritten before every run (registry dshRoutePatch;
+   * mcp/yaml.ts). The key and the base URL are named as the env vars every
+   * mode already sets (apiKeyEnv, baseUrlEnv), so the same file serves the
+   * managed gateway, an external gateway and direct mode. Spend headers ride
+   * env reads too, and only where the SDK sets those envs — the managed
+   * gateway (spendTrackingEnvs + the runtime-binding env); an unset env would
+   * turn into an undefined header value.
+   */
+  private async writeDshPerRunPatch(sandbox: SandboxInstance): Promise<void> {
+    const route = this.registry.dshRoutePatch;
+    if (!route || !this.registry.baseUrlEnv) return;
+    const managedGateway = !this.agentConfig.isDirectMode;
+    if (managedGateway) this.requireActiveProviderRuntimeToken();
+    const tracking = this.registry.spendTrackingEnvs;
+    await writeDshRoutePatch(
+      sandbox,
+      {
+        ...route,
+        apiKeyEnv: this.registry.apiKeyEnv,
+        baseUrlEnv: this.registry.baseUrlEnv,
+        model: this.dshPatchModel(),
+        reasoningEffort: getDshReasoningEffort(this.reasoningEffort()),
+        headerEnvs:
+          managedGateway && tracking
+            ? {
+                [LITELLM_CUSTOMER_ID_HEADER]: tracking.sessionTagEnv,
+                [LITELLM_TAGS_HEADER]: tracking.runTagEnv,
+                [PROVIDER_RUNTIME_BINDING_HEADER]: PROVIDER_RUNTIME_BINDING_ENV,
+              }
+            : undefined,
+      },
+      this.homeDir,
     );
   }
 
@@ -1654,6 +1753,52 @@ export class Agent {
       ? this.registry.directModelAliases
       : this.registry.gatewayModelAliases;
     return aliases?.[model] ?? model;
+  }
+
+  /** The pi family's per-run models.json: the mode's LITERAL base URL (pi never expands $VAR there), the key by env name. */
+  private async writePiFamilyModelsJson(sandbox: SandboxInstance, runId: string): Promise<void> {
+    const route = this.registry.modelsJsonRoute;
+    if (!route) return;
+    const isExternalGateway = Boolean(this.agentConfig.externalGateway);
+    const isDirect = this.agentConfig.isDirectMode && !isExternalGateway;
+
+    let baseUrl: string;
+    let headers: Record<string, string> = {};
+    if (isExternalGateway) {
+      baseUrl = this.agentConfig.baseUrl ?? withOpenAiV1Path(getGatewayUrl());
+    } else if (isDirect) {
+      const direct = this.agentConfig.baseUrl ?? this.registry.defaultBaseUrl;
+      if (!direct) {
+        throw new Error(`${this.agentConfig.type} direct mode needs a base URL (providerBaseUrl or the registry defaultBaseUrl)`);
+      }
+      baseUrl = direct;
+    } else {
+      const providerRuntime = this.requireActiveProviderRuntimeToken();
+      baseUrl = withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl());
+      headers = {
+        [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+        [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+        ...this.providerRuntimeHeaderUpdates(),
+      };
+    }
+
+    const effort = this.reasoningEffort();
+    await writeModelsJsonRoute(
+      sandbox,
+      {
+        ...route,
+        apiKeyEnv: this.registry.apiKeyEnv,
+        baseUrl,
+        model: piFamilyWireModel(
+          this.resolveCommandModel(this.agentConfig.model || this.registry.defaultModel),
+          { isDirectMode: this.agentConfig.isDirectMode, isExternalGateway },
+        ),
+        reasoning: isThinkingEnabled(effort),
+        thinkingLevel: piThinkingLevel(effort),
+      },
+      headers,
+      this.homeDir,
+    );
   }
 
   /**
@@ -1904,11 +2049,23 @@ export class Agent {
     // work. Gateway mode and managed integrations both produce session-scoped URLs.
     if (Object.keys(mcpServers).length > 0) {
       this.assertProviderRuntimeDoesNotExposeGatewayKey(mcpServers);
+      this.mcpConfigured = true;
       await writeMcpConfig(
         this.agentConfig.type,
         sandbox,
         this.workingDir,
         mcpServers,
+        this.homeDir,
+      );
+    }
+
+    // Platform settings stamp (pi, Prime Agent): merged into the harness's own
+    // settings file AFTER the MCP writer, whose keys survive the merge.
+    if (this.registry.settingsStamp) {
+      await writeJsonSettingsStamp(
+        sandbox,
+        this.registry.settingsStamp.path,
+        this.registry.settingsStamp.document,
         this.homeDir,
       );
     }
@@ -2119,8 +2276,10 @@ export class Agent {
       // shared box passes `resume: false` to keep each one fresh — see
       // RunOptions.resume for why that could not be expressed before.
       isResume: resume ?? this.hasRun,
-      sessionId:
-        this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
+      mcpConfigured: this.mcpConfigured,
+      // Set only for harnesses with a sessionIdStateFile (droid, dsh); the
+      // other command builders ignore it.
+      sessionId: this.capturedSessionId,
       reasoningEffort: this.reasoningEffort(),
       nativeConfigPath: this.nativeConfigFlagPath(),
       presetFlags: this.presetCommandFlags(),
@@ -2370,7 +2529,7 @@ export class Agent {
         await this.setupWorkspace(this.sandbox, {
           skipSystemPrompt: !hasExplicitPromptConfig,
         });
-        await this.loadDroidSessionState(this.sandbox);
+        await this.loadCapturedSessionId(this.sandbox);
 
         // Mark as resumed so CLI uses --continue flag
         this.hasRun = true;
@@ -2396,7 +2555,7 @@ export class Agent {
 
     const sandbox = await this.getSandbox(callbacks);
     await this.ensureProviderRuntimeToken();
-    await this.loadDroidSessionState(sandbox);
+    await this.loadCapturedSessionId(sandbox);
 
     // Track turn start time BEFORE process starts (for output file filtering)
     // Files modified AFTER this time will be returned by getOutputFiles()
@@ -2447,6 +2606,7 @@ export class Agent {
     }
 
     await this.writeKimiPerRunConfig(sandbox, runId);
+    await this.writeDshPerRunPatch(sandbox);
 
     // Per-run Droid gateway settings: Droid custom models read extraHeaders from
     // settings at startup, so rewrite the Evolve-owned settings file each run.
@@ -2481,10 +2641,15 @@ export class Agent {
       );
     }
 
+    // Per-run models.json for the pi family (pi, Prime Agent): the file is the
+    // only route these CLIs take, and it carries the run tag in the provider's
+    // headers, so it is rewritten before every spawn in every mode.
+    await this.writePiFamilyModelsJson(sandbox, runId);
     await this.writeZcodePerRunConfig(sandbox, runId);
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
+    let streamVerdict: StreamVerdict = { failed: false, stopReasonJudged: false };
 
     // Create parser once (shared by onContent callback and session logger)
     const parser = createAgentParser(this.agentConfig.type);
@@ -2501,7 +2666,8 @@ export class Agent {
 
         // Parse once, use for both session logger and onContent
         const events = parser(line);
-        this.captureDroidSession(line, events);
+        streamVerdict = streamVerdictAfter(events, streamVerdict);
+        this.captureHarnessSessionId(line, events);
 
         // Log to session logger with pre-parsed events (non-blocking)
         this.sessionLogger?.writeEventParsed(line, events);
@@ -2536,7 +2702,9 @@ export class Agent {
     this.hasRun = true;
 
     if (background) {
-      this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox);
+      this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox, () =>
+        this.registry.verdictFromStream === true && streamVerdict.failed,
+      );
       return {
         sandboxId: sandbox.sandboxId,
         sessionId: this.managedBrowserSession?.sessionId,
@@ -2558,22 +2726,12 @@ export class Agent {
       throw error;
     }
 
-    const interrupted =
-      this.interruptedOperations.delete(opId) || result.exitCode === 130;
-    if (interrupted) {
-      this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
-    } else if (result.exitCode === 0) {
-      this.finalizeOperation(opId, callbacks, "run_complete", "idle");
-    } else {
-      this.finalizeOperation(opId, callbacks, "run_failed", "error");
-    }
-    await this.removeZcodePerRunConfig(sandbox);
-
-    // Process any remaining buffered content
+    // Process any remaining buffered content (before the verdict: it may be the last assistant message_end)
     if (lineBuffer.trim()) {
       // Parse once, use for both session logger and onContent
       const events = parser(lineBuffer);
-      this.captureDroidSession(lineBuffer, events);
+      streamVerdict = streamVerdictAfter(events, streamVerdict);
+      this.captureHarnessSessionId(lineBuffer, events);
 
       // Log to session logger with pre-parsed events (non-blocking)
       this.sessionLogger?.writeEventParsed(lineBuffer, events);
@@ -2589,7 +2747,21 @@ export class Agent {
       }
     }
 
-    await this.writeDroidSessionState(sandbox);
+    // pi and Prime Agent exit 0 whatever happened (registry verdictFromStream):
+    // the last assistant message_end decides, never their exit code alone.
+    const succeeded = result.exitCode === 0 && !(this.registry.verdictFromStream && streamVerdict.failed);
+    const interrupted =
+      this.interruptedOperations.delete(opId) || result.exitCode === 130;
+    if (interrupted) {
+      this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
+    } else if (succeeded) {
+      this.finalizeOperation(opId, callbacks, "run_complete", "idle");
+    } else {
+      this.finalizeOperation(opId, callbacks, "run_failed", "error");
+    }
+    await this.removeZcodePerRunConfig(sandbox);
+
+    await this.writeCapturedSessionId(sandbox);
 
     // Flush observability events so dashboard is complete before returning.
     // This ensures Python SDK (and any caller) gets deterministic flushing
@@ -2603,7 +2775,7 @@ export class Agent {
     // AUTO-CHECKPOINT: after successful foreground run with storage configured
     // =========================================================================
     let checkpoint: CheckpointInfo | undefined;
-    if (this.storage && !background && result.exitCode === 0) {
+    if (this.storage && !background && succeeded) {
       try {
         checkpoint = await createCheckpoint(
           sandbox,

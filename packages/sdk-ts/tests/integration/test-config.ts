@@ -128,8 +128,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "zcode"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid, zcode`);
+  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "pi", "prime-agent", "dsh", "zcode"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode`);
   }
   return type as AgentType;
 }
@@ -192,6 +192,25 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         model: process.env.DROID_MODEL || "gpt-5.5",
       };
 
+    case "pi":
+      return {
+        type: "pi",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.PI_MODEL || "openrouter/anthropic/claude-sonnet-5",
+      };
+
+    case "prime-agent":
+      return {
+        type: "prime-agent",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.PRIME_AGENT_MODEL || "openrouter/anthropic/claude-sonnet-5",
+      };
+
+    case "dsh":
+      return {
+        type: "dsh",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.DSH_MODEL || "openrouter/deepseek/deepseek-v4.1-flash",
     case "zcode":
       return {
         type: "zcode",
