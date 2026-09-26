@@ -1,47 +1,20 @@
 /**
  * DeepSeek Harness (dsh) `--profile headless --json` → ACP-style events.
  *
- * Native format: one JSON object per stdout line, ten event shapes
- * (deepseek-harness packages/bundle/headless/src/json-stream.ts at tag
- * dsh-v0.1.7-rc.2, commit 477b4f4 — the emitting source; no exported type,
- * JSON Schema or docs page declares the vocabulary, and the vendor calls it
- * "a projection, not the log" with pre-stable APIs):
+ * The vocabulary is the emitting source, not a published schema: deepseek-harness
+ * packages/bundle/headless/src/json-stream.ts at dsh-v0.1.7-rc.2 (recon
+ * 01-deepseek.md §G1; every shape observed live in 06-live-tests/dsh). Ten
+ * line types: session, status (turn_start | step_start | step_end | turn_end),
+ * thinking, text, tool_call, tool_result, final, error. No clock, model id,
+ * message id or cost on any line; strings are capped at 8 KiB (`truncated`).
  *
- *   session      { sessionId, cwd }                 first line; the id the
- *                                                   resume flag needs
- *   status       { phase: turn_start | step_start } lifecycle (nothing to carry)
- *                { phase: step_end, usage? }        usage (scope "call": one
- *                                                   step = one model call)
- *                { phase: turn_end, reason }        completed → nothing;
- *                                                   any other kind → error
- *   thinking     { text }                           agent_thought_chunk
- *   text         { text }                           agent_message_chunk
- *   tool_call    { callId, tool, input }            tool_call (pending)
- *   tool_result  { callId, status, result }         tool_call_update
- *   final        { text }                           the last assistant text —
- *                                                   emitted only when no `text`
- *                                                   line already carried it
- *   error        { message }                        error (fatal: a driver
- *                                                   failure outside a turn)
+ * Failure is `turn_end` with a `reason.kind` other than `completed` (round-2
+ * E1: retries are invisible, then one turn_end, `final ""`, exit 1); a
+ * `tool_result.status: "error"` is a tool failing, a shell's exit code is
+ * not (E2/E2b); SIGINT ends the stream at `final` with no turn_end (E3).
  *
- * Every string is capped at 8 KiB and a line at 32 KiB; a cut line carries
- * `truncated: true`, which rides the envelope's `extra`. No line carries a
- * clock, a model id, a message id or a cost — the on-disk session log
- * (~/.dsh/sessions/…/session.v4.jsonl.zstd, captured with the home) has them.
- *
- * FAILURE SEMANTICS (live captures, harness-recon-2026-09-25/06-live-tests/dsh
- * rounds 1 and 2): a failed turn ends with `turn_end {reason: {kind: "error",
- * error: {message, code, status?}}}` then `final ""` and exit 1; the retries
- * before it are invisible here (`step_end` usage is all zeros after a fully
- * failed step). `tool_result.status: "error"` is a tool-level failure only —
- * a shell command's non-zero exit comes back `completed` with the code in the
- * text. After SIGINT the stream ends at `final` with no `turn_end` at all.
- * The exit code IS a verdict for dsh (0 only on `completed`), unlike pi.
- *
- * Any `type` or `status.phase` outside this vocabulary is logged once and
- * skipped — never a failure, never work — because the stream is unversioned
- * and the vendor promises breaking changes; the raw line still reaches the
- * stored stdout trace untouched (the run loop writes every line).
+ * Any type or phase outside the vocabulary rides `harness_event` and is
+ * logged once — the stream is unversioned and pre-stable by the vendor's word.
  */
 
 import { harnessErrorText } from "./types";
@@ -56,7 +29,7 @@ import type {
   ToolKind,
 } from "./types";
 
-/** dsh's tool names (the headless profile's request/header tool list) → ACP kind. */
+/** The headless profile's tool list (live request/header, T2) → ACP kind; the rest is "other". */
 const TOOL_KINDS: Record<string, ToolKind> = {
   read: "read",
   read_image: "read",
@@ -74,8 +47,6 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   subagent: "think",
   subagent_fork: "think",
   exit_plan_mode: "switch_mode",
-  // Bookkeeping, agent control, goals, skills, workflows and every mcp__*
-  // tool fall to "other" (the map's default).
 };
 
 export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
@@ -94,15 +65,16 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
 
     const type = stringField(data, "type");
     const updates: SessionUpdate[] = [];
-    // Facts of the line with no ACP slot, under the wire's own names.
     const extra: Record<string, unknown> = {};
     if (data.truncated === true) extra.truncated = true;
 
     switch (type) {
+      // The opening line: the id `--session-id` resumes with, and the cwd.
       case "session": {
         const id = stringField(data, "sessionId");
         if (id) sessionId = id;
-        return null;
+        updates.push(harnessEvent(type, data));
+        break;
       }
 
       case "status": {
@@ -137,10 +109,8 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
         break;
       }
 
-      // The run's closing text, lossless and uncapped. A completed turn
-      // already streamed it as the last `text` block, so it is skipped
-      // unless it differs — after SIGINT it is the only copy of the partial
-      // answer (round-2 E3), and `""` on a failed turn says nothing.
+      // The last text block again on a completed turn; after SIGINT it is the
+      // only copy of the partial answer (E3), and `""` after a failed turn.
       case "final": {
         const text = stringField(data, "text");
         if (text && text !== lastAssistantText) {
@@ -150,8 +120,7 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
         break;
       }
 
-      // A driver failure outside a turn, or a usage/grammar error; the
-      // stream ends here without `final` (json-stream.ts), so it is terminal.
+      // A driver failure outside a turn; the stream ends here without `final`.
       case "error": {
         updates.push({
           sessionUpdate: "error",
@@ -163,7 +132,8 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
 
       default:
         warnOnce(`event type ${JSON.stringify(type)}`);
-        return null;
+        updates.push(harnessEvent(type, data));
+        break;
     }
 
     if (updates.length === 0) return null;
@@ -177,18 +147,19 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
   function warnOnce(what: string): void {
     if (warned.has(what)) return;
     warned.add(what);
-    console.warn(`[Evolve] dsh parser: unknown ${what} skipped (the raw line stays in the stdout trace)`);
+    console.warn(`[dsh parser] unknown ${what}`);
   }
 }
 
+function harnessEvent(type: string, data: Record<string, unknown>): SessionUpdate {
+  const { type: _type, ...payload } = data;
+  return { sessionUpdate: "harness_event", type, payload };
+}
+
 /**
- * `status` lines. `usage` on step_end is dsh's TokenUsage — DISJOINT counts
- * (deepseek-harness packages/llm/llm/src/types.ts: inputTokens is the
- * uncached share; cacheReadTokens, cacheWriteTokens, outputTokens,
- * totalTokens?, reasoningTokens?; live T2: 210 + 74 + 5376 = totalTokens
- * 5660). Harbor's arithmetic then: prompt = input + cache read + cache write,
- * completion = output, cached = cache read; the remaining counters ride
- * `extra` under their wire names. A counter the line did not carry is absent.
+ * step_end.usage is dsh's TokenUsage with DISJOINT counts (llm/src/types.ts:
+ * inputTokens is the uncached share; T2: 210 + 74 + 5376 = totalTokens 5660),
+ * so Harbor's arithmetic is prompt = input + cache read + cache write.
  */
 function handleStatus(
   data: Record<string, unknown>,
@@ -209,12 +180,8 @@ function handleStatus(
       return { sessionUpdate: "usage", scope: "call", usage };
     }
 
-    // `reason.kind`: completed | aborted | blocked | error | max-tokens |
-    // interrupted | forked (json-stream.ts / session types TurnEndReason).
-    // Everything but `completed` ended the turn without an answer and exits
-    // non-zero, so it is the error variant with dsh's own text: the error's
-    // message, the abort's reason, else the reason object dumped (never
-    // blank). The kind and the error's code/status ride `extra` verbatim.
+    // Every kind but `completed` (aborted, blocked, error, max-tokens,
+    // interrupted, forked) ended the turn without an answer and exits non-zero.
     case "turn_end": {
       const reason = asRecord(data.reason);
       const kind = reason ? stringField(reason, "kind") : "";
@@ -235,7 +202,7 @@ function handleStatus(
 
     default:
       warnOnce(`status phase ${JSON.stringify(phase)}`);
-      return null;
+      return harnessEvent("status", data);
   }
 }
 
@@ -264,14 +231,7 @@ function stepUsage(value: unknown): TokenUsage | null {
   return usage;
 }
 
-/**
- * `tool_call {callId, tool, input}`: `input` is the parsed arguments object
- * (`{}` when empty; the raw string when the model's JSON did not parse). The
- * name rides `toolName` verbatim — an MCP tool is `mcp__<server>__<tool>`.
- * `todo_write` also yields a `plan` (its schema, read from the live
- * request/header: `todos[{content, status: pending|in_progress|completed}]`,
- * no priority — dsh declares none, so every entry is "medium").
- */
+/** `input` is the parsed arguments (`{}` when empty; the raw string when the model's JSON did not parse). */
 function handleToolCall(data: Record<string, unknown>): SessionUpdate[] {
   const callId = stringField(data, "callId");
   if (!callId) return [];
@@ -299,12 +259,7 @@ function handleToolCall(data: Record<string, unknown>): SessionUpdate[] {
   return updates;
 }
 
-/**
- * `tool_result {callId, status: completed | error, result}`: `result` is the
- * tool's text blocks concatenated (images and structured content are dropped
- * by the projection), verbatim — no fence, no prefix; a viewer frames it.
- * `error` is the tool failing (a missing file), never a command's exit code.
- */
+/** `result` is the tool's text blocks concatenated (the projection drops images and structured content). */
 function handleToolResult(data: Record<string, unknown>): SessionUpdate | null {
   const callId = stringField(data, "callId");
   if (!callId) return null;
@@ -341,7 +296,7 @@ function toolInfo(toolName: string, input: Record<string, unknown>): {
     case "read": {
       if (path) {
         const offset = input.offset;
-        // dsh's read `offset` is 1-based like Claude's; ACP lines are 0-based.
+        // dsh's `offset` is 1-based (its read schema); ACP lines are 0-based.
         locations.push({
           path,
           line: typeof offset === "number" && Number.isFinite(offset) ? Math.max(0, offset - 1) : undefined,
@@ -408,6 +363,7 @@ function toolInfo(toolName: string, input: Record<string, unknown>): {
   };
 }
 
+/** todo_write's schema (live request/header): `todos[{content, status}]`, no priority. */
 function planEntries(value: unknown): PlanEntry[] {
   if (!Array.isArray(value)) return [];
   const entries: PlanEntry[] = [];

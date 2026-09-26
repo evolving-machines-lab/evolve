@@ -432,6 +432,7 @@ async function testLaw(): Promise<void> {
   console.log("\n[law] accounting is never work");
   assert(!isAgentWorkUpdate({ sessionUpdate: "usage" }), "isAgentWorkUpdate(usage) === false");
   assert(!isAgentWorkUpdate({ sessionUpdate: "error" }), "isAgentWorkUpdate(error) === false (unchanged)");
+  assert(!isAgentWorkUpdate({ sessionUpdate: "harness_event" }), "isAgentWorkUpdate(harness_event) === false — a line the harness printed is not work the agent did");
   assert(isAgentWorkUpdate({ sessionUpdate: "agent_message_chunk" }), "isAgentWorkUpdate(agent_message_chunk) === true (unchanged)");
 }
 

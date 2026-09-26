@@ -1,28 +1,12 @@
 /**
  * dsh Configuration Writers (YAML patches)
  *
- * DeepSeek Harness (`dsh`) is configured by Cordis PATCH files: a YAML list of
- * rows, each `id` replacing that row's whole `config` (no deep merge), or an
- * `insert:` list adding rows (deepseek-harness apps/cli/reference/README.md
- * "Profile boot"; docs/user/guide/mcp-memory.md for `insert`). dsh has no
- * model, effort or base-URL flag and reads no .mcp.json, so the two patches
- * below are the whole routing surface. Both are Evolve-owned files under
- * ~/.dsh, passed to the command with `--patch` (registry.ts dsh.buildCommand).
- *
- *   evolve-route.patch.yml  the pi-ai provider route at the gateway (or at
- *                           OpenRouter in direct mode), the default model and
- *                           effort, and the rows the headless run must not
- *                           carry (the hidden title call; the native route's
- *                           session-log and plugin-inventory uploads).
- *   evolve-mcp.patch.yml    one @deepseek-ai/dsh-mcp-client row per server.
- *
- * NO SECRET EVER LANDS IN THE ROUTE PATCH. The key and the base URL are named
- * as ENV VARIABLES — `apiKeyEnv` is dsh's own env-name field, and the URL and
- * the spend headers ride `!!js process.env.X` scalars, which dsh's YAML loader
- * evaluates at boot (proven live 2026-09-25, harness-recon-2026-09-25/
- * 06-live-tests/dsh). One file shape therefore serves gateway, external-
- * gateway and direct mode; only the env values differ, and the home capture
- * can carry the file.
+ * dsh has no model, effort or base-URL flag and reads no .mcp.json: Cordis
+ * patch files (a YAML list of rows; `- insert:` adds rows) are its one config
+ * surface, so two Evolve-owned files under ~/.dsh route it — the pi-ai route
+ * (model, effort, spend headers) and one dsh-mcp-client row per MCP server.
+ * The route patch names the key and URL as env variables (`!!js process.env.X`,
+ * read by dsh at boot), so no secret lands on disk and one shape serves every mode.
  */
 
 import { stringify as stringifyYaml } from "yaml";
@@ -37,14 +21,7 @@ import { validateServers } from "./validation";
 /** dsh-mcp-client's serverName grammar (packages/mcp/mcp-client/README.md). */
 const DSH_SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/;
 
-/**
- * Transform to the dsh-mcp-client row config.
- *
- * dsh speaks `stdio` and `streamable-http` only — no SSE (grep across the
- * vendor's packages/: none), so an SSE server is refused typed rather than
- * silently re-labelled onto a protocol it does not speak. A url with no type
- * is streamable-http (the modern default; SSE must be asked for by name).
- */
+/** dsh speaks stdio and streamable-http only (no SSE in the vendor's packages/), so sse is refused, not re-labelled. */
 function toDshMcpFormat(name: string, config: McpServerConfig): Record<string, unknown> {
   if (!DSH_SERVER_NAME.test(name)) {
     throw new Error(
@@ -74,13 +51,7 @@ function toDshMcpFormat(name: string, config: McpServerConfig): Record<string, u
   return row;
 }
 
-/**
- * Write MCP config for dsh: `~/.dsh/evolve-mcp.patch.yml`, one inserted
- * @deepseek-ai/dsh-mcp-client row per server (tools surface as
- * `mcp__<serverName>__<tool>`). Rows must sit under `- insert:` — a bare row
- * in a --patch file is "entry not found" (round-2 live finding M1). The file
- * is Evolve-owned and rewritten whole.
- */
+/** Rows must sit under `- insert:`; a bare row in a --patch file is "entry not found" (live M1). */
 export async function writeDshMcpConfig(
   sandbox: SandboxInstance,
   servers: Record<string, McpServerConfig>,
@@ -111,24 +82,17 @@ export async function writeDshMcpConfig(
 // =============================================================================
 
 export interface DshRoutePatchConfig {
-  /** Sandbox path of the patch (registry dshRoutePatch.path, `~` allowed). */
   path: string;
-  /** The pi-ai provider route name declared and selected. */
   providerName: string;
-  /** Env var NAME dsh reads the key from per request (pi-ai `apiKeyEnv`). */
+  /** Env var NAME (pi-ai `apiKeyEnv` reads it per request). */
   apiKeyEnv: string;
-  /** Env var NAME holding the base URL, read at boot via `!!js process.env`. */
+  /** Env var NAME, read at boot via `!!js process.env`. */
   baseUrlEnv: string;
-  /** The wire model id — the one string the provider receives verbatim. */
+  /** The wire model id, sent verbatim. */
   model: string;
-  /** pi-ai thinking level for `agent-default-model.reasoningEffort`; absent = the route's default. */
+  /** pi-ai thinking level; absent = the route's default. */
   reasoningEffort?: string;
-  /**
-   * Spend-tracking headers as header name → env var NAME, each read at boot
-   * via `!!js process.env`. Only for the managed gateway, where the SDK sets
-   * every named env per run; absent otherwise (an unset env would become an
-   * undefined header value).
-   */
+  /** Header name → env var NAME; only where the SDK sets every named env (an unset env would be an undefined header). */
   headerEnvs?: Record<string, string>;
   contextWindow: number;
   maxTokens: number;
@@ -136,7 +100,7 @@ export interface DshRoutePatchConfig {
 
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 
-/** A `!!js` scalar reading one env var at boot; the name is validated so no other code can ride it. */
+/** The name is validated so no other code can ride the `!!js` scalar. */
 function envRead(envName: string): string {
   if (!ENV_NAME.test(envName)) {
     throw new Error(`dsh route patch: "${envName}" is not an environment variable name`);
@@ -149,11 +113,7 @@ function quoted(value: string): string {
   return JSON.stringify(value);
 }
 
-/**
- * The route patch's text — rendered by hand because the `!!js` tags have no
- * JSON spelling. Every string dsh could misread as a number, a boolean or a
- * flow token is quoted.
- */
+/** Rendered by hand: `!!js` tags have no JSON spelling. */
 export function renderDshRoutePatch(config: DshRoutePatchConfig): string {
   const lines: string[] = [
     "# Evolve-owned dsh patch: the pi-ai route, the default model and effort, and the rows a",
@@ -174,8 +134,7 @@ export function renderDshRoutePatch(config: DshRoutePatchConfig): string {
     }
   }
   lines.push(
-    // The two switches the vendor names for an OpenAI-compatible gateway
-    // (docs/user/guide/providers.md "Request compatibility"), proven live.
+    // The two switches the vendor names for an OpenAI-compatible gateway (providers.md "Request compatibility").
     "        compat:",
     "          supportsDeveloperRole: false",
     "          maxTokensField: max_tokens",
@@ -183,9 +142,7 @@ export function renderDshRoutePatch(config: DshRoutePatchConfig): string {
     `          - id: ${quoted(config.model)}`,
     `            contextWindow: ${config.contextWindow}`,
     `            maxTokens: ${config.maxTokens}`,
-    // A hand-declared model offers no effort levels until they are declared;
-    // each key is a level, its value the `reasoning_effort` wire spelling, and
-    // `off` valueless means "send nothing" (providers.md "Reasoning effort").
+    // A hand-declared model offers no levels until declared; `off` valueless sends nothing (providers.md "Reasoning effort").
     "            reasoningEfforts:",
     ...DSH_REASONING_LEVELS.map((level) => (level === "off" ? "              off: null" : `              ${level}: ${level}`)),
     "- id: agent-default-model",
@@ -197,16 +154,14 @@ export function renderDshRoutePatch(config: DshRoutePatchConfig): string {
     lines.push(`    reasoningEffort: ${quoted(config.reasoningEffort)}`);
   }
   lines.push(
-    // The native route's per-request uploads (the whole session log and the
-    // plugin inventory, both on by default) never leave on the pi-ai route,
-    // but the rows are pinned off so a future default cannot re-enable them.
+    // The native route's per-request uploads, pinned off so a future default cannot re-enable them.
     "- id: session-log-deepseek",
     "  config:",
     "    enabled: false",
     "- id: plugin-package-inventory-deepseek",
     "  config:",
     "    enabled: false",
-    // One hidden extra model call per session, on the same route and key.
+    // One hidden model call per session otherwise.
     "- id: session-title-llm",
     "  disabled: true",
     "",
@@ -214,11 +169,7 @@ export function renderDshRoutePatch(config: DshRoutePatchConfig): string {
   return lines.join("\n");
 }
 
-/**
- * Write the Evolve-owned dsh route patch. Rewritten before every run because
- * the model and effort are per-Agent facts; the text itself is static per
- * session (the run tag rides an env var), so the write is idempotent.
- */
+/** Rewritten before every run; the run tag rides an env var, so the text is static per session. */
 export async function writeDshRoutePatch(
   sandbox: SandboxInstance,
   config: DshRoutePatchConfig,

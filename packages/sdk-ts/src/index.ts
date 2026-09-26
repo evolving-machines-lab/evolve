@@ -250,7 +250,7 @@ export type {
 // =============================================================================
 
 // Output event types
-export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, TokenUsage } from "./parsers";
+export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, HarnessEvent, TokenUsage } from "./parsers";
 export { isAgentWorkUpdate } from "./parsers";
 
 // Parser functions

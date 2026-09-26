@@ -141,8 +141,14 @@ async function testOneShotText(): Promise<void> {
   console.log("\n[1] T1: a one-shot answer — text, one call-scoped usage, no lifecycle noise");
   const events = parseAll(createDshParser(), T1);
   const kinds = events.map((e) => e.update.sessionUpdate);
-  assert(same(kinds, ["agent_message_chunk", "usage"]), `emits text then usage (got ${kinds.join(", ")})`);
-  assert(events.every((e) => e.sessionId === "session-1daaa9ed-3f72-4002-90ce-b2fd02035153"), "the session line's id is stamped on every event");
+  assert(same(kinds, ["harness_event", "agent_message_chunk", "usage"]), `emits the session fact, text, then usage (got ${kinds.join(", ")})`);
+  assert(events.every((e) => e.sessionId === "session-1daaa9ed-3f72-4002-90ce-b2fd02035153"), "the session line's id is stamped on every event, its own included");
+  const opening = ofKind(events, "harness_event")[0];
+  assert(
+    opening?.update.type === "session" && same(opening.update.payload, { sessionId: "session-1daaa9ed-3f72-4002-90ce-b2fd02035153", cwd: "/work" }),
+    "the opening session line rides as harness_event {type: session, payload: its other fields verbatim}",
+  );
+  assert(events.filter((e) => isAgentWorkUpdate(e.update)).length === 1, "only the text is agent work — the session fact and the usage are not");
   const text = ofKind(events, "agent_message_chunk")[0];
   assert(text?.update.content.type === "text" && text.update.content.text === "OK", "the text block rides verbatim");
   const usage = ofKind(events, "usage")[0];
@@ -321,11 +327,22 @@ async function testEdgesAndUnknowns(): Promise<void> {
   console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
   try {
     const parser = createDshParser();
-    const unknown = parser(`{"type":"compaction","summary":"…"}`);
-    const again = parser(`{"type":"compaction","summary":"…"}`);
-    const phase = parser(`{"type":"status","phase":"turn_paused","turn":1}`);
-    assert(unknown === null && again === null && phase === null, "unknown event types and phases produce no event — never a failure, never work");
-    assert(warnings.length === 2 && warnings[0].includes('"compaction"') && warnings[1].includes('"turn_paused"'), "each unknown type is logged once");
+    const unknown = parser(`{"type":"compaction","summary":"…"}`)?.[0]?.update;
+    const again = parser(`{"type":"compaction","summary":"…"}`)?.[0]?.update;
+    const phase = parser(`{"type":"status","phase":"turn_paused","turn":1}`)?.[0]?.update;
+    assert(
+      unknown?.sessionUpdate === "harness_event" && unknown.type === "compaction" && same(unknown.payload, { summary: "…" }),
+      "an unknown event type rides as harness_event {type, payload: the other fields verbatim} — never dropped, never a failure",
+    );
+    assert(again?.sessionUpdate === "harness_event" && !isAgentWorkUpdate(again), "a second unknown line is still passed through and is never work");
+    assert(
+      phase?.sessionUpdate === "harness_event" && phase.type === "status" && same(phase.payload, { phase: "turn_paused", turn: 1 }),
+      "an unknown status phase rides the same way under type status",
+    );
+    assert(
+      warnings.length === 2 && warnings.every((w) => w.startsWith("[dsh parser] unknown ")) && warnings[0].includes('"compaction"') && warnings[1].includes('"turn_paused"'),
+      "each unknown type is logged once per parser instance, as [dsh parser] unknown …",
+    );
   } finally {
     console.warn = original;
   }
