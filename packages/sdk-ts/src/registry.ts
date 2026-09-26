@@ -1010,7 +1010,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     // Closed source (agy 1.2.11). The one headless auth path is the Gemini API key: GEMINI_API_KEY (GOOGLE_API_KEY is
     // ignored) with modelProvider "gemini" in its settings and GOOGLE_GEMINI_BASE_URL as the documented endpoint
-    // override (antigravity.google/docs/cli/install; recon team/dev-items/harness-recon-2026-09-25/05-antigravity.md).
+    // override (antigravity.google/docs/cli/install; the lane record holds the live-test captures).
     apiKeyEnv: "GEMINI_API_KEY",
     effortSupport: "level",
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
