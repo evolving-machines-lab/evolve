@@ -3815,11 +3815,6 @@ class SkillUploadPage:
 # MAPPERS
 # =============================================================================
 
-def _defaults_query(agent: Optional[str]) -> str:
-    """Both defaults doors' ``?agent=`` — the server resolves the named agent's policy; the client names it, nothing more."""
-    return '' if agent is None else f'?{urllib.parse.urlencode({"agent": agent})}'
-
-
 def _map_dataset_ref(data: Dict[str, Any]) -> DatasetRef:
     return DatasetRef(name=data.get('name', ''), version=data.get('version', ''))
 
@@ -5401,6 +5396,11 @@ def _collect_preflight_payload(directory: str) -> Dict[str, Any]:
 # =============================================================================
 # HTTP CORE
 # =============================================================================
+
+def _defaults_query(agent: Optional[str]) -> str:
+    """Both defaults doors' ``?agent=`` — the server resolves the named agent's policy; the client names it, nothing more."""
+    return '' if agent is None else f'?{urllib.parse.urlencode({"agent": agent})}'
+
 
 def _parse_error_body(text: str, fallback: str) -> Dict[str, Any]:
     """Extract the hosted error envelope {error: {code, message, param, details, ...}}."""
