@@ -243,8 +243,9 @@ RUN set -eu; V=0.9.6; cd /opt/evolve/prime-agent \
     && rm -rf /home/user/.cache/uv
 
 USER root
+# Prime prints its version on stderr (measured 2026-09-25), so the check reads both streams.
 RUN ln -sf /opt/evolve/prime-agent/node_modules/.bin/prime-agent /usr/local/bin/prime-agent \
-    && test "$(prime-agent --version)" = "0.9.6"
+    && test "$(prime-agent --version 2>&1)" = "0.9.6"
 USER user
 # The baked kernel's interpreter: with it set, Prime runs no bootstrap and no skill sync.
 ENV PRIME_AGENT_KERNEL_PYTHON=/home/user/.prime/agent/kernel-venv/bin/python

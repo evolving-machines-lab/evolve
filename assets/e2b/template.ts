@@ -174,7 +174,8 @@ export const template = Template()
   ].join(' && '))
 
   .setUser('root')
-  .runCmd('ln -sf /opt/evolve/prime-agent/node_modules/.bin/prime-agent /usr/local/bin/prime-agent && test "$(prime-agent --version)" = "0.9.6"')
+  // Prime prints its version on stderr (measured 2026-09-25), so the check reads both streams.
+  .runCmd('ln -sf /opt/evolve/prime-agent/node_modules/.bin/prime-agent /usr/local/bin/prime-agent && test "$(prime-agent --version 2>&1)" = "0.9.6"')
   .setUser('user')
   // The baked kernel's interpreter: with it set, Prime runs no bootstrap and no skill sync.
   .setEnvs({ PRIME_AGENT_KERNEL_PYTHON: '/home/user/.prime/agent/kernel-venv/bin/python' })
