@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: THE HARNESS-ERROR LAW, across all seven parsers.
+ * Unit Test: THE HARNESS-ERROR LAW, across all eight parsers.
  *
  * The law lives in parsers/types.ts (AgentError): a failure the HARNESS itself
  * reported is the `error` variant — never an agent_message_chunk, never
@@ -11,7 +11,7 @@
  * diagnosis on codex.
  *
  * codex was the only parser that obeyed. This suite pins the same two
- * properties for all seven:
+ * properties for all eight:
  *   1. the failure is surfaced, with the harness's own text VERBATIM;
  *   2. it is never counted as agent work (isAgentWorkUpdate === false).
  *
@@ -22,6 +22,8 @@
  *             codex-parser-errors.test.ts, which owns the codex regression)
  *   droid     live capture, droid 0.182.0 (`droid exec --output-format
  *             stream-json`, and the `--output-format json` result line)
+ *   dsh       live capture, @deepseek-ai/dsh@0.1.7-rc.2 (`--profile headless
+ *             --json`): the turn_end reason after a failed step, round-2 E1
  *   gemini    ErrorEvent / ResultEvent, gemini-cli
  *             packages/core/src/output/types.ts
  *   kimi      PromptJsonWriter.writeRetrying, kimi-code
@@ -40,9 +42,12 @@
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
+import { createDshParser } from "../../src/parsers/dsh.ts";
 import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
+import { createPiParser } from "../../src/parsers/pi.ts";
+import { createPrimeAgentParser } from "../../src/parsers/prime-agent.ts";
 import { createQwenParser } from "../../src/parsers/qwen.ts";
 import { isAgentWorkUpdate } from "../../src/parsers/types.ts";
 import type { AgentError, OutputEvent } from "../../src/parsers/types.ts";
@@ -223,6 +228,46 @@ async function testDroid(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// dsh
+// ---------------------------------------------------------------------------
+
+async function testDsh(): Promise<void> {
+  console.log("\n[dsh] a failed turn: turn_end kind error after invisible retries (live capture, round-2 E1)");
+
+  // dsh retries a failed model call five times in silence, then closes the
+  // turn with `turn_end {reason: {kind: "error", error}}` and `final ""` —
+  // the one failure signal on the stream, and terminal (exit 1 follows).
+  const events = parseAll(createDshParser(), [
+    `{"type":"session","sessionId":"session-b28c98d6-8415-4639-a300-ca955901ecf6","cwd":"/work"}`,
+    `{"type":"status","phase":"turn_start","turn":1}`,
+    `{"type":"status","phase":"step_start","turn":1,"step":1}`,
+    `{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":0,"outputTokens":0,"totalTokens":0}}`,
+    `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error","error":{"message":"500: {\\"message\\":\\"sink: internal error (request 6)\\",\\"type\\":\\"server_error\\",\\"code\\":\\"internal_error\\"}","code":"SERVER"}}}`,
+    `{"type":"final","text":""}`,
+  ]);
+  assertLaw("dsh", events, {
+    count: 1,
+    contains: ["sink: internal error (request 6)"],
+    fatal: [true],
+  });
+  assert(events[0]?.sessionId === "session-b28c98d6-8415-4639-a300-ca955901ecf6", "dsh: keeps the session id");
+  assert(workOf(events).length === 0, "dsh: the zero-usage step and the empty final are not work");
+
+  console.log("\n[dsh] a driver failure outside a turn");
+  const driver = parseAll(createDshParser(), [`{"type":"error","message":"usage: task required"}`]);
+  assertLaw("dsh/error", driver, { count: 1, contains: ["usage: task required"], fatal: [true] });
+
+  console.log("\n[dsh] a successful run is untouched");
+  const okEvents = parseAll(createDshParser(), [
+    `{"type":"text","text":"OK"}`,
+    `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}`,
+    `{"type":"final","text":"OK"}`,
+  ]);
+  assert(workOf(okEvents).length === 1, "dsh: the answer is agent work, once");
+  assert(errorsOf(okEvents).length === 0, "dsh: a completed turn is not a failure");
+}
+
+// ---------------------------------------------------------------------------
 // gemini
 // ---------------------------------------------------------------------------
 
@@ -386,6 +431,53 @@ async function testQwen(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// pi and Prime Agent — one core, two exit-code traps (both exit 0 on failure)
+// ---------------------------------------------------------------------------
+
+async function testPiFamily(): Promise<void> {
+  console.log("\n[pi] a failed call is the error variant; the loop giving up is the fatal one (live capture, pi 0.87.1)");
+  // Live capture E1 (round 2, 2026-09-25): every attempt prints an assistant
+  // message_end with stopReason error and the HTTP body as errorMessage; the
+  // last agent_end says willRetry false; exit code 0 throughout.
+  const pi = parseAll(createPiParser(), [
+    `{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"sink-gateway","model":"sink-model","stopReason":"pending","timestamp":1790372041715}}`,
+    `{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"sink-gateway","model":"sink-model","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},"stopReason":"error","timestamp":1790372041715,"errorMessage":"429: {\\"message\\":\\"Rate limit exceeded (sink)\\",\\"type\\":\\"rate_limit_error\\",\\"code\\":\\"rate_limit_exceeded\\"}"}}`,
+    `{"type":"turn_end","message":{},"toolResults":[]}`,
+    `{"type":"agent_end","messages":[],"willRetry":false}`,
+    `{"type":"agent_settled"}`,
+  ]);
+  assertLaw("pi", pi, {
+    count: 2,
+    contains: ["Rate limit exceeded (sink)", "Rate limit exceeded (sink)"],
+    fatal: [false, true],
+  });
+  assert(workOf(pi).length === 0, "pi: a failed run did no work");
+
+  console.log("\n[pi] the retry loop's exhaustion is fatal exactly once");
+  const exhausted = parseAll(createPiParser(), [
+    `{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"500: boom","timestamp":1}}`,
+    `{"type":"agent_end","messages":[],"willRetry":false}`,
+    `{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"500: boom"}`,
+  ]);
+  assertLaw("pi/exhausted", exhausted, { count: 2, contains: ["500: boom", "500: boom"], fatal: [false, true] });
+
+  console.log("\n[prime-agent] the same core; Prime prints no willRetry, so auto_retry_end is the fatal (live capture, v0.9.6 T3b)");
+  const prime = parseAll(createPrimeAgentParser(), [
+    `{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"hdrcheck","model":"m","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},"stopReason":"error","timestamp":1790368108007,"errorMessage":"401 hdrsink: rejected on purpose\\n\\nRun /login to update credentials."}}`,
+    `{"type":"agent_end","messages":[]}`,
+    `{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2271,"errorMessage":"401 hdrsink: rejected on purpose"}`,
+    `{"type":"auth_stale","provider":"hdrcheck","sourceTokens":[]}`,
+    `{"type":"auto_retry_end","success":false,"attempt":1,"finalError":"401 hdrsink: rejected on purpose\\n\\nRun /login to update credentials."}`,
+  ]);
+  assertLaw("prime-agent", prime, {
+    count: 2,
+    contains: ["401 hdrsink: rejected on purpose", "401 hdrsink: rejected on purpose"],
+    fatal: [false, true],
+  });
+  assert(workOf(prime).length === 0, "prime-agent: the retry schedule and auth_stale are generic events, never work");
+}
+
+// ---------------------------------------------------------------------------
 // The cross-harness invariant
 // ---------------------------------------------------------------------------
 
@@ -428,6 +520,21 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
       parse: createQwenParser(),
       lines: [`{"type":"result","subtype":"error_during_execution","session_id":"s","is_error":true,"error":{"message":"boom"}}`],
     },
+    {
+      name: "pi",
+      parse: createPiParser(),
+      lines: [`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"boom","timestamp":1}}`],
+    },
+    {
+      name: "prime-agent",
+      parse: createPrimeAgentParser(),
+      lines: [`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"boom","timestamp":1}}`],
+    },
+    {
+      name: "dsh",
+      parse: createDshParser(),
+      lines: [`{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error","error":{"message":"boom","code":"SERVER"}}}`],
+    },
   ];
 
   for (const { name, parse, lines } of cases) {
@@ -438,7 +545,7 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
     assert(errorsOf(events)[0]?.message === "boom", `${name}: the message is exactly what the harness said`);
   }
 
-  assert(cases.length === 7, "all seven harnesses are covered");
+  assert(cases.length === 10, "all ten harnesses are covered");
 }
 
 async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
@@ -453,6 +560,10 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
     { name: "gemini", parse: createGeminiParser(), line: `{"type":"error","severity":"error"}` },
     { name: "gemini/result", parse: createGeminiParser(), line: `{"type":"result","status":"error"}` },
     { name: "opencode", parse: createOpenCodeParser(), line: `{"type":"error","sessionID":"s","error":{}}` },
+    { name: "pi", parse: createPiParser(), line: `{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}` },
+    { name: "prime-agent", parse: createPrimeAgentParser(), line: `{"type":"auto_retry_end","success":false}` },
+    { name: "dsh", parse: createDshParser(), line: `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error"}}` },
+    { name: "dsh/max-tokens", parse: createDshParser(), line: `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"max-tokens"}}` },
   ];
 
   for (const { name, parse, line } of cases) {
@@ -464,16 +575,18 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("=".repeat(60));
-  console.log("THE HARNESS-ERROR LAW — all seven parsers");
+  console.log("THE HARNESS-ERROR LAW — all eight parsers");
   console.log("=".repeat(60));
 
   await testClaude();
   await testCodex();
   await testDroid();
+  await testDsh();
   await testGemini();
   await testKimi();
   await testOpenCode();
   await testQwen();
+  await testPiFamily();
   await testNoHarnessFoldsAFailureIntoAMessage();
   await testMalformedFailuresDegradeInsteadOfVanishing();
 

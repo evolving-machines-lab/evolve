@@ -9,6 +9,8 @@
  * - state transition safety under pause/kill/interrupt
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Evolve, type LifecycleEvent } from "../../dist/index.js";
 import { E2BCommands, E2BFiles } from "@evolvingmachines/e2b";
 import type {
@@ -88,7 +90,10 @@ type RuntimeProvider =
   | "dashscope"
   | "kimi"
   | "openrouter"
-  | "droid";
+  | "droid"
+  | "pi"
+  | "prime-agent"
+  | "dsh";
 
 function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
   const openAiCompatible = new Set<RuntimeProvider>([
@@ -97,6 +102,9 @@ function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
     "kimi",
     "openrouter",
     "droid",
+    "pi",
+    "prime-agent",
+    "dsh",
   ]);
   const suffix = openAiCompatible.has(provider) ? "/v1" : "";
   const baseUrl = `https://dashboard.test/api/model-proxy/${provider}${suffix}`;
@@ -148,6 +156,8 @@ class MockCommands implements SandboxCommands {
     options?: SandboxRunOptions,
   ) => SandboxCommandResult;
   public mode: SpawnMode = "instant";
+  /** The stdout lines an instant spawn prints (one noop line by default). */
+  public stdoutScript: string[] | null = null;
   public killSucceeds = true;
   public activeHandle: SandboxCommandHandle | null = null;
 
@@ -198,7 +208,7 @@ class MockCommands implements SandboxCommands {
     if (this.mode === "instant") {
       setTimeout(() => {
         if (finished) return;
-        options?.onStdout?.('{"type":"noop"}\n');
+        for (const line of this.stdoutScript ?? ['{"type":"noop"}']) options?.onStdout?.(line + "\n");
         finished = true;
         resolveWait?.({
           exitCode: interrupted ? 130 : 0,
@@ -1971,6 +1981,9 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
     { agentType: "kimi", provider: "kimi", tokenMustBeInSandboxConfig: true },
     { agentType: "opencode", provider: "openrouter", tokenMustBeInSandboxConfig: true },
     { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true },
+    { agentType: "pi", provider: "pi", tokenMustBeInSandboxConfig: true },
+    { agentType: "prime-agent", provider: "prime-agent", tokenMustBeInSandboxConfig: true },
+    { agentType: "dsh", provider: "dsh", tokenMustBeInSandboxConfig: true },
   ];
 
   try {
@@ -2748,7 +2761,7 @@ async function testExternalGatewayMutualExclusivity(): Promise<void> {
 }
 
 async function testExternalGatewayPerHarnessWiring(): Promise<void> {
-  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid)");
+  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/pi/prime-agent/dsh)");
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
@@ -2914,6 +2927,36 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
       "droid externalGateway sends an alias that IS its wire id verbatim — never the gatewayModelAliases route spelling",
     );
 
+    // pi and Prime Agent: routed via a per-run models.json provider entry at
+    // the external base URL VERBATIM (pi never expands $VAR in baseUrl), the
+    // key by env NAME, no LiteLLM headers, the caller's model VERBATIM; the
+    // command selects that provider. pi spells the key reference "$VAR",
+    // Prime the bare name.
+    const PI_FAMILY_EXTERNAL = [
+      { type: "pi", home: "/home/user/.pi/agent", keyRef: "$OPENROUTER_API_KEY" },
+      { type: "prime-agent", home: "/home/user/.prime/agent", keyRef: "OPENROUTER_API_KEY" },
+    ] as const;
+    for (const { type, home, keyRef } of PI_FAMILY_EXTERNAL) {
+      const model = `gw-${type}-model`;
+      const run = await runHarness(type, model);
+      const raw = run.files.get(`${home}/models.json`) ?? "";
+      assert(raw.length > 0, `${type} externalGateway writes ${home}/models.json`);
+      const doc = JSON.parse(raw) as {
+        providers?: Record<string, { baseUrl?: string; api?: string; apiKey?: string; headers?: Record<string, string>; models?: Array<{ id?: string }> }>;
+      };
+      const entry = doc.providers?.evolve;
+      assertEqual(entry?.baseUrl, EXTERNAL_URL, `${type} provider entry points at the external base URL VERBATIM`);
+      assertEqual(entry?.api, "openai-completions", `${type} provider entry speaks OpenAI chat completions`);
+      assertEqual(entry?.apiKey, keyRef, `${type} provider entry references the key by env name (${keyRef})`);
+      assertEqual(entry?.headers, undefined, `${type} external entry carries NO LiteLLM spend headers`);
+      assertEqual(entry?.models?.[0]?.id, model, `${type} provider entry registers the VERBATIM caller model`);
+      assertEqual(run.bootEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, `${type} boot env injects OPENROUTER_API_KEY for the models.json reference`);
+      assertEqual(run.spawnEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, `${type} spawn env injects OPENROUTER_API_KEY for the models.json reference`);
+      assert(!("EVOLVE_API_KEY" in run.bootEnvs), `${type} externalGateway never exposes EVOLVE_API_KEY`);
+      assert(run.command.includes(`--provider evolve --model ${model}`), `${type} command selects the evolve provider and the verbatim model`);
+      assert(!run.command.includes("openrouter/"), `${type} command never rewrites the model to openrouter/`);
+    }
+
     // Plain direct mode is untouched: Factory's own dot id rides --model and
     // no settings file is written.
     const directCommands = new MockCommands();
@@ -2936,6 +2979,116 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
       !directSandbox.files.writes.has("/home/user/.factory/evolve-settings.json"),
       "droid direct mode writes no Evolve-owned settings file",
     );
+
+    // dsh: routed by the Evolve-owned route PATCH (~/.dsh/evolve-route.patch.yml),
+    // which names the key and the base URL as env variables — the SDK's
+    // apiKeyEnv/baseUrlEnv, injected at boot and per spawn like every direct-
+    // style harness — and carries the caller's model VERBATIM, no spend
+    // headers (an unset header env would be an undefined header value).
+    const dsh = await runHarness("dsh", "gw-dsh-model");
+    assertEqual(dsh.bootEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, "dsh boot env injects OPENROUTER_API_KEY (the patch's apiKeyEnv)");
+    assertEqual(dsh.bootEnvs.EVOLVE_DSH_BASE_URL, EXTERNAL_URL, "dsh boot env injects EVOLVE_DSH_BASE_URL (the patch's baseURL read) VERBATIM");
+    assertEqual(dsh.spawnEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, "dsh spawn env re-injects OPENROUTER_API_KEY");
+    assertEqual(dsh.spawnEnvs.EVOLVE_DSH_BASE_URL, EXTERNAL_URL, "dsh spawn env re-injects EVOLVE_DSH_BASE_URL");
+    assert(!("EVOLVE_LITELLM_TAGS" in dsh.spawnEnvs) && !("EVOLVE_LITELLM_CUSTOMER_ID" in dsh.spawnEnvs), "dsh externalGateway spawn env carries NO LiteLLM tag envs");
+    const patch = dsh.files.get("/home/user/.dsh/evolve-route.patch.yml") ?? "";
+    assert(patch.length > 0, "dsh externalGateway writes the Evolve-owned route patch");
+    assert(patch.includes('model: "gw-dsh-model"'), "dsh route patch carries the VERBATIM caller model");
+    assert(patch.includes("baseURL: !!js process.env.EVOLVE_DSH_BASE_URL"), "dsh route patch reads the base URL from EVOLVE_DSH_BASE_URL at boot");
+    assert(patch.includes('apiKeyEnv: "OPENROUTER_API_KEY"'), "dsh route patch names OPENROUTER_API_KEY as the key env");
+    assert(!patch.includes("headers:"), "dsh external route patch carries NO LiteLLM spend headers");
+    assert(!patch.includes(EXTERNAL_KEY) && !patch.includes(EXTERNAL_URL), "dsh route patch holds neither the key nor the URL value");
+    assert(patch.includes('reasoningEffort: "high"'), "dsh route patch stamps the pinned effort (high) when the caller names none");
+    assert(dsh.command.includes("dsh --profile headless --patch /home/user/.dsh/evolve-route.patch.yml"), "dsh command runs the headless profile with the route patch");
+    assert(dsh.command.includes("DSH_PERMISSION_MODE=danger-full-access") && dsh.command.includes("DSH_TELEMETRY_DISABLED=1"), "dsh command bypasses approvals and disables telemetry by env");
+    assert(dsh.command.includes("--json"), "dsh command streams JSON");
+    assert(!dsh.command.includes("--session-id"), "a first run passes no --session-id");
+    assert(!dsh.command.includes("gw-dsh-model"), "the model never rides the command line (the patch carries it)");
+
+    // dsh plain direct mode: OpenRouter's own id in the patch (the roster's
+    // openrouter/ prefix is the gateway's route spelling), OpenRouter's API root.
+    const dshDirectCommands = new MockCommands();
+    const dshDirectSandbox = new MockSandbox("direct-dsh", dshDirectCommands);
+    const dshDirectKit = new Evolve()
+      .withAgent({ type: "dsh", model: "openrouter/deepseek/deepseek-v4.1-flash", providerApiKey: "or-direct" })
+      .withSandbox(new MockProvider(dshDirectSandbox))
+      .withWorkspaceMode("task")
+      .withWorkingDirectory("/task");
+    try {
+      await dshDirectKit.run({ prompt: "solve", timeoutMs: 10_000 });
+    } finally {
+      await dshDirectKit.kill().catch(() => {});
+    }
+    const directPatch = dshDirectSandbox.files.writes.get("/home/user/.dsh/evolve-route.patch.yml") ?? "";
+    assert(directPatch.includes('model: "deepseek/deepseek-v4.1-flash"'), "dsh direct mode names OpenRouter's own model id in the patch");
+    assert(!directPatch.includes("headers:"), "dsh direct mode carries no spend headers");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
+/** The real captured streams the parser tests run on, one line per element. */
+function fixtureLines(harness: "pi" | "prime-agent", name: string): string[] {
+  const path = fileURLToPath(new URL(`../fixtures/${harness}/${name}.jsonl`, import.meta.url));
+  return readFileSync(path, "utf8").split("\n").filter((line) => line.trim().length > 0);
+}
+
+/**
+ * pi and Prime Agent exit 0 whatever happened (live captures 2026-09-25), so
+ * the registry's verdictFromStream makes the SDK read the run's verdict from
+ * the last assistant message_end at exit 0: the captured streams (both retry
+ * loops giving up, the 401, two plain runs), the synthetic shapes a capture
+ * cannot show, and a control harness that keeps the exit code as its verdict.
+ */
+async function testPiFamilyStreamVerdict(): Promise<void> {
+  console.log("\n[23] pi family: at exit 0 the last assistant message_end is the verdict (registry verdictFromStream)");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    throw new Error(`unexpected fetch in the verdict test: ${String(input)}`);
+  }) as typeof fetch;
+
+  const END_OK = '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop","timestamp":1,"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"total":0}}}}';
+  const END_ERR = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"500: boom","timestamp":1}}';
+  const END_ABORTED = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","timestamp":1}}';
+  const cases: Array<{ name: string; type: "pi" | "prime-agent" | "droid"; lines: string[]; reason: LifecycleReason; agent: string }> = [
+    // The captured streams (tests/fixtures, the parser tests' fixtures).
+    { name: "pi capture: the retry loop gave up (model-error-retries)", type: "pi", lines: fixtureLines("pi", "model-error-retries"), reason: "run_failed", agent: "error" },
+    { name: "prime-agent capture: the retry loop gave up (model-error-retries)", type: "prime-agent", lines: fixtureLines("prime-agent", "model-error-retries"), reason: "run_failed", agent: "error" },
+    { name: "prime-agent capture: a 401, one retry, auth_stale (model-error-401)", type: "prime-agent", lines: fixtureLines("prime-agent", "model-error-401"), reason: "run_failed", agent: "error" },
+    { name: "pi capture: a plain run (tool-use)", type: "pi", lines: fixtureLines("pi", "tool-use"), reason: "run_complete", agent: "idle" },
+    { name: "prime-agent capture: a plain run (tool-use)", type: "prime-agent", lines: fixtureLines("prime-agent", "tool-use"), reason: "run_complete", agent: "idle" },
+    // The shapes a capture cannot show.
+    { name: "pi: the last call succeeded", type: "pi", lines: [END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
+    { name: "pi: the retry loop gave up", type: "pi", lines: [END_ERR, '{"type":"agent_end","messages":[],"willRetry":false}', '{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"500: boom"}'], reason: "run_failed", agent: "error" },
+    { name: "pi: a failed call that a retry recovered", type: "pi", lines: [END_ERR, '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":1}', END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
+    { name: "prime-agent: a failure Prime never retried (no willRetry, no auto_retry_end)", type: "prime-agent", lines: [END_ERR, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
+    { name: "prime-agent: the last call aborted, exit code still 0", type: "prime-agent", lines: [END_ABORTED, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
+    // A harness without the flag keeps the exit code as its verdict, whatever its stream said.
+    { name: "droid (control): exit 0 is the verdict", type: "droid", lines: [END_ERR], reason: "run_complete", agent: "idle" },
+  ];
+  try {
+    for (const c of cases) {
+      const commands = new MockCommands();
+      commands.stdoutScript = c.lines;
+      const sandbox = new MockSandbox(`verdict-${c.type}`, commands);
+      const kit = new Evolve()
+        .withAgent({ type: c.type, providerApiKey: "direct-key" } as never)
+        .withSandbox(new MockProvider(sandbox))
+        .withWorkspaceMode("task")
+        .withWorkingDirectory("/task");
+      const reasons: LifecycleReason[] = [];
+      kit.on("lifecycle", (event: LifecycleEvent) => reasons.push(event.reason));
+      let result;
+      try {
+        result = await kit.run({ prompt: "solve", timeoutMs: 10_000 });
+        const status = await kit.status();
+        assertEqual(result.exitCode, 0, `${c.name}: the response keeps the CLI's own exit code, 0`);
+        assert(reasons.includes(c.reason), `${c.name}: the lifecycle ends ${c.reason} (saw ${reasons.join(",")})`);
+        assertEqual(status.agent, c.agent, `${c.name}: status() reports the agent ${c.agent}`);
+      } finally {
+        await kit.kill().catch(() => {});
+      }
+    }
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -2974,6 +3127,7 @@ async function main(): Promise<void> {
     await testExternalGatewaySealFlow();
     await testExternalGatewayMutualExclusivity();
     await testExternalGatewayPerHarnessWiring();
+    await testPiFamilyStreamVerdict();
   } catch (error) {
     failed++;
     console.log(

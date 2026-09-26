@@ -19,6 +19,9 @@
  *   opencode  run --format json (step_finish tokens/cost, tool_use state)
  *   droid     exec --output-format stream-json, droid 0.182.0 (completion.usage)
  *   kimi      -p --output-format stream-json, kimi-code 0.41.0 (no usage line)
+ *   pi        --mode json, pi 0.87.1 (message_end.usage per call, 2026-09-25)
+ *   prime     --mode json, Prime Agent v0.9.6 (the same shape; ipython details)
+ *   dsh       --profile headless --json, @deepseek-ai/dsh@0.1.7-rc.2 (step_end.usage)
  *
  * The other half of the law: accounting is NEVER work (isAgentWorkUpdate),
  * so a usage-only stream still trips the eval runner's harnessNeverRan.
@@ -27,9 +30,12 @@
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
+import { createDshParser } from "../../src/parsers/dsh.ts";
 import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
+import { createPiParser } from "../../src/parsers/pi.ts";
+import { createPrimeAgentParser } from "../../src/parsers/prime-agent.ts";
 import { createQwenParser } from "../../src/parsers/qwen.ts";
 import { isAgentWorkUpdate } from "../../src/parsers/types.ts";
 import type { OutputEvent, SessionUpdate } from "../../src/parsers/types.ts";
@@ -393,6 +399,78 @@ async function testKimi(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// pi (and Prime Agent, one core)
+// ---------------------------------------------------------------------------
+
+async function testPi(): Promise<void> {
+  console.log("\n[pi] message_end is the call's record: clock, model, responseId, stop reasons, usage; the result record rides rawOutput");
+  const events = parseAll(createPiParser(), [
+    `{"type":"session","version":3,"id":"p-1","timestamp":"2026-09-25T20:10:24.177Z","cwd":"/work"}`,
+    `{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"evolve","model":"pi-test-model","stopReason":"pending","timestamp":1790367024255}}`,
+    `{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_1","name":"bash","arguments":{"command":"false"}}],"api":"openai-completions","provider":"evolve","model":"pi-test-model","usage":{"input":238,"output":121,"cacheRead":1536,"cacheWrite":0,"reasoning":8,"totalTokens":1895,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"toolUse","timestamp":1790367024255,"responseId":"gen-1","rawStopReason":"tool_calls"}}`,
+    `{"type":"tool_execution_start","toolCallId":"call_1","toolName":"bash","args":{"command":"false"}}`,
+    `{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"(no output)\\n\\nCommand exited with code 1"}],"details":{}},"isError":true}`,
+  ]);
+  const call = ofKind(events, "tool_call")[0];
+  assert(call?.sessionId === "p-1", "pi: the session header's id is stamped on later events");
+  assert(call?.model === "pi-test-model" && call?.messageId === "gen-1", "pi: message.model and responseId are on the envelope");
+  assert(call?.timestamp === new Date(1790367024255).toISOString(), "pi: the message's epoch-ms clock is ISO on the envelope");
+  assert(same(call?.extra, { stopReason: "toolUse", rawStopReason: "tool_calls", provider: "evolve", api: "openai-completions" }), "pi: stopReason and rawStopReason ride extra");
+  const usage = ofKind(events, "usage");
+  assert(usage.length === 1 && usage[0].update.scope === "call", "pi: one call-scoped usage per assistant message_end");
+  assert(
+    same(usage[0]?.update.usage, { promptTokens: 1774, completionTokens: 121, cachedTokens: 1536, extra: { cacheRead: 1536, cacheWrite: 0, reasoning: 8, totalTokens: 1895 } }),
+    "pi: prompt = input + cacheRead + cacheWrite (pi.py _metrics_from_usage), cost 0 is unknown and absent, the rest verbatim in extra",
+  );
+  assert(usage[0]?.messageId === "gen-1", "pi: the usage event carries the responseId it belongs to");
+  const update = ofKind(events, "tool_call_update")[0];
+  assert(update?.update.status === "failed" && textOf(update.update) === "(no output)\n\nCommand exited with code 1", "pi: isError → failed, the text verbatim, no fence");
+  assert(same(update?.update.rawOutput, { content: [{ type: "text", text: "(no output)\n\nCommand exited with code 1" }], details: {} }), "pi: the result record rides rawOutput");
+  assert(!isAgentWorkUpdate(usage[0]?.update), "pi: usage is never work");
+
+  console.log("\n[prime-agent] the same core reads Prime's spellings: stopReasonRaw, and ipython details decide the verdict");
+  const prime = parseAll(createPrimeAgentParser(), [
+    `{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_0","name":"ipython","arguments":{"code":"raise ValueError('x')"}}],"api":"openai-completions","provider":"evolve","model":"m","usage":{"input":5757,"output":116,"cacheRead":512,"cacheWrite":0,"totalTokens":6385,"cost":{"total":0}},"stopReason":"toolUse","stopReasonRaw":"tool_calls","timestamp":1790373681654,"responseId":"gen-2"}}`,
+    `{"type":"tool_execution_end","toolCallId":"call_0","toolName":"ipython","result":{"content":[{"type":"text","text":"Traceback…"}],"details":{"durationMs":28,"status":"error","errorEname":"ValueError","stdout":"","stderr":"","kernelRestarted":false}},"isError":false}`,
+  ]);
+  assert(same(ofKind(prime, "tool_call")[0]?.extra, { stopReason: "toolUse", stopReasonRaw: "tool_calls", provider: "evolve", api: "openai-completions" }), "prime: stopReasonRaw rides extra under Prime's key");
+  assert(same(ofKind(prime, "usage")[0]?.update.usage, { promptTokens: 6269, completionTokens: 116, cachedTokens: 512, extra: { cacheRead: 512, cacheWrite: 0, totalTokens: 6385 } }), "prime: the same usage arithmetic");
+  const primeUpdate = ofKind(prime, "tool_call_update")[0];
+  assert(primeUpdate?.update.status === "failed", "prime: details.status error → failed although isError is false (round-2 E2b)");
+  assert((primeUpdate?.update.rawOutput as { details?: { errorEname?: string } })?.details?.errorEname === "ValueError", "prime: IpythonToolDetails ride rawOutput");
+}
+
+// ---------------------------------------------------------------------------
+// dsh
+// ---------------------------------------------------------------------------
+
+async function testDsh(): Promise<void> {
+  console.log("\n[dsh] the session line names the id; step_end.usage is per call; no clock, model or message id");
+  // Live capture T2 (2026-09-25), the first step: uncached input + cache read.
+  const events = parseAll(createDshParser(), [
+    `{"type":"session","sessionId":"session-fab655c4-d085-41e0-adf5-11880872873c","cwd":"/work"}`,
+    `{"type":"status","phase":"turn_start","turn":1}`,
+    `{"type":"status","phase":"step_start","turn":1,"step":1}`,
+    `{"type":"thinking","text":"Simple task. Create file with write tool, then read/print."}`,
+    `{"type":"tool_call","callId":"call_8f1b268a3e504b39bb2aa64d","tool":"write","input":{"file_path":"hello.txt","content":"hello from dsh"}}`,
+    `{"type":"tool_result","callId":"call_8f1b268a3e504b39bb2aa64d","status":"completed","result":"<path>/work/hello.txt</path>\\n<type>file</type>\\n<content>\\nCreated file\\n</content>"}`,
+    `{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":210,"outputTokens":74,"totalTokens":5660,"cacheReadTokens":5376}}`,
+  ]);
+  assert(events.every((e) => e.sessionId === "session-fab655c4-d085-41e0-adf5-11880872873c"), "dsh: the opening session line's id is stamped on every event");
+  assert(events.every((e) => e.timestamp === undefined && e.model === undefined && e.messageId === undefined), "dsh: no clock, model or message id — the stream carries none");
+  const usage = ofKind(events, "usage");
+  assert(usage.length === 1 && usage[0].update.scope === "call", "dsh: step_end.usage → one call-scoped usage event per step");
+  assert(
+    same(usage[0]?.update.usage, { promptTokens: 5586, completionTokens: 74, cachedTokens: 5376, extra: { totalTokens: 5660 } }),
+    "dsh: prompt = inputTokens + cacheReadTokens (disjoint counts), cached = cacheReadTokens, totalTokens rides extra verbatim",
+  );
+  assert(same(usage[0]?.extra, { turn: 1, step: 1 }), "dsh: the step's turn and step ride the envelope extra");
+  const result = ofKind(events, "tool_call_update")[0];
+  assert(result !== undefined && result.update.rawOutput === undefined, "dsh: tool_result carries text only — no structured record, so no rawOutput");
+  assert(events.every((e) => e.parentToolCallId === undefined), "dsh: no subagent lines exist on the stream (a child's answer is the parent's tool result)");
+}
+
+// ---------------------------------------------------------------------------
 // the law
 // ---------------------------------------------------------------------------
 
@@ -400,6 +478,7 @@ async function testLaw(): Promise<void> {
   console.log("\n[law] accounting is never work");
   assert(!isAgentWorkUpdate({ sessionUpdate: "usage" }), "isAgentWorkUpdate(usage) === false");
   assert(!isAgentWorkUpdate({ sessionUpdate: "error" }), "isAgentWorkUpdate(error) === false (unchanged)");
+  assert(!isAgentWorkUpdate({ sessionUpdate: "harness_event" }), "isAgentWorkUpdate(harness_event) === false — a line the harness printed is not work the agent did");
   assert(isAgentWorkUpdate({ sessionUpdate: "agent_message_chunk" }), "isAgentWorkUpdate(agent_message_chunk) === true (unchanged)");
 }
 
@@ -412,6 +491,8 @@ async function main(): Promise<void> {
   await testOpenCode();
   await testDroid();
   await testKimi();
+  await testPi();
+  await testDsh();
   await testLaw();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
