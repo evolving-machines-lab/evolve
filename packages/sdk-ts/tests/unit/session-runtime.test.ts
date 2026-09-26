@@ -9,6 +9,8 @@
  * - state transition safety under pause/kill/interrupt
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Evolve, type LifecycleEvent } from "../../dist/index.js";
 import { E2BCommands, E2BFiles } from "@evolvingmachines/e2b";
 import type {
@@ -152,6 +154,8 @@ class MockCommands implements SandboxCommands {
     options?: SandboxRunOptions,
   ) => SandboxCommandResult;
   public mode: SpawnMode = "instant";
+  /** The stdout lines an instant spawn prints (one noop line by default). */
+  public stdoutScript: string[] | null = null;
   public killSucceeds = true;
   public activeHandle: SandboxCommandHandle | null = null;
 
@@ -202,7 +206,7 @@ class MockCommands implements SandboxCommands {
     if (this.mode === "instant") {
       setTimeout(() => {
         if (finished) return;
-        options?.onStdout?.('{"type":"noop"}\n');
+        for (const line of this.stdoutScript ?? ['{"type":"noop"}']) options?.onStdout?.(line + "\n");
         finished = true;
         resolveWait?.({
           exitCode: interrupted ? 130 : 0,
@@ -2977,6 +2981,73 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
   }
 }
 
+/** The real captured streams the parser tests run on, one line per element. */
+function fixtureLines(harness: "pi" | "prime-agent", name: string): string[] {
+  const path = fileURLToPath(new URL(`../fixtures/${harness}/${name}.jsonl`, import.meta.url));
+  return readFileSync(path, "utf8").split("\n").filter((line) => line.trim().length > 0);
+}
+
+/**
+ * pi and Prime Agent exit 0 whatever happened (live captures 2026-09-25), so
+ * the registry's verdictFromStream makes the SDK read the run's verdict from
+ * the last assistant message_end at exit 0: the captured streams (both retry
+ * loops giving up, the 401, two plain runs), the synthetic shapes a capture
+ * cannot show, and a control harness that keeps the exit code as its verdict.
+ */
+async function testPiFamilyStreamVerdict(): Promise<void> {
+  console.log("\n[23] pi family: at exit 0 the last assistant message_end is the verdict (registry verdictFromStream)");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    throw new Error(`unexpected fetch in the verdict test: ${String(input)}`);
+  }) as typeof fetch;
+
+  const END_OK = '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop","timestamp":1,"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"total":0}}}}';
+  const END_ERR = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"500: boom","timestamp":1}}';
+  const END_ABORTED = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","timestamp":1}}';
+  const cases: Array<{ name: string; type: "pi" | "prime-agent" | "droid"; lines: string[]; reason: LifecycleReason; agent: string }> = [
+    // The captured streams (tests/fixtures, the parser tests' fixtures).
+    { name: "pi capture: the retry loop gave up (model-error-retries)", type: "pi", lines: fixtureLines("pi", "model-error-retries"), reason: "run_failed", agent: "error" },
+    { name: "prime-agent capture: the retry loop gave up (model-error-retries)", type: "prime-agent", lines: fixtureLines("prime-agent", "model-error-retries"), reason: "run_failed", agent: "error" },
+    { name: "prime-agent capture: a 401, one retry, auth_stale (model-error-401)", type: "prime-agent", lines: fixtureLines("prime-agent", "model-error-401"), reason: "run_failed", agent: "error" },
+    { name: "pi capture: a plain run (tool-use)", type: "pi", lines: fixtureLines("pi", "tool-use"), reason: "run_complete", agent: "idle" },
+    { name: "prime-agent capture: a plain run (tool-use)", type: "prime-agent", lines: fixtureLines("prime-agent", "tool-use"), reason: "run_complete", agent: "idle" },
+    // The shapes a capture cannot show.
+    { name: "pi: the last call succeeded", type: "pi", lines: [END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
+    { name: "pi: the retry loop gave up", type: "pi", lines: [END_ERR, '{"type":"agent_end","messages":[],"willRetry":false}', '{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"500: boom"}'], reason: "run_failed", agent: "error" },
+    { name: "pi: a failed call that a retry recovered", type: "pi", lines: [END_ERR, '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":1}', END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
+    { name: "prime-agent: a failure Prime never retried (no willRetry, no auto_retry_end)", type: "prime-agent", lines: [END_ERR, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
+    { name: "prime-agent: the last call aborted, exit code still 0", type: "prime-agent", lines: [END_ABORTED, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
+    // A harness without the flag keeps the exit code as its verdict, whatever its stream said.
+    { name: "droid (control): exit 0 is the verdict", type: "droid", lines: [END_ERR], reason: "run_complete", agent: "idle" },
+  ];
+  try {
+    for (const c of cases) {
+      const commands = new MockCommands();
+      commands.stdoutScript = c.lines;
+      const sandbox = new MockSandbox(`verdict-${c.type}`, commands);
+      const kit = new Evolve()
+        .withAgent({ type: c.type, providerApiKey: "direct-key" } as never)
+        .withSandbox(new MockProvider(sandbox))
+        .withWorkspaceMode("task")
+        .withWorkingDirectory("/task");
+      const reasons: LifecycleReason[] = [];
+      kit.on("lifecycle", (event: LifecycleEvent) => reasons.push(event.reason));
+      let result;
+      try {
+        result = await kit.run({ prompt: "solve", timeoutMs: 10_000 });
+        const status = await kit.status();
+        assertEqual(result.exitCode, 0, `${c.name}: the response keeps the CLI's own exit code, 0`);
+        assert(reasons.includes(c.reason), `${c.name}: the lifecycle ends ${c.reason} (saw ${reasons.join(",")})`);
+        assertEqual(status.agent, c.agent, `${c.name}: status() reports the agent ${c.agent}`);
+      } finally {
+        await kit.kill().catch(() => {});
+      }
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Session Runtime Unit Tests");
@@ -3010,6 +3081,7 @@ async function main(): Promise<void> {
     await testExternalGatewaySealFlow();
     await testExternalGatewayMutualExclusivity();
     await testExternalGatewayPerHarnessWiring();
+    await testPiFamilyStreamVerdict();
   } catch (error) {
     failed++;
     console.log(

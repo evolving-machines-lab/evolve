@@ -132,7 +132,8 @@ type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | HarnessEvent;
 ```
 
 ### Message Events
@@ -208,6 +209,7 @@ completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool sta
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `HarnessEvent` | `"harness_event"` | A line about the harness's own run (a retry, a sub-agent step, an unknown type). **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -432,6 +434,27 @@ import { isAgentWorkUpdate } from "@evolvingmachines/evolve";
 
 const didWork = events.some((e) => isAgentWorkUpdate(e.update));
 ```
+
+## Harness-reported events (`harness_event`)
+
+A harness also prints lines that describe its own run rather than the agent's work — a retry it is
+about to make, a sub-agent's progress, a compaction, a title call — and any harness can add a new
+line type in a release. None of those fit an ACP update, and none is dropped: each rides through
+as its own update with the harness's own type word and the line's other fields, verbatim. A type the
+parser has never seen is passed through the same way and logged once per type.
+
+```typescript
+interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  /** The harness's own type word for the line, verbatim. */
+  type: string;
+  /** Every other field of the line, verbatim. */
+  payload: Record<string, unknown>;
+}
+```
+
+**It is not agent work either.** `isAgentWorkUpdate` excludes it, exactly as it excludes `error`
+and `usage`: a harness that printed a retry schedule has not done anything for the task yet.
 
 ## Harness-reported usage (`usage`)
 

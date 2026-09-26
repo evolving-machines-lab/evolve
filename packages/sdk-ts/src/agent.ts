@@ -316,11 +316,22 @@ function withOpenAiV1Path(baseUrl: string): string {
  * Uses registry lookup for agent-specific behavior.
  * Tracks hasRun state for continue flag handling.
  */
+/** Every message_end-derived event carries the message's stop reason in extra; the last one is the verdict. */
+function lastModelCallFailedAfter(events: OutputEvent[] | null, previous: boolean): boolean {
+  let failed = previous;
+  for (const event of events ?? []) {
+    const stop = event.extra?.stopReason;
+    if (typeof stop === "string") failed = stop === "error" || stop === "aborted";
+  }
+  return failed;
+}
+
 export class Agent {
   private agentConfig: ResolvedAgentConfig;
   private options: AgentOptions;
   private sandbox?: SandboxInstance;
   private hasRun: boolean = false;
+  private mcpConfigured = false;
   private readonly workingDir: string;
   private readonly homeDir: string;
   private lastRunTimestamp?: number;
@@ -541,6 +552,7 @@ export class Agent {
     handle: SandboxCommandHandle,
     callbacks?: StreamCallbacks,
     sandbox?: SandboxInstance,
+    streamFailed: () => boolean = () => false,
   ): void {
     const completeReason: LifecycleReason =
       kind === "run"
@@ -568,9 +580,8 @@ export class Agent {
         if (kind === "run" && sandbox) {
           await this.writeDroidSessionState(sandbox);
         }
-        const reason = result.exitCode === 0 ? completeReason : failedReason;
-        const nextState = result.exitCode === 0 ? "idle" : "error";
-        this.finalizeOperation(opId, callbacks, reason, nextState);
+        const succeeded = result.exitCode === 0 && !streamFailed();
+        this.finalizeOperation(opId, callbacks, succeeded ? completeReason : failedReason, succeeded ? "idle" : "error");
       })
       .catch(() => {
         this.interruptedOperations.delete(opId);
@@ -1646,24 +1657,9 @@ export class Agent {
   }
 
   /**
-   * The pi family's models.json (registry modelsJsonRoute: pi, Prime Agent),
-   * written before every spawn. Neither CLI reads a base-URL env or flag and
-   * pi never expands a variable in `baseUrl`, so the LITERAL URL is written
-   * per mode, the same three shapes droid's settings file takes:
-   *
-   *   gateway mode       the runtime token's door URL (+/v1), the model as
-   *                      resolveCommandModel spells it, the LiteLLM session
-   *                      and run headers plus the runtime binding header;
-   *   external gateway   the caller's base URL VERBATIM, the model verbatim,
-   *                      no headers (route names and metering are theirs);
-   *   direct mode        OpenRouter itself (registry defaultBaseUrl, or the
-   *                      caller's providerBaseUrl), the OpenRouter id
-   *                      (piFamilyWireModel drops the `openrouter/` prefix),
-   *                      no headers.
-   *
-   * The key never enters the file: it names the env var (`$OPENROUTER_API_KEY`
-   * for pi, the bare name for Prime) that buildEnvironmentVariables /
-   * buildProviderRuntimeProcessEnvs inject, exactly as droid's `${FACTORY_API_KEY}`.
+   * The pi family's models.json, written before every spawn with the LITERAL
+   * base URL of the mode (door, caller's gateway, or OpenRouter) and the key
+   * by env NAME — pi never expands a variable in baseUrl.
    */
   private async writePiFamilyModelsJson(sandbox: SandboxInstance, runId: string): Promise<void> {
     const route = this.registry.modelsJsonRoute;
@@ -1958,6 +1954,7 @@ export class Agent {
     // work. Gateway mode and managed integrations both produce session-scoped URLs.
     if (Object.keys(mcpServers).length > 0) {
       this.assertProviderRuntimeDoesNotExposeGatewayKey(mcpServers);
+      this.mcpConfigured = Object.keys(mcpServers).length > 0;
       await writeMcpConfig(
         this.agentConfig.type,
         sandbox,
@@ -2184,6 +2181,7 @@ export class Agent {
       // shared box passes `resume: false` to keep each one fresh — see
       // RunOptions.resume for why that could not be expressed before.
       isResume: resume ?? this.hasRun,
+      mcpConfigured: this.mcpConfigured,
       sessionId:
         this.agentConfig.type === "droid" ? this.droidSessionId : undefined,
       reasoningEffort: this.reasoningEffort(),
@@ -2495,6 +2493,7 @@ export class Agent {
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
+    let lastModelCallFailed = false;
 
     // Create parser once (shared by onContent callback and session logger)
     const parser = createAgentParser(this.agentConfig.type);
@@ -2511,6 +2510,7 @@ export class Agent {
 
         // Parse once, use for both session logger and onContent
         const events = parser(line);
+        lastModelCallFailed = lastModelCallFailedAfter(events, lastModelCallFailed);
         this.captureDroidSession(line, events);
 
         // Log to session logger with pre-parsed events (non-blocking)
@@ -2546,7 +2546,9 @@ export class Agent {
     this.hasRun = true;
 
     if (background) {
-      this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox);
+      this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox, () =>
+        this.registry.verdictFromStream === true && lastModelCallFailed,
+      );
       return {
         sandboxId: sandbox.sandboxId,
         sessionId: this.managedBrowserSession?.sessionId,
@@ -2567,20 +2569,11 @@ export class Agent {
       throw error;
     }
 
-    const interrupted =
-      this.interruptedOperations.delete(opId) || result.exitCode === 130;
-    if (interrupted) {
-      this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
-    } else if (result.exitCode === 0) {
-      this.finalizeOperation(opId, callbacks, "run_complete", "idle");
-    } else {
-      this.finalizeOperation(opId, callbacks, "run_failed", "error");
-    }
-
-    // Process any remaining buffered content
+    // Process any remaining buffered content (before the verdict: it may be the last assistant message_end)
     if (lineBuffer.trim()) {
       // Parse once, use for both session logger and onContent
       const events = parser(lineBuffer);
+      lastModelCallFailed = lastModelCallFailedAfter(events, lastModelCallFailed);
       this.captureDroidSession(lineBuffer, events);
 
       // Log to session logger with pre-parsed events (non-blocking)
@@ -2597,6 +2590,19 @@ export class Agent {
       }
     }
 
+    // pi and Prime Agent exit 0 whatever happened (registry verdictFromStream):
+    // the last assistant message_end decides, never their exit code alone.
+    const succeeded = result.exitCode === 0 && !(this.registry.verdictFromStream && lastModelCallFailed);
+    const interrupted =
+      this.interruptedOperations.delete(opId) || result.exitCode === 130;
+    if (interrupted) {
+      this.finalizeOperation(opId, callbacks, "run_interrupted", "interrupted");
+    } else if (succeeded) {
+      this.finalizeOperation(opId, callbacks, "run_complete", "idle");
+    } else {
+      this.finalizeOperation(opId, callbacks, "run_failed", "error");
+    }
+
     await this.writeDroidSessionState(sandbox);
 
     // Flush observability events so dashboard is complete before returning.
@@ -2611,7 +2617,7 @@ export class Agent {
     // AUTO-CHECKPOINT: after successful foreground run with storage configured
     // =========================================================================
     let checkpoint: CheckpointInfo | undefined;
-    if (this.storage && !background && result.exitCode === 0) {
+    if (this.storage && !background && succeeded) {
       try {
         checkpoint = await createCheckpoint(
           sandbox,

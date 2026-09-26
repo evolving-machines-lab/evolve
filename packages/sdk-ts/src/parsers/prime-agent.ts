@@ -1,25 +1,7 @@
 /**
- * Prime Agent (`prime-agent --mode json`) parser — the pi-family core
- * (parsers/pi-family.ts) with Prime's own tool and session events.
- *
- * Prime Agent v0.9.6 replaced pi's tools with ONE model tool, `ipython
- * {code}` (packages/coding-agent/src/core/tools/ipython.ts:189-316): shell
- * commands run inside Python via `bash()`, MCP servers are reached from
- * Python (`await mcp.call_tool(...)`), skills are read with `open()`, and
- * sub-agents are spawned with `await rlm.spawn(...)` — all of it text in
- * `args.code` and `details.stdout`, with no separate tool event. The result's
- * `details` is IpythonToolDetails {status: ok|error|aborted|starting,
- * durationMs, stdout, stderr, errorEname?, error{ename,evalue,traceback}?,
- * kernelRestarted}; a Python exception leaves the wire's isError FALSE and
- * says `status: "error"` (round-2 E2b), so the profile reads that field.
- * Session-level events beyond the core (agent-session.ts:414-487):
- * session_action_update, rlm_child_update (a sub-agent's progress: id,
- * sessionName, status queued|running|done, tokenCount, answerPreview —
- * round-2 U1), auth_stale, compaction_*, thinking_level_changed,
- * service_tier_changed, ipython_sent_agent_message, rlm_progress_note,
- * recap_update, goal_update, bash_start/output/end, refine_complete/failed.
- * A sub-agent's reply reaches the parent as a `custom` message of type
- * agent_message (the core maps it to a user turn).
+ * Prime Agent profile over the pi-family core: one tool, `ipython {code}`
+ * (shell, MCP, skills and sub-agents all run inside the cell), whose result
+ * `details.status` — not the wire's isError — says whether the cell failed.
  */
 
 import { createPiFamilyParser, stringField, type PiToolDescription } from "./pi-family";

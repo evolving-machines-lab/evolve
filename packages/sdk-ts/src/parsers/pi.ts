@@ -1,21 +1,7 @@
 /**
- * pi (`pi --mode json`) parser — the pi-family core (parsers/pi-family.ts)
- * with pi's own tool set.
- *
- * pi 0.87.1's built-in tools (packages/coding-agent/src/core/tools/, live
- * capture 2026-09-25): `read {path, offset?, limit?}`, `write {path,
- * content}`, `edit {path, oldText, newText}`, `bash {command, timeout?}`,
- * and the off-by-default `grep`/`find`/`ls`. MCP is not in pi's core: it
- * rides the pi-mcp-adapter extension (2.37.0 pinned in the image), whose
- * calls arrive as the ONE proxy tool `mcp` — `{tool, args}` for a call,
- * `{search}`, `{server}`, `{}` for status — or, with directTools on, as
- * `<server>_<tool>`. An adapter failure (a tool that does not exist) comes
- * back with isError FALSE and `details.error` set (round-2 M1), so the
- * profile reads that field. pi's session-level events beyond the core:
- * agent_settled (silent, the terminal record), entry_appended,
- * queue_update, session_info_changed, thinking_level_changed,
- * compaction_start/end, summarization_retry_* (types read at tag v0.87.1,
- * agent-session.ts:164-206).
+ * pi profile over the pi-family core: pi's built-in tools (read, bash, edit,
+ * write; grep/find/ls when enabled) plus the pi-mcp-adapter's one proxy tool
+ * `mcp`, whose own failures ride `details.error` with isError false.
  */
 
 import { asRecord, createPiFamilyParser, stringField, type PiToolDescription } from "./pi-family";

@@ -497,12 +497,7 @@ function toOpenCodeFormat(config: McpServerConfig): Record<string, unknown> {
 // THE PI FAMILY (pi, Prime Agent): models.json route, MCP, settings stamp
 // =============================================================================
 
-/**
- * Transform to pi-mcp-adapter format (nicobailon/pi-mcp-adapter 2.37.0 README):
- * a stdio server is `{ command, args?, cwd?, env? }`, a remote one `{ url,
- * headers? }` — the adapter speaks streamable HTTP with SSE fallback on any
- * `url`, so both SDK transports collapse onto it.
- */
+/** pi-mcp-adapter's shape: stdio `{command, args?, cwd?, env?}`, remote `{url, headers?}` (HTTP with SSE fallback). */
 function toPiMcpFormat(config: McpServerConfig): Record<string, unknown> {
   const transport = detectTransport(config);
   if (transport === "stdio" && config.command) {
@@ -518,23 +513,14 @@ function toPiMcpFormat(config: McpServerConfig): Record<string, unknown> {
   return result;
 }
 
-/**
- * The adapter settings the SDK pins in pi's mcp.json: no host-config
- * discovery (the adapter would otherwise also read ~/.config/mcp/mcp.json,
- * ~/.agents/mcp.json and the project's .mcp.json — Harbor pi.py:290-294
- * pins the same three), no startup notification, no script mode.
- */
+/** No host-config discovery (Harbor pi.py pins the same three off), no startup notice, no script mode. */
 export const PI_MCP_ADAPTER_SETTINGS = {
   hostConfigDiscovery: "off",
   notifyOnStartupConnect: false,
   scriptMode: false,
 } as const;
 
-/**
- * Write MCP config for pi: `<agent-dir>/mcp.json`, read by the pi-mcp-adapter
- * extension the command loads whenever this file exists (registry.ts pi
- * buildCommand). pi's own core has no MCP.
- */
+/** pi's MCP config: `<agent-dir>/mcp.json`, read by the adapter extension the command loads. */
 export async function writePiMcpConfig(
   sandbox: SandboxInstance,
   servers: Record<string, McpServerConfig>,
@@ -580,17 +566,8 @@ export async function writePiMcpConfig(
 }
 
 /**
- * Transform to Prime Agent's settings.json `mcpServers` shape
- * (settings-manager.ts McpServerConfig, v0.9.6): `{ type: "http", url,
- * headers?, bearerTokenEnvVar? }` or `{ type: "stdio", command, args?, cwd?,
- * env? }`. Two honesty rules from that type:
- *   - Prime has no SSE transport; a server declared `sse` is written as
- *     `http` (its client speaks streamable HTTP), which an SSE-only server
- *     will refuse at connect — the closest thing Prime can be told.
- *   - a stdio server's `env` is `Record<name, { env: hostVarName }>`:
- *     references into the kernel's environment, never literal values, so a
- *     literal SDK `env` is refused typed rather than silently dropped. The
- *     SDK's `envVars` (names to pass through) is exactly that shape.
+ * Prime's settings.json McpServerConfig: `sse` is written as `http` (Prime has no SSE
+ * transport), and a stdio `env` must be references by NAME — a literal value is refused.
  */
 function toPrimeAgentMcpFormat(name: string, config: McpServerConfig): Record<string, unknown> {
   const transport = detectTransport(config);
@@ -617,11 +594,7 @@ function toPrimeAgentMcpFormat(name: string, config: McpServerConfig): Record<st
   return result;
 }
 
-/**
- * Write MCP config for Prime Agent: the `mcpServers` map of the GLOBAL
- * ~/.prime/agent/settings.json (docs/mcp-integrations.md — project-level
- * maps are ignored for execution), the rest of the file preserved.
- */
+/** Prime's MCP servers: the `mcpServers` map of the GLOBAL settings.json, the rest of the file kept. */
 export async function writePrimeAgentMcpConfig(
   sandbox: SandboxInstance,
   servers: Record<string, McpServerConfig>,
@@ -673,13 +646,7 @@ export interface ModelsJsonRouteWrite {
   thinkingLevel?: string;
 }
 
-/**
- * Write the pi family's models.json: one custom provider on the
- * `openai-completions` dialect at the literal base URL, the run's model, and
- * the spend headers at provider level (pi docs/models.md; live-proven to
- * reach the gateway on both CLIs 2026-09-25). Other providers a caller left
- * in the file survive; ours is replaced whole every run.
- */
+/** One provider entry at the literal base URL with the run's model and headers; other providers survive. */
 export async function writeModelsJsonRoute(
   sandbox: SandboxInstance,
   config: ModelsJsonRouteWrite,
@@ -723,12 +690,7 @@ export async function writeModelsJsonRoute(
   );
 }
 
-/**
- * Deep-merge a platform stamp into a harness's JSON settings file: objects
- * merge key by key, everything else (scalars, arrays) is the stamp's. The
- * file's other keys — an MCP writer's `mcpServers`, a user's own settings —
- * survive untouched.
- */
+/** Deep-merge a settings stamp: objects key by key, scalars and arrays the stamp's; other keys survive. */
 export async function writeJsonSettingsStamp(
   sandbox: SandboxInstance,
   path: string,

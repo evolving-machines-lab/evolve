@@ -126,6 +126,17 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const piOff = new Agent({ type: "pi", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "no-thinking" } as any, {});
   assert(((piOff as any).buildCommand("hello") as string).includes("--thinking off"), "pi 'no-thinking' is off");
 
+  // Prime's daemon socket lives under TMPDIR (108-byte socket path limit); pi loads its MCP
+  // adapter only when the run configured MCP servers.
+  assert(((primeAgent as any).buildCommand("hello") as string).includes(" TMPDIR=/tmp prime-agent "), "prime-agent command pins TMPDIR=/tmp");
+  const piNoMcp = AGENT_REGISTRY.pi.buildCommand({ prompt: "p", model: "m", isResume: false } as never);
+  const piMcp = AGENT_REGISTRY.pi.buildCommand({ prompt: "p", model: "m", isResume: false, mcpConfigured: true } as never);
+  assert(!piNoMcp.includes("--extension"), "pi without MCP servers loads no adapter extension");
+  assert(
+    piMcp.includes('--extension "${PI_MCP_ADAPTER_EXTENSION:-/opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts}"'),
+    "pi with MCP servers loads the adapter from the fleet path, an env override allowed",
+  );
+
   // kimi: omitted effort stamps max thinking in the KIMI_MODEL_* envs
   // (direct wiring path; the config.toml path resolves through the same
   // Agent.reasoningEffort()).

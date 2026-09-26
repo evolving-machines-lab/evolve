@@ -223,6 +223,13 @@ function testSyntheticShapes(): void {
     // A message_end aborted (the session file's spelling of a SIGINT mid-call) is an error, not silence.
     const aborted = parse('{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","timestamp":1,"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}}}}');
     assert(aborted?.length === 1 && aborted[0].update.sessionUpdate === "error" && aborted[0].update.message === "aborted" && aborted[0].update.fatal === false, "stopReason aborted → error with the stop reason as its text, no usage for a zero call");
+
+    // A failure Prime never retries (retry disabled, a non-retryable kind) ends on agent_end with no
+    // auto_retry_end: the error stays non-fatal — at agent_end the parser cannot know that no retry follows.
+    const unretried = createPrimeAgentParser();
+    const unretriedError = unretried('{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"400 context overflow","timestamp":1}}');
+    assert(unretriedError?.length === 1 && unretriedError[0].update.sessionUpdate === "error" && unretriedError[0].update.fatal === false, "an unretried Prime failure is one non-fatal error");
+    assert(unretried('{"type":"agent_end","messages":[]}') === null, "Prime's agent_end carries no willRetry, so it marks nothing fatal");
     // isError true on the wire is also failed.
     parse('{"type":"tool_execution_start","toolCallId":"c1","toolName":"ipython","args":{"code":"x"}}');
     const failed = parse('{"type":"tool_execution_end","toolCallId":"c1","toolName":"ipython","result":{"content":[{"type":"text","text":"boom"}],"details":{"status":"ok"}},"isError":true}');

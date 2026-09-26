@@ -150,7 +150,7 @@ RUN mkdir -p /home/user/.claude/skills \
              /home/user/.pi/agent/skills \
              /home/user/.prime/agent/skills \
              /opt/evolve/prime-agent \
-    && chown -R user:user /home/user /opt/evolve
+    && chown -R user:user /home/user /opt/evolve/prime-agent
 
 # ---------------------------------------------------------------------------
 # Switch to user
