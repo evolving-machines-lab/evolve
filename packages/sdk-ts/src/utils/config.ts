@@ -75,6 +75,15 @@ export function validateAgentConfig(config?: AgentConfig | ResolvedAgentConfig):
     );
   }
 
+  const efforts = getAgentConfig(type).efforts;
+  if (config.reasoningEffort !== undefined && efforts && !(efforts as readonly string[]).includes(config.reasoningEffort)) {
+    throw new EvolveConfigError(
+      "reasoningEffort",
+      `Evolve agent config: agent "${type}" honors reasoning effort ${efforts.map((e) => `"${e}"`).join(", ")} only; ` +
+      `${describe(config.reasoningEffort)} is not one of them and would be recorded but never applied.`,
+    );
+  }
+
   if (config.config !== undefined) {
     if (!agentSupportsNativeConfig(type)) {
       // Harbor's SUPPORTS_CONFIG refusal (agents/installed/base.py:528-531),
