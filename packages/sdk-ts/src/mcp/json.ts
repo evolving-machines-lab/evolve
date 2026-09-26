@@ -14,7 +14,23 @@
 
 import type { SandboxInstance, McpServerConfig } from "../types";
 import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
+import { EvolveConfigError } from "../utils/config";
 import { validateServers, isNotFoundError } from "./validation";
+
+/**
+ * An existing config file's object. An empty file is no config (the antigravity CLI leaves a 0-byte
+ * mcp_config.json when nothing was written); malformed JSON is refused with the path named, never a bare SyntaxError.
+ */
+function parseExistingJson(text: unknown, path: string, field: string): Record<string, unknown> {
+  if (typeof text !== "string" || text.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new EvolveConfigError(field, `Existing config at ${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+}
 
 // =============================================================================
 // FORMAT TRANSFORMERS
@@ -173,10 +189,7 @@ async function writeJsonMcpConfig(
 
   let existingConfig: Record<string, unknown> = {};
   try {
-    const existing = await sandbox.files.read(settingsPath);
-    if (typeof existing === "string") {
-      existingConfig = JSON.parse(existing);
-    }
+    existingConfig = parseExistingJson(await sandbox.files.read(settingsPath), settingsPath, "mcpServers");
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
   }
@@ -408,10 +421,7 @@ export async function writeAntigravitySettings(
 
   let settings: Record<string, unknown> = {};
   try {
-    const existing = await sandbox.files.read(path);
-    if (typeof existing === "string" && existing.trim()) {
-      settings = JSON.parse(existing);
-    }
+    settings = parseExistingJson(await sandbox.files.read(path), path, "antigravitySettings");
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
   }

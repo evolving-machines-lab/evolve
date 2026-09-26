@@ -18,7 +18,6 @@
  * plan                 → TodoWrite updates
  * error                → A failure the harness reported (never work)
  * usage                → Token accounting the harness reported (never work)
- * unknown              → A wire line of a kind the parser does not know (never work)
  * ```
  *
  * @example UI Integration
@@ -290,12 +289,11 @@ export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | u
 /**
  * The harness's failure text for an AgentError.message, in ITS OWN WORDS.
  *
- * The eight harnesses put that text in eight different places — codex in
+ * The seven harnesses put that text in seven different places — codex in
  * `message`, gemini in `error.message`, opencode in `error.data.message` (and
  * in `error.name` when data is empty), claude in an `errors: string[]`, droid
- * in `message`, kimi in `error_message`, qwen in `error.message`, antigravity
- * in `result.error` — so each parser passes its own fields, in its own
- * preference order, as `candidates`.
+ * in `message`, kimi in `error_message`, qwen in `error.message` — so each
+ * parser passes its own fields, in its own preference order, as `candidates`.
  *
  * THE ONE RULE THIS HOLDS FOR ALL OF THEM: the result is never empty. A
  * failure that arrives with no text would render as an event that says

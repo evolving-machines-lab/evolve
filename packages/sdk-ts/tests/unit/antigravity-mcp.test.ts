@@ -10,6 +10,7 @@
 
 import { writeAntigravityMcpConfig, writeAntigravitySettings } from "../../src/mcp/json.ts";
 import { AGENT_REGISTRY, antigravityEffort, antigravityModelSlug } from "../../src/registry.ts";
+import { EvolveConfigError } from "../../src/utils/config.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -125,6 +126,41 @@ async function testMcpMerge(): Promise<void> {
   assert("fresh" in servers && !("old" in servers), "mcpServers is replaced by the run's set");
 }
 
+async function testEmptyAndMalformedExisting(): Promise<void> {
+  console.log("\n[2b] the CLI's 0-byte mcp_config.json is no config; a malformed one is refused typed");
+
+  const mcpPath = "/home/user/.gemini/config/mcp_config.json";
+  const settingsPath = "/home/user/.gemini/antigravity-cli/settings.json";
+
+  // Live: with no servers written, the CLI itself creates an empty mcp_config.json (config/.migrated);
+  // a checkpoint restore then hands it back to the writer.
+  for (const empty of ["", "   \n"]) {
+    const { sandbox, files, readJson } = createMockSandbox();
+    files.set(mcpPath, empty);
+    await writeAntigravityMcpConfig(sandbox, { fresh: { command: "fresh" } });
+    assert("fresh" in (readJson(mcpPath).mcpServers as Record<string, unknown>), `an empty mcp_config.json (${JSON.stringify(empty)}) reads as no servers and is written over`);
+    files.set(settingsPath, empty);
+    await writeAntigravitySettings(sandbox, AGENT_REGISTRY.antigravity.antigravitySettings!.settingsPath, "vertex_ai/gemini-3.8-flash");
+    assert(readJson(settingsPath).modelProvider === "gemini", `an empty settings.json (${JSON.stringify(empty)}) reads as no settings and is written over`);
+  }
+
+  for (const [path, run] of [
+    [mcpPath, (sandbox: SandboxInstance) => writeAntigravityMcpConfig(sandbox, { fresh: { command: "fresh" } })],
+    [settingsPath, (sandbox: SandboxInstance) => writeAntigravitySettings(sandbox, AGENT_REGISTRY.antigravity.antigravitySettings!.settingsPath, "vertex_ai/gemini-3.8-flash")],
+  ] as const) {
+    const { sandbox, files } = createMockSandbox();
+    files.set(path, "{ not json");
+    let thrown: unknown;
+    try {
+      await run(sandbox);
+    } catch (error) {
+      thrown = error;
+    }
+    assert(thrown instanceof EvolveConfigError && thrown.message.includes(path), `malformed ${path.split("/").pop()} → EvolveConfigError naming the path (never a bare SyntaxError)`);
+    assert(!files.has(path) || files.get(path) === "{ not json", "the malformed file is left as it was");
+  }
+}
+
 async function testSettings(): Promise<void> {
   console.log("\n[3] writes ~/.gemini/antigravity-cli/settings.json for a run");
 
@@ -204,6 +240,7 @@ async function main(): Promise<void> {
 
   await testMcpFormat();
   await testMcpMerge();
+  await testEmptyAndMalformedExisting();
   await testSettings();
   await testSettingsMerge();
   await testSettingsHomeDir();
