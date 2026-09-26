@@ -22,6 +22,10 @@ One arm
 | `kimi` | Kimi Code |
 | `opencode` | OpenCode |
 | `droid` | Droid |
+| `pi` | pi |
+| `prime-agent` | Prime Agent |
+| `dsh` | DeepSeek Harness |
+| `zcode` | Z Code |
 | `antigravity` | Antigravity CLI |
 
 ```bash

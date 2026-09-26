@@ -270,6 +270,40 @@
       "supportsConfig": false,
       "presets": []
     },
+    "dsh": {
+      "defaultModel": "openrouter/deepseek/deepseek-v4.1-flash",
+      "models": [
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4.1-flash",
+          "modelId": "fireworks/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via Fireworks"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4-pro-0813",
+          "modelId": "openrouter/deepseek/deepseek-v4-pro-0813",
+          "description": "DeepSeek V4 Pro via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4-pro-0813",
+          "modelId": "fireworks/deepseek-v4-pro-0813",
+          "description": "DeepSeek V4 Pro via Fireworks"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
     "gemini": {
       "defaultModel": "gemini-3.5-flash",
       "models": [
@@ -430,6 +464,184 @@
       "supportsConfig": false,
       "presets": []
     },
+    "pi": {
+      "defaultModel": "openrouter/anthropic/claude-opus-5",
+      "models": [
+        {
+          "alias": "openrouter/anthropic/claude-fable-5.1",
+          "modelId": "openrouter/anthropic/claude-fable-5.1",
+          "description": "Anthropic Fable 5.1 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-opus-5",
+          "modelId": "openrouter/anthropic/claude-opus-5",
+          "description": "Anthropic Opus 5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-sonnet-5",
+          "modelId": "openrouter/anthropic/claude-sonnet-5",
+          "description": "Anthropic Sonnet 5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-haiku-4.5",
+          "modelId": "openrouter/anthropic/claude-haiku-4.5",
+          "description": "Anthropic Haiku via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-astra",
+          "modelId": "openrouter/openai/gpt-6-astra",
+          "description": "OpenAI GPT-6 Astra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-sol",
+          "modelId": "openrouter/openai/gpt-5.6-sol",
+          "description": "OpenAI GPT-5.6 Sol via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-terra",
+          "modelId": "openrouter/openai/gpt-5.6-terra",
+          "description": "OpenAI GPT-5.6 Terra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-luna",
+          "modelId": "openrouter/openai/gpt-5.6-luna",
+          "description": "OpenAI GPT-5.6 Luna via OpenRouter"
+        },
+        {
+          "alias": "openrouter/google/gemini-3.6-flash",
+          "modelId": "openrouter/google/gemini-3.6-flash",
+          "description": "Gemini 3.6 Flash via OpenRouter"
+        },
+        {
+          "alias": "openrouter/qwen/qwen3.7-max",
+          "modelId": "openrouter/qwen/qwen3.7-max",
+          "description": "Qwen 3.7 Max via OpenRouter"
+        },
+        {
+          "alias": "openrouter/moonshotai/kimi-k3",
+          "modelId": "openrouter/moonshotai/kimi-k3",
+          "description": "Kimi K3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
+    "prime-agent": {
+      "defaultModel": "openrouter/anthropic/claude-opus-5",
+      "models": [
+        {
+          "alias": "openrouter/anthropic/claude-fable-5.1",
+          "modelId": "openrouter/anthropic/claude-fable-5.1",
+          "description": "Anthropic Fable 5.1 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-opus-5",
+          "modelId": "openrouter/anthropic/claude-opus-5",
+          "description": "Anthropic Opus 5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-sonnet-5",
+          "modelId": "openrouter/anthropic/claude-sonnet-5",
+          "description": "Anthropic Sonnet 5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-haiku-4.5",
+          "modelId": "openrouter/anthropic/claude-haiku-4.5",
+          "description": "Anthropic Haiku via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-astra",
+          "modelId": "openrouter/openai/gpt-6-astra",
+          "description": "OpenAI GPT-6 Astra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-sol",
+          "modelId": "openrouter/openai/gpt-5.6-sol",
+          "description": "OpenAI GPT-5.6 Sol via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-terra",
+          "modelId": "openrouter/openai/gpt-5.6-terra",
+          "description": "OpenAI GPT-5.6 Terra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-luna",
+          "modelId": "openrouter/openai/gpt-5.6-luna",
+          "description": "OpenAI GPT-5.6 Luna via OpenRouter"
+        },
+        {
+          "alias": "openrouter/google/gemini-3.6-flash",
+          "modelId": "openrouter/google/gemini-3.6-flash",
+          "description": "Gemini 3.6 Flash via OpenRouter"
+        },
+        {
+          "alias": "openrouter/qwen/qwen3.7-max",
+          "modelId": "openrouter/qwen/qwen3.7-max",
+          "description": "Qwen 3.7 Max via OpenRouter"
+        },
+        {
+          "alias": "openrouter/moonshotai/kimi-k3",
+          "modelId": "openrouter/moonshotai/kimi-k3",
+          "description": "Kimi K3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
     "qwen": {
       "defaultModel": "qwen3.7-max",
       "models": [
@@ -457,6 +669,45 @@
         "thinking"
       ],
       "defaultEffort": "thinking",
+      "supportsConfig": false,
+      "presets": []
+    },
+    "zcode": {
+      "defaultModel": "openrouter/z-ai/glm-5.3",
+      "models": [
+        {
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/glm-5.3",
+          "modelId": "fireworks/glm-5.3",
+          "description": "Zhipu GLM-5.3 via Fireworks"
+        },
+        {
+          "alias": "fireworks/glm-5.3-flash",
+          "modelId": "fireworks/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via Fireworks"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
       "supportsConfig": false,
       "presets": []
     }

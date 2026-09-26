@@ -466,6 +466,39 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
+// The same tree for a harness with no Harbor adapter: its own tee name, the
+// home at its real names, no Harbor copy
+// -----------------------------------------------------------------------------
+{
+  const base = fixtureTrial();
+  const files = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...base.agent_info, name: "zcode", version: "3.14.3" } }),
+      home: { "/root/.zcode/cli/db/db.sqlite": "sqlite", "/root/.zcode/cli/config.json": '{"mcp":{"servers":{}}}' },
+    }),
+  );
+  assertEqual(
+    Object.keys(files).sort(),
+    [
+      "agent/.zcode/cli/config.json",
+      "agent/.zcode/cli/db/db.sqlite",
+      "agent/stderr.log",
+      "agent/zcode.txt",
+      "agent/trace-parsed.jsonl",
+      "agent/trajectory.json",
+      "config.json",
+      "evolve.json",
+      "result.json",
+      "verifier/reward.json",
+      "verifier/test-stdout.txt",
+    ].sort(),
+    "a zcode trial materializes the same tree under its own tee name, the home at its real names and no Harbor copy"
+  );
+  assertEqual(files["agent/zcode.txt"], "raw stdout\n", "the stdout stream sits at zcode.txt");
+  assertEqual(JSON.parse(files["config.json"]).agent.name, "zcode", "config.json names the harness");
+}
+
+// -----------------------------------------------------------------------------
 // Harbor's copies — the server's table (harness-registry.ts harborCopies), pinned
 // -----------------------------------------------------------------------------
 {
@@ -477,14 +510,25 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     kimi: [],
     opencode: [{ sandboxRoot: "/root/.local/share/opencode", agentDir: "opencode/xdg-data/opencode" }],
     droid: [],
+    // pi.py:102/:447: Harbor's --session-dir is agent/pi/sessions, where pi writes flat.
+    pi: [{ sandboxRoot: "/root/.pi/agent/sessions", agentDir: "pi/sessions" }],
+    "prime-agent": [],
+    dsh: [],
+    zcode: [],
     antigravity: [],
   };
-  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the eight harnesses");
+  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the twelve harnesses");
+  assertEqual(HARNESS_TRIAL_LAYOUTS.pi.stdoutFile, "pi.txt", "pi's tee is Harbor's pi.txt (pi.py:100)");
+  assertEqual(HARNESS_TRIAL_LAYOUTS["prime-agent"].stdoutFile, "prime-agent.txt", "prime-agent has no Harbor adapter: the platform's own <harness>.txt");
+  assertEqual(harborCopyPath(harnessTrialLayout("pi"), "/root/.pi/agent/sessions/2026-09-25T20-10-24-177Z_x.jsonl"), "pi/sessions/2026-09-25T20-10-24-177Z_x.jsonl", "pi's session files are copied to Harbor's pi/sessions/ slot");
+  assertEqual(harborCopyPath(harnessTrialLayout("pi"), "/root/.pi/agent/models.json"), null, "pi's config outside sessions/ has no Harbor copy");
   for (const [id, copies] of Object.entries(expected)) {
     assertEqual(HARNESS_TRIAL_LAYOUTS[id].harborCopies, copies, `${id}: Harbor's copies mirror the server's table`);
   }
   assertEqual(harborCopyPath(harnessTrialLayout("claude-code"), "/root/.claude/x"), "sessions/x", "claude's config dir is copied to Harbor's sessions/");
   assertEqual(harborCopyPath(harnessTrialLayout("kimi"), "/root/.kimi-code/x"), null, "kimi has no Harbor copy: the home at .kimi-code/ is the whole record");
+  assertEqual(harnessTrialLayout("zcode").stdoutFile, "zcode.txt", "zcode has no Harbor adapter: the tee follows the <harness>.txt pattern");
+  assertEqual(harborCopyPath(harnessTrialLayout("zcode"), "/root/.zcode/cli/db/db.sqlite"), null, "zcode has no Harbor copy: the home at .zcode/ is the whole record");
   assertEqual(harnessTrialLayout("antigravity-cli").stdoutFile, "antigravity-stream.jsonl", "Harbor's antigravity-cli label finds the SDK id and its tee name (antigravity_cli.py:984)");
   assertEqual(harborCopyPath(harnessTrialLayout("antigravity"), "/root/.gemini/antigravity-cli/brain/x"), null, "antigravity has no Harbor copy slot: Harbor copies renamed files, not a subtree");
   assertEqual(harborCopyPath(DEFAULT_HARNESS_TRIAL_LAYOUT, "/root/.claude/x"), null, "the default layout copies nothing");

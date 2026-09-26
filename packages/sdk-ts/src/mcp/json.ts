@@ -9,10 +9,12 @@
  * - Gemini: { url: "...", type: "http"|"sse" } | { command: "..." }
  * - Qwen:   { httpUrl: "..." } | { url: "..." } | { command: "..." }
  * - Kimi Code: { url: "...", transport?: "http"|"sse" } | { command: "...", transport: "stdio" }
+ * - Z Code: { type: "stdio", command, args, env } | { type: "http"|"sse", url, headers } under `mcp.servers`
  * - Antigravity: { serverUrl: "...", headers? } | { command: "...", args?, env?, cwd? }
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
+import { shellSingleQuote } from "../utils/shell";
 import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { EvolveConfigError } from "../utils/config";
 import { validateServers, isNotFoundError } from "./validation";
@@ -137,6 +139,25 @@ function toDroidFormat(config: McpServerConfig): Record<string, unknown> {
   }
 
   return { type: transport === "stdio" ? "stdio" : "http", ...rest };
+}
+
+/**
+ * Z Code's MCP schema is a strict union on `type` (stdio | http | sse): the type is always
+ * written and only the keys the schema names ride through (a stray key rejects the entry).
+ */
+function toZcodeFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  if (transport === "stdio" && config.command) {
+    const result: Record<string, unknown> = { type: "stdio", command: config.command };
+    if (config.args && config.args.length > 0) result.args = config.args;
+    if (config.env && Object.keys(config.env).length > 0) result.env = config.env;
+    return result;
+  }
+  const result: Record<string, unknown> = { type: transport === "sse" ? "sse" : "http" };
+  if (config.url) result.url = config.url;
+  const headers = config.headers ?? config.httpHeaders;
+  if (headers && Object.keys(headers).length > 0) result.headers = headers;
+  return result;
 }
 
 /**
@@ -507,6 +528,141 @@ export async function writeDroidGatewaySettings(
 }
 
 /**
+ * Write MCP config for Z Code
+ *
+ * Z Code reads user-level servers from `mcp.servers` in ~/.zcode/cli/config.json
+ * (the registry's mcpConfig); every other key of that file is preserved.
+ */
+export async function writeZcodeMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  validateServers(servers);
+
+  const settingsDir = getMcpSettingsDir("zcode", homeDir);
+  const settingsPath = getMcpSettingsPath("zcode", homeDir);
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string" && existing.trim()) {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const existingMcp =
+    typeof existingConfig.mcp === "object" && existingConfig.mcp !== null
+      ? (existingConfig.mcp as Record<string, unknown>)
+      : {};
+  const transformedServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toZcodeFormat(config)])
+  );
+
+  await sandbox.files.write(
+    settingsPath,
+    JSON.stringify({ ...existingConfig, mcp: { ...existingMcp, servers: transformedServers } }, null, 2)
+  );
+}
+
+export interface ZcodeProviderConfigInput {
+  /** The provider file, `~` = the sandbox home (registry zcodeProviderConfig.path). */
+  path: string;
+  providerId: string;
+  providerName: string;
+  /** OpenAI-compatible base URL INCLUDING `/v1` — Z Code appends `/chat/completions`. */
+  baseUrl: string;
+  /** The literal credential: Z Code expands no `${VAR}` in this file. */
+  apiKey: string;
+  /** The wire model id the request names. */
+  model: string;
+  /** One of ZCODE_REASONING_LEVELS. */
+  reasoningLevel: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  /** Extra request headers (the LiteLLM spend tags); {} when none. */
+  headers: Record<string, string>;
+}
+
+/**
+ * Z Code's provider file, built from scratch every run at mode 0600: the CLI reads its model,
+ * level, base URL and key here and nowhere else (ZCode packages/provider/src/config at v3.14.3).
+ */
+export async function writeZcodeProviderConfig(
+  sandbox: SandboxInstance,
+  config: ZcodeProviderConfigInput,
+  homeDir?: string,
+): Promise<void> {
+  const filePath = expandPath(config.path, homeDir);
+  const dir = filePath.slice(0, filePath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(dir);
+
+  const api: Record<string, unknown> = {
+    type: "openai-chat-completions",
+    baseUrl: config.baseUrl,
+  };
+  if (Object.keys(config.headers).length > 0) api.headers = config.headers;
+
+  const document = {
+    schemaVersion: 1,
+    config: {
+      providerConfigRules: {
+        providerRules: [
+          {
+            providerId: config.providerId,
+            providerName: config.providerName,
+            config: {
+              group: "standard-personal",
+              access: { type: "api-key", apiKey: config.apiKey },
+              api,
+              personalModelIds: [config.model],
+            },
+          },
+        ],
+      },
+      modelConfigRules: {
+        providerModelRules: [
+          {
+            providerId: config.providerId,
+            modelId: config.model,
+            config: {
+              enabled: true,
+              properties: { contextWindow: config.contextWindow, supportsToolCall: true },
+              optionSpecs: {
+                maxOutputTokens: {
+                  max: config.maxOutputTokens,
+                  map: '{"max_tokens": maxOutputTokens}',
+                },
+                reasoningLevel: {
+                  values: ["disabled", "low", "medium", "high"],
+                  map: 'reasoningLevel == "disabled" ? {} : {"reasoning_effort": reasoningLevel}',
+                },
+              },
+            },
+          },
+        ],
+        manualProviderModelRules: [],
+      },
+      defaultModelSelection: {
+        providerId: config.providerId,
+        modelId: config.model,
+        options: { reasoningLevel: config.reasoningLevel },
+      },
+    },
+  };
+
+  await sandbox.files.write(filePath, JSON.stringify(document, null, 2));
+  // The file holds the literal key; the sandbox file API writes with the
+  // default mode, so the permission is tightened right after the write.
+  await sandbox.commands.run(`chmod 600 ${shellSingleQuote(filePath)}`, { timeoutMs: 10000 });
+}
+
+/**
  * Write MCP config for OpenCode agent
  *
  * OpenCode uses opencode.json in the working directory with an `mcp` key.
@@ -577,4 +733,243 @@ function toOpenCodeFormat(config: McpServerConfig): Record<string, unknown> {
 
   // Fallback: pass through with type
   return { type: transport === "stdio" ? "local" : "remote", ...config };
+}
+
+// =============================================================================
+// THE PI FAMILY (pi, Prime Agent): models.json route, MCP, settings stamp
+// =============================================================================
+
+/** pi-mcp-adapter's shape: stdio `{command, args?, cwd?, env?}`, remote `{url, headers?}` (HTTP with SSE fallback). */
+function toPiMcpFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  if (transport === "stdio" && config.command) {
+    const result: Record<string, unknown> = { command: config.command };
+    if (config.args && config.args.length > 0) result.args = config.args;
+    if (config.cwd) result.cwd = config.cwd;
+    if (config.env && Object.keys(config.env).length > 0) result.env = config.env;
+    return result;
+  }
+  const result: Record<string, unknown> = { url: config.url };
+  const headers = config.headers ?? config.httpHeaders;
+  if (headers && Object.keys(headers).length > 0) result.headers = headers;
+  return result;
+}
+
+/** No host-config discovery (Harbor pi.py pins the same three off), no startup notice, no script mode. */
+export const PI_MCP_ADAPTER_SETTINGS = {
+  hostConfigDiscovery: "off",
+  notifyOnStartupConnect: false,
+  scriptMode: false,
+} as const;
+
+/** pi's MCP config: `<agent-dir>/mcp.json`, read by the adapter extension the command loads. */
+export async function writePiMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  validateServers(servers);
+
+  const settingsDir = getMcpSettingsDir("pi", homeDir);
+  const settingsPath = getMcpSettingsPath("pi", homeDir);
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const existingSettings =
+    typeof existingConfig.settings === "object" && existingConfig.settings !== null
+      ? (existingConfig.settings as Record<string, unknown>)
+      : {};
+  const transformedServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toPiMcpFormat(config)])
+  );
+
+  await sandbox.files.write(
+    settingsPath,
+    JSON.stringify(
+      {
+        ...existingConfig,
+        settings: { ...existingSettings, ...PI_MCP_ADAPTER_SETTINGS },
+        mcpServers: transformedServers,
+      },
+      null,
+      2
+    )
+  );
+}
+
+/**
+ * Prime's settings.json McpServerConfig: `sse` is written as `http` (Prime has no SSE
+ * transport), and a stdio `env` must be references by NAME — a literal value is refused.
+ */
+function toPrimeAgentMcpFormat(name: string, config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  if (transport === "stdio" && config.command) {
+    if (config.env && Object.keys(config.env).length > 0) {
+      throw new Error(
+        `MCP server "${name}": Prime Agent passes a stdio server's env only as references to the sandbox ` +
+          `environment (its settings.json takes { env: NAME }, never literal values). Set the values in ` +
+          `the sandbox environment and name them with envVars instead of env.`,
+      );
+    }
+    const result: Record<string, unknown> = { type: "stdio", command: config.command };
+    if (config.args && config.args.length > 0) result.args = config.args;
+    if (config.cwd) result.cwd = config.cwd;
+    if (config.envVars && config.envVars.length > 0) {
+      result.env = Object.fromEntries(config.envVars.map((envName) => [envName, { env: envName }]));
+    }
+    return result;
+  }
+  const result: Record<string, unknown> = { type: "http", url: config.url };
+  const headers = config.headers ?? config.httpHeaders;
+  if (headers && Object.keys(headers).length > 0) result.headers = headers;
+  if (config.bearerTokenEnvVar) result.bearerTokenEnvVar = config.bearerTokenEnvVar;
+  return result;
+}
+
+/** Prime's MCP servers: the `mcpServers` map of the GLOBAL settings.json, the rest of the file kept. */
+export async function writePrimeAgentMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  validateServers(servers);
+
+  const settingsDir = getMcpSettingsDir("prime-agent", homeDir);
+  const settingsPath = getMcpSettingsPath("prime-agent", homeDir);
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string") {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const transformedServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toPrimeAgentMcpFormat(name, config)])
+  );
+
+  await sandbox.files.write(
+    settingsPath,
+    JSON.stringify({ ...existingConfig, mcpServers: transformedServers }, null, 2)
+  );
+}
+
+export interface ModelsJsonRouteWrite {
+  /** The agent dir holding models.json (~ expanded here). */
+  agentDir: string;
+  /** The provider name the command's --provider selects. */
+  providerName: string;
+  /** "$VAR" (pi) or the bare "VAR" (Prime Agent) in the file's apiKey field. */
+  apiKeyRef: "dollar" | "bare";
+  /** The env var the key rides in. */
+  apiKeyEnv: string;
+  /** The LITERAL base URL, `/v1` included (pi never expands a variable here). */
+  baseUrl: string;
+  /** The wire model id, as the command's --model spells it. */
+  model: string;
+  /** Whether thinking is on for this run (the model entry's `reasoning` flag). */
+  reasoning: boolean;
+  /** The --thinking level; xhigh/max need an explicit thinkingLevelMap (Harbor pi.py:235-239). */
+  thinkingLevel?: string;
+}
+
+/** One provider entry at the literal base URL with the run's model and headers; other providers survive. */
+export async function writeModelsJsonRoute(
+  sandbox: SandboxInstance,
+  config: ModelsJsonRouteWrite,
+  headers: Record<string, string>,
+  homeDir?: string,
+): Promise<void> {
+  const agentDir = expandPath(config.agentDir, homeDir);
+  const modelsPath = `${agentDir}/models.json`;
+
+  await sandbox.files.makeDir(agentDir);
+
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await sandbox.files.read(modelsPath);
+    if (typeof raw === "string" && raw.trim()) {
+      existing = JSON.parse(raw);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+  const providers =
+    typeof existing.providers === "object" && existing.providers !== null
+      ? (existing.providers as Record<string, unknown>)
+      : {};
+
+  const model: Record<string, unknown> = { id: config.model, reasoning: config.reasoning };
+  if (config.reasoning && (config.thinkingLevel === "xhigh" || config.thinkingLevel === "max")) {
+    model.thinkingLevelMap = { [config.thinkingLevel]: config.thinkingLevel };
+  }
+  const provider: Record<string, unknown> = {
+    baseUrl: config.baseUrl,
+    api: "openai-completions",
+    apiKey: config.apiKeyRef === "dollar" ? `$${config.apiKeyEnv}` : config.apiKeyEnv,
+    models: [model],
+  };
+  if (Object.keys(headers).length > 0) provider.headers = headers;
+
+  await sandbox.files.write(
+    modelsPath,
+    JSON.stringify({ ...existing, providers: { ...providers, [config.providerName]: provider } }, null, 2),
+  );
+}
+
+/** Deep-merge a settings stamp: objects key by key, scalars and arrays the stamp's; other keys survive. */
+export async function writeJsonSettingsStamp(
+  sandbox: SandboxInstance,
+  path: string,
+  stamp: Record<string, unknown>,
+  homeDir?: string,
+): Promise<void> {
+  const settingsPath = expandPath(path, homeDir);
+  const settingsDir = settingsPath.slice(0, settingsPath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await sandbox.files.read(settingsPath);
+    if (typeof raw === "string" && raw.trim()) {
+      existing = JSON.parse(raw);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  await sandbox.files.write(settingsPath, JSON.stringify(mergeStamp(existing, stamp), null, 2));
+}
+
+function mergeStamp(base: Record<string, unknown>, stamp: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(stamp)) {
+    const current = merged[key];
+    if (isPlainObject(value) && isPlainObject(current)) {
+      merged[key] = mergeStamp(current, value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

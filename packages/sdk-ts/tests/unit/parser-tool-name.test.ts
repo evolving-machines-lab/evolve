@@ -6,17 +6,21 @@
  * harness put on the wire, verbatim. Consumers that render a trajectory need
  * the real name ("mcp__mcp-server__get_secret"); `kind` only says "other".
  *
- * Covers all 8 parsers, each with an MCP call and a non-MCP call.
+ * Covers all 12 parsers, each with an MCP call and a non-MCP call.
  */
 
 import { createAntigravityParser } from "../../src/parsers/antigravity.ts";
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
+import { createDshParser } from "../../src/parsers/dsh.ts";
 import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
+import { createPiParser } from "../../src/parsers/pi.ts";
+import { createPrimeAgentParser } from "../../src/parsers/prime-agent.ts";
 import { createQwenParser } from "../../src/parsers/qwen.ts";
+import { createZcodeParser } from "../../src/parsers/zcode.ts";
 import type { OutputEvent } from "../../src/parsers/types.ts";
 
 let passed = 0;
@@ -118,6 +122,25 @@ async function testDroid(): Promise<void> {
         parameters: { file_path: "/tmp/a.txt" },
       })
     ) === "Read",
+    "non-MCP tool carries its native name"
+  );
+}
+
+async function testDsh(): Promise<void> {
+  console.log("\n[3b] dsh");
+
+  // dsh spells MCP tools mcp__<serverName>__<tool> (round-2 live capture M1:
+  // mcp__everything__get-sum); every tool arrives as {type:"tool_call", callId, tool, input}.
+  assert(
+    toolNameOf(
+      feed(createDshParser(), { type: "tool_call", callId: "call_1", tool: MCP_NAME, input: {} })
+    ) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(
+      feed(createDshParser(), { type: "tool_call", callId: "call_2", tool: "read", input: { file_path: "/tmp/a.txt" } })
+    ) === "read",
     "non-MCP tool carries its native name"
   );
 }
@@ -268,16 +291,87 @@ async function testQwen(): Promise<void> {
   );
 }
 
+/** pi / Prime Agent: {type:"tool_execution_start", toolCallId, toolName, args} (pi-family core). */
+function piFamilyLine(toolName: string): Record<string, unknown> {
+  return { type: "tool_execution_start", toolCallId: `call_${toolName}`, toolName, args: { command: "ls" } };
+}
+
+async function testPi(): Promise<void> {
+  console.log("\n[8] pi");
+
+  // With the adapter's directTools on, an MCP tool arrives under its own name.
+  assert(
+    toolNameOf(feed(createPiParser(), piFamilyLine(MCP_NAME))) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(feed(createPiParser(), piFamilyLine("bash"))) === "bash",
+    "non-MCP tool carries its native name"
+  );
+  // The adapter's default proxy tool is literally `mcp`.
+  assert(
+    toolNameOf(feed(createPiParser(), { type: "tool_execution_start", toolCallId: "c", toolName: "mcp", args: { tool: "everything_get-sum", args: {} } })) === "mcp",
+    "the adapter's proxy tool keeps its own name"
+  );
+}
+
+async function testPrimeAgent(): Promise<void> {
+  console.log("\n[9] prime-agent");
+
+  assert(
+    toolNameOf(feed(createPrimeAgentParser(), piFamilyLine(MCP_NAME))) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(feed(createPrimeAgentParser(), { type: "tool_execution_start", toolCallId: "c", toolName: "ipython", args: { code: "print(1)" } })) === "ipython",
+    "the one native tool carries its name"
+  );
+}
+
+/** Z Code: {type:"tool.updated", payload:{kind:"scheduled", toolCallId, toolName, input}} */
+async function testZcode(): Promise<void> {
+  console.log("\n[10] zcode");
+
+  assert(
+    toolNameOf(
+      feed(createZcodeParser(), {
+        type: "tool.updated",
+        sessionId: "sess_z",
+        seq: 1,
+        timestamp: 1,
+        payload: { kind: "scheduled", toolCallId: "z1", toolName: MCP_NAME, input: {}, display: { kind: "mcp_tool", serverName: "mcp-server", toolName: "get_secret" } },
+      })
+    ) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(
+      feed(createZcodeParser(), {
+        type: "model.streaming",
+        sessionId: "sess_z",
+        seq: 1,
+        timestamp: 1,
+        payload: { kind: "tool_call", assistantMessageId: "msg_1", toolCallId: "z2", toolName: "Read", input: { file_path: "/tmp/a.txt" } },
+      })
+    ) === "Read",
+    "non-MCP tool carries its native name (the model's own tool_call line)"
+  );
+}
+
 async function main(): Promise<void> {
   console.log("\n=== Parser Tool Name Unit Tests ===");
 
   await testClaude();
   await testCodex();
   await testDroid();
+  await testDsh();
   await testGemini();
   await testKimi();
   await testOpenCode();
   await testQwen();
+  await testPi();
+  await testPrimeAgent();
+  await testZcode();
   await testAntigravity();
 
   console.log(`\n=== Summary ===`);

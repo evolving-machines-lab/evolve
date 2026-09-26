@@ -266,7 +266,11 @@ export {
   createClaudeParser,
   createCodexParser,
   createDroidParser,
+  createDshParser,
   createGeminiParser,
+  createPiParser,
+  createPrimeAgentParser,
+  createZcodeParser,
   parseQwenOutput,
 } from "./parsers";
 
@@ -301,8 +305,12 @@ export {
   writeCodexMcpConfig,
   writeDroidGatewaySettings,
   writeDroidMcpConfig,
+  writeDshMcpConfig,
+  writeDshRoutePatch,
   writeGeminiMcpConfig,
   writeQwenMcpConfig,
+  writeZcodeMcpConfig,
+  writeZcodeProviderConfig,
 } from "./mcp";
 
 // =============================================================================
