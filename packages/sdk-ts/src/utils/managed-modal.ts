@@ -78,6 +78,7 @@ import type {
   SandboxRunOptions,
   SandboxSpawnOptions,
 } from "../types";
+import { readRetryAfterSec } from "../hosted/retry-after";
 
 /** The door's request-body cap: 1 MiB of wire bytes, JSON included. */
 const MANAGED_MODAL_MAX_BODY_BYTES = 1024 * 1024;
@@ -99,6 +100,19 @@ export class ManagedModalWriteLimitError extends Error {
     );
     this.name = "ManagedModalWriteLimitError";
     this.bytes = bytes;
+  }
+}
+
+/** A refusal from the door: its HTTP `status`, the body's sentence, and the delay a 429/503 asked for. */
+export class ManagedModalDoorError extends Error {
+  readonly status: number;
+  readonly retryAfterSec?: number;
+
+  constructor(operation: string, status: number, detail: string, retryAfterSec?: number) {
+    super(`Managed Modal ${operation} failed (${status})${detail ? `: ${detail}` : ""}`);
+    this.name = "ManagedModalDoorError";
+    this.status = status;
+    if (retryAfterSec !== undefined) this.retryAfterSec = retryAfterSec;
   }
 }
 
@@ -129,15 +143,19 @@ class ManagedModalDoor {
       },
     });
     if (!response.ok) {
+      const text = await response.text().catch(() => "");
       let detail = "";
       try {
-        const payload = (await response.json()) as { error?: string };
-        detail = payload?.error ?? "";
+        const payload = JSON.parse(text) as { error?: unknown };
+        if (typeof payload?.error === "string") detail = payload.error;
       } catch {
-        // A non-JSON error body still yields the status line below.
+        // A non-JSON error body still yields the status line.
       }
-      throw new Error(
-        `Managed Modal ${operation} failed (${response.status})${detail ? `: ${detail}` : ""}`,
+      throw new ManagedModalDoorError(
+        operation,
+        response.status,
+        detail,
+        readRetryAfterSec(text, response),
       );
     }
     return response;
@@ -387,7 +405,7 @@ class ManagedModalSandbox implements SandboxInstance {
       );
     } catch (err) {
       // A box already gone IS the outcome kill asks for.
-      if (err instanceof Error && err.message.includes("(404)")) return;
+      if (err instanceof ManagedModalDoorError && err.status === 404) return;
       throw err;
     }
   }
@@ -404,7 +422,7 @@ class ManagedModalSandbox implements SandboxInstance {
       await this.getInfo();
       return true;
     } catch (err) {
-      if (err instanceof Error && err.message.includes("(404)")) return false;
+      if (err instanceof ManagedModalDoorError && err.status === 404) return false;
       throw err;
     }
   }

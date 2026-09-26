@@ -18,6 +18,12 @@ import {
   MANAGED_SANDBOX_PROVIDERS,
   type ManagedSandboxProviderName,
 } from "../constants";
+import {
+  retryAfterSecFromHeader,
+  retryTransient,
+  type TransientRefusal,
+  type TransientRetryPolicy,
+} from "../hosted/retry-after";
 
 /**
  * Encode an Evolve gateway key as an e2b-shaped key for the managed E2B route.
@@ -96,6 +102,61 @@ function withCreateDefaults(
   return provider;
 }
 
+/** Three tries paced like the hosted watch (1 s doubling, 30 s cap), bounded because a create has no deadline. */
+export const MANAGED_CREATE_RETRY: TransientRetryPolicy = {
+  attempts: 3,
+  baseDelayMs: 1_000,
+  maxDelayMs: 30_000,
+};
+
+/**
+ * A door's 429/503 read off the backing client's error: the Modal door's `status`, Daytona's
+ * `statusCode` + `headers` (@daytonaio/sdk 0.203), e2b's class name or "503: …" text (e2b 2.39 keeps neither).
+ */
+export function readManagedCreateRefusal(error: unknown): TransientRefusal | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const e = error as Error & {
+    status?: unknown;
+    statusCode?: unknown;
+    retryAfterSec?: unknown;
+    headers?: unknown;
+  };
+  const status = typeof e.status === "number" ? e.status : e.statusCode;
+  if (typeof status === "number") {
+    if (status !== 429 && status !== 503) return undefined;
+    if (typeof e.retryAfterSec === "number") return { retryAfterSec: e.retryAfterSec };
+    const headers = e.headers as (Record<string, unknown> & { get?: unknown }) | undefined;
+    const raw =
+      typeof headers?.get === "function" ? headers.get("retry-after") : headers?.["retry-after"];
+    return { retryAfterSec: retryAfterSecFromHeader(raw) };
+  }
+  if (e.name === "RateLimitError") return {};
+  if (e.name === "SandboxError" && e.message.startsWith("503:")) return {};
+  return undefined;
+}
+
+/**
+ * Retry a managed create the door refused with a 429/503; past the bound the refusal is thrown unchanged.
+ * Create alone: it is the one request the platform refuses before any box exists.
+ */
+export function withTransientCreateRetry(
+  provider: SandboxProvider,
+  policy: TransientRetryPolicy = MANAGED_CREATE_RETRY,
+): SandboxProvider {
+  const createDirect = provider.create.bind(provider);
+  provider.create = (options: SandboxCreateOptions = {}) =>
+    retryTransient(() => createDirect(options), readManagedCreateRefusal, policy);
+  return provider;
+}
+
+/** What every managed provider gets: the mark, the create retry, then the create defaults folded under. */
+function managed(
+  provider: SandboxProvider,
+  defaults?: ManagedSandboxCreateDefaults,
+): SandboxProvider {
+  return withCreateDefaults(withTransientCreateRetry(markEvolveManagedSandbox(provider)), defaults);
+}
+
 /**
  * Resolve a sandbox provider that runs on the platform's credentials.
  *
@@ -129,14 +190,12 @@ export async function resolveManagedSandbox(
       // credential for. The Evolve key travels as the Daytona apiKey because
       // that is the header the Daytona client puts it in and the header both
       // managed doors read.
-      return withCreateDefaults(
-        markEvolveManagedSandbox(
-          createDaytonaProvider({
-            apiKey,
-            apiUrl: getManagedProviderUrl("daytona"),
-            managedToolboxUrl: getManagedDaytonaToolboxUrl(),
-          }),
-        ),
+      return managed(
+        createDaytonaProvider({
+          apiKey,
+          apiUrl: getManagedProviderUrl("daytona"),
+          managedToolboxUrl: getManagedDaytonaToolboxUrl(),
+        }),
         defaults,
       );
     } catch (e) {
@@ -160,20 +219,16 @@ export async function resolveManagedSandbox(
     // utils/managed-modal.ts for the wire, which the Dashboard's twin routes
     // are built against).
     const { ManagedModalProvider } = await import("./managed-modal");
-    return withCreateDefaults(
-      markEvolveManagedSandbox(
-        new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
-      ),
+    return managed(
+      new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
       defaults,
     );
   }
 
   try {
     const { createE2BProvider } = await import("@evolvingmachines/e2b");
-    return withCreateDefaults(
-      markEvolveManagedSandbox(
-        createE2BProvider({ apiKey: toManagedE2BKey(apiKey), apiUrl: getE2BGatewayUrl() }),
-      ),
+    return managed(
+      createE2BProvider({ apiKey: toManagedE2BKey(apiKey), apiUrl: getE2BGatewayUrl() }),
       defaults,
     );
   } catch (e) {
