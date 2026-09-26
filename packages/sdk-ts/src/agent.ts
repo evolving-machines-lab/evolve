@@ -6,6 +6,7 @@
  */
 
 import type { z } from "zod";
+import { shellSingleQuote } from "./utils/shell";
 import Ajv, { type ValidateFunction } from "ajv";
 import { randomUUID, randomBytes } from "crypto";
 import type {
@@ -2227,7 +2228,7 @@ export class Agent {
     const config = this.registry.zcodeProviderConfig;
     if (!config) return;
     try {
-      await sandbox.commands.run(`rm -f '${expandPath(config.path, this.homeDir)}'`, { timeoutMs: 10000 });
+      await sandbox.commands.run(`rm -f ${shellSingleQuote(expandPath(config.path, this.homeDir))}`, { timeoutMs: 10000 });
     } catch {
       // The run's own outcome stands; a sandbox already gone has no file left.
     }

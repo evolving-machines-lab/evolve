@@ -13,6 +13,7 @@
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
+import { shellSingleQuote } from "../utils/shell";
 import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { validateServers, isNotFoundError } from "./validation";
 
@@ -573,10 +574,6 @@ export async function writeZcodeProviderConfig(
   // The file holds the literal key; the sandbox file API writes with the
   // default mode, so the permission is tightened right after the write.
   await sandbox.commands.run(`chmod 600 ${shellSingleQuote(filePath)}`, { timeoutMs: 10000 });
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**

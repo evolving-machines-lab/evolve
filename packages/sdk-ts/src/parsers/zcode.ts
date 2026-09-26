@@ -483,7 +483,8 @@ function recordToolCall(
   const existing = toolCalls.get(toolCallId);
   if (existing?.emitted) return null;
   const toolName = name || existing?.name || "Tool";
-  toolCalls.set(toolCallId, { name: toolName, input, emitted: true, title: mcpTitle });
+  const title0 = mcpTitle ?? mcpNameTitle(toolName);
+  toolCalls.set(toolCallId, { name: toolName, input, emitted: true, title: title0 });
 
   if (normalizeToolName(toolName) === "todowrite") {
     const plan = handleTodoWrite(input);
@@ -494,7 +495,7 @@ function recordToolCall(
   return {
     sessionUpdate: "tool_call",
     toolCallId,
-    title: mcpTitle ?? title,
+    title: title0 ?? title,
     toolName,
     kind,
     status: "pending",
@@ -504,7 +505,16 @@ function recordToolCall(
   };
 }
 
-/** `display{kind:"mcp_tool", serverName, toolName}` on the scheduled line names the server behind an `mcp__` call. */
+/**
+ * One title for an MCP call and its updates: `<server> <tool> (MCP)`, read from the call's own
+ * `mcp__<server>__<tool>` name (the model's line comes first) and confirmed by the scheduled
+ * line's `display{kind:"mcp_tool", serverName, toolName}`.
+ */
+function mcpNameTitle(toolName: string): string | undefined {
+  const match = /^mcp__([^_].*?)__(.+)$/.exec(toolName);
+  return match ? `${match[1]} ${match[2]} (MCP)` : undefined;
+}
+
 function mcpDisplayTitle(display: unknown): string | undefined {
   const record = asRecord(display);
   if (record?.kind !== "mcp_tool") return undefined;

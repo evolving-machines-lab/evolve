@@ -6,6 +6,7 @@
  */
 
 import type { AgentPreset, AgentType, ReasoningEffort, SkillsConfig } from "./types";
+import { shellSingleQuote } from "./utils/shell";
 import { DEFAULT_HOME_DIR } from "./constants";
 
 // =============================================================================
@@ -418,6 +419,8 @@ export function zcodeEnvPins(homeDir: string): Record<string, string> {
     ZCODE_STORAGE_DIR: `${homeDir}/.zcode`,
     ZCODE_DATA_BASE_DIR: homeDir,
     ZCODE_SESSION_DB_PATH: `${homeDir}/.zcode/cli/db/db.sqlite`,
+    // The CLI's alias of SESSION_DB_PATH; unpinned, a later-enumerated .env key would win.
+    ZCODE_SESSION_DB: `${homeDir}/.zcode/cli/db/db.sqlite`,
     ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: `${homeDir}/.zcode/v2/provider_config.json`,
     ZCODE_HTTP_PROXY: "",
     ZCODE_NO_PROXY: "",
@@ -1127,10 +1130,6 @@ export function isValidAgentType(type: string): type is AgentType {
  */
 export function expandPath(path: string, homeDir: string = DEFAULT_HOME_DIR): string {
   return path.replace(/^~/, homeDir);
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**

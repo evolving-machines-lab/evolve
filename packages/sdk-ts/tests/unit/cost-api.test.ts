@@ -1848,6 +1848,7 @@ async function testZcodeBuildCommand(): Promise<void> {
   assertEqual(zcode.gatewayModelAliases, undefined, "gateway mode rewrites nothing: the roster spells the routes");
   const pins =
     "ZCODE_STORAGE_DIR='/home/user/.zcode' ZCODE_DATA_BASE_DIR='/home/user' ZCODE_SESSION_DB_PATH='/home/user/.zcode/cli/db/db.sqlite' " +
+    "ZCODE_SESSION_DB='/home/user/.zcode/cli/db/db.sqlite' " +
     "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE='/home/user/.zcode/v2/provider_config.json' ZCODE_HTTP_PROXY='' ZCODE_NO_PROXY='' ZCODE_AGENT_CA_CERT='' " +
     "ZCODE_MODEL_TELEMETRY_ENABLED='0'";
   const fresh = zcode.buildCommand({ prompt: "hello", model: "openrouter/z-ai/glm-5.3", isResume: false, reasoningEffort: "high", homeDir: "/home/user" });
@@ -1857,9 +1858,10 @@ async function testZcodeBuildCommand(): Promise<void> {
   // The pinned set: what a task's .env could otherwise move (home, store, provider file) or re-route (proxy, CA), plus telemetry.
   assertEqual(
     Object.keys(zcodeEnvPins("/h")).sort().join(","),
-    "ZCODE_AGENT_CA_CERT,ZCODE_DATA_BASE_DIR,ZCODE_HTTP_PROXY,ZCODE_MODEL_TELEMETRY_ENABLED,ZCODE_NO_PROXY,ZCODE_PERSONAL_PROVIDER_CONFIG_FILE,ZCODE_SESSION_DB_PATH,ZCODE_STORAGE_DIR",
-    "the pinned ZCODE_* set",
+    "ZCODE_AGENT_CA_CERT,ZCODE_DATA_BASE_DIR,ZCODE_HTTP_PROXY,ZCODE_MODEL_TELEMETRY_ENABLED,ZCODE_NO_PROXY,ZCODE_PERSONAL_PROVIDER_CONFIG_FILE,ZCODE_SESSION_DB,ZCODE_SESSION_DB_PATH,ZCODE_STORAGE_DIR",
+    "the pinned ZCODE_* set (both spellings of the session store: the CLI maps them to one setting, last enumerated wins)",
   );
+  assertEqual(zcodeEnvPins("/h").ZCODE_SESSION_DB, zcodeEnvPins("/h").ZCODE_SESSION_DB_PATH, "the alias pins the same path");
   assert(!("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE" in zcodeEnvPins("/h")), "the built-in catalog path is the image's and the bundle's to pin: an empty value aborts the CLI");
   assert(Object.values(zcodeEnvPins("/h")).every((v) => typeof v === "string"), "every pin is a string (an empty one blocks the .env and leaves the setting unset)");
 }
