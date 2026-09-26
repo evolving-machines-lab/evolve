@@ -2,7 +2,7 @@
 """Workspace Mode Tests
 
 Tests: workspace_mode='knowledge', workspace_mode='swe'
-Agent Support: All (codex, claude, gemini, qwen)
+Agent Support: All (codex, claude, qwen)
 """
 
 import sys
@@ -30,7 +30,6 @@ agent_name = get_agent_display_name(agent_config.type)
 SYSTEM_PROMPT_FILES = {
     'codex': 'AGENTS.md',
     'claude': 'CLAUDE.md',
-    'gemini': 'GEMINI.md',
     'qwen': 'QWEN.md',
 }
 

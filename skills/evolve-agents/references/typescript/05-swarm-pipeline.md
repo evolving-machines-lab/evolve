@@ -267,13 +267,13 @@ Use different agents per candidate:
 ```ts
 const claudeAgent = { type: "claude", model: "opus" };
 const codexAgent = { type: "codex", model: "gpt-5.3-codex" };
-const geminiAgent = { type: "gemini", model: "gemini-3.5-flash" };
+const kimiAgent = { type: "kimi", model: "kimi-k3" };
 
 const result = await swarm.bestOf({
     item: input,
     prompt: "Solve this",
     config: {
-        taskAgents: [claudeAgent, codexAgent, geminiAgent],
+        taskAgents: [claudeAgent, codexAgent, kimiAgent],
         judgeCriteria: "Best solution quality",
         judgeAgent: claudeAgent,
         mcpServers: {...},        // (optional) MCP servers for candidates
@@ -721,7 +721,7 @@ Override the default agent for any operation (apiKey inherited from Swarm config
 
 ```ts
 interface AgentOverride {
-    type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
+    type: "claude" | "codex" | "qwen" | "kimi" | "opencode" | "droid";
     model?: string;
     reasoningEffort?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "thinking" | "no-thinking";
 }

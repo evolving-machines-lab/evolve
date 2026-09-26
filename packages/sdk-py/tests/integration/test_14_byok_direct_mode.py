@@ -7,7 +7,6 @@ Uses provider_api_key instead of api_key to bypass the Evolve gateway.
 Required env vars (in .env):
   ANTHROPIC_API_KEY - For Claude direct mode
   OPENAI_API_KEY - For Codex direct mode
-  GEMINI_API_KEY - For Gemini direct mode
   DASHSCOPE_API_KEY - For Qwen direct mode (Alibaba)
   E2B_API_KEY - For E2B sandbox direct mode
 
@@ -40,7 +39,7 @@ LOGS_DIR = Path(__file__).parent.parent / 'test-logs' / '14-byok-direct-mode'
 # CONFIG
 # =============================================================================
 
-ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen']
+ALL_AGENTS = ['claude', 'codex', 'qwen']
 
 
 def save_log(agent: str, name: str, content: str | bytes) -> None:
@@ -68,7 +67,6 @@ def get_provider_env() -> dict:
     return {
         'ANTHROPIC_API_KEY': os.getenv('ANTHROPIC_API_KEY'),
         'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
-        'GEMINI_API_KEY': os.getenv('GEMINI_API_KEY'),
         'DASHSCOPE_API_KEY': os.getenv('DASHSCOPE_API_KEY'),
         'E2B_API_KEY': os.getenv('E2B_API_KEY'),
     }
@@ -80,7 +78,7 @@ def get_byok_agent_config(agent_type: str) -> Optional[AgentConfig]:
     This bypasses the Evolve gateway for direct provider access.
 
     Args:
-        agent_type: Agent type (claude, codex, gemini, qwen)
+        agent_type: Agent type (claude, codex, qwen)
 
     Returns:
         AgentConfig with provider_api_key, or None if key not available
@@ -104,15 +102,6 @@ def get_byok_agent_config(agent_type: str) -> Optional[AgentConfig]:
             provider_api_key=env['OPENAI_API_KEY'],
             model=os.getenv('CODEX_MODEL', 'gpt-5.5'),
             reasoning_effort=os.getenv('CODEX_REASONING_EFFORT', 'medium'),
-        )
-
-    elif agent_type == 'gemini':
-        if not env['GEMINI_API_KEY']:
-            return None
-        return AgentConfig(
-            type='gemini',
-            provider_api_key=env['GEMINI_API_KEY'],
-            model=os.getenv('GEMINI_MODEL', 'gemini-3.6-flash'),
         )
 
     elif agent_type == 'qwen':
@@ -156,7 +145,6 @@ async def test_agent(agent_type: str) -> dict:
         key_name = {
             'claude': 'ANTHROPIC_API_KEY',
             'codex': 'OPENAI_API_KEY',
-            'gemini': 'GEMINI_API_KEY',
             'qwen': 'DASHSCOPE_API_KEY',
         }.get(agent_type, 'UNKNOWN_KEY')
         return {'ok': False, 'error': f'{key_name} not set', 'skipped': True, 'duration': 0}
@@ -225,7 +213,6 @@ async def main():
     print('Provider keys status:')
     print(f'  ANTHROPIC_API_KEY: {"✓ set" if env["ANTHROPIC_API_KEY"] else "✗ not set"}')
     print(f'  OPENAI_API_KEY: {"✓ set" if env["OPENAI_API_KEY"] else "✗ not set"}')
-    print(f'  GEMINI_API_KEY: {"✓ set" if env["GEMINI_API_KEY"] else "✗ not set"}')
     print(f'  DASHSCOPE_API_KEY: {"✓ set" if env["DASHSCOPE_API_KEY"] else "✗ not set"}')
     print(f'  E2B_API_KEY: {"✓ set" if env["E2B_API_KEY"] else "✗ not set"}')
     print()

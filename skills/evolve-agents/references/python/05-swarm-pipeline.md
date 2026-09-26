@@ -276,13 +276,13 @@ Use different agents per candidate:
 ```python
 claude_agent = AgentConfig(type='claude', model='opus')
 codex_agent = AgentConfig(type='codex', model='gpt-5.3-codex')
-gemini_agent = AgentConfig(type='gemini', model='gemini-3.5-flash')
+kimi_agent = AgentConfig(type='kimi', model='kimi-k3')
 
 result = await swarm.best_of(
     item=input_item,
     prompt='Solve this',
     config=BestOfConfig(
-        task_agents=[claude_agent, codex_agent, gemini_agent],
+        task_agents=[claude_agent, codex_agent, kimi_agent],
         judge_criteria='Best solution quality',
         judge_agent=claude_agent,
         mcp_servers={...},           # (optional) MCP servers for candidates
@@ -722,7 +722,7 @@ Override the default agent for any operation. There is no separate override type
 ```python
 @dataclass
 class AgentConfig:
-    type: Literal['claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
+    type: Literal['claude', 'codex', 'qwen', 'kimi', 'opencode', 'droid']
     api_key: str | None = None
     model: str | None = None
     reasoning_effort: Literal['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking'] | None = None

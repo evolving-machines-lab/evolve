@@ -120,7 +120,7 @@ EVOLVE_API_KEY=sk-...
 E2B_API_KEY=e2b_...              # Optional with EVOLVE_API_KEY (auto-resolves)
 
 # .env - Direct Provider Key Mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 E2B_API_KEY=e2b_...              # Required in Direct Provider Key Mode
 ```
 
@@ -142,7 +142,7 @@ MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 
 # .env - Direct Provider Key Mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 ```
@@ -167,7 +167,7 @@ EVOLVE_API_KEY=sk-...
 DAYTONA_API_KEY=...
 
 # .env - Direct Provider Key Mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
 DAYTONA_API_KEY=...
 ```
 
@@ -245,7 +245,7 @@ const evolve = new Evolve()
 
     // Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     .withAgent({
-        type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid" - defaults to "claude"
+        type: "codex",                        // "claude" | "codex" | "qwen" | "kimi" | "opencode" | "droid" - defaults to "claude"
         model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "fable" for Claude Fable 5.1 or "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
         reasoningEffort: "medium",            // (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve stamps its pinned per-harness default (see Getting Started → Agent Reference)
         // maxContextSize: 128000,            // (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
@@ -606,12 +606,6 @@ await credentials.delete({
 .withPlugins({
     marketplace: "anthropics/claude-code",
     plugin: "commit-commands@anthropics-claude-code",
-})
-
-// gemini
-.withPlugins({
-    source: "https://github.com/org/gemini-extension",
-    ref: "main",
 })
 
 // codex marketplace registration

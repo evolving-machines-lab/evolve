@@ -1,6 +1,6 @@
 ---
 name: evolve-agents
-description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Gemini, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client. For hosted evals (datasets, jobs, trials, checks, analyses, the evolve CLI) read `evolve skills get evals`."
+description: "Evolve SDK development for TypeScript and Python. Use when building applications with Evolve to run AI agents (Claude, Codex, Qwen, Kimi, OpenCode, Droid) in secure sandboxes. Triggers: (1) Creating Evolve applications, (2) Configuring agents with skills, Integrations, MCP servers, (3) Using Swarm abstractions (map, filter, reduce, bestOf/best_of, verify), (4) Building Pipelines, (5) Structured output with schemas, (6) Session management, streaming, observability, (7) Checkpointing, storage & StorageClient, (8) Cost tracking (per-run and per-session spend), (9) Historical sessions & trace download via sessions() client. For hosted evals (datasets, jobs, trials, checks, analyses, the evolve CLI) read `evolve skills get evals`."
 metadata:
   internal: true
 ---
@@ -65,7 +65,7 @@ Read on demand when the user's task requires them:
 | Core lifecycle (run, output, kill) | [TS](references/typescript/01-getting-started.md#core-lifecycle) | [PY](references/python/01-getting-started.md#core-lifecycle) |
 | Streaming basics | [TS](references/typescript/01-getting-started.md#streaming) | [PY](references/python/01-getting-started.md#streaming) |
 | Gateway, managed BYO provider keys, and direct provider-key mode | [TS](references/typescript/01-getting-started.md#authentication) | [PY](references/python/01-getting-started.md#authentication) |
-| BYO subscriptions (Claude Max, Codex, Gemini) | [TS](references/typescript/01-getting-started.md#byo-claude-max-subscription) | [PY](references/python/01-getting-started.md#byo-claude-max-subscription) |
+| BYO subscriptions (Claude Max, Codex) | [TS](references/typescript/01-getting-started.md#byo-claude-max-subscription) | [PY](references/python/01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents, models & defaults | [TS](references/typescript/01-getting-started.md#agent-reference) | [PY](references/python/01-getting-started.md#agent-reference) |
 | Harness and model pairing (per-harness constraints) | [TS](references/typescript/01-getting-started.md#harness-and-model-pairing) | [PY](references/python/01-getting-started.md#harness-and-model-pairing) |
 

@@ -110,8 +110,8 @@ interface OutputEvent {
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets you
+clock (claude, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
+the model named on the line, or on the harness's init line for droid; `messageId` lets you
 tell which lines belong to one LLM message (claude prints one line per content block, all with the
 same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
 of the `Task`/`agent` call that spawned it.
@@ -140,7 +140,7 @@ type SessionUpdate =
 |------|-----------------|-------------|
 | `AgentMessageChunk` | `"agent_message_chunk"` | Text/image streaming from agent |
 | `AgentThoughtChunk` | `"agent_thought_chunk"` | Reasoning (Codex) or thinking (Claude) |
-| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Gemini) |
+| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode) |
 
 ```typescript
 interface AgentMessageChunk {
@@ -360,7 +360,7 @@ function handleEvent(event: OutputEvent): void {
       break;
 
     case "user_message_chunk":
-      // Gemini echo - typically ignored
+      // Prompt echo - typically ignored
       break;
 
     case "tool_call":
@@ -436,7 +436,7 @@ const didWork = events.some((e) => isAgentWorkUpdate(e.update));
 
 Every harness prints its own token accounting on the stream, and it arrives as its own update so
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
-opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
+opencode prints each step's tokens and cost, and codex, claude, qwen and droid print a
 whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
 simply has no `usage` events.
 

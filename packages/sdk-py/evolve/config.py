@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, Union, runtime_checkable
 
 
+#: 'gemini' is retired (new runs are refused) and stays here for the records of its past runs.
 AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
 WorkspaceMode = Literal['knowledge', 'swe', 'task']
 BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
@@ -206,7 +207,7 @@ class AgentConfig:
     All fields are optional - TS SDK auto-detects from environment variables.
 
     Args:
-        type: Agent type (codex, claude, gemini, qwen, kimi, opencode, droid) - defaults to 'claude'
+        type: Agent type (codex, claude, qwen, kimi, opencode, droid) - defaults to 'claude'
         api_key: Evolve API key for gateway mode (defaults to EVOLVE_API_KEY env var)
         provider_api_key: Provider API key for direct mode / BYOK (defaults to provider env var)
         oauth_token: OAuth token for Claude Max subscription (defaults to CLAUDE_CODE_OAUTH_TOKEN env var)

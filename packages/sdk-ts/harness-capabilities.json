@@ -1,5 +1,5 @@
 {
-  "$comment": "Per-harness models and reasoning efforts, checked in so two repos that share no test runner can be held to one table. The evolve SDK owns it: AGENT_REGISTRY in packages/sdk-ts/src/registry.ts is the only place models, efforts, or defaults may change, and scripts/generate-harness-capabilities.ts regenerates this file from it (npm run generate:capabilities; the build fails when it is stale). The hosted-evals dashboard consumes this file for its capability document and its parity test diffs the served document against it, the TypeScript SDK test regenerates these exact bytes from the registry, and the Python SDK test asserts its own Literals cover them. Changing a model or an effort therefore means: registry.ts, regenerate this file, and nothing else.",
+  "$comment": "Per-harness models, reasoning efforts and retirements, checked in so two repos that share no test runner can be held to one table. The evolve SDK owns it: AGENT_REGISTRY in packages/sdk-ts/src/registry.ts is the only place models, efforts, or defaults may change, and scripts/generate-harness-capabilities.ts regenerates this file from it (npm run generate:capabilities; the build fails when it is stale). The hosted-evals dashboard consumes this file for its capability document and its parity test diffs the served document against it, the TypeScript SDK test regenerates these exact bytes from the registry, and the Python SDK test asserts its own Literals cover them. Changing a model or an effort therefore means: registry.ts, regenerate this file, and nothing else.",
   "reasoningEfforts": [
     "off",
     "minimal",
@@ -259,7 +259,10 @@
       "efforts": [],
       "defaultEffort": null,
       "supportsConfig": false,
-      "presets": []
+      "presets": [],
+      "retired": {
+        "replacedBy": "antigravity"
+      }
     },
     "kimi": {
       "defaultModel": "kimi-k3",

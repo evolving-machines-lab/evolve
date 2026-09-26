@@ -2,7 +2,7 @@
 """Streaming Events Tests
 
 Tests: Event emitters (stdout, stderr, content, lifecycle) via on() callbacks
-Agent Support: All (codex, claude, gemini, qwen)
+Agent Support: All (codex, claude, qwen)
 """
 
 import os

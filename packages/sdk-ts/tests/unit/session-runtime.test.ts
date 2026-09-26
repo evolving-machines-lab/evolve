@@ -9,7 +9,7 @@
  * - state transition safety under pause/kill/interrupt
  */
 
-import { Evolve, type LifecycleEvent } from "../../dist/index.js";
+import { AGENT_REGISTRY, Evolve, type LifecycleEvent } from "../../dist/index.js";
 import { E2BCommands, E2BFiles } from "@evolvingmachines/e2b";
 import type {
   SandboxProvider,
@@ -23,6 +23,9 @@ import type {
   SandboxCommandResult,
   ProcessInfo,
 } from "../../src/types.js";
+
+// gemini is retired but keeps its run path, so lifting the retirement is one field; this file tests that path lifted.
+delete AGENT_REGISTRY.gemini.retired;
 
 let passed = 0;
 let failed = 0;

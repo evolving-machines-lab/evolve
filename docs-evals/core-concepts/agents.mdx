@@ -17,7 +17,6 @@ One arm
 | --- | --- |
 | `claude` | Claude Code |
 | `codex` | Codex |
-| `gemini` | Gemini CLI |
 | `qwen` | Qwen Code |
 | `kimi` | Kimi Code |
 | `opencode` | OpenCode |
@@ -30,6 +29,14 @@ evolve run -d harbor-examples@1.0 -i hello-world \
 ```
 
 Use `-a name@version` to pin a harness release. Without a version, Evolve resolves one at job creation and uses that version across the job. The trial records it in `agent_info.version`.
+
+### Retired harnesses
+
+A retired harness no longer starts runs: a new job, resume or retry that names it is refused with `agent_retired`, naming the harness to use instead. What it ran before keeps its name and stays readable: its jobs, trials and traces still list, download, analyze and regrade, and an uploaded Harbor job that used it still imports.
+
+| CLI name | Harness | Use instead |
+| --- | --- | --- |
+| `gemini` | Gemini CLI | `antigravity` |
 
 ## Configure an arm
 

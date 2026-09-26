@@ -5569,6 +5569,7 @@ export const HOSTED_ERROR_CODES = [
   "agent_config_unsupported",
   "agent_config_key_refused",
   "agent_preset_unsupported",
+  "agent_retired",
   "provider_unsupported",
   "job_not_found",
   "job_not_terminal",
@@ -5734,6 +5735,12 @@ export interface AgentModelOption {
   description: string | null;
 }
 
+/** One retired built-in agent and the agent to use instead — the row `agent_retired` details carry too. */
+export interface RetiredAgent {
+  agent: string;
+  replaced_by: string;
+}
+
 /** One built-in agent's declared capabilities. */
 export interface AgentCapability {
   name: string;
@@ -5845,8 +5852,14 @@ export interface ManagedProviderCapability {
  */
 export interface CapabilityDocument {
   schema_version: number;
-  /** Built-in agents and their declared capabilities. */
+  /** Built-in agents a new job may name, and their declared capabilities. */
   agents: AgentCapability[];
+  /**
+   * Retired built-in agents, left out of `agents`: a new job, resume or retry
+   * naming one is refused `agent_retired`, while its records stay readable.
+   * Absent on servers predating the field.
+   */
+  retired_agents?: RetiredAgent[];
   /** Rules a bring-your-own agent registration must satisfy. */
   agent_registration: {
     name_pattern: string;

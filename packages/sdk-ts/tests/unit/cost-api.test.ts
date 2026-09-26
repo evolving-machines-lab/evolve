@@ -8,9 +8,12 @@
  * - previous session tag fallback (post-kill query path)
  */
 
-import { Agent } from "../../dist/index.js";
+import { AGENT_REGISTRY, Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
+
+// gemini is retired but keeps its run path, so lifting the retirement is one field; this file tests that path lifted.
+delete AGENT_REGISTRY.gemini.retired;
 
 let passed = 0;
 let failed = 0;
