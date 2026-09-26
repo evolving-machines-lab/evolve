@@ -105,7 +105,12 @@ async function writeTomlDocument(
   homeDir?: string,
   homeOwner?: string,
 ): Promise<void> {
-  await writeHomeFile(sandbox, path, stringify(doc).trimEnd() + "\n", { homeDir, owner: homeOwner });
+  await writeHomeFile(sandbox, path, renderToml(doc), { homeDir, owner: homeOwner });
+}
+
+/** The one TOML render rule: smol-toml's text, one trailing newline. */
+function renderToml(doc: TomlTable): string {
+  return stringify(doc).trimEnd() + "\n";
 }
 
 // =============================================================================
@@ -181,6 +186,8 @@ export async function writeCodexMcpConfig(
   }
 
   const settingsPath = getMcpSettingsPath("codex", homeDir);
+  // A setup-time write, before the home is handed over: the JSON and YAML MCP writers' shape (directory first, raw write).
+  await sandbox.files.makeDir(getMcpSettingsDir("codex", homeDir));
 
   // Read existing config to preserve other settings
   const doc = await readTomlDocument(sandbox, settingsPath);
@@ -201,9 +208,7 @@ export async function writeCodexMcpConfig(
     mcpServers[name] = buildCodexServerTable(name, config);
   }
 
-  // A setup-time write, before the home is handed over: a raw write like the JSON and YAML MCP writers.
-  await sandbox.files.makeDir(getMcpSettingsDir("codex", homeDir));
-  await sandbox.files.write(settingsPath, stringify(doc).trimEnd() + "\n");
+  await sandbox.files.write(settingsPath, renderToml(doc));
 }
 
 // =============================================================================
