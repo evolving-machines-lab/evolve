@@ -87,6 +87,48 @@ async function testClaudeBuildCommandUsesReasoningEffort(): Promise<void> {
   assert(maxCmd.includes("--effort max"), "caller's effort overrides the pin");
 }
 
+async function testClaudeBuildCommandPinsRosterWireId(): Promise<void> {
+  console.log("\n[0a] Claude buildCommand carries the roster's wire id, never a bare alias");
+  const { AGENT_REGISTRY } = await import("../../src/registry.js");
+  const claude = AGENT_REGISTRY.claude;
+
+  // Claude Code resolves a bare alias (`opus`, `sonnet`, ...) to ITS current
+  // default, which need not be the roster's wire id; the command must pin the
+  // roster's id so the CLI never chooses. Both modes, every roster row.
+  for (const isDirectMode of [false, true]) {
+    for (const row of claude.models) {
+      const agent = new Agent({
+        type: "claude",
+        apiKey: isDirectMode ? "direct-api-key" : "test-gateway-key",
+        isDirectMode,
+        model: row.alias,
+      } as any, {});
+      const cmd = (agent as any).buildCommand("hello") as string;
+      assert(
+        cmd.includes(`--model ${row.modelId} `),
+        `${isDirectMode ? "direct" : "gateway"}: alias "${row.alias}" rides as --model ${row.modelId}`,
+      );
+      if (row.alias !== row.modelId) {
+        assert(!cmd.includes(`--model ${row.alias} `), `${isDirectMode ? "direct" : "gateway"}: the bare alias "${row.alias}" is not on the command line`);
+      }
+    }
+  }
+  assert(
+    !claude.models.some((row) => row.alias.endsWith("[1m]")),
+    "no `[1m]` alias on the claude roster (Claude Code resolves those itself; no gateway route admits them)",
+  );
+
+  // The default model follows the same rule; an off-roster name rides verbatim.
+  const defaultCmd = (createAgent() as any).buildCommand("hello") as string;
+  const defaultRow = claude.models.find((row) => row.alias === claude.defaultModel);
+  assert(
+    defaultRow !== undefined && defaultCmd.includes(`--model ${defaultRow.modelId} `),
+    `omitted model rides as the default's wire id (${defaultRow?.modelId})`,
+  );
+  const offRoster = new Agent({ type: "claude", apiKey: "k", isDirectMode: true, model: "claude-opus-4-8" } as any, {});
+  assert(((offRoster as any).buildCommand("hello") as string).includes("--model claude-opus-4-8 "), "an off-roster id rides verbatim");
+}
+
 async function testPinnedReasoningEffortDefaults(): Promise<void> {
   console.log("\n[0b] Omitted reasoningEffort stamps each harness's registry pin on the wire");
   const { AGENT_REGISTRY, resolveReasoningEffort, isThinkingEnabled } =
@@ -1046,7 +1088,8 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
   assertEqual(kimi.defaultModel, "kimi-k3", "Kimi default is user-facing");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k3"], "moonshot/kimi-k3", "Kimi gateway maps K3 to Moonshot route");
   assertEqual(kimi.gatewayModelAliases?.["kimi-k3-raptor"], "kimi-k3-raptor", "Kimi K3 Raptor alias maps to gateway route");
-  assertEqual(kimi.gatewayModelAliases?.["kimi-k2p7-code-raptor"], "kimi-k2p7-code-raptor", "Kimi K2.7 Code Raptor alias maps to gateway route");
+  assertEqual(kimi.gatewayModelAliases?.["kimi-k2p7-code-raptor"], undefined, "the retired Kimi K2.7 Code Raptor route (provider 404) has no alias row");
+  assert(!kimi.models.some((row) => row.alias === "kimi-k2p7-code-raptor"), "the retired Kimi K2.7 Code Raptor route is off the roster");
   assertEqual(kimi.mcpConfig.settingsDir, "~/.kimi-code", "Kimi Code settings dir");
   // Registry skill dirs are ~-relative and expanded against the sandbox homeDir at use sites.
   assertEqual(kimi.skillsConfig.targetDir, "~/.kimi-code/skills", "Kimi Code skills dir");
@@ -1070,7 +1113,7 @@ async function testKimiBuildCommandUsesPromptMode(): Promise<void> {
     type: "kimi",
     apiKey: "test-gateway-key",
     isDirectMode: false,
-    model: "kimi-k2p7-code-raptor",
+    model: "kimi-k3-raptor",
   } as any, {});
   const raptorGatewayCmd = (raptorGatewayAgent as any).buildCommand("hello") as string;
   assert(raptorGatewayCmd.includes("else kimi -p 'hello' --output-format stream-json"), "raptor gateway uses config default model in new Kimi branch");
@@ -1167,7 +1210,7 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
     type: "kimi",
     apiKey: "direct-api-key",
     isDirectMode: true,
-    model: "kimi-k2p7-code-raptor",
+    model: "kimi-k2.7-code",
   } as any, {});
   assertEqual(
     (kimiModelAgent as any).resolveKimiMaxContextSize(),
@@ -2101,6 +2144,7 @@ async function main(): Promise<void> {
   console.log("Cost API Unit Tests");
   console.log("============================================================");
   await testClaudeBuildCommandUsesReasoningEffort();
+  await testClaudeBuildCommandPinsRosterWireId();
   await testPinnedReasoningEffortDefaults();
   await testSessionCostNormalization();
   await testRunCostSelectors();

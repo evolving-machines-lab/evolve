@@ -76,16 +76,6 @@
           "description": "Quick tasks, syntax correction"
         },
         {
-          "alias": "opus[1m]",
-          "modelId": "opus[1m]",
-          "description": "Complex reasoning with 1M context window"
-        },
-        {
-          "alias": "sonnet[1m]",
-          "modelId": "sonnet[1m]",
-          "description": "Daily coding with 1M context window"
-        },
-        {
           "alias": "glm-5.3",
           "modelId": "glm-5.3",
           "description": "Zhipu GLM-5.3 via the Evolve gateway"
@@ -348,11 +338,6 @@
           "modelId": "kimi-k3-raptor",
           "description": "Evolve-managed Kimi K3 Raptor route for latency-sensitive agent runs",
           "maxContextSize": 1048576
-        },
-        {
-          "alias": "kimi-k2p7-code-raptor",
-          "modelId": "kimi-k2p7-code-raptor",
-          "description": "Evolve-managed Kimi K2.7 Code Raptor route for latency-sensitive agent runs"
         }
       ],
       "effortSupport": "level",

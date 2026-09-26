@@ -291,11 +291,11 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 
 | type | models | default | Gateway | Direct key |
 |------|--------|---------|---------|------|
-| `'claude'` | `'fable'` `'opus'` `'sonnet'` `'haiku'` `'opus[1m]'` `'sonnet[1m]'` `'glm-5.3'` `'glm-5.3-flash'` `'openrouter/deepseek/deepseek-v4.1-flash'` `'fireworks/deepseek-v4.1-flash'` | `'opus'` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| `'claude'` | `'fable'` `'opus'` `'sonnet'` `'haiku'` `'glm-5.3'` `'glm-5.3-flash'` `'openrouter/deepseek/deepseek-v4.1-flash'` `'fireworks/deepseek-v4.1-flash'` | `'opus'` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `'codex'` | `'gpt-5.6-sol'` `'gpt-5.6-terra'` `'gpt-5.6-luna'` `'gpt-5.5'` `'gpt-5.3-codex'` | `'gpt-5.6-sol'` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `'gemini'` | `'gemini-3.5-flash'` `'gemini-3.5-flash-lite'` `'gemini-3.1-pro-preview'` `'gemini-3.7-flash'` *(not selectable yet — see below)* | `'gemini-3.5-flash'` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `'qwen'` | `'qwen3.7-max'` `'qwen3.7-plus'` `'qwen3.6-flash'` | `'qwen3.7-max'` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
-| `'kimi'` | `'kimi-k3'` `'kimi-k2.7-code'` `'kimi-k3-raptor'` `'kimi-k2p7-code-raptor'` | `'kimi-k3'` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
+| `'kimi'` | `'kimi-k3'` `'kimi-k2.7-code'` `'kimi-k3-raptor'` | `'kimi-k3'` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
 | `'opencode'` | `'openrouter/anthropic/claude-fable-5.1'` `'openrouter/anthropic/claude-opus-5'` `'openrouter/anthropic/claude-sonnet-5'` `'openrouter/anthropic/claude-haiku-4.5'` `'openrouter/openai/gpt-5.6-sol'` `'openrouter/openai/gpt-5.6-terra'` `'openrouter/openai/gpt-5.6-luna'` `'openrouter/google/gemini-3.6-flash'` `'openrouter/qwen/qwen3.7-max'` `'openrouter/moonshotai/kimi-k3'` `'openrouter/z-ai/glm-5.3'` `'openrouter/z-ai/glm-5.3-flash'` `'openrouter/deepseek/deepseek-v4.1-flash'` `'fireworks/deepseek-v4.1-flash'` | `'openrouter/anthropic/claude-opus-5'` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `'droid'` | `'claude-fable-5.1'` `'claude-opus-5'` `'claude-sonnet-5'` `'claude-haiku-4-5'` `'gpt-5.6-sol'` `'gpt-5.6-terra'` `'gpt-5.6-luna'` `'gemini-3.6-flash'` `'qwen3.7-max'` `'kimi-k3'` `'glm-5.3'` `'glm-5.3-flash'` `'openrouter/deepseek/deepseek-v4.1-flash'` `'fireworks/deepseek-v4.1-flash'` | `'claude-opus-5'` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
 | `'pi'` | `'openrouter/anthropic/claude-fable-5.1'` `'openrouter/anthropic/claude-opus-5'` `'openrouter/anthropic/claude-sonnet-5'` `'openrouter/anthropic/claude-haiku-4.5'` `'openrouter/openai/gpt-6-astra'` `'openrouter/openai/gpt-5.6-sol'` `'openrouter/openai/gpt-5.6-terra'` `'openrouter/openai/gpt-5.6-luna'` `'openrouter/google/gemini-3.6-flash'` `'openrouter/qwen/qwen3.7-max'` `'openrouter/moonshotai/kimi-k3'` `'openrouter/z-ai/glm-5.3'` `'openrouter/z-ai/glm-5.3-flash'` `'openrouter/deepseek/deepseek-v4.1-flash'` | `'openrouter/anthropic/claude-opus-5'` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
@@ -354,7 +354,7 @@ Instead of hand-writing such a config, `preset` names a bundle Evolve ships and 
 evolve = Evolve().with_agent(AgentConfig(type='codex', preset='no-internet'))
 ```
 
-For Claude Fable 5.1, use `model='fable'`. For OpenCode via OpenRouter, use `model='openrouter/anthropic/claude-fable-5.1'`. For Claude 1M context window, use `model='sonnet[1m]'` or `model='opus[1m]'`.
+For Claude Fable 5.1, use `model='fable'`. For OpenCode via OpenRouter, use `model='openrouter/anthropic/claude-fable-5.1'`.
 
 #### Harness and Model Pairing
 
@@ -383,7 +383,6 @@ These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve fo
 | Agent | Model | Use |
 |-------|-------|-----|
 | `'kimi'` | `'kimi-k3-raptor'` | Kimi K3 fast route for latency-sensitive agent runs |
-| `'kimi'` | `'kimi-k2p7-code-raptor'` | Kimi K2.7 Code Raptor route for interactive coding and agent runs |
 
 ### Agent Examples
 
@@ -414,13 +413,6 @@ evolve = Evolve(
 
 evolve = Evolve(
     config=AgentConfig(type='claude', reasoning_effort='max'),
-)
-
-evolve = Evolve(
-    config=AgentConfig(
-        type='claude',
-        model='sonnet[1m]',  # 1M context window
-    ),
 )
 ```
 
@@ -478,7 +470,7 @@ evolve = Evolve(
 evolve = Evolve(
     config=AgentConfig(
         type='kimi',
-        model='kimi-k2p7-code-raptor',
+        model='kimi-k3-raptor',
         reasoning_effort='thinking',
     ),
 )

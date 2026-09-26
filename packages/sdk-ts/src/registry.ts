@@ -601,25 +601,16 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // default for all of them — stamped explicitly via --effort.
     defaultReasoningEffort: "high",
     models: [
-      // The alias rides to Claude Code verbatim (resolveCommandModel applies
-      // only gatewayModelAliases, never this modelId), so Claude Code's own
-      // version resolves it. This modelId records that resolution — the wire
-      // name the platform's per-arm gateway key must admit (swarm_dashboard
-      // resolveGatewayModelScope reads it from harness-capabilities.json).
-      // Vendor doc (code.claude.com/docs/en/model-config, read 2026-09-15):
-      // "Unless you set ANTHROPIC_DEFAULT_FABLE_MODEL, the `fable` alias
-      // resolves to Fable 5.1, except in Claude apps gateway sessions, where
-      // `fable` and `best` resolve to Fable 5", and "Fable 5.1 requires
-      // Claude Code v2.1.257 or later" — an older Claude Code still answers
-      // the alias with claude-fable-5 (the evolve-all image carried 2.1.233
-      // on 2026-09-15 and served claude-fable-5 for `fable`; the measurement
-      // is in team/dev-items/fable-astra-lane-report-2026-09-15.md).
+      // buildCommand sends this modelId, never the alias: Claude Code resolves
+      // a bare alias to ITS current default (`opus` is Opus 5.5 in its docs,
+      // 2026-09-26), which the gateway need not route and a hosted run's key,
+      // scoped to the alias and this id, refuses. The `opus[1m]`/`sonnet[1m]`
+      // rows left for the same reason (alias == wire id, so the CLI resolved
+      // them itself and every hosted run 403'd); Sonnet 5 runs 1M natively.
       { alias: "fable", modelId: "claude-fable-5-1", description: "Highest capability, long-horizon agentic work" },
       { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-5", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
-      { alias: "opus[1m]", modelId: "opus[1m]", description: "Complex reasoning with 1M context window" },
-      { alias: "sonnet[1m]", modelId: "sonnet[1m]", description: "Daily coding with 1M context window" },
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
       // DeepSeek V4.1 Flash (released 2026-09-10: native image input, 1M
@@ -682,7 +673,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const continueFlag = isResume ? "--continue " : "";
       const effortFlag = reasoningEffort ? ` --effort ${reasoningEffort}` : "";
       const settingsFlag = nativeConfigPath ? ` --settings ${nativeConfigPath}` : "";
-      return `echo "${prompt}" | claude -p ${continueFlag}--model ${model}${effortFlag}${settingsFlag} --output-format stream-json --verbose --dangerously-skip-permissions`;
+      // The roster's wire id, so Claude Code never resolves an alias to its own default.
+      const wireModel = registryWireId(AGENT_REGISTRY.claude, model);
+      return `echo "${prompt}" | claude -p ${continueFlag}--model ${wireModel}${effortFlag}${settingsFlag} --output-format stream-json --verbose --dangerously-skip-permissions`;
     },
   },
 
@@ -911,7 +904,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "kimi-k3", modelId: "moonshot/kimi-k3", description: "Latest flagship: 1M context, always-on thinking", maxContextSize: 1048576 },
       { alias: "kimi-k2.7-code", modelId: "moonshot/kimi-k2.7-code", description: "Latest coding-specialized standard model" },
       { alias: "kimi-k3-raptor", modelId: "kimi-k3-raptor", description: "Evolve-managed Kimi K3 Raptor route for latency-sensitive agent runs", maxContextSize: 1048576 },
-      { alias: "kimi-k2p7-code-raptor", modelId: "kimi-k2p7-code-raptor", description: "Evolve-managed Kimi K2.7 Code Raptor route for latency-sensitive agent runs" },
     ],
     systemPromptFile: "AGENTS.md",
     mcpConfig: {
@@ -939,7 +931,6 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "kimi-k3": "moonshot/kimi-k3",
       "kimi-k2.7-code": "moonshot/kimi-k2.7-code",
       "kimi-k3-raptor": "kimi-k3-raptor",
-      "kimi-k2p7-code-raptor": "kimi-k2p7-code-raptor",
     },
     buildCommand: ({ prompt, isResume, reasoningEffort, homeDir = DEFAULT_HOME_DIR }) => {
       const continueFlag = isResume ? "--continue " : "";
