@@ -480,8 +480,9 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
     // pi.py:102/:447: Harbor's --session-dir is agent/pi/sessions, where pi writes flat.
     pi: [{ sandboxRoot: "/root/.pi/agent/sessions", agentDir: "pi/sessions" }],
     "prime-agent": [],
+    dsh: [],
   };
-  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the nine harnesses");
+  assertEqual(Object.keys(HARNESS_TRIAL_LAYOUTS).sort(), Object.keys(expected).sort(), "the table names exactly the ten harnesses");
   assertEqual(HARNESS_TRIAL_LAYOUTS.pi.stdoutFile, "pi.txt", "pi's tee is Harbor's pi.txt (pi.py:100)");
   assertEqual(HARNESS_TRIAL_LAYOUTS["prime-agent"].stdoutFile, "prime-agent.txt", "prime-agent has no Harbor adapter: the platform's own <harness>.txt");
   assertEqual(harborCopyPath(harnessTrialLayout("pi"), "/root/.pi/agent/sessions/2026-09-25T20-10-24-177Z_x.jsonl"), "pi/sessions/2026-09-25T20-10-24-177Z_x.jsonl", "pi's session files are copied to Harbor's pi/sessions/ slot");

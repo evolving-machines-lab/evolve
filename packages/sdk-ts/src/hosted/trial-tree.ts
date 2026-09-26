@@ -54,9 +54,9 @@
  *   agent/<harness>.txt       the harness process's stdout stream at Harbor's
  *                             own tee name for the harness (claude-code.txt,
  *                             codex.txt, gemini-cli.txt, qwen-code.txt,
- *                             kimi-code.txt, opencode.txt, pi.txt; droid.txt
- *                             and prime-agent.txt are the platform's own, and
- *                             stdout.log serves a harness Harbor has no name
+ *                             kimi-code.txt, opencode.txt, pi.txt; droid.txt,
+ *                             prime-agent.txt and dsh.txt are the platform's own,
+ *                             and stdout.log serves a harness Harbor has no name
  *                             for), when stored
  *   agent/stderr.log          the harness process's stderr stream, when stored
  *   agent/trace-parsed.jsonl  the parsed event trace (Evolve's own artifact,
@@ -157,6 +157,8 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   pi: { stdoutFile: "pi.txt", harborCopies: [{ sandboxRoot: "/root/.pi/agent/sessions", agentDir: "pi/sessions" }] },
   // No Harbor adapter: prime-agent.txt follows their pattern, recorded as ours.
   "prime-agent": { stdoutFile: "prime-agent.txt", harborCopies: [] },
+  // No Harbor adapter either (Harbor's installed/ has no deepseek entry): dsh.txt, ours.
+  dsh: { stdoutFile: "dsh.txt", harborCopies: [] },
 };
 
 /**

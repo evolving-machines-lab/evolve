@@ -236,6 +236,40 @@
       "supportsConfig": false,
       "presets": []
     },
+    "dsh": {
+      "defaultModel": "openrouter/deepseek/deepseek-v4.1-flash",
+      "models": [
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4.1-flash",
+          "modelId": "fireworks/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via Fireworks"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4-pro-0813",
+          "modelId": "openrouter/deepseek/deepseek-v4-pro-0813",
+          "description": "DeepSeek V4 Pro via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4-pro-0813",
+          "modelId": "fireworks/deepseek-v4-pro-0813",
+          "description": "DeepSeek V4 Pro via Fireworks"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
     "gemini": {
       "defaultModel": "gemini-3.5-flash",
       "models": [

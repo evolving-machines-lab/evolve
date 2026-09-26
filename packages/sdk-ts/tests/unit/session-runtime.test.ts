@@ -92,7 +92,8 @@ type RuntimeProvider =
   | "openrouter"
   | "droid"
   | "pi"
-  | "prime-agent";
+  | "prime-agent"
+  | "dsh";
 
 function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
   const openAiCompatible = new Set<RuntimeProvider>([
@@ -103,6 +104,7 @@ function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
     "droid",
     "pi",
     "prime-agent",
+    "dsh",
   ]);
   const suffix = openAiCompatible.has(provider) ? "/v1" : "";
   const baseUrl = `https://dashboard.test/api/model-proxy/${provider}${suffix}`;
@@ -1981,6 +1983,7 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
     { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true },
     { agentType: "pi", provider: "pi", tokenMustBeInSandboxConfig: true },
     { agentType: "prime-agent", provider: "prime-agent", tokenMustBeInSandboxConfig: true },
+    { agentType: "dsh", provider: "dsh", tokenMustBeInSandboxConfig: true },
   ];
 
   try {
@@ -2758,7 +2761,7 @@ async function testExternalGatewayMutualExclusivity(): Promise<void> {
 }
 
 async function testExternalGatewayPerHarnessWiring(): Promise<void> {
-  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/pi/prime-agent)");
+  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/pi/prime-agent/dsh)");
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
@@ -2976,6 +2979,49 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
       !directSandbox.files.writes.has("/home/user/.factory/evolve-settings.json"),
       "droid direct mode writes no Evolve-owned settings file",
     );
+
+    // dsh: routed by the Evolve-owned route PATCH (~/.dsh/evolve-route.patch.yml),
+    // which names the key and the base URL as env variables — the SDK's
+    // apiKeyEnv/baseUrlEnv, injected at boot and per spawn like every direct-
+    // style harness — and carries the caller's model VERBATIM, no spend
+    // headers (an unset header env would be an undefined header value).
+    const dsh = await runHarness("dsh", "gw-dsh-model");
+    assertEqual(dsh.bootEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, "dsh boot env injects OPENROUTER_API_KEY (the patch's apiKeyEnv)");
+    assertEqual(dsh.bootEnvs.EVOLVE_DSH_BASE_URL, EXTERNAL_URL, "dsh boot env injects EVOLVE_DSH_BASE_URL (the patch's baseURL read) VERBATIM");
+    assertEqual(dsh.spawnEnvs.OPENROUTER_API_KEY, EXTERNAL_KEY, "dsh spawn env re-injects OPENROUTER_API_KEY");
+    assertEqual(dsh.spawnEnvs.EVOLVE_DSH_BASE_URL, EXTERNAL_URL, "dsh spawn env re-injects EVOLVE_DSH_BASE_URL");
+    assert(!("EVOLVE_LITELLM_TAGS" in dsh.spawnEnvs) && !("EVOLVE_LITELLM_CUSTOMER_ID" in dsh.spawnEnvs), "dsh externalGateway spawn env carries NO LiteLLM tag envs");
+    const patch = dsh.files.get("/home/user/.dsh/evolve-route.patch.yml") ?? "";
+    assert(patch.length > 0, "dsh externalGateway writes the Evolve-owned route patch");
+    assert(patch.includes('model: "gw-dsh-model"'), "dsh route patch carries the VERBATIM caller model");
+    assert(patch.includes("baseURL: !!js process.env.EVOLVE_DSH_BASE_URL"), "dsh route patch reads the base URL from EVOLVE_DSH_BASE_URL at boot");
+    assert(patch.includes('apiKeyEnv: "OPENROUTER_API_KEY"'), "dsh route patch names OPENROUTER_API_KEY as the key env");
+    assert(!patch.includes("headers:"), "dsh external route patch carries NO LiteLLM spend headers");
+    assert(!patch.includes(EXTERNAL_KEY) && !patch.includes(EXTERNAL_URL), "dsh route patch holds neither the key nor the URL value");
+    assert(patch.includes('reasoningEffort: "high"'), "dsh route patch stamps the pinned effort (high) when the caller names none");
+    assert(dsh.command.includes("dsh --profile headless --patch /home/user/.dsh/evolve-route.patch.yml"), "dsh command runs the headless profile with the route patch");
+    assert(dsh.command.includes("DSH_PERMISSION_MODE=danger-full-access") && dsh.command.includes("DSH_TELEMETRY_DISABLED=1"), "dsh command bypasses approvals and disables telemetry by env");
+    assert(dsh.command.includes("--json"), "dsh command streams JSON");
+    assert(!dsh.command.includes("--session-id"), "a first run passes no --session-id");
+    assert(!dsh.command.includes("gw-dsh-model"), "the model never rides the command line (the patch carries it)");
+
+    // dsh plain direct mode: OpenRouter's own id in the patch (the roster's
+    // openrouter/ prefix is the gateway's route spelling), OpenRouter's API root.
+    const dshDirectCommands = new MockCommands();
+    const dshDirectSandbox = new MockSandbox("direct-dsh", dshDirectCommands);
+    const dshDirectKit = new Evolve()
+      .withAgent({ type: "dsh", model: "openrouter/deepseek/deepseek-v4.1-flash", providerApiKey: "or-direct" })
+      .withSandbox(new MockProvider(dshDirectSandbox))
+      .withWorkspaceMode("task")
+      .withWorkingDirectory("/task");
+    try {
+      await dshDirectKit.run({ prompt: "solve", timeoutMs: 10_000 });
+    } finally {
+      await dshDirectKit.kill().catch(() => {});
+    }
+    const directPatch = dshDirectSandbox.files.writes.get("/home/user/.dsh/evolve-route.patch.yml") ?? "";
+    assert(directPatch.includes('model: "deepseek/deepseek-v4.1-flash"'), "dsh direct mode names OpenRouter's own model id in the patch");
+    assert(!directPatch.includes("headers:"), "dsh direct mode carries no spend headers");
   } finally {
     globalThis.fetch = previousFetch;
   }

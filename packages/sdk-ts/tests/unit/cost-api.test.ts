@@ -99,6 +99,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
   assertEqual(AGENT_REGISTRY.pi.defaultReasoningEffort, "high", "pi pin is high (owner policy; pi's own default is medium)");
   assertEqual(AGENT_REGISTRY["prime-agent"].defaultReasoningEffort, "high", "prime-agent pin is high (owner policy; Prime's own default is medium)");
+  assertEqual(AGENT_REGISTRY.dsh.defaultReasoningEffort, "high", "dsh pin is high (DeepSeek's documented default)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -1781,21 +1782,173 @@ async function testDroidSessionStateRoundTrip(): Promise<void> {
     isDirectMode: false,
   };
   const agent = new Agent(config as any, {});
-  (agent as any).captureDroidSession("", [{
+  (agent as any).captureHarnessSessionId("", [{
     sessionId: "droid-session-123",
     update: {
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text: "ok" },
     },
   }]);
-  await (agent as any).writeDroidSessionState(sandbox);
+  await (agent as any).writeCapturedSessionId(sandbox);
 
   const agent2 = new Agent(config as any, {});
-  await (agent2 as any).loadDroidSessionState(sandbox);
+  await (agent2 as any).loadCapturedSessionId(sandbox);
   (agent2 as any).hasRun = true;
   const command = (agent2 as any).buildCommand("continue") as string;
 
   assert(command.includes("--session-id 'droid-session-123'"), "loaded session id is used in next command");
+}
+
+// =============================================================================
+// dsh routing (the Evolve-owned --patch file; env-named key, URL and headers)
+// =============================================================================
+
+async function testDshBuildCommand(): Promise<void> {
+  console.log("\n[41] dsh buildCommand() runs the headless profile with the Evolve patches; model and effort ride the patch");
+  const { AGENT_REGISTRY, getDshReasoningEffort } = await import("../../src/registry.js");
+  const dsh = AGENT_REGISTRY.dsh;
+  assertEqual(dsh.defaultModel, "openrouter/deepseek/deepseek-v4.1-flash", "dsh defaults to DeepSeek V4.1 Flash via OpenRouter");
+  assertEqual(dsh.apiKeyEnv, "OPENROUTER_API_KEY", "dsh's SDK-facing key env is OPENROUTER_API_KEY (the patch's apiKeyEnv)");
+  assertEqual(dsh.baseUrlEnv, "EVOLVE_DSH_BASE_URL", "dsh's base URL env is the one the patch reads at boot");
+  assertEqual(dsh.sessionIdStateFile, "~/.dsh/evolve-session.json", "dsh keeps the stream-announced session id for --session-id");
+  assertEqual(dsh.mcpConfig.filename, "evolve-mcp.patch.yml", "dsh's MCP config is a second patch under ~/.dsh");
+
+  const cmd = dsh.buildCommand({ prompt: "hello", model: "openrouter/deepseek/deepseek-v4.1-flash", isResume: false, reasoningEffort: "high" });
+  assert(cmd.startsWith("DSH_HOME=/home/user/.dsh DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1 dsh --profile headless"), "the command pins the home, bypasses approvals by env, disables telemetry and runs the headless profile");
+  assert(cmd.includes("--patch /home/user/.dsh/evolve-route.patch.yml"), "the route patch is always passed");
+  assert(cmd.includes("if [ -f /home/user/.dsh/evolve-mcp.patch.yml ]; then printf ' --patch /home/user/.dsh/evolve-mcp.patch.yml'; fi"), "the MCP patch is passed only when it exists");
+  assert(cmd.endsWith('--json -- "hello"'), "JSON streaming, then the prompt after --");
+  assert(!cmd.includes("openrouter/") && !cmd.includes("high"), "neither the model nor the effort rides the command line");
+  assert(!cmd.includes("--session-id"), "a first run passes no --session-id");
+
+  const resumed = dsh.buildCommand({ prompt: "again", model: "m", isResume: true, sessionId: "session-abc" });
+  assert(resumed.includes("--json --session-id 'session-abc' -- \"again\""), "a resume passes the captured id with --session-id");
+  const noId = dsh.buildCommand({ prompt: "again", model: "m", isResume: true });
+  assert(!noId.includes("--session-id"), "a resume with no captured id starts fresh rather than passing an empty id");
+
+  const rooted = dsh.buildCommand({ prompt: "x", model: "m", isResume: false, homeDir: "/root" });
+  assert(rooted.includes("DSH_HOME=/root/.dsh") && rooted.includes("--patch /root/.dsh/evolve-route.patch.yml"), "the home follows homeDir (eval boxes run as root)");
+
+  // The effort roster: the three proven levels ride verbatim; everything else is a typed refusal.
+  assertEqual(getDshReasoningEffort("high"), "high", "high rides verbatim");
+  assertEqual(getDshReasoningEffort("medium"), "medium", "medium rides verbatim");
+  assertEqual(getDshReasoningEffort("low"), "low", "low rides verbatim");
+  assertEqual(getDshReasoningEffort(undefined), undefined, "no effort → none named");
+  for (const refused of ["off", "none", "no-thinking", "minimal", "xhigh", "max", "thinking"]) {
+    let message = "";
+    try {
+      getDshReasoningEffort(refused);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert(
+      message.includes('agent "dsh" honors reasoning effort "low", "medium", "high" only') && message.includes(`"${refused}"`),
+      `"${refused}" is refused typed, naming dsh, the roster and the value`,
+    );
+  }
+}
+
+async function testDshGatewayEnvsAndPatch(): Promise<void> {
+  console.log("\n[42] dsh gateway mode: runtime token + gateway URL in the patch's envs, spend tags per run, headers read from env in the patch");
+  const agent = new Agent({ type: "dsh", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  attachProviderRuntimeToken(agent, "dsh", "https://dashboard.test/api/model-gateway/v1");
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.OPENROUTER_API_KEY, "evrt_dsh_runtime_token", "the runtime token lands in OPENROUTER_API_KEY (the patch's apiKeyEnv)");
+  assertEqual(envs.EVOLVE_DSH_BASE_URL, "https://dashboard.test/api/model-gateway/v1", "the door's /v1 base URL lands in EVOLVE_DSH_BASE_URL");
+  assertEqual(envs.EVOLVE_PROVIDER_RUNTIME_BINDING, "evrb_dsh_binding_secret", "the runtime binding secret rides its env (spendTrackingEnvs path)");
+  assert(typeof envs.EVOLVE_LITELLM_CUSTOMER_ID === "string" && envs.EVOLVE_LITELLM_CUSTOMER_ID.length > 0, "the session tag rides EVOLVE_LITELLM_CUSTOMER_ID at boot");
+  assert(!("EVOLVE_API_KEY" in envs), "the account key is never exposed");
+
+  const runEnvs = (agent as any).buildRunEnvs("run-dsh-001") as Record<string, string>;
+  assertEqual(runEnvs.EVOLVE_LITELLM_TAGS, "run:run-dsh-001", "the run tag rides EVOLVE_LITELLM_TAGS per run");
+  assertEqual(runEnvs.EVOLVE_LITELLM_CUSTOMER_ID, envs.EVOLVE_LITELLM_CUSTOMER_ID, "the session tag is re-sent per run");
+  assertEqual(runEnvs.OPENROUTER_API_KEY, "evrt_dsh_runtime_token", "the token is re-injected per spawn");
+
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeDshPerRunPatch(sandbox);
+  assertEqual(written[0].path, "/home/user/.dsh/evolve-route.patch.yml", "writes the Evolve-owned route patch");
+  const patch = written[0].content;
+  assert(patch.includes('"x-litellm-customer-id": !!js process.env.EVOLVE_LITELLM_CUSTOMER_ID'), "the session tag header reads its env");
+  assert(patch.includes('"x-litellm-tags": !!js process.env.EVOLVE_LITELLM_TAGS'), "the run tag header reads its env");
+  assert(patch.includes('"x-evolve-provider-runtime-binding": !!js process.env.EVOLVE_PROVIDER_RUNTIME_BINDING'), "the binding header reads its env");
+  assert(patch.includes('model: "openrouter/deepseek/deepseek-v4.1-flash"'), "gateway mode names the gateway's exact entry (no alias rewrite)");
+  assert(patch.includes('reasoningEffort: "high"'), "the pinned effort is stamped");
+  assert(!patch.includes("evrt_dsh_runtime_token") && !patch.includes("dashboard.test"), "the patch carries no token and no URL value");
+}
+
+async function testDshExternalGatewayPatch(): Promise<void> {
+  console.log("\n[43] dsh externalGateway: wire id verbatim, no headers");
+  const agent = new Agent({
+    type: "dsh",
+    apiKey: "sk-external",
+    baseUrl: "https://gateway.example.com/v1",
+    isDirectMode: true,
+    externalGateway: { revoke: async () => {} },
+    model: "openrouter/deepseek/deepseek-v4-pro-0813",
+    reasoningEffort: "medium",
+  } as any, {});
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeDshPerRunPatch(sandbox);
+  const patch = written[0].content;
+  assert(patch.includes('model: "openrouter/deepseek/deepseek-v4-pro-0813"'), "externalGateway sends the roster id verbatim (alias == wire id) — never the direct-mode OpenRouter spelling");
+  assert(!patch.includes("headers:"), "externalGateway patch carries no LiteLLM headers");
+  assert(patch.includes('reasoningEffort: "medium"'), "the caller's level is stamped verbatim");
+  const envs = (agent as any).buildRunEnvs("run-x") as Record<string, string>;
+  assertEqual(envs.OPENROUTER_API_KEY, "sk-external", "the caller's key rides the patch's apiKeyEnv");
+  assertEqual(envs.EVOLVE_DSH_BASE_URL, "https://gateway.example.com/v1", "the caller's base URL rides the patch's baseURL env VERBATIM");
+}
+
+async function testDshDirectModePatch(): Promise<void> {
+  console.log("\n[44] dsh direct mode: OpenRouter's own id, OpenRouter's key env, no headers");
+  const agent = new Agent({
+    type: "dsh",
+    apiKey: "or-key",
+    baseUrl: "https://openrouter.ai/api/v1",
+    isDirectMode: true,
+    model: "openrouter/deepseek/deepseek-v4.1-flash",
+  } as any, {});
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.OPENROUTER_API_KEY, "or-key", "direct mode sets OPENROUTER_API_KEY");
+  assertEqual(envs.EVOLVE_DSH_BASE_URL, "https://openrouter.ai/api/v1", "direct mode sets the OpenRouter API root");
+  assertEqual((agent as any).buildRunEnvs("run-y"), undefined, "direct mode adds no per-run envs");
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeDshPerRunPatch(sandbox);
+  assert(written[0].content.includes('model: "deepseek/deepseek-v4.1-flash"'), "direct mode strips the gateway's openrouter/ route prefix (directModelAliases)");
+  assert(!written[0].content.includes("headers:"), "direct mode carries no headers");
+}
+
+async function testDshSessionStateRoundTrip(): Promise<void> {
+  console.log("\n[45] dsh session id is captured from the `session` line and persisted under ~/.dsh");
+  const files = new Map<string, string>();
+  const sandbox = {
+    files: {
+      makeDir: async () => {},
+      read: async (path: string) => {
+        const value = files.get(path);
+        if (!value) throw Object.assign(new Error("not found"), { code: "ENOENT" });
+        return value;
+      },
+      write: async (path: string, content: string) => { files.set(path, content); },
+    },
+  };
+  const config = { type: "dsh", apiKey: "test-gateway-key", isDirectMode: false };
+  const agent = new Agent(config as any, {});
+  // The opening line carries the id but yields no event (the parser returns
+  // null for it), so the capture must read the raw line.
+  (agent as any).captureHarnessSessionId(`{"type":"session","sessionId":"session-fab655c4","cwd":"/work"}`, null);
+  await (agent as any).writeCapturedSessionId(sandbox);
+  assert(files.has("/home/user/.dsh/evolve-session.json"), "the id is persisted at the registry's sessionIdStateFile");
+
+  const agent2 = new Agent(config as any, {});
+  await (agent2 as any).loadCapturedSessionId(sandbox);
+  (agent2 as any).hasRun = true;
+  const command = (agent2 as any).buildCommand("continue") as string;
+  assert(command.includes("--session-id 'session-fab655c4'"), "the loaded id is used in the next command");
+
+  const claude = new Agent({ type: "claude", apiKey: "k", isDirectMode: false } as any, {});
+  (claude as any).captureHarnessSessionId(`{"type":"system","session_id":"c1"}`, null);
+  assert((claude as any).capturedSessionId === undefined, "a harness with no sessionIdStateFile captures nothing");
 }
 
 async function main(): Promise<void> {
@@ -1856,6 +2009,11 @@ async function main(): Promise<void> {
   await testDroidGatewayModelAliases();
   await testDroidBuildRunEnvsReturnsUndefined();
   await testDroidSessionStateRoundTrip();
+  await testDshBuildCommand();
+  await testDshGatewayEnvsAndPatch();
+  await testDshExternalGatewayPatch();
+  await testDshDirectModePatch();
+  await testDshSessionStateRoundTrip();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");

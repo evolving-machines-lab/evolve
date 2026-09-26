@@ -572,7 +572,8 @@ export type AgentType =
   | "opencode"
   | "droid"
   | "pi"
-  | "prime-agent";
+  | "prime-agent"
+  | "dsh";
 
 /** Agent type constants for use in code */
 export const AGENT_TYPES = {
@@ -585,6 +586,7 @@ export const AGENT_TYPES = {
   DROID: "droid",
   PI: "pi",
   PRIME_AGENT: "prime-agent",
+  DSH: "dsh",
 } as const;
 
 // =============================================================================

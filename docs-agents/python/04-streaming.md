@@ -221,7 +221,7 @@ class OutputEvent(TypedDict):
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
 clock (claude, gemini, opencode and droid stamp every line; pi and prime-agent stamp every message;
-qwen and kimi stamp none); `model` is
+qwen, kimi and dsh stamp none); `model` is
 the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets
 you tell which lines belong to one LLM message (claude prints one line per content block, all with
 the same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the
@@ -434,9 +434,9 @@ Every harness prints its own token accounting on the stream, and it arrives as i
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
 opencode prints each step's tokens and cost, pi and prime-agent print each model call's tokens on
 its `message_end` line (prompt tokens are input plus cache reads plus cache writes, as Harbor counts
-them; a cost is reported only when the harness prices the call itself), and codex, gemini, claude,
-qwen and droid print a whole-run total on their terminal line. Kimi's stream-json prints no usage at
-all, so a kimi run simply has no `usage` events.
+them; a cost is reported only when the harness prices the call itself), dsh prints each step's tokens,
+and codex, gemini, claude, qwen and droid print a whole-run total on their terminal line. Kimi's
+stream-json prints no usage at all, so a kimi run simply has no `usage` events.
 
 ```python
 {

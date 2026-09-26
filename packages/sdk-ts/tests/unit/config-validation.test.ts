@@ -138,8 +138,40 @@ function testUnknownAgentType(): void {
   assert(error instanceof EvolveConfigError, "an unknown type throws EvolveConfigError");
   assertEqual((error as EvolveConfigError).field, "type", "the error names the type field");
   assert(
-    (error as Error).message.includes("claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent"),
+    (error as Error).message.includes("claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh"),
     "the message lists every valid agent type",
+  );
+}
+
+/** An effort outside a harness's declared roster is refused by name at the door. */
+function testEffortOutsideRoster(): void {
+  console.log("\n[3b] A reasoning effort the harness cannot honor is rejected by name");
+
+  const error = thrownBy(() =>
+    new Evolve().withAgent({ type: "dsh", apiKey: "key", reasoningEffort: "off" }),
+  );
+  assert(error instanceof EvolveConfigError, "an unlisted effort throws EvolveConfigError");
+  assertEqual((error as EvolveConfigError).field, "reasoningEffort", "the error names the reasoningEffort field");
+  assert(
+    (error as Error).message.includes('agent "dsh" honors reasoning effort "low", "medium", "high" only') &&
+      (error as Error).message.includes('"off"'),
+    "the message names the harness, its roster and the refused value",
+  );
+  for (const spelling of ["none", "no-thinking"] as const) {
+    assert(
+      thrownBy(() => new Evolve().withAgent({ type: "dsh", apiKey: "key", reasoningEffort: spelling })) instanceof EvolveConfigError,
+      `the off spelling "${spelling}" is refused the same way`,
+    );
+  }
+  assertEqual(
+    thrownBy(() => new Evolve().withAgent({ type: "dsh", apiKey: "key", reasoningEffort: "high" })),
+    undefined,
+    "a roster value constructs",
+  );
+  assertEqual(
+    thrownBy(() => new Evolve().withAgent({ type: "codex", apiKey: "key", reasoningEffort: "off" })),
+    undefined,
+    "a harness with no narrowed roster keeps the whole vocabulary",
   );
 }
 
@@ -282,6 +314,7 @@ async function main(): Promise<void> {
   testMissingModelIsNamed();
   testOmittedModelIsFine();
   testUnknownAgentType();
+  testEffortOutsideRoster();
   await testMissingPrompt();
   testAgentConstructorGuards();
   testNativeAgentConfig();

@@ -76,13 +76,16 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
  * takes there — pure data derivation from its effortSupport. The
  * harness-capabilities artifact generator and picker UIs share this.
  */
-export function harnessEffortVocabulary(support: EffortSupport): {
+export function harnessEffortVocabulary(
+  support: EffortSupport,
+  efforts?: readonly ReasoningEffort[],
+): {
   efforts: readonly ReasoningEffort[];
   defaultEffort: ReasoningEffort | null;
 } {
   if (support === "none") return { efforts: [], defaultEffort: null };
   return {
-    efforts: support === "binary" ? BINARY_EFFORT_VALUES : REASONING_EFFORTS,
+    efforts: efforts ?? (support === "binary" ? BINARY_EFFORT_VALUES : REASONING_EFFORTS),
     defaultEffort: DEFAULT_REASONING_EFFORT,
   };
 }
@@ -112,7 +115,7 @@ export interface McpConfigInfo {
   /** Config filename (e.g., "settings.json" or "config.toml") */
   filename: string;
   /** Config format */
-  format: "json" | "toml";
+  format: "json" | "toml" | "yaml";
   /** Whether to use workingDir for project-level config (Claude only) */
   projectConfig?: boolean;
 }
@@ -166,6 +169,9 @@ export interface AgentRegistryEntry {
    * advertises exactly the vocabulary the local SDK drives.
    */
   effortSupport: EffortSupport;
+
+  /** The subset of the level vocabulary this CLI can honor; absent = the whole vocabulary for its effortSupport. */
+  efforts?: readonly ReasoningEffort[];
 
   /** Environment variable name for API key */
   apiKeyEnv: string;
@@ -364,6 +370,17 @@ export interface AgentRegistryEntry {
   checkpointExcludes?: string[];
   /** The CLI exits 0 whatever happened: at exit 0 the last assistant message_end is the verdict (agent.ts). */
   verdictFromStream?: true;
+  /** Where the SDK keeps the stream-captured session id for CLIs that resume by `--session-id` (droid, dsh). */
+  sessionIdStateFile?: string;
+  /** dsh only: the Evolve-owned `--patch` that routes the CLI (mcp/yaml.ts); it names env variables, never values. */
+  dshRoutePatch?: {
+    path: string;
+    /** The pi-ai provider route name the patch declares and the default model selects. */
+    providerName: string;
+    contextWindow: number;
+    /** The request's `max_tokens`. */
+    maxTokens: number;
+  };
 }
 
 /**
@@ -398,6 +415,19 @@ export function getOpenCodeReasoningVariant(reasoningEffort?: string): string | 
 function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   const variant = getOpenCodeReasoningVariant(reasoningEffort);
   return variant ? ` --variant ${variant} --thinking` : "";
+}
+
+/** The pi-ai levels dsh's patch declares and the SDK accepts — the three proven on the wire (owner ruling 2026-09-25). */
+export const DSH_REASONING_EFFORTS = ["low", "medium", "high"] as const satisfies readonly ReasoningEffort[];
+
+/** Typed refusal outside the roster: dsh sends the effort on every request, so an unlisted value would be recorded but never applied. */
+export function getDshReasoningEffort(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  if ((DSH_REASONING_EFFORTS as readonly string[]).includes(reasoningEffort)) return reasoningEffort;
+  throw new Error(
+    `Evolve agent config: agent "dsh" honors reasoning effort ${DSH_REASONING_EFFORTS.map((e) => `"${e}"`).join(", ")} only; ` +
+      `"${reasoningEffort}" is not one of them and would be recorded but never applied.`,
+  );
 }
 
 // =============================================================================
@@ -978,6 +1008,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     checkpointDirs: [
       "~/.factory",
     ],
+    // Droid resumes by the id its stream announced; the SDK keeps it here
+    // between runs (agent.ts captureHarnessSessionId).
+    sessionIdStateFile: "~/.factory/evolve-session.json",
     buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode, isExternalGateway, homeDir = DEFAULT_HOME_DIR }) => {
       // Gateway AND external-gateway modes route through the Evolve-owned
       // settings file (custom model at the gateway); only plain direct mode
@@ -1078,6 +1111,74 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       // --cwd "$PWD": a daemon-side worker runs the session, so the spawn cwd travels explicitly.
       // TMPDIR: the daemon socket lives under it (108-byte socket path limit). Exit 0 is no verdict (verdictFromStream).
       return `PRIME_AGENT_TELEMETRY=0 TMPDIR=/tmp prime-agent --mode json --offline --cwd "$PWD" ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} -- "${prompt}" </dev/null`;
+    },
+  },
+  // dsh: routing rides an Evolve-owned --patch file (dshRoutePatch), never
+  // flags; recon team/dev-items/harness-recon-2026-09-25/01-deepseek.md.
+  dsh: {
+    image: "evolve-all",
+    // The patch's apiKeyEnv names this env; never DEEPSEEK_API_KEY, which
+    // dsh's web_search would send to DeepSeek's own search API.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    efforts: DSH_REASONING_EFFORTS,
+    // Read by the patch as `!!js process.env.EVOLVE_DSH_BASE_URL`; every mode sets it ending in /v1.
+    baseUrlEnv: "EVOLVE_DSH_BASE_URL",
+    defaultModel: "openrouter/deepseek/deepseek-v4.1-flash",
+    // DeepSeek's documented default (01-deepseek.md §C); owner policy pins graded harnesses high.
+    defaultReasoningEffort: "high",
+    // Direct mode is OpenRouter-only, like opencode; the fireworks/ names are gateway routes.
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    // Owner decision 2026-09-25 (recon README): V4.1 Flash and V4 Pro on both
+    // routes; alias == wire id, the gateway's exact entry for each name.
+    models: [
+      { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
+      { alias: "openrouter/deepseek/deepseek-v4-pro-0813", modelId: "openrouter/deepseek/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via OpenRouter" },
+      { alias: "fireworks/deepseek-v4-pro-0813", modelId: "fireworks/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via Fireworks" },
+    ],
+    // AGENTS.md then CLAUDE.md from the project root down to cwd (01-deepseek.md §F).
+    systemPromptFile: "AGENTS.md",
+    // MCP rows are a second patch file (mcp/yaml.ts); dsh reads no .mcp.json.
+    mcpConfig: {
+      settingsDir: "~/.dsh",
+      filename: "evolve-mcp.patch.yml",
+      format: "yaml",
+    },
+    // $DSH_HOME/skills, inside the captured home (§F; live S1).
+    skillsConfig: {
+      targetDir: "~/.dsh/skills",
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    // OpenRouter itself knows the id without the gateway's openrouter/ route prefix.
+    directModelAliases: {
+      "openrouter/deepseek/deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+      "openrouter/deepseek/deepseek-v4-pro-0813": "deepseek/deepseek-v4-pro-0813",
+    },
+    // The patch's `headers` map reads these per request, so the file stays static per session.
+    spendTrackingEnvs: {
+      sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID",
+      runTagEnv: "EVOLVE_LITELLM_TAGS",
+    },
+    dshRoutePatch: {
+      path: "~/.dsh/evolve-route.patch.yml",
+      providerName: "evolve",
+      // The window every live run used; maxTokens is the request's max_tokens.
+      contextWindow: 128000,
+      maxTokens: 32000,
+    },
+    // dsh resumes only by `--session-id <id>` from its opening `session` line (§B).
+    sessionIdStateFile: "~/.dsh/evolve-session.json",
+    buildCommand: ({ prompt, isResume, sessionId, homeDir = DEFAULT_HOME_DIR }) => {
+      const dshHome = `${homeDir}/.dsh`;
+      const routePatch = `${dshHome}/evolve-route.patch.yml`;
+      const mcpPatch = `${dshHome}/evolve-mcp.patch.yml`;
+      const mcpFlag = `$(if [ -f ${mcpPatch} ]; then printf ' --patch ${mcpPatch}'; fi)`;
+      const resumeFlag = isResume && sessionId ? ` --session-id ${shellSingleQuote(sessionId)}` : "";
+      // No permission flag exists: the env unconfines the sandbox and never asks (§B).
+      return `DSH_HOME=${dshHome} DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1 dsh --profile headless --patch ${routePatch}${mcpFlag} --json${resumeFlag} -- "${prompt}"`;
     },
   },
 };

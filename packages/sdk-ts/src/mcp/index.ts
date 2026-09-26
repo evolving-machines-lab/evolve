@@ -17,6 +17,7 @@ import {
   writePrimeAgentMcpConfig,
 } from "./json";
 import { writeCodexMcpConfig } from "./toml";
+import { writeDshMcpConfig } from "./yaml";
 
 /**
  * Write MCP server configuration for an agent
@@ -30,6 +31,7 @@ import { writeCodexMcpConfig } from "./toml";
  * - OpenCode: JSON to ${workingDir}/opencode.json (mcp key)
  * - pi: JSON to ~/.pi/agent/mcp.json (the pi-mcp-adapter extension's file)
  * - Prime Agent: JSON to ~/.prime/agent/settings.json (mcpServers key)
+ * - dsh: YAML patch rows to ~/.dsh/evolve-mcp.patch.yml
  */
 export async function writeMcpConfig(
   agentType: AgentType,
@@ -79,6 +81,10 @@ export async function writeMcpConfig(
       await writePrimeAgentMcpConfig(sandbox, servers, homeDir);
       break;
 
+    case "dsh":
+      await writeDshMcpConfig(sandbox, servers, homeDir);
+      break;
+
     default:
       throw new Error(`Unknown agent type for MCP config: ${agentType}`);
   }
@@ -103,3 +109,4 @@ export {
   type ModelsJsonRouteWrite,
 } from "./json";
 export { writeCodexMcpConfig, writeCodexSpendProvider, writeKimiSpendConfig } from "./toml";
+export { writeDshMcpConfig, writeDshRoutePatch, renderDshRoutePatch, type DshRoutePatchConfig } from "./yaml";

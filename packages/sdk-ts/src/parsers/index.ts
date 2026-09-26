@@ -10,6 +10,7 @@ import type { OutputEvent } from "./types";
 import { createClaudeParser } from "./claude";
 import { createCodexParser } from "./codex";
 import { createDroidParser } from "./droid";
+import { createDshParser } from "./dsh";
 import { createGeminiParser } from "./gemini";
 import { createKimiParser } from "./kimi";
 import { createOpenCodeParser } from "./opencode";
@@ -61,6 +62,9 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "prime-agent":
       return createPrimeAgentParser();
+
+    case "dsh":
+      return createDshParser();
 
     default:
       return () => null;
@@ -121,6 +125,7 @@ export function parseNdjsonOutput(
 export { createClaudeParser } from "./claude";
 export { createCodexParser } from "./codex";
 export { createDroidParser } from "./droid";
+export { createDshParser } from "./dsh";
 export { createGeminiParser } from "./gemini";
 export { createKimiParser } from "./kimi";
 export { createOpenCodeParser } from "./opencode";

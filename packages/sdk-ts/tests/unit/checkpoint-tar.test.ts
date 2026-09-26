@@ -250,6 +250,15 @@ async function testBuildTarCommandPiFamily(): Promise<void> {
   assert(prime.includes("--exclude='.prime/agent/kernel-venv'"), "prime-agent: excludes the ~214 MB Python kernel venv (rebuilt from its marker)");
 }
 
+async function testBuildTarCommandDsh(): Promise<void> {
+  console.log("\n[6e] buildTarCommand() - dsh");
+
+  const cmd = buildTarCommand("dsh", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  assert(cmd.includes(".dsh/"), "Includes .dsh/ (sessions, profiles, skills, the Evolve patches)");
+}
+
 // =============================================================================
 // TESTS: Cache excludes in tar command
 // =============================================================================
@@ -351,6 +360,7 @@ async function main(): Promise<void> {
   await testBuildTarCommandOpencode();
   await testBuildTarCommandDroid();
   await testBuildTarCommandPiFamily();
+  await testBuildTarCommandDsh();
   await testTarExcludes();
   await testCustomWorkingDir();
   await testInvalidWorkingDir();

@@ -13,6 +13,7 @@
 #   - Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Droid
 #   - Kimi Code
 #   - pi (+ the pi-mcp-adapter extension) and Prime Agent (+ its Python kernel)
+#   - DeepSeek Harness (dsh, pinned)
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
 #
@@ -113,6 +114,15 @@ RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/ho
     && chown -R user:user /home/user/.kimi-code
 
 # ---------------------------------------------------------------------------
+# DeepSeek Harness (dsh)
+# ---------------------------------------------------------------------------
+# PINNED, not @latest: only the `next` prerelease line has the headless surface
+# the SDK drives (--json, --session-id, stdin). npm checks the registry's sha512 on
+# install (no vendor checksum file); optional deps stay ON for the glibc flock addon
+# that session writes need. Runs on the image's one Node.
+RUN npm install -g @deepseek-ai/dsh@0.1.7-rc.2 && dsh --version
+
+# ---------------------------------------------------------------------------
 # MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
 # ---------------------------------------------------------------------------
 RUN npm install -g mcp-remote
@@ -149,6 +159,7 @@ RUN mkdir -p /home/user/.claude/skills \
              /home/user/.factory/skills \
              /home/user/.pi/agent/skills \
              /home/user/.prime/agent/skills \
+             /home/user/.dsh/skills \
              /opt/evolve/prime-agent \
     && chown -R user:user /home/user /opt/evolve/prime-agent
 

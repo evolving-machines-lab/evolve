@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: THE HARNESS-ERROR LAW, across all seven parsers.
+ * Unit Test: THE HARNESS-ERROR LAW, across all eight parsers.
  *
  * The law lives in parsers/types.ts (AgentError): a failure the HARNESS itself
  * reported is the `error` variant — never an agent_message_chunk, never
@@ -11,7 +11,7 @@
  * diagnosis on codex.
  *
  * codex was the only parser that obeyed. This suite pins the same two
- * properties for all seven:
+ * properties for all eight:
  *   1. the failure is surfaced, with the harness's own text VERBATIM;
  *   2. it is never counted as agent work (isAgentWorkUpdate === false).
  *
@@ -22,6 +22,8 @@
  *             codex-parser-errors.test.ts, which owns the codex regression)
  *   droid     live capture, droid 0.182.0 (`droid exec --output-format
  *             stream-json`, and the `--output-format json` result line)
+ *   dsh       live capture, @deepseek-ai/dsh@0.1.7-rc.2 (`--profile headless
+ *             --json`): the turn_end reason after a failed step, round-2 E1
  *   gemini    ErrorEvent / ResultEvent, gemini-cli
  *             packages/core/src/output/types.ts
  *   kimi      PromptJsonWriter.writeRetrying, kimi-code
@@ -40,6 +42,7 @@
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
+import { createDshParser } from "../../src/parsers/dsh.ts";
 import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
@@ -222,6 +225,46 @@ async function testDroid(): Promise<void> {
   ]);
   assert(workOf(okEvents).length === 1, "droid: a successful result is still agent work");
   assert(errorsOf(okEvents).length === 0, "droid: a successful result is not a failure");
+}
+
+// ---------------------------------------------------------------------------
+// dsh
+// ---------------------------------------------------------------------------
+
+async function testDsh(): Promise<void> {
+  console.log("\n[dsh] a failed turn: turn_end kind error after invisible retries (live capture, round-2 E1)");
+
+  // dsh retries a failed model call five times in silence, then closes the
+  // turn with `turn_end {reason: {kind: "error", error}}` and `final ""` —
+  // the one failure signal on the stream, and terminal (exit 1 follows).
+  const events = parseAll(createDshParser(), [
+    `{"type":"session","sessionId":"session-b28c98d6-8415-4639-a300-ca955901ecf6","cwd":"/work"}`,
+    `{"type":"status","phase":"turn_start","turn":1}`,
+    `{"type":"status","phase":"step_start","turn":1,"step":1}`,
+    `{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":0,"outputTokens":0,"totalTokens":0}}`,
+    `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error","error":{"message":"500: {\\"message\\":\\"sink: internal error (request 6)\\",\\"type\\":\\"server_error\\",\\"code\\":\\"internal_error\\"}","code":"SERVER"}}}`,
+    `{"type":"final","text":""}`,
+  ]);
+  assertLaw("dsh", events, {
+    count: 1,
+    contains: ["sink: internal error (request 6)"],
+    fatal: [true],
+  });
+  assert(events[0]?.sessionId === "session-b28c98d6-8415-4639-a300-ca955901ecf6", "dsh: keeps the session id");
+  assert(workOf(events).length === 0, "dsh: the zero-usage step and the empty final are not work");
+
+  console.log("\n[dsh] a driver failure outside a turn");
+  const driver = parseAll(createDshParser(), [`{"type":"error","message":"usage: task required"}`]);
+  assertLaw("dsh/error", driver, { count: 1, contains: ["usage: task required"], fatal: [true] });
+
+  console.log("\n[dsh] a successful run is untouched");
+  const okEvents = parseAll(createDshParser(), [
+    `{"type":"text","text":"OK"}`,
+    `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}`,
+    `{"type":"final","text":"OK"}`,
+  ]);
+  assert(workOf(okEvents).length === 1, "dsh: the answer is agent work, once");
+  assert(errorsOf(okEvents).length === 0, "dsh: a completed turn is not a failure");
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +530,11 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
       parse: createPrimeAgentParser(),
       lines: [`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"boom","timestamp":1}}`],
     },
+    {
+      name: "dsh",
+      parse: createDshParser(),
+      lines: [`{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error","error":{"message":"boom","code":"SERVER"}}}`],
+    },
   ];
 
   for (const { name, parse, lines } of cases) {
@@ -497,7 +545,7 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
     assert(errorsOf(events)[0]?.message === "boom", `${name}: the message is exactly what the harness said`);
   }
 
-  assert(cases.length === 9, "all nine harnesses are covered");
+  assert(cases.length === 10, "all ten harnesses are covered");
 }
 
 async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
@@ -514,6 +562,8 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
     { name: "opencode", parse: createOpenCodeParser(), line: `{"type":"error","sessionID":"s","error":{}}` },
     { name: "pi", parse: createPiParser(), line: `{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}` },
     { name: "prime-agent", parse: createPrimeAgentParser(), line: `{"type":"auto_retry_end","success":false}` },
+    { name: "dsh", parse: createDshParser(), line: `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error"}}` },
+    { name: "dsh/max-tokens", parse: createDshParser(), line: `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"max-tokens"}}` },
   ];
 
   for (const { name, parse, line } of cases) {
@@ -525,12 +575,13 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("=".repeat(60));
-  console.log("THE HARNESS-ERROR LAW — all seven parsers");
+  console.log("THE HARNESS-ERROR LAW — all eight parsers");
   console.log("=".repeat(60));
 
   await testClaude();
   await testCodex();
   await testDroid();
+  await testDsh();
   await testGemini();
   await testKimi();
   await testOpenCode();
