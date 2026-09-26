@@ -135,10 +135,14 @@ async function testMcp(): Promise<void> {
   assert(call?.toolName === "mcp__everything__get-sum", "the verbatim MCP tool name is carried");
   assert(call?.kind === "other", "an MCP tool is kind other");
   assert(JSON.stringify(call?.rawInput) === JSON.stringify({ a: 40, b: 2 }), "the MCP input rides rawInput");
-  assert(call?.title === "everything get-sum (MCP)", "the tool_call's title names the server and tool, read from the mcp__<server>__<tool> name (the model's line comes first)");
+  assert(call?.title === "mcp__everything__get-sum", "the title is the verbatim name, like every other parser's");
   const started = ofKind(events, "tool_call_update").find((e) => e.update.status === "in_progress");
   const done = ofKind(events, "tool_call_update").find((e) => e.update.status === "completed");
-  assert(started?.update.title === "everything get-sum (MCP)" && done?.update.title === "everything get-sum (MCP)", "the scheduled line's display confirms it; every later update carries the same title");
+  assert(started?.update.title === "mcp__everything__get-sum" && done?.update.title === "mcp__everything__get-sum", "every update carries the same verbatim title");
+  const display = (e: OutputEvent | undefined) => e?.extra?.display as Record<string, unknown> | undefined;
+  assert(display(started)?.kind === "mcp_tool" && display(started)?.serverName === "everything" && display(started)?.toolName === "get-sum", "the scheduled line's display (server, tool) rides the update's extra, verbatim");
+  assert(display(done)?.serverName === "everything" && display(done)?.toolName === "get-sum", "…on the result update as well");
+  assert(call !== undefined && ofKind(events, "tool_call")[0].extra?.display === undefined, "the model's own line comes first and carries no display");
   assert(textOf(done?.update ?? {}) === "The sum of 40 and 2 is 42.", "the MCP result text is the tool's own");
   assert(joinedAgentText(events).includes("42"), "the answer follows");
 }
