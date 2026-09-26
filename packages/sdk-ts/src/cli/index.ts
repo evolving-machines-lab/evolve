@@ -1808,7 +1808,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     summary: "Judge a finished job's trial traces against a rubric",
     notes:
       "Each trial gets its own analysis run; `analysis list --job <id>` finds them again. " +
-      "--show-defaults prints the platform's analyze defaults and exits.",
+      "--show-defaults prints the analyze defaults (with -a, that agent's) and exits.",
     flags: {
       // Harbor's -a/--agent (their cli/analyze.py:258), in the arms' agent names.
       agent: {
@@ -1824,7 +1824,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help: "Model the analyzer runs, on the agent's roster",
-        default: "openrouter/deepseek/deepseek-v4.1-flash",
+        default: "the agent's default model; --show-defaults -a prints it",
         group: "Analyzer",
       },
       // The one option beyond Harbor's analyze options, recorded as the hosted
@@ -1864,7 +1864,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       },
       "show-defaults": {
         kind: "boolean",
-        help: "Print the built-in agent, model, effort, provider, prompt and rubric, then exit",
+        help: "Print the default agent, model, effort, provider, prompt and rubric, then exit; -a picks the agent",
         group: "Analyzer",
       },
       // Harbor's selection and width options, their exact spellings
@@ -1943,7 +1943,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         short: "m",
         value: "<name>",
         help: "Model the checker runs, on the agent's roster",
-        default: "openrouter/deepseek/deepseek-v4.1-flash",
+        default: "the agent's default model; --show-defaults -a prints it",
         group: "Checker",
       },
       effort: {
@@ -1978,7 +1978,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       },
       "show-defaults": {
         kind: "boolean",
-        help: "Print the built-in agent, model, effort, provider, prompt and rubric, then exit",
+        help: "Print the default agent, model, effort, provider, prompt and rubric, then exit; -a picks the agent",
         group: "Checker",
       },
       "n-concurrent": {
@@ -5784,7 +5784,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   if (inv.flags["show-defaults"] === true) {
-    return printDefaults(inv, io, () => analyses(clientConfig(inv)).defaults(), "analyze", "<job-id>");
+    return printDefaults(inv, io, (options) => analyses(clientConfig(inv)).defaults(options), "analyze", "<job-id>");
   }
   if (inv.positionals[0] === undefined) {
     throw new CliUsageError("analyze takes a <job-id> (or --show-defaults)");
@@ -6012,24 +6012,24 @@ export function checkDetailLines(check: Check): string[] {
   return [...table(rows), "", ...checkResultLines(check)];
 }
 
-/** `analyze --show-defaults` and `check --show-defaults`: one door, so the two verbs cannot drift. */
+/** `analyze --show-defaults` and `check --show-defaults`: one door, so the two verbs cannot drift; -a names the agent whose defaults print. */
 async function printDefaults(
   inv: Invocation,
   io: CliIO,
-  read: () => Promise<AnalyzeDefaults | CheckDefaults>,
+  read: (options?: { agent?: string }) => Promise<AnalyzeDefaults | CheckDefaults>,
   verb: "analyze" | "check",
   positional: "<job-id>" | "<path>",
 ): Promise<number> {
   // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
-  const allowed = new Set(["show-defaults", ...Object.keys(GLOBAL_FLAGS)]);
+  const allowed = new Set(["show-defaults", "agent", ...Object.keys(GLOBAL_FLAGS)]);
   const stray = Object.keys(inv.flags).filter((k) => !allowed.has(k));
   if (inv.positionals[0] !== undefined || stray.length > 0) {
     throw new CliUsageError(
-      `--show-defaults prints the platform's ${verb} defaults and takes no ${positional} and no other ${verb} flag` +
+      `--show-defaults prints the platform's ${verb} defaults and takes no ${positional} and no ${verb} flag but -a/--agent` +
         (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
     );
   }
-  const defaults = await read();
+  const defaults = await read(inv.flags.agent === undefined ? undefined : { agent: String(inv.flags.agent) });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(defaults));
   } else {
@@ -6072,7 +6072,7 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   const quiet = inv.flags.quiet === true;
   const client = checks(clientConfig(inv));
   if (inv.flags["show-defaults"] === true) {
-    return printDefaults(inv, io, () => client.defaults(), "check", "<path>");
+    return printDefaults(inv, io, (options) => client.defaults(options), "check", "<path>");
   }
   const knobs: CheckConfigInput = {};
   if (inv.flags.name !== undefined) knobs.name = String(inv.flags.name);

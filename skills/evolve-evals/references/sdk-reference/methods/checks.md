@@ -162,27 +162,29 @@ Optional `scope`: `my` (default), `shared`, or `org`; `status`: a list of `queue
 
 ## defaults
 
-Read `CheckDefaults`: current model, reasoning effort, sandbox provider, rubric, and unrendered prompt template.
+Read `CheckDefaults`: current agent, model, reasoning effort, sandbox provider, rubric, and unrendered prompt template. Pass an agent to read what that agent runs under when you name no model.
 
 ### Signature
 
 ```ts TypeScript signature
-defaults(): Promise<CheckDefaults>;
+defaults(options?: { agent?: string }): Promise<CheckDefaults>;
 ```
 
 ```python Python signature
-async def defaults() -> CheckDefaults: ...
+async def defaults(*, agent: Optional[str] = None) -> CheckDefaults: ...
 ```
 
 ```ts TypeScript
 const defaults = await client.defaults();
+const codex = await client.defaults({ agent: "codex" });
 ```
 
 ```python Python
 defaults = await client.defaults()
+codex = await client.defaults(agent="codex")
 ```
 
-Python returns a dictionary. The check’s prompt uses `{task_path}`, `{file_tree}`, and `{criteria_guidance}`; the output contract is appended after your template.
+Python returns a dictionary. The check’s prompt uses `{task_path}`, `{file_tree}`, and `{criteria_guidance}`; the output contract is appended after your template. An agent the platform does not offer is refused with `invalid_input`.
 
 ## watch
 
