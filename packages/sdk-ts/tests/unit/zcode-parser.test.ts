@@ -82,8 +82,8 @@ async function testToolUse(): Promise<void> {
   const echo = ofKind(events, "user_message_chunk");
   assert(echo.length === 1 && echo[0].update.content.type === "text" && echo[0].update.content.text.startsWith("Create a file named hello.txt"), "turn.started echoes the prompt once");
   assert(events.every((e) => e.sessionId === "sess_f69325ab-f1e6-4571-b433-3042201020d4"), "every event carries the run's session id");
-  assert(echo[0].model === undefined, "the prompt echo precedes the first request line, so it names no model");
-  assert(events.slice(1).every((e) => e.model === "openrouter/z-ai/glm-5.3-flash"), "the model named on the first request line is stamped on every later event");
+  assert(events[0].update.sessionUpdate === "harness_event" && events[0].update.type === "session.titleUpdated" && events[0].model === undefined && echo[0].model === undefined, "the title line and the prompt echo precede the first request line, so they name no model");
+  assert(events.slice(2).every((e) => e.model === "openrouter/z-ai/glm-5.3-flash"), "the model named on the first request line is stamped on it and every later event");
   assert(events.every((e) => e.timestamp === undefined || !Number.isNaN(Date.parse(e.timestamp))), "epoch-ms timestamps become ISO on the envelope");
   assert(ofKind(events, "agent_thought_chunk").length > 0, "reasoning deltas are thought chunks");
 
@@ -115,6 +115,13 @@ async function testToolUse(): Promise<void> {
   assert(runs[0].update.usage.promptTokens === 40521 && runs[0].update.usage.completionTokens === 410, "the run total is result.usage as printed (40521 / 410)");
   assert((runs[0].update.usage.extra as Record<string, unknown>)?.modelRequestCount === 2, "modelRequestCount rides extra");
   assert(ofKind(events, "error").length === 0, "a successful run reports no failure");
+
+  const facts = ofKind(events, "harness_event");
+  assert(facts.length === 7, `title, checkpoint, stream-recovery, two model_request and two request-start lines pass through as harness_event (got ${facts.length})`);
+  assert(facts.every((e) => !isAgentWorkUpdate(e.update)), "a harness_event is never agent work");
+  assert(facts.filter((e) => e.update.type === "session.updated" && (e.update.payload.payload as Record<string, unknown>)?.type === "model_request_started").length === 2, "each request start is one harness_event under the type word session.updated");
+  assert(facts.every((e) => !("type" in e.update.payload) && typeof e.update.payload.seq === "number" && typeof e.update.payload.payload === "object"), "payload is the line minus its type word: seq, sessionId, timestamp and the vendor payload verbatim");
+  assert(facts.map((e) => e.update.type).filter((t) => t !== "session.updated").sort().join(",") === "checkpoint.created,session.titleUpdated,streamRecovery.updated", "the three session-level fact types of a tool run");
 
   const finalTexts = events.filter((e) => e.update.sessionUpdate === "agent_message_chunk").slice(-1);
   assert(finalTexts.length === 1, "text is present");
@@ -150,12 +157,13 @@ async function testSubagent(): Promise<void> {
   const agentCall = ofKind(events, "tool_call").find((e) => e.update.toolName === "Agent");
   assert(agentCall !== undefined && agentCall.update.kind === "think", "the Agent delegation is a think-kind tool_call");
   const parentToolCallId = agentCall?.update.toolCallId;
-  const child = events.filter((e) => e.parentToolCallId !== undefined);
-  assert(child.length > 0, "the child's lines carry parentToolCallId");
-  assert(child.every((e) => e.parentToolCallId === parentToolCallId), "…the id of the parent's Agent call");
+  const child = events.filter((e) => e.extra?.childSessionId !== undefined);
+  assert(child.length > 0 && child.every((e) => e.extra?.childSessionId === "sess_subagent_agent_ca1a6360-3d21-4ddb-aa69-424c7c69aac3"), "the child's lines name the child's own session under extra");
   assert(child.every((e) => e.sessionId === "sess_6899ec83-fd4d-47e4-99bb-a659504ad8f6"), "child events keep the RUN's session id on the envelope");
-  assert(child.every((e) => e.extra?.childSessionId === "sess_subagent_agent_ca1a6360-3d21-4ddb-aa69-424c7c69aac3"), "…and name the child's own session under extra");
-  assert(events.filter((e) => e.parentToolCallId === undefined).every((e) => e.extra?.childSessionId === undefined), "root lines carry no childSessionId");
+  const [first, ...announced] = child;
+  assert(first.update.sessionUpdate === "harness_event" && first.update.type === "session.titleUpdated" && first.parentToolCallId === undefined && first.model === undefined, "the child's title line arrives one line before the parent announces it: no parent stamp and no model yet");
+  assert(announced.length > 0 && announced.every((e) => e.parentToolCallId === parentToolCallId), "every child line after the announcement carries the id of the parent's Agent call");
+  assert(events.filter((e) => e.extra?.childSessionId === undefined).every((e) => e.parentToolCallId === undefined), "root lines carry no parent stamp");
   const childEcho = child.find((e) => e.update.sessionUpdate === "user_message_chunk");
   assert(childEcho !== undefined && childEcho.update.sessionUpdate === "user_message_chunk" && childEcho.update.content.type === "text" && childEcho.update.content.text === "Reply with the word PONG.", "the child's turn.started is its own prompt");
   const childUsage = child.filter((e) => e.update.sessionUpdate === "usage");
@@ -166,6 +174,12 @@ async function testSubagent(): Promise<void> {
   const result = ofKind(events, "tool_call_update").find((e) => e.update.toolCallId === parentToolCallId && e.update.status === "completed");
   assert(textOf(result?.update ?? {}).startsWith("PONG"), "the Agent tool's result is the child's answer");
   assert(ofKind(events, "error").length === 0, "no failure");
+
+  const vendor = (e: OutputEvent) => ((e.update as { payload?: Record<string, unknown> }).payload?.payload ?? {}) as Record<string, unknown>;
+  const status = ofKind(events, "harness_event").filter((e) => typeof vendor(e).childSessionId === "string");
+  assert(status.length === 2 && status.map((e) => vendor(e).status).join(",") === "running,completed", "the parent's two sub-agent status lines are harness_events (running, then completed)");
+  assert(status.every((e) => e.parentToolCallId === undefined), "…as the parent's own lines, not stamped as the child's");
+  assert(ofKind(events, "harness_event").filter((e) => vendor(e).modelSelection !== undefined).length === 1, "the child's model_selected line is a harness_event");
 }
 
 async function testModelError(): Promise<void> {
@@ -181,6 +195,8 @@ async function testModelError(): Promise<void> {
   assert(ofKind(events, "usage").length === 0, "no usage line exists for a run that never got an answer");
   const work = events.filter((e) => isAgentWorkUpdate(e.update));
   assert(work.length === 1 && work[0].update.sessionUpdate === "user_message_chunk", "the only work-shaped event is the prompt echo");
+  const retries = ofKind(events, "harness_event").filter((e) => (e.update.payload.payload as Record<string, unknown>)?.type === "model_retry_scheduled");
+  assert(retries.length === 2 && retries.every((e) => typeof (e.update.payload.payload as Record<string, unknown>).delayMs === "number"), `the two scheduled retries are harness_events carrying delayMs (got ${retries.length})`);
 }
 
 async function testProbe400(): Promise<void> {
@@ -254,27 +270,45 @@ async function testNoProviderFile(): Promise<void> {
   assert(events[0].timestamp === new Date(1790367240179).toISOString(), "the line's clock is on the envelope");
 }
 
-async function testSilentAndUnknown(): Promise<void> {
-  console.log("\n[11] bookkeeping is silent; an unknown type is logged once and passed over");
+async function testFactsAndUnknown(): Promise<void> {
+  console.log("\n[11] session-level facts pass through as harness_event; an unknown type is logged once and passed through too");
   const parse = createZcodeParser();
   const resumed = parse(JSON.stringify({ type: "session.resumed", sessionId: "sess_x", seq: 27, timestamp: 1, payload: { directory: "/w", interruptedToolCount: 0, messageCount: 4, partCount: 12 } }));
-  assert(resumed === null, "session.resumed emits nothing");
-  assert(parse(JSON.stringify({ type: "session.titleUpdated", sessionId: "sess_x", seq: 1, timestamp: 1, payload: { title: "t" } })) === null, "session.titleUpdated emits nothing");
-  assert(parse(JSON.stringify({ type: "checkpoint.created", sessionId: "sess_x", seq: 2, timestamp: 1, payload: {} })) === null, "checkpoint.created emits nothing");
+  const fact = resumed?.[0]?.update;
+  assert(resumed?.length === 1 && fact?.sessionUpdate === "harness_event" && fact.type === "session.resumed", "session.resumed is one harness_event under its own type word");
+  assert(
+    fact?.sessionUpdate === "harness_event" &&
+      JSON.stringify(fact.payload) === JSON.stringify({ sessionId: "sess_x", seq: 27, timestamp: 1, payload: { directory: "/w", interruptedToolCount: 0, messageCount: 4, partCount: 12 } }),
+    "payload is the line's other fields verbatim",
+  );
+  assert(fact !== undefined && !isAgentWorkUpdate(fact), "a harness_event is never agent work");
+  assert(resumed?.[0]?.timestamp === "1970-01-01T00:00:00.001Z" && resumed[0].sessionId === "sess_x", "the envelope keeps the line's session and timestamp");
+  for (const type of ["session.titleUpdated", "checkpoint.created", "streamRecovery.updated"]) {
+    const out = parse(JSON.stringify({ type, sessionId: "sess_x", seq: 2, timestamp: 1, payload: {} }));
+    assert(out?.length === 1 && out[0].update.sessionUpdate === "harness_event" && out[0].update.type === type, `${type} is a harness_event`);
+  }
+  assert(parse(JSON.stringify({ type: "turn.completed", sessionId: "sess_x", seq: 9, timestamp: 1, payload: { resultType: "success", response: "ok", usage: {} } })) === null, "a successful turn.completed is loop punctuation: silent");
+  assert(parse(JSON.stringify({ type: "tool.updated", sessionId: "sess_x", seq: 10, timestamp: 1, payload: { kind: "batch", toolCallIds: ["c"], successCount: 1, errorCount: 0 } })) === null, "a tool batch line is loop punctuation: silent");
 
   const warnings: string[] = [];
   const previous = console.warn;
   console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
   try {
-    assert(parse(JSON.stringify({ type: "permission.requested", sessionId: "sess_x", seq: 3, timestamp: 1, payload: { toolCallId: "c", toolName: "Bash" } })) === null, "a documented-but-unseen type emits nothing");
+    const unseen = parse(JSON.stringify({ type: "permission.requested", sessionId: "sess_x", seq: 3, timestamp: 1, payload: { toolCallId: "c", toolName: "Bash" } }));
+    assert(unseen?.length === 1 && unseen[0].update.sessionUpdate === "harness_event" && unseen[0].update.type === "permission.requested", "a documented-but-unseen type passes through as harness_event");
     parse(JSON.stringify({ type: "permission.requested", sessionId: "sess_x", seq: 4, timestamp: 1, payload: {} }));
-    parse(JSON.stringify({ type: "something.new", sessionId: "sess_x", seq: 5, timestamp: 1, payload: {} }));
+    const novel = parse(JSON.stringify({ type: "something.new", sessionId: "sess_x", seq: 5, timestamp: 1, payload: { a: 1 } }));
+    assert(novel?.length === 1 && novel[0].update.sessionUpdate === "harness_event" && novel[0].update.type === "something.new", "an unknown type passes through as harness_event");
+    const catchAll = parse(JSON.stringify({ type: "session.updated", sessionId: "sess_x", seq: 6, timestamp: 1, payload: { compactedMessages: 12, summary: "…" } }));
+    assert(catchAll?.length === 1 && catchAll[0].update.sessionUpdate === "harness_event" && catchAll[0].update.type === "session.updated", "an unclassifiable catch-all payload passes through as harness_event");
+    parse(JSON.stringify({ type: "session.updated", sessionId: "sess_x", seq: 7, timestamp: 1, payload: { compactedMessages: 3, summary: "…" } }));
   } finally {
     console.warn = previous;
   }
-  assert(warnings.length === 2, `each unknown type is logged once (got ${warnings.length})`);
-  assert(warnings[0].includes("permission.requested") && warnings[1].includes("something.new"), "the log names the type");
-  assert(parse("not json") === null, "a non-JSON line is ignored");
+  assert(warnings.length === 3, `each unknown type is logged once per parser (got ${warnings.length})`);
+  assert(warnings.every((w) => w.startsWith("[zcode parser] unknown event type ")), "the log line names the parser and says what it is");
+  assert(warnings[0].endsWith("permission.requested") && warnings[1].endsWith("something.new") && warnings[2].endsWith("session.updated/{compactedMessages,summary}"), "the log names the type (a catch-all payload by its key set)");
+  assert(parse("not json") === null && parse("{}") === null, "a non-JSON line and a line with no type are ignored");
 }
 
 async function testModelCompleteWithoutDeltas(): Promise<void> {
@@ -308,7 +342,7 @@ async function main(): Promise<void> {
   await testCancelWhileStreaming();
   await testCancelDuringTool();
   await testNoProviderFile();
-  await testSilentAndUnknown();
+  await testFactsAndUnknown();
   await testModelCompleteWithoutDeltas();
 
   console.log("\n" + "=".repeat(60));

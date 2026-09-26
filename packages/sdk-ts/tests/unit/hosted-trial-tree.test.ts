@@ -466,6 +466,39 @@ console.log("\n=== Harbor trial-tree assembly ===\n");
 }
 
 // -----------------------------------------------------------------------------
+// The same tree for a harness with no Harbor adapter: its own tee name, the
+// home at its real names, no Harbor copy
+// -----------------------------------------------------------------------------
+{
+  const base = fixtureTrial();
+  const files = assembleTrialTree(
+    fullParts({
+      trial: fixtureTrial({ agent_info: { ...base.agent_info, name: "zcode", version: "3.14.3" } }),
+      home: { "/root/.zcode/cli/db/db.sqlite": "sqlite", "/root/.zcode/cli/config.json": '{"mcp":{"servers":{}}}' },
+    }),
+  );
+  assertEqual(
+    Object.keys(files).sort(),
+    [
+      "agent/.zcode/cli/config.json",
+      "agent/.zcode/cli/db/db.sqlite",
+      "agent/stderr.log",
+      "agent/zcode.txt",
+      "agent/trace-parsed.jsonl",
+      "agent/trajectory.json",
+      "config.json",
+      "evolve.json",
+      "result.json",
+      "verifier/reward.json",
+      "verifier/test-stdout.txt",
+    ].sort(),
+    "a zcode trial materializes the same tree under its own tee name, the home at its real names and no Harbor copy"
+  );
+  assertEqual(files["agent/zcode.txt"], "raw stdout\n", "the stdout stream sits at zcode.txt");
+  assertEqual(JSON.parse(files["config.json"]).agent.name, "zcode", "config.json names the harness");
+}
+
+// -----------------------------------------------------------------------------
 // Harbor's copies — the server's table (harness-registry.ts harborCopies), pinned
 // -----------------------------------------------------------------------------
 {

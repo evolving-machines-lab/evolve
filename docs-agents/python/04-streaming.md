@@ -193,6 +193,11 @@ class AgentUsage(TypedDict):
     scope: Literal["call", "run"]  # one LLM inference, or the harness's whole-run total
     usage: TokenUsage
 
+class HarnessEvent(TypedDict):
+    sessionUpdate: Literal["harness_event"]
+    type: str                  # the harness's own type word for the line
+    payload: dict[str, Any]    # the line's other fields, verbatim
+
 SessionUpdate = Union[
     AgentMessageChunk,
     AgentThoughtChunk,
@@ -202,6 +207,7 @@ SessionUpdate = Union[
     Plan,
     AgentError,
     AgentUsage,
+    HarnessEvent,
 ]
 
 # =============================================================================
@@ -290,6 +296,7 @@ UI display. For replay after cleanup, use the `session_id` with
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `HarnessEvent` | `"harness_event"` | A line of the harness's own with no slot above (a retry, a sub-agent's status, an unknown line type), verbatim. **Not agent work** — see below |
 
 ---
 
@@ -449,3 +456,25 @@ prompt_tokens = sum(u.get("promptTokens", 0) for u in per_message.values())
 
 Like `error`, `usage` is **not agent work**: a stream that carries only accounting still counts as a
 run that did nothing.
+
+## Harness-reported facts (`harness_event`)
+
+A harness also writes lines that are neither output, nor a tool, nor a failure, nor usage: a
+scheduled retry, a sub-agent's status, a session title, a compaction record, or a line type the
+parser does not know yet. Those pass through as their own update, under the harness's own name for
+the line, with the line's other fields verbatim:
+
+```python
+{
+    "update": {
+        "sessionUpdate": "harness_event",
+        "type": "session.titleUpdated",  # the harness's own type word for the line
+        "payload": {"seq": 1, "payload": {"title": "…"}},  # the line's other fields, verbatim
+    }
+}
+```
+
+Like `error` and `usage`, a `harness_event` is **not agent work**: a stream that carries only such
+lines still counts as a run that did nothing. A line type the parser does not know is also logged
+once per run (`[<harness> parser] unknown event type …`), so a vendor release that adds a line type
+never breaks a run and never disappears from the transcript.

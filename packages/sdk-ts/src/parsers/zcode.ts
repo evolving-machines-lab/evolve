@@ -21,35 +21,38 @@
  * gateway: plain answer, tool use, resume, MCP, skills, sub-agent, model
  * error, tool failure, two cancellations). The rules below hold for every
  * capture; a vendor release may change them without anything failing to
- * compile, so an unknown type is logged once and passed over, never a
- * failure (README decision 2026-09-25).
+ * compile, so an unknown type is logged once and passed through as a
+ * `harness_event`, never a failure (decision 2026-09-25).
  *
- * WHAT THE STREAM SAYS (observed):
+ * WHAT THE STREAM SAYS (observed), and what each line becomes:
  *   turn.started            the prompt (`input`); `inputSource:"subagent"` on a child
  *   session.updated         the catch-all — classified by payload shape:
- *     payload.type model_request_started | model_request_completed (usage,
- *       finishReason) | model_request_failed (errorCode, statusCode,
- *       retryable, message) | model_retry_scheduled
- *     {providerId, modelId, messageCount}          the model of the session
- *     {usage, stopReason, content}                  model_complete
+ *     payload.type model_request_started (harness_event; names the model) |
+ *       model_request_completed (usage, finishReason) | model_request_failed
+ *       (error, non-fatal: errorCode, statusCode, retryable) |
+ *       model_retry_scheduled (harness_event)
+ *     {providerId, modelId, messageCount}          model_request: harness_event, names the model
+ *     {usage, stopReason, content}                  model_complete: text only when none was streamed
  *     {toolCallId, status}                          the tool ledger (silent)
- *     {modelSelection}                              a sub-agent's model
- *     {agentId, childSessionId, parentToolCallId, status}  sub-agent lifecycle
- *   model.streaming         kind text_delta | reasoning_delta | tool_call |
- *                           start | finish | *_start | *_end | tool_input_delta
- *   tool.updated            kind scheduled | started | progress | result | error | batch
- *   turn.completed          resultType success | cancelled | error_*; usage
- *   turn.failed             error{message, code, …}, turnPhase
+ *     {modelSelection}                              a sub-agent's model: harness_event
+ *     {agentId, childSessionId, parentToolCallId, status}  sub-agent lifecycle: harness_event
+ *   model.streaming         kind text_delta | reasoning_delta | tool_call;
+ *                           start | finish | *_start | *_end | tool_input_delta are silent brackets
+ *   tool.updated            kind scheduled | started | progress | result | error; batch is silent
+ *   turn.completed          resultType success (silent) | cancelled | error_* (error, fatal; usage)
+ *   turn.failed             error{message, code, …}, turnPhase (error, fatal)
  *   result                  the run total (usage) and the final response
  *   session.titleUpdated, session.resumed, checkpoint.created,
- *   streamRecovery.updated  bookkeeping, silent
+ *   streamRecovery.updated  session-level facts with no ACP slot: harness_event
  *
  * SUB-AGENTS write into the SAME stream under their own `sessionId`
  * (`sess_subagent_agent_<id>`); the parent announces the child with
  * {agentId, childSessionId, parentToolCallId, status:"running"} right after
- * its `Agent` tool starts. Every child line is stamped `parentToolCallId`
- * (the delegating call), keeps the RUN's session id on the envelope and
- * names its own under `extra.childSessionId`. The run totals
+ * its `Agent` tool starts. Every child line from then on is stamped
+ * `parentToolCallId` (the delegating call); the child's own title line
+ * arrives one line earlier and carries no parent yet. Every child line keeps
+ * the RUN's session id on the envelope and names its own under
+ * `extra.childSessionId`. The run totals
  * (`turn.completed.usage`, `result.usage`) count the parent's requests only
  * — the child's tokens are in its own per-call `usage` events.
  *
@@ -90,8 +93,8 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   todowrite: "other",
 };
 
-/** Observed types that carry no event of their own — bookkeeping the trace does not need. */
-const SILENT_TYPES = new Set([
+/** Observed types with no ACP slot: passed through as harness_event, unwarned. */
+const FACT_TYPES = new Set([
   "session.titleUpdated",
   "session.resumed",
   "checkpoint.created",
@@ -137,7 +140,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
   function warnUnknown(kind: string): void {
     if (warnedTypes.has(kind)) return;
     warnedTypes.add(kind);
-    console.warn(`[Evolve] zcode parser: unknown stream line ${kind}; passed over unparsed (the raw line is kept in stdout)`);
+    console.warn(`[zcode parser] unknown event type ${kind}`);
   }
 
   return function parseZcodeEvent(jsonLine: string): OutputEvent[] | null {
@@ -150,6 +153,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
     if (!isRecord(data)) return null;
 
     const type = stringField(data, "type");
+    if (!type) return null;
     const lineSessionId = stringField(data, "sessionId") || undefined;
     if (rootSessionId === undefined && lineSessionId) rootSessionId = lineSessionId;
     const sessionId = lineSessionId ?? rootSessionId;
@@ -196,6 +200,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
             case "model_request_started": {
               const modelId = stringField(payload, "modelId");
               if (modelId && sessionId) models.set(sessionId, modelId);
+              updates.push(harnessEvent(data, type));
               break;
             }
             case "model_request_completed": {
@@ -221,15 +226,18 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               break;
             }
             case "model_retry_scheduled":
+              updates.push(harnessEvent(data, type));
               break;
             default:
               warnUnknown(`session.updated/${payloadType}`);
+              updates.push(harnessEvent(data, type));
           }
           break;
         }
         if (typeof payload.modelId === "string" && typeof payload.providerId === "string" && "messageCount" in payload) {
           // model_request: the model this session's requests name.
           if (sessionId) models.set(sessionId, payload.modelId);
+          updates.push(harnessEvent(data, type));
           break;
         }
         if (isRecord(payload.usage) && "stopReason" in payload) {
@@ -252,12 +260,14 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
         if (isRecord(payload.modelSelection)) {
           const modelId = stringField(payload.modelSelection, "modelId");
           if (modelId && sessionId) models.set(sessionId, modelId);
+          updates.push(harnessEvent(data, type));
           break;
         }
         if (typeof payload.childSessionId === "string" && typeof payload.parentToolCallId === "string") {
           // Sub-agent lifecycle: running (the mapping every child line is
           // stamped from) and completed (the parent's tool result follows).
           childParents.set(payload.childSessionId, payload.parentToolCallId);
+          updates.push(harnessEvent(data, type));
           break;
         }
         if (isRecord(payload.error) && "retryable" in payload) {
@@ -270,6 +280,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
           break;
         }
         warnUnknown(`session.updated/{${Object.keys(payload).sort().join(",")}}`);
+        updates.push(harnessEvent(data, type));
         break;
       }
 
@@ -317,7 +328,10 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
             break;
           }
           default:
-            if (!SILENT_STREAMING_KINDS.has(kind)) warnUnknown(`model.streaming/${kind || "?"}`);
+            if (!SILENT_STREAMING_KINDS.has(kind)) {
+              warnUnknown(`model.streaming/${kind || "?"}`);
+              updates.push(harnessEvent(data, type));
+            }
         }
         break;
       }
@@ -394,6 +408,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
             break;
           default:
             warnUnknown(`tool.updated/${kind || "?"}`);
+            updates.push(harnessEvent(data, type));
         }
         break;
       }
@@ -434,7 +449,8 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
       }
 
       default:
-        if (type && !SILENT_TYPES.has(type)) warnUnknown(type || "?");
+        if (!FACT_TYPES.has(type)) warnUnknown(type);
+        updates.push(harnessEvent(data, type));
     }
 
     const parentToolCallId = isChild && sessionId ? childParents.get(sessionId) : undefined;
@@ -451,7 +467,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
     parentToolCallId?: string,
   ): OutputEvent[] | null {
     if (updates.length === 0) return null;
-    const model = (sessionId && models.get(sessionId)) || (rootSessionId && models.get(rootSessionId)) || undefined;
+    const model = sessionId !== undefined ? models.get(sessionId) : undefined;
     if (childSessionId) extra.childSessionId = childSessionId;
     return updates.map((update) => ({
       sessionId: rootSessionId ?? sessionId,
@@ -568,6 +584,15 @@ function toolInfo(toolName: string, input: Record<string, unknown>): {
 
 function agentText(text: string): SessionUpdate {
   return { sessionUpdate: "agent_message_chunk", content: { type: "text", text } };
+}
+
+/** The line under its own type word, every other field verbatim (types.ts HarnessEvent). */
+function harnessEvent(line: Record<string, unknown>, type: string): SessionUpdate {
+  const payload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(line)) {
+    if (key !== "type") payload[key] = value;
+  }
+  return { sessionUpdate: "harness_event", type, payload };
 }
 
 function copyIfPresent(from: Record<string, unknown>, into: Record<string, unknown>, keys: string[]): void {

@@ -18,6 +18,7 @@
  * plan                 → TodoWrite updates
  * error                → A failure the harness reported (never work)
  * usage                → Token accounting the harness reported (never work)
+ * harness_event        → A line of the harness's own with no slot above (never work)
  * ```
  *
  * @example UI Integration
@@ -164,7 +165,8 @@ export type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | HarnessEvent;
 
 /**
  * Token accounting as the harness reported it on one wire line.
@@ -249,12 +251,30 @@ export interface AgentError {
 }
 
 /**
+ * A line the harness wrote that has no slot above — a retry, a sub-agent's
+ * status, a title or compaction record, or a type the parser does not know.
+ *
+ * DELIBERATE EXTENSION BEYOND ACP, shared by every parser (decision
+ * 2026-09-25). Dropping such a line hides that the harness said something;
+ * folding it into agent text would count it as work. So it passes through
+ * under the harness's own `type` word with the line's other fields verbatim
+ * in `payload`, excluded from isAgentWorkUpdate. Loop punctuation (turn or
+ * agent start and end) stays silent, as in every parser before it.
+ */
+export interface HarnessEvent { sessionUpdate: "harness_event"; type: string; payload: Record<string, unknown> }
+
+/**
  * Is this update evidence the harness did WORK, as opposed to reporting a
  * failure? The one predicate every "did it run" check should use, so the answer
  * cannot drift between callers.
  */
 export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | undefined): boolean {
-  return !!update && update.sessionUpdate !== "error" && update.sessionUpdate !== "usage";
+  return (
+    !!update &&
+    update.sessionUpdate !== "error" &&
+    update.sessionUpdate !== "usage" &&
+    update.sessionUpdate !== "harness_event"
+  );
 }
 
 /**
