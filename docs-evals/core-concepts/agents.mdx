@@ -25,6 +25,7 @@ One arm
 | `pi` | pi |
 | `prime-agent` | Prime Agent |
 | `dsh` | DeepSeek Harness |
+| `zcode` | Z Code |
 
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \

@@ -11,6 +11,7 @@
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
+import { zcodeEnvPins, zcodeReasoningLevel } from "../../src/registry.js";
 
 let passed = 0;
 let failed = 0;
@@ -100,6 +101,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.pi.defaultReasoningEffort, "high", "pi pin is high (owner policy; pi's own default is medium)");
   assertEqual(AGENT_REGISTRY["prime-agent"].defaultReasoningEffort, "high", "prime-agent pin is high (owner policy; Prime's own default is medium)");
   assertEqual(AGENT_REGISTRY.dsh.defaultReasoningEffort, "high", "dsh pin is high (DeepSeek's documented default)");
+  assertEqual(AGENT_REGISTRY.zcode.defaultReasoningEffort, "high", "zcode pin is high (owner policy: graded harnesses run high)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -384,9 +386,13 @@ async function testCodexSpendTrackingEnvs(): Promise<void> {
 // Fake sandbox for writeCodexSpendProvider tests
 // =============================================================================
 
-function createFakeSandbox(existingContent?: string): { sandbox: any; written: { path: string; content: string }[] } {
+function createFakeSandbox(existingContent?: string): { sandbox: any; written: { path: string; content: string }[]; ran: string[] } {
   const written: { path: string; content: string }[] = [];
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       read: async () => {
@@ -396,7 +402,7 @@ function createFakeSandbox(existingContent?: string): { sandbox: any; written: {
       write: async (path: string, content: string) => { written.push({ path, content }); },
     },
   };
-  return { sandbox, written };
+  return { sandbox, written, ran };
 }
 
 const spendEnvs = { sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID", runTagEnv: "EVOLVE_LITELLM_TAGS" };
@@ -1951,6 +1957,105 @@ async function testDshSessionStateRoundTrip(): Promise<void> {
   assert((claude as any).capturedSessionId === undefined, "a harness with no sessionIdStateFile captures nothing");
 }
 
+// =============================================================================
+// Z Code: the per-run provider file (model, level, base URL, key, spend headers)
+// =============================================================================
+
+async function testZcodeReasoningLevels(): Promise<void> {
+  console.log("\n[46] zcodeReasoningLevel() collapses the platform vocabulary onto Z Code's four levels");
+  assertEqual(zcodeReasoningLevel("off"), "disabled", "off → disabled");
+  assertEqual(zcodeReasoningLevel("minimal"), "disabled", "minimal → disabled (isThinkingEnabled draws the line)");
+  assertEqual(zcodeReasoningLevel("no-thinking"), "disabled", "no-thinking → disabled");
+  assertEqual(zcodeReasoningLevel("low"), "low", "low → low");
+  assertEqual(zcodeReasoningLevel("medium"), "medium", "medium → medium");
+  assertEqual(zcodeReasoningLevel("thinking"), "medium", "thinking → medium");
+  assertEqual(zcodeReasoningLevel("high"), "high", "high → high");
+  assertEqual(zcodeReasoningLevel("xhigh"), "high", "xhigh → high (the top level Z Code's file declares)");
+  assertEqual(zcodeReasoningLevel("max"), "high", "max → high");
+  assertEqual(zcodeReasoningLevel(undefined), "high", "an omitted effort is the roster pin (one value, one home)");
+}
+
+async function testZcodePerRunProviderFileGateway(): Promise<void> {
+  console.log("\n[47] zcode gateway mode writes the provider file with the runtime token, the gateway /v1 and both spend headers");
+  const agent = new Agent({ type: "zcode", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  attachProviderRuntimeToken(agent, "zcode", "https://dashboard.test/api/model-proxy/zcode/v1");
+  const { sandbox, written, ran } = createFakeSandbox(undefined);
+
+  await (agent as any).writeZcodePerRunConfig(sandbox, "run-zcode-001");
+
+  assertEqual(written.length, 1, "writes one file");
+  assertEqual(written[0].path, "/home/user/.zcode/v2/provider_config.json", "the provider file at the sandbox home");
+  const doc = JSON.parse(written[0].content);
+  const provider = doc.config.providerConfigRules.providerRules[0].config;
+  assertEqual(provider.access.apiKey, "evrt_zcode_runtime_token", "the runtime token is the literal key (Z Code expands no env)");
+  assertEqual(provider.api.baseUrl, "https://dashboard.test/api/model-proxy/zcode/v1", "the runtime token's base URL, /v1 kept once");
+  assertEqual(provider.api.type, "openai-chat-completions", "OpenAI chat completions dialect");
+  const headers = provider.api.headers;
+  assertEqual(headers["x-litellm-tags"], "run:run-zcode-001", "sets the run header");
+  assert(typeof headers["x-litellm-customer-id"] === "string" && headers["x-litellm-customer-id"].length > 0, "sets the session header");
+  assertEqual(headers["x-evolve-provider-runtime-binding"], "evrb_zcode_binding_secret", "sets the provider runtime binding header");
+  assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3", "the default model rides verbatim (a gateway route name)");
+  assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "high", "the omitted effort stamps the pin as the reasoning level");
+  assertEqual(ran.join("\n"), "chmod 600 '/home/user/.zcode/v2/provider_config.json'", "the file is tightened to 0600");
+
+  const envs = (agent as any).buildRunEnvs("run-zcode-002") as Record<string, string> | undefined;
+  assert(!("OPENROUTER_API_KEY" in (envs ?? {})), "no key env in gateway mode: the token lives only in the provider file, which is all the CLI reads");
+  assert(!("x-litellm-tags" in (envs ?? {})), "no header env: the headers ride the provider file");
+
+  // The same rule in the other two modes: the caller's or the user's key rides the provider file only.
+  const external = new Agent(
+    { type: "zcode", apiKey: "sk-litellm-task", isDirectMode: true, baseUrl: "https://litellm.test/v1", externalGateway: { apiKey: "sk-litellm-task", baseUrl: "https://litellm.test/v1", revoke: async () => {} } } as any,
+    {},
+  );
+  const externalBoot = (external as any).buildEnvironmentVariables() as Record<string, string>;
+  const externalRun = ((external as any).buildRunEnvs("run-zcode-004") ?? {}) as Record<string, string>;
+  assert(!("OPENROUTER_API_KEY" in externalBoot) && !("OPENROUTER_API_KEY" in externalRun), "external-gateway mode: no key env at boot or per run");
+  const direct = new Agent({ type: "zcode", apiKey: "sk-or-user", isDirectMode: true, model: "openrouter/z-ai/glm-5.3" } as any, {});
+  const directBoot = (direct as any).buildEnvironmentVariables() as Record<string, string>;
+  assert(!("OPENROUTER_API_KEY" in directBoot), "direct mode: no key env at boot either");
+  assert(!Object.values(externalBoot).includes("sk-litellm-task") && !Object.values(directBoot).includes("sk-or-user"), "the key appears in no env value in either mode");
+}
+
+async function testZcodePerRunProviderFileEffort(): Promise<void> {
+  console.log("\n[48] zcode: the caller's effort lands in the provider file");
+  const agent = new Agent({ type: "zcode", apiKey: "test-gateway-key", isDirectMode: false, model: "openrouter/z-ai/glm-5.3-flash", reasoningEffort: "off" } as any, {});
+  attachProviderRuntimeToken(agent, "zcode", "https://dashboard.test/api/model-proxy/zcode/v1");
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeZcodePerRunConfig(sandbox, "run-zcode-003");
+  const doc = JSON.parse(written[0].content);
+  assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "disabled", "off → disabled: no reasoning field on the wire");
+  assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3-flash", "the caller's model");
+  assertEqual(doc.config.modelConfigRules.providerModelRules[0].config.properties.contextWindow, 200000, "the platform's one context window");
+}
+
+async function testZcodeBuildCommand(): Promise<void> {
+  console.log("\n[49] zcode buildCommand(): headless stream-json, no model flag, resume via --continue");
+  const { AGENT_REGISTRY } = await import("../../src/registry.js");
+  const zcode = AGENT_REGISTRY.zcode;
+  assertEqual(zcode.defaultModel, "openrouter/z-ai/glm-5.3", "Z Code defaults to GLM-5.3 via OpenRouter");
+  assertEqual(zcode.apiKeyEnv, "OPENROUTER_API_KEY", "direct mode is OpenRouter");
+  assertEqual(zcode.directModelAliases?.["openrouter/z-ai/glm-5.3-flash"], "z-ai/glm-5.3-flash", "direct mode rewrites to OpenRouter's own id");
+  assertEqual(zcode.gatewayModelAliases, undefined, "gateway mode rewrites nothing: the roster spells the routes");
+  const pins =
+    "ZCODE_STORAGE_DIR='/home/user/.zcode' ZCODE_DATA_BASE_DIR='/home/user' ZCODE_SESSION_DB_PATH='/home/user/.zcode/cli/db/db.sqlite' " +
+    "ZCODE_SESSION_DB='/home/user/.zcode/cli/db/db.sqlite' " +
+    "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE='/home/user/.zcode/v2/provider_config.json' ZCODE_HTTP_PROXY='' ZCODE_NO_PROXY='' ZCODE_AGENT_CA_CERT='' " +
+    "ZCODE_MODEL_TELEMETRY_ENABLED='0'";
+  const fresh = zcode.buildCommand({ prompt: "hello", model: "openrouter/z-ai/glm-5.3", isResume: false, reasoningEffort: "high", homeDir: "/home/user" });
+  assertEqual(fresh, `${pins} zcode -p "hello" --output-format stream-json`, "fresh run: every pin, then the headless command");
+  const resumed = zcode.buildCommand({ prompt: "again", model: "openrouter/z-ai/glm-5.3", isResume: true, reasoningEffort: "high", homeDir: "/home/user" });
+  assertEqual(resumed, `${pins} zcode -p "again" --continue --output-format stream-json`, "resume continues the latest session in the cwd");
+  // The pinned set: what a task's .env could otherwise move (home, store, provider file) or re-route (proxy, CA), plus telemetry.
+  assertEqual(
+    Object.keys(zcodeEnvPins("/h")).sort().join(","),
+    "ZCODE_AGENT_CA_CERT,ZCODE_DATA_BASE_DIR,ZCODE_HTTP_PROXY,ZCODE_MODEL_TELEMETRY_ENABLED,ZCODE_NO_PROXY,ZCODE_PERSONAL_PROVIDER_CONFIG_FILE,ZCODE_SESSION_DB,ZCODE_SESSION_DB_PATH,ZCODE_STORAGE_DIR",
+    "the pinned ZCODE_* set (both spellings of the session store: the CLI maps them to one setting, last enumerated wins)",
+  );
+  assertEqual(zcodeEnvPins("/h").ZCODE_SESSION_DB, zcodeEnvPins("/h").ZCODE_SESSION_DB_PATH, "the alias pins the same path");
+  assert(!("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE" in zcodeEnvPins("/h")), "the built-in catalog path is the image's and the bundle's to pin: an empty value aborts the CLI");
+  assert(Object.values(zcodeEnvPins("/h")).every((v) => typeof v === "string"), "every pin is a string (an empty one blocks the .env and leaves the setting unset)");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -2014,6 +2119,10 @@ async function main(): Promise<void> {
   await testDshExternalGatewayPatch();
   await testDshDirectModePatch();
   await testDshSessionStateRoundTrip();
+  await testZcodeReasoningLevels();
+  await testZcodePerRunProviderFileGateway();
+  await testZcodePerRunProviderFileEffort();
+  await testZcodeBuildCommand();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");

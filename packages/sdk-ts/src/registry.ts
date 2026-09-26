@@ -6,6 +6,7 @@
  */
 
 import type { AgentPreset, AgentType, ReasoningEffort, SkillsConfig } from "./types";
+import { shellSingleQuote } from "./utils/shell";
 import { DEFAULT_HOME_DIR } from "./constants";
 
 // =============================================================================
@@ -320,6 +321,19 @@ export interface AgentRegistryEntry {
   };
   /** Vendor defaults wrong for a metered run, deep-merged into the settings file at setup. */
   settingsStamp?: { path: string; document: Record<string, unknown> };
+  /**
+   * Z Code's per-run provider file: the CLI's only source of model, level, base
+   * URL and key (no `--model` flag, no credential env; ZCode cli/src at v3.14.3).
+   */
+  zcodeProviderConfig?: {
+    path: string;
+    providerId: string;
+    providerName: string;
+    /** The window Z Code compacts at — the platform's one number, below every roster route's real ceiling. */
+    contextWindow: number;
+    /** Cap on `max_tokens` per request. */
+    maxOutputTokens: number;
+  };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -489,6 +503,39 @@ const OPENROUTER_ROSTER: readonly ModelInfo[] = [
   // The analyzer's default (owner 2026-09-10), priced from OpenRouter's own bill.
   { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
 ];
+
+/** The levels the provider file declares for the Evolve model entry; `disabled` sends no reasoning field. */
+export const ZCODE_REASONING_LEVELS = ["disabled", "low", "medium", "high"] as const;
+export type ZcodeReasoningLevel = (typeof ZCODE_REASONING_LEVELS)[number];
+
+/** The platform effort collapsed onto Z Code's four levels (the opencode precedent); an omitted effort is the roster pin. */
+export function zcodeReasoningLevel(reasoningEffort?: string): ZcodeReasoningLevel {
+  const effort = reasoningEffort ?? AGENT_REGISTRY.zcode.defaultReasoningEffort;
+  if (!isThinkingEnabled(effort)) return "disabled";
+  if (effort === "low") return "low";
+  if (effort === "medium" || effort === "thinking") return "medium";
+  return "high";
+}
+
+/**
+ * The ZCODE_* variables a task's `.env` could move or re-route (the CLI auto-loads one from the
+ * cwd upward, override:false): a value on the command wins, an empty one leaves the setting unset.
+ * The built-in catalog path is pinned by the image and the bundle instead (empty aborts the CLI).
+ */
+export function zcodeEnvPins(homeDir: string): Record<string, string> {
+  return {
+    ZCODE_STORAGE_DIR: `${homeDir}/.zcode`,
+    ZCODE_DATA_BASE_DIR: homeDir,
+    ZCODE_SESSION_DB_PATH: `${homeDir}/.zcode/cli/db/db.sqlite`,
+    // The CLI's alias of SESSION_DB_PATH; unpinned, a later-enumerated .env key would win.
+    ZCODE_SESSION_DB: `${homeDir}/.zcode/cli/db/db.sqlite`,
+    ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: `${homeDir}/.zcode/v2/provider_config.json`,
+    ZCODE_HTTP_PROXY: "",
+    ZCODE_NO_PROXY: "",
+    ZCODE_AGENT_CA_CERT: "",
+    ZCODE_MODEL_TELEMETRY_ENABLED: "0",
+  };
+}
 
 // =============================================================================
 // AGENT REGISTRY
@@ -1181,6 +1228,72 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       return `DSH_HOME=${dshHome} DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1 dsh --profile headless --patch ${routePatch}${mcpFlag} --json${resumeFlag} -- "${prompt}"`;
     },
   },
+
+  zcode: {
+    image: "evolve-all",
+    // The SDK's direct-mode input; the CLI reads its key and URL from the provider file, never env.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/z-ai/glm-5.3",
+    // Owner policy: graded-effort harnesses pin high; the pin lands in the provider file every run.
+    defaultReasoningEffort: "high",
+    // Direct mode is OpenRouter only; the fireworks/ routes are refused typed there (utils/config.ts).
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    // Owner decision 2026-09-25: GLM 5.3 and GLM 5.3 Flash under route-spelled names; alias == wire id.
+    models: [
+      { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
+      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via OpenRouter" },
+      { alias: "fireworks/glm-5.3", modelId: "fireworks/glm-5.3", description: "Zhipu GLM-5.3 via Fireworks" },
+      { alias: "fireworks/glm-5.3-flash", modelId: "fireworks/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via Fireworks" },
+    ],
+    // Z Code reads AGENTS.md from the cwd upward (never CLAUDE.md).
+    systemPromptFile: "AGENTS.md",
+    // User-level MCP file; every server carries an explicit `type` (the schema drops one without).
+    mcpConfig: {
+      settingsDir: "~/.zcode/cli",
+      filename: "config.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.zcode/skills",
+    },
+    // Direct mode sends OpenRouter its own ids; the fireworks rows have no direct-mode home.
+    directModelAliases: {
+      "openrouter/z-ai/glm-5.3": "z-ai/glm-5.3",
+      "openrouter/z-ai/glm-5.3-flash": "z-ai/glm-5.3-flash",
+    },
+    zcodeProviderConfig: {
+      path: "~/.zcode/v2/provider_config.json",
+      providerId: "evolve",
+      providerName: "Evolve gateway",
+      // Every GLM route's real window is above this; Z Code compacts here.
+      contextWindow: PINNED_CONTEXT_WINDOW_TOKENS,
+      maxOutputTokens: 32768,
+    },
+    // The whole ~/.zcode home rides the checkpoint; the provider file (literal key) and two caches never do.
+    checkpointDirs: [
+      "~/.zcode",
+    ],
+    checkpointExcludes: [
+      ".zcode/v2/provider_config.json",
+      ".zcode/cli/plugins/cache",
+      ".zcode/v2/runtime",
+    ],
+    // Exit 0 is no verdict: turn.failed and a non-success turn.completed are fatal errors (verdictFromStream).
+    verdictFromStream: true,
+    // `-p` is headless (yolo, no TTY); the model comes from the provider file. Every ZCODE_* a
+    // task's `.env` could move or re-route is pinned on the command (zcodeEnvPins).
+    buildCommand: ({ prompt, isResume, homeDir = DEFAULT_HOME_DIR }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      const pins = Object.entries(zcodeEnvPins(homeDir))
+        .map(([name, value]) => `${name}=${shellSingleQuote(value)}`)
+        .join(" ");
+      return `${pins} zcode -p "${prompt}" ${continueFlag}--output-format stream-json`;
+    },
+  },
 };
 
 // =============================================================================
@@ -1258,10 +1371,6 @@ export function isValidAgentType(type: string): type is AgentType {
  */
 export function expandPath(path: string, homeDir: string = DEFAULT_HOME_DIR): string {
   return path.replace(/^~/, homeDir);
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**

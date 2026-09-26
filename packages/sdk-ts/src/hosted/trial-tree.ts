@@ -159,6 +159,9 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   "prime-agent": { stdoutFile: "prime-agent.txt", harborCopies: [] },
   // No Harbor adapter either (Harbor's installed/ has no deepseek entry): dsh.txt, ours.
   dsh: { stdoutFile: "dsh.txt", harborCopies: [] },
+  // No Harbor adapter: zcode.txt, the same pattern; the captured ~/.zcode
+  // (SQLite session store) sits at agent/.zcode/ alone.
+  zcode: { stdoutFile: "zcode.txt", harborCopies: [] },
 };
 
 /**

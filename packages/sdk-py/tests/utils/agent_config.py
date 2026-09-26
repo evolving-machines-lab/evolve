@@ -2,7 +2,7 @@
 
 Creates agent configs based on TEST_AGENT_TYPE environment variable.
 If TEST_AGENT_TYPE is empty, returns None to let Evolve resolve from env.
-Supports: codex, claude, gemini, qwen, kimi, opencode, droid, pi, prime-agent
+Supports: codex, claude, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode
 """
 
 import os
@@ -106,6 +106,11 @@ def get_agent_config() -> Optional[AgentConfig]:
             type='dsh',
             api_key=evolve_api_key,
             model=os.getenv('DSH_MODEL', 'openrouter/deepseek/deepseek-v4.1-flash'),
+    elif agent_type == 'zcode':
+        return AgentConfig(
+            type='zcode',
+            api_key=evolve_api_key,
+            model=os.getenv('ZCODE_MODEL', 'openrouter/z-ai/glm-5.3-flash'),
         )
 
     else:
@@ -132,6 +137,7 @@ def get_agent_display_name(agent_type: AgentType) -> str:
         'pi': 'pi',
         'prime-agent': 'Prime Agent',
         'dsh': 'DeepSeek Harness',
+        'zcode': 'Z Code',
     }
     return names.get(agent_type, agent_type)
 

@@ -9,9 +9,11 @@
  * - Gemini: { url: "...", type: "http"|"sse" } | { command: "..." }
  * - Qwen:   { httpUrl: "..." } | { url: "..." } | { command: "..." }
  * - Kimi Code: { url: "...", transport?: "http"|"sse" } | { command: "...", transport: "stdio" }
+ * - Z Code: { type: "stdio", command, args, env } | { type: "http"|"sse", url, headers } under `mcp.servers`
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
+import { shellSingleQuote } from "../utils/shell";
 import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { validateServers, isNotFoundError } from "./validation";
 
@@ -122,6 +124,25 @@ function toDroidFormat(config: McpServerConfig): Record<string, unknown> {
   }
 
   return { type: transport === "stdio" ? "stdio" : "http", ...rest };
+}
+
+/**
+ * Z Code's MCP schema is a strict union on `type` (stdio | http | sse): the type is always
+ * written and only the keys the schema names ride through (a stray key rejects the entry).
+ */
+function toZcodeFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  if (transport === "stdio" && config.command) {
+    const result: Record<string, unknown> = { type: "stdio", command: config.command };
+    if (config.args && config.args.length > 0) result.args = config.args;
+    if (config.env && Object.keys(config.env).length > 0) result.env = config.env;
+    return result;
+  }
+  const result: Record<string, unknown> = { type: transport === "sse" ? "sse" : "http" };
+  if (config.url) result.url = config.url;
+  const headers = config.headers ?? config.httpHeaders;
+  if (headers && Object.keys(headers).length > 0) result.headers = headers;
+  return result;
 }
 
 // =============================================================================
@@ -418,6 +439,141 @@ export async function writeDroidGatewaySettings(
   };
 
   await sandbox.files.write(settingsPath, JSON.stringify(content, null, 2));
+}
+
+/**
+ * Write MCP config for Z Code
+ *
+ * Z Code reads user-level servers from `mcp.servers` in ~/.zcode/cli/config.json
+ * (the registry's mcpConfig); every other key of that file is preserved.
+ */
+export async function writeZcodeMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  validateServers(servers);
+
+  const settingsDir = getMcpSettingsDir("zcode", homeDir);
+  const settingsPath = getMcpSettingsPath("zcode", homeDir);
+
+  await sandbox.files.makeDir(settingsDir);
+
+  let existingConfig: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(settingsPath);
+    if (typeof existing === "string" && existing.trim()) {
+      existingConfig = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const existingMcp =
+    typeof existingConfig.mcp === "object" && existingConfig.mcp !== null
+      ? (existingConfig.mcp as Record<string, unknown>)
+      : {};
+  const transformedServers = Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, toZcodeFormat(config)])
+  );
+
+  await sandbox.files.write(
+    settingsPath,
+    JSON.stringify({ ...existingConfig, mcp: { ...existingMcp, servers: transformedServers } }, null, 2)
+  );
+}
+
+export interface ZcodeProviderConfigInput {
+  /** The provider file, `~` = the sandbox home (registry zcodeProviderConfig.path). */
+  path: string;
+  providerId: string;
+  providerName: string;
+  /** OpenAI-compatible base URL INCLUDING `/v1` — Z Code appends `/chat/completions`. */
+  baseUrl: string;
+  /** The literal credential: Z Code expands no `${VAR}` in this file. */
+  apiKey: string;
+  /** The wire model id the request names. */
+  model: string;
+  /** One of ZCODE_REASONING_LEVELS. */
+  reasoningLevel: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  /** Extra request headers (the LiteLLM spend tags); {} when none. */
+  headers: Record<string, string>;
+}
+
+/**
+ * Z Code's provider file, built from scratch every run at mode 0600: the CLI reads its model,
+ * level, base URL and key here and nowhere else (ZCode packages/provider/src/config at v3.14.3).
+ */
+export async function writeZcodeProviderConfig(
+  sandbox: SandboxInstance,
+  config: ZcodeProviderConfigInput,
+  homeDir?: string,
+): Promise<void> {
+  const filePath = expandPath(config.path, homeDir);
+  const dir = filePath.slice(0, filePath.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(dir);
+
+  const api: Record<string, unknown> = {
+    type: "openai-chat-completions",
+    baseUrl: config.baseUrl,
+  };
+  if (Object.keys(config.headers).length > 0) api.headers = config.headers;
+
+  const document = {
+    schemaVersion: 1,
+    config: {
+      providerConfigRules: {
+        providerRules: [
+          {
+            providerId: config.providerId,
+            providerName: config.providerName,
+            config: {
+              group: "standard-personal",
+              access: { type: "api-key", apiKey: config.apiKey },
+              api,
+              personalModelIds: [config.model],
+            },
+          },
+        ],
+      },
+      modelConfigRules: {
+        providerModelRules: [
+          {
+            providerId: config.providerId,
+            modelId: config.model,
+            config: {
+              enabled: true,
+              properties: { contextWindow: config.contextWindow, supportsToolCall: true },
+              optionSpecs: {
+                maxOutputTokens: {
+                  max: config.maxOutputTokens,
+                  map: '{"max_tokens": maxOutputTokens}',
+                },
+                reasoningLevel: {
+                  values: ["disabled", "low", "medium", "high"],
+                  map: 'reasoningLevel == "disabled" ? {} : {"reasoning_effort": reasoningLevel}',
+                },
+              },
+            },
+          },
+        ],
+        manualProviderModelRules: [],
+      },
+      defaultModelSelection: {
+        providerId: config.providerId,
+        modelId: config.model,
+        options: { reasoningLevel: config.reasoningLevel },
+      },
+    },
+  };
+
+  await sandbox.files.write(filePath, JSON.stringify(document, null, 2));
+  // The file holds the literal key; the sandbox file API writes with the
+  // default mode, so the permission is tightened right after the write.
+  await sandbox.commands.run(`chmod 600 ${shellSingleQuote(filePath)}`, { timeoutMs: 10000 });
 }
 
 /**

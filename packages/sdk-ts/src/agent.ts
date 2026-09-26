@@ -6,6 +6,7 @@
  */
 
 import type { z } from "zod";
+import { shellSingleQuote } from "./utils/shell";
 import Ajv, { type ValidateFunction } from "ajv";
 import { randomUUID, randomBytes } from "crypto";
 import type {
@@ -47,6 +48,7 @@ import {
   registryOwnsModel,
   registryWireId,
   resolveReasoningEffort,
+  zcodeReasoningLevel,
   type AgentRegistryEntry,
 } from "./registry";
 import {
@@ -59,6 +61,7 @@ import {
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
   writeDshRoutePatch,
+  writeZcodeProviderConfig,
 } from "./mcp";
 import { stringify as stringifyToml } from "smol-toml";
 import { createAgentParser, type AgentParser } from "./parsers";
@@ -179,6 +182,8 @@ function providerRuntimeProviderForAgent(
       return "prime-agent";
     case "dsh":
       return "dsh";
+    case "zcode":
+      return "zcode";
     default:
       return null;
   }
@@ -320,14 +325,28 @@ function withOpenAiV1Path(baseUrl: string): string {
  * Uses registry lookup for agent-specific behavior.
  * Tracks hasRun state for continue flag handling.
  */
+/** The stream's verdict at exit 0 (registry verdictFromStream), read line by line. */
+interface StreamVerdict {
+  failed: boolean;
+  /** A failure has been judged by a stop reason: the stream speaks that vocabulary. */
+  stopReasonJudged: boolean;
+}
+
 /** Every message_end-derived event carries the message's stop reason in extra; the last one is the verdict. */
-function lastModelCallFailedAfter(events: OutputEvent[] | null, previous: boolean): boolean {
-  let failed = previous;
+function streamVerdictAfter(events: OutputEvent[] | null, previous: StreamVerdict): StreamVerdict {
+  let { failed, stopReasonJudged } = previous;
   for (const event of events ?? []) {
     const stop = event.extra?.stopReason;
-    if (typeof stop === "string") failed = stop === "error" || stop === "aborted";
+    if (typeof stop === "string") {
+      failed = stop === "error" || stop === "aborted";
+      if (failed) stopReasonJudged = true;
+    }
+    // Harnesses that never print a stop reason report failure as a fatal error. Once a stop
+    // reason has judged a failure, a later fatal repeats it (pi's agent_end) and cannot
+    // overturn a recovered call.
+    if (!stopReasonJudged && event.update.sessionUpdate === "error" && event.update.fatal) failed = true;
   }
-  return failed;
+  return { failed, stopReasonJudged };
 }
 
 export class Agent {
@@ -570,6 +589,9 @@ export class Agent {
     void handle
       .wait()
       .then(async (result) => {
+        if (kind === "run" && sandbox) {
+          await this.removeZcodePerRunConfig(sandbox);
+        }
         const interrupted =
           this.interruptedOperations.delete(opId) || result.exitCode === 130;
         if (interrupted) {
@@ -587,7 +609,10 @@ export class Agent {
         const succeeded = result.exitCode === 0 && !streamFailed();
         this.finalizeOperation(opId, callbacks, succeeded ? completeReason : failedReason, succeeded ? "idle" : "error");
       })
-      .catch(() => {
+      .catch(async () => {
+        if (kind === "run" && sandbox) {
+          await this.removeZcodePerRunConfig(sandbox);
+        }
         this.interruptedOperations.delete(opId);
         this.finalizeOperation(opId, callbacks, failedReason, "error");
       });
@@ -828,6 +853,8 @@ export class Agent {
       for (const mapping of Object.values(this.registry.providerEnvMap)) {
         envVars[mapping.keyEnv] = this.agentConfig.apiKey;
       }
+    } else if (this.credentialRidesProviderFile()) {
+      // The CLI reads its key from the provider file the SDK writes, in every mode: no key env.
     } else {
       // Single-provider: resolve model-specific key env for multi-provider CLIs in direct mode
       const providerPrefix = this.agentConfig.model?.split("/")[0];
@@ -1432,8 +1459,14 @@ export class Agent {
   private shouldExposeProviderRuntimeTokenEnv(): boolean {
     return (
       this.agentConfig.type !== "kimi" &&
-      !this.registry.gatewayConfigEnv
+      !this.registry.gatewayConfigEnv &&
+      !this.credentialRidesProviderFile()
     );
+  }
+
+  /** Z Code: the literal key lives in the per-run provider file, so no mode puts a key env in the process. */
+  private credentialRidesProviderFile(): boolean {
+    return this.registry.zcodeProviderConfig !== undefined;
   }
 
   private buildProviderRuntimeProcessEnvs(): Record<string, string> {
@@ -1446,9 +1479,9 @@ export class Agent {
       if (this.agentConfig.type === "kimi") {
         return this.buildKimiDirectModelEnvs();
       }
-      const envs: Record<string, string> = {
-        [this.registry.apiKeyEnv]: this.agentConfig.apiKey,
-      };
+      const envs: Record<string, string> = this.credentialRidesProviderFile()
+        ? {}
+        : { [this.registry.apiKeyEnv]: this.agentConfig.apiKey };
       if (this.registry.baseUrlEnv && this.agentConfig.baseUrl) {
         envs[this.registry.baseUrlEnv] = this.agentConfig.baseUrl;
       }
@@ -2308,6 +2341,64 @@ export class Agent {
     );
   }
 
+  /**
+   * Z Code reads model, level, URL and key from its provider file only, so every
+   * mode writes it before each spawn (gateway mode adds the spend headers).
+   */
+  private async writeZcodePerRunConfig(
+    sandbox: SandboxInstance,
+    runId: string,
+  ): Promise<void> {
+    const config = this.registry.zcodeProviderConfig;
+    if (!config) return;
+    const model = this.agentConfig.model || this.registry.defaultModel;
+    const reasoningLevel = zcodeReasoningLevel(this.reasoningEffort());
+    let connection: { baseUrl: string; apiKey: string; model: string; headers: Record<string, string> };
+    if (this.agentConfig.externalGateway) {
+      connection = {
+        baseUrl: this.agentConfig.baseUrl ?? withOpenAiV1Path(getGatewayUrl()),
+        apiKey: this.agentConfig.apiKey,
+        model: registryWireId(this.registry, model),
+        headers: {},
+      };
+    } else if (this.agentConfig.isDirectMode) {
+      connection = {
+        baseUrl: this.agentConfig.baseUrl ?? this.registry.defaultBaseUrl ?? "",
+        apiKey: this.agentConfig.apiKey,
+        model: this.resolveCommandModel(model),
+        headers: {},
+      };
+    } else {
+      const providerRuntime = this.requireActiveProviderRuntimeToken();
+      connection = {
+        baseUrl: withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl()),
+        apiKey: providerRuntime?.token ?? this.agentConfig.apiKey,
+        model: this.resolveCommandModel(model),
+        headers: {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+          ...this.providerRuntimeHeaderUpdates(),
+        },
+      };
+    }
+    await writeZcodeProviderConfig(
+      sandbox,
+      { ...config, ...connection, reasoningLevel },
+      this.homeDir,
+    );
+  }
+
+  /** The provider file holds the run's credential literally, so it lives only while the run does. */
+  private async removeZcodePerRunConfig(sandbox: SandboxInstance): Promise<void> {
+    const config = this.registry.zcodeProviderConfig;
+    if (!config) return;
+    try {
+      await sandbox.commands.run(`rm -f ${shellSingleQuote(expandPath(config.path, this.homeDir))}`, { timeoutMs: 10000 });
+    } catch {
+      // The run's own outcome stands; a sandbox already gone has no file left.
+    }
+  }
+
   async run(
     options: RunOptions,
     callbacks?: StreamCallbacks,
@@ -2554,10 +2645,11 @@ export class Agent {
     // only route these CLIs take, and it carries the run tag in the provider's
     // headers, so it is rewritten before every spawn in every mode.
     await this.writePiFamilyModelsJson(sandbox, runId);
+    await this.writeZcodePerRunConfig(sandbox, runId);
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
-    let lastModelCallFailed = false;
+    let streamVerdict: StreamVerdict = { failed: false, stopReasonJudged: false };
 
     // Create parser once (shared by onContent callback and session logger)
     const parser = createAgentParser(this.agentConfig.type);
@@ -2574,7 +2666,7 @@ export class Agent {
 
         // Parse once, use for both session logger and onContent
         const events = parser(line);
-        lastModelCallFailed = lastModelCallFailedAfter(events, lastModelCallFailed);
+        streamVerdict = streamVerdictAfter(events, streamVerdict);
         this.captureHarnessSessionId(line, events);
 
         // Log to session logger with pre-parsed events (non-blocking)
@@ -2611,7 +2703,7 @@ export class Agent {
 
     if (background) {
       this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox, () =>
-        this.registry.verdictFromStream === true && lastModelCallFailed,
+        this.registry.verdictFromStream === true && streamVerdict.failed,
       );
       return {
         sandboxId: sandbox.sandboxId,
@@ -2630,6 +2722,7 @@ export class Agent {
     } catch (error) {
       this.interruptedOperations.delete(opId);
       this.finalizeOperation(opId, callbacks, "run_failed", "error");
+      await this.removeZcodePerRunConfig(sandbox);
       throw error;
     }
 
@@ -2637,7 +2730,7 @@ export class Agent {
     if (lineBuffer.trim()) {
       // Parse once, use for both session logger and onContent
       const events = parser(lineBuffer);
-      lastModelCallFailed = lastModelCallFailedAfter(events, lastModelCallFailed);
+      streamVerdict = streamVerdictAfter(events, streamVerdict);
       this.captureHarnessSessionId(lineBuffer, events);
 
       // Log to session logger with pre-parsed events (non-blocking)
@@ -2656,7 +2749,7 @@ export class Agent {
 
     // pi and Prime Agent exit 0 whatever happened (registry verdictFromStream):
     // the last assistant message_end decides, never their exit code alone.
-    const succeeded = result.exitCode === 0 && !(this.registry.verdictFromStream && lastModelCallFailed);
+    const succeeded = result.exitCode === 0 && !(this.registry.verdictFromStream && streamVerdict.failed);
     const interrupted =
       this.interruptedOperations.delete(opId) || result.exitCode === 130;
     if (interrupted) {
@@ -2666,6 +2759,7 @@ export class Agent {
     } else {
       this.finalizeOperation(opId, callbacks, "run_failed", "error");
     }
+    await this.removeZcodePerRunConfig(sandbox);
 
     await this.writeCapturedSessionId(sandbox);
 

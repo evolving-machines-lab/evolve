@@ -573,7 +573,8 @@ export type AgentType =
   | "droid"
   | "pi"
   | "prime-agent"
-  | "dsh";
+  | "dsh"
+  | "zcode";
 
 /** Agent type constants for use in code */
 export const AGENT_TYPES = {
@@ -587,6 +588,7 @@ export const AGENT_TYPES = {
   PI: "pi",
   PRIME_AGENT: "prime-agent",
   DSH: "dsh",
+  ZCODE: "zcode",
 } as const;
 
 // =============================================================================

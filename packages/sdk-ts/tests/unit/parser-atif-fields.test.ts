@@ -22,6 +22,8 @@
  *   pi        --mode json, pi 0.87.1 (message_end.usage per call, 2026-09-25)
  *   prime     --mode json, Prime Agent v0.9.6 (the same shape; ipython details)
  *   dsh       --profile headless --json, @deepseek-ai/dsh@0.1.7-rc.2 (step_end.usage)
+ *   zcode     -p --output-format stream-json, ZCode 3.14.3 / CLI 0.16.9
+ *             (model_request_completed usage per request, result.usage per run)
  *
  * The other half of the law: accounting is NEVER work (isAgentWorkUpdate),
  * so a usage-only stream still trips the eval runner's harnessNeverRan.
@@ -37,6 +39,7 @@ import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
 import { createPiParser } from "../../src/parsers/pi.ts";
 import { createPrimeAgentParser } from "../../src/parsers/prime-agent.ts";
 import { createQwenParser } from "../../src/parsers/qwen.ts";
+import { createZcodeParser } from "../../src/parsers/zcode.ts";
 import { isAgentWorkUpdate } from "../../src/parsers/types.ts";
 import type { OutputEvent, SessionUpdate } from "../../src/parsers/types.ts";
 
@@ -471,6 +474,42 @@ async function testDsh(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// zcode
+// ---------------------------------------------------------------------------
+
+async function testZcode(): Promise<void> {
+  console.log("\n[zcode] the first request names the model; every line carries its clock; usage per request AND per run");
+  const base = { sessionId: "sess_z", traceId: "t", turnId: "turn_1" };
+  const events = parseAll(createZcodeParser(), [
+    JSON.stringify({ ...base, seq: 3, timestamp: 1790376328765, type: "session.updated", payload: { messageCount: 6, providerId: "evolve", modelId: "openrouter/z-ai/glm-5.3", toolCount: 40, iteration: 0 } }),
+    JSON.stringify({ ...base, seq: 5, timestamp: 1790376331375, type: "model.streaming", payload: { assistantMessageId: "msg_a", delta: "", done: false, kind: "start" } }),
+    JSON.stringify({ ...base, seq: 30, timestamp: 1790376331671, type: "model.streaming", payload: { assistantMessageId: "msg_a", delta: "I'll create the file.", done: false, kind: "text_delta" } }),
+    JSON.stringify({ ...base, seq: 38, timestamp: 1790376331904, type: "model.streaming", payload: { assistantMessageId: "msg_a", delta: "", done: false, input: { content: "hi\n", file_path: "/app/hello.txt" }, kind: "tool_call", toolCallId: "call_1", toolName: "Write" } }),
+    JSON.stringify({ ...base, seq: 40, timestamp: 1790376331932, type: "session.updated", payload: { type: "model_request_completed", modelId: "openrouter/z-ai/glm-5.3", attempt: 1, durationMs: 3161, finishReason: "tool-calls", usage: { inputTokens: 20026, outputTokens: 212, totalTokens: 20238, cacheReadTokens: 0, reasoningTokens: 108 } } }),
+    JSON.stringify({ ...base, seq: 47, timestamp: 1790376331971, type: "tool.updated", payload: { toolCallId: "call_1", result: { success: true, content: "File created successfully at: /app/hello.txt", perf: { totalMs: 19, detail: { kind: "filesystem", filesystem: { fileCount: 1, totalBytes: 3 } } } }, duration: 15, kind: "result" } }),
+    JSON.stringify({ type: "result", sessionId: "sess_z", traceId: "t", turnId: "turn_1", response: "Done.", usage: { source: "provider", modelRequestCount: 2, inputTokens: 40370, outputTokens: 408, totalTokens: 40778, cacheReadTokens: 64, cacheWriteTokens: 0, reasoningTokens: 278, webFetchRequests: 0, webSearchRequests: 0 }, eventCount: 117, projection: { status: "idle", turnCount: 1, totalTokenCount: 40778, contextUsed: 20540, contextWindow: 200000 } }),
+  ]);
+  const message = ofKind(events, "agent_message_chunk")[0];
+  assert(message?.model === "openrouter/z-ai/glm-5.3", "zcode: the model of the first request line is stamped on later events");
+  assert(message?.timestamp === new Date(1790376331671).toISOString(), "zcode: the epoch-ms timestamp is ISO on the envelope");
+  assert(message?.messageId === "msg_a", "zcode: the assistant message id keys the line");
+  const call = ofKind(events, "tool_call")[0];
+  assert(call?.messageId === "msg_a" && call.update.toolName === "Write", "zcode: the tool call rides its message id with the verbatim tool name");
+  const done = ofKind(events, "tool_call_update")[0];
+  assert(same((done?.update.rawOutput as Record<string, unknown>)?.success, true) && done?.update.status === "completed", "zcode: rawOutput is the structured result");
+  const usage = ofKind(events, "usage");
+  assert(usage.length === 2, "zcode: one per-call usage event and one run total");
+  assert(usage[0].update.scope === "call" && usage[0].messageId === "msg_a" && usage[0].extra?.finishReason === "tool-calls", "zcode: the per-call usage is keyed to its message and carries finishReason");
+  assert(
+    same(usage[0].update.usage, { promptTokens: 20026, completionTokens: 212, cachedTokens: 0, extra: { totalTokens: 20238, reasoningTokens: 108 } }),
+    "zcode: inputTokens already includes the cached share, so promptTokens is inputTokens; reasoningTokens and totalTokens ride extra verbatim",
+  );
+  assert(usage[1].update.scope === "run" && same(usage[1].update.usage.promptTokens, 40370) && same(usage[1].update.usage.cachedTokens, 64), "zcode: result.usage is the run total");
+  assert(same((usage[1].update.usage.extra as Record<string, unknown>)?.modelRequestCount, 2), "zcode: modelRequestCount rides extra");
+  assert(ofKind(events, "agent_message_chunk").length === 2, "zcode: result.response is emitted when it differs from the streamed text");
+}
+
+// ---------------------------------------------------------------------------
 // the law
 // ---------------------------------------------------------------------------
 
@@ -493,6 +532,7 @@ async function main(): Promise<void> {
   await testKimi();
   await testPi();
   await testDsh();
+  await testZcode();
   await testLaw();
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

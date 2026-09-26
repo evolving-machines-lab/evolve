@@ -17,6 +17,7 @@ import { createOpenCodeParser } from "./opencode";
 import { createPiParser } from "./pi";
 import { createPrimeAgentParser } from "./prime-agent";
 import { createQwenParser } from "./qwen";
+import { createZcodeParser } from "./zcode";
 
 // Re-export types for convenience
 export type { OutputEvent, SessionUpdate, AgentError, AgentUsage, HarnessEvent, TokenUsage } from "./types";
@@ -65,6 +66,8 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "dsh":
       return createDshParser();
+    case "zcode":
+      return createZcodeParser();
 
     default:
       return () => null;
@@ -132,3 +135,4 @@ export { createOpenCodeParser } from "./opencode";
 export { createPiParser } from "./pi";
 export { createPrimeAgentParser } from "./prime-agent";
 export { createQwenParser, parseQwenOutput } from "./qwen";
+export { createZcodeParser } from "./zcode";

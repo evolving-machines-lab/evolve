@@ -110,12 +110,12 @@ interface OutputEvent {
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; pi and prime-agent stamp every message;
+clock (claude, gemini, opencode, droid and zcode stamp every line; pi and prime-agent stamp every message;
 qwen, kimi and dsh stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets you
+the model named on the line, or on the harness's init line for gemini and droid and on its first request line for zcode; `messageId` lets you
 tell which lines belong to one LLM message (claude prints one line per content block, all with the
 same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
-of the `Task`/`agent` call that spawned it.
+of the `Task`/`agent`/`Agent` call that spawned it (a zcode sub-agent also names its own session under `extra.childSessionId`).
 
 ---
 
@@ -462,8 +462,9 @@ Every harness prints its own token accounting on the stream, and it arrives as i
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
 opencode prints each step's tokens and cost, pi and prime-agent print each model call's tokens on
 its `message_end` line (prompt tokens are input plus cache reads plus cache writes, as Harbor counts
-them; a cost is reported only when the harness prices the call itself), dsh prints each step's tokens,
-and codex, gemini, claude, qwen and droid print a whole-run total on their terminal line. Kimi's
+them; a cost is reported only when the harness prices the call itself), dsh prints each step's tokens, zcode prints each model request's
+tokens (reasoning and cache counts under their own names in `extra`, never a cost),
+and codex, gemini, claude, qwen, droid and zcode print a whole-run total on their terminal line. Kimi's
 stream-json prints no usage at all, so a kimi run simply has no `usage` events.
 
 ```typescript
@@ -502,3 +503,23 @@ const promptTokens = [...perMessage.values()].reduce((n, u) => n + (u.promptToke
 
 Like `error`, `usage` is **not agent work**: `isAgentWorkUpdate` answers `false` for it, so a
 stream that carries only accounting still counts as a run that did nothing.
+
+## Harness-reported facts (`harness_event`)
+
+A harness also writes lines that are neither output, nor a tool, nor a failure, nor usage: a
+scheduled retry, a sub-agent's status, a session title, a compaction record, or a line type the
+parser does not know yet. Those pass through as their own update, under the harness's own name for
+the line, with the line's other fields verbatim:
+
+```typescript
+interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  type: string;                      // the harness's own type word for the line
+  payload: Record<string, unknown>;  // the line's other fields, verbatim
+}
+```
+
+Like `error` and `usage`, a `harness_event` is **not agent work**: `isAgentWorkUpdate` answers
+`false` for it. A line type the parser does not know is also logged once per run
+(`[<harness> parser] unknown event type …`), so a vendor release that adds a line type never breaks
+a run and never disappears from the transcript.

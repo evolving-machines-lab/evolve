@@ -637,6 +637,45 @@
       "defaultEffort": "thinking",
       "supportsConfig": false,
       "presets": []
+    },
+    "zcode": {
+      "defaultModel": "openrouter/z-ai/glm-5.3",
+      "models": [
+        {
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/glm-5.3",
+          "modelId": "fireworks/glm-5.3",
+          "description": "Zhipu GLM-5.3 via Fireworks"
+        },
+        {
+          "alias": "fireworks/glm-5.3-flash",
+          "modelId": "fireworks/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via Fireworks"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
     }
   }
 }

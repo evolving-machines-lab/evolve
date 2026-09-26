@@ -20,6 +20,10 @@
  *             shape pinned by SDKResultError in @anthropic-ai/claude-agent-sdk
  *   codex     the stdout of the failing daytona/modal trials (see
  *             codex-parser-errors.test.ts, which owns the codex regression)
+ *   zcode     live capture, ZCode 3.14.3 / CLI 0.16.9 (`zcode -p --output-format
+ *             stream-json`, 2026-09-25): turn.failed and the non-success
+ *             turn.completed are the turn's verdict; model_request_failed is
+ *             one request's failure with retries still to come
  *   droid     live capture, droid 0.182.0 (`droid exec --output-format
  *             stream-json`, and the `--output-format json` result line)
  *   dsh       live capture, @deepseek-ai/dsh@0.1.7-rc.2 (`--profile headless
@@ -49,6 +53,7 @@ import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
 import { createPiParser } from "../../src/parsers/pi.ts";
 import { createPrimeAgentParser } from "../../src/parsers/prime-agent.ts";
 import { createQwenParser } from "../../src/parsers/qwen.ts";
+import { createZcodeParser } from "../../src/parsers/zcode.ts";
 import { isAgentWorkUpdate } from "../../src/parsers/types.ts";
 import type { AgentError, OutputEvent } from "../../src/parsers/types.ts";
 
@@ -184,6 +189,40 @@ async function testCodex(): Promise<void> {
     contains: ["stream disconnected before completion", "stream disconnected before completion"],
     fatal: [false, true],
   });
+}
+
+// ---------------------------------------------------------------------------
+// zcode
+// ---------------------------------------------------------------------------
+
+async function testZcode(): Promise<void> {
+  console.log("\n[zcode] one request failure per attempt, then the turn's verdict (live capture, ZCode 3.14.3)");
+  // A 429 the CLI retries, then the turn fails: two lines, two failures, only
+  // the second terminal. The request line's `retryable` says a retry follows.
+  const events = parseAll(createZcodeParser(), [
+    `{"type":"session.updated","sessionId":"sess_s","seq":5,"timestamp":1790376503629,"payload":{"type":"model_request_failed","attempt":1,"maxAttempts":3,"message":"Rate limit exceeded (sink)","reason":"rate_limited","statusCode":429,"retryable":true,"errorCode":"model_rate_limited"}}`,
+    `{"type":"turn.failed","sessionId":"sess_s","seq":12,"timestamp":1790376507120,"payload":{"error":{"type":"unknown_error","code":"internal_error","message":"Internal server error (sink)"},"turnPhase":"processing_input"}}`,
+  ]);
+  assertLaw("zcode", events, {
+    count: 2,
+    contains: ["Rate limit exceeded (sink)", "Internal server error (sink)"],
+    fatal: [false, true],
+  });
+  assert(events[0]?.sessionId === "sess_s", "zcode: keeps the session id");
+
+  console.log("\n[zcode] a cancelled turn ends with turn.completed, not turn.failed, and no result line");
+  const cancelled = parseAll(createZcodeParser(), [
+    `{"type":"turn.completed","sessionId":"sess_s","seq":6,"timestamp":1,"payload":{"response":"","tokenCount":0,"toolCallCount":0,"duration":3928,"resultType":"cancelled"}}`,
+  ]);
+  assertLaw("zcode/cancelled", cancelled, { count: 1, contains: ["cancelled"], fatal: [true] });
+
+  console.log("\n[zcode] a successful turn is untouched");
+  const ok = parseAll(createZcodeParser(), [
+    `{"type":"turn.completed","sessionId":"sess_s","seq":6,"timestamp":1,"payload":{"response":"OK","resultType":"success","usage":{"inputTokens":10,"outputTokens":1}}}`,
+    `{"type":"result","sessionId":"sess_s","response":"OK","usage":{"inputTokens":10,"outputTokens":1},"eventCount":5,"projection":{"status":"idle"}}`,
+  ]);
+  assert(errorsOf(ok).length === 0, "zcode: a successful turn is not a failure");
+  assert(workOf(ok).length === 1, "zcode: the final response is agent work");
 }
 
 // ---------------------------------------------------------------------------
@@ -535,6 +574,11 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
       parse: createDshParser(),
       lines: [`{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error","error":{"message":"boom","code":"SERVER"}}}`],
     },
+    {
+      name: "zcode",
+      parse: createZcodeParser(),
+      lines: [`{"type":"turn.failed","sessionId":"sess_s","seq":1,"timestamp":1,"payload":{"error":{"type":"unknown_error","code":"internal_error","message":"boom"},"turnPhase":"processing_input"}}`],
+    },
   ];
 
   for (const { name, parse, lines } of cases) {
@@ -545,7 +589,7 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
     assert(errorsOf(events)[0]?.message === "boom", `${name}: the message is exactly what the harness said`);
   }
 
-  assert(cases.length === 10, "all ten harnesses are covered");
+  assert(cases.length === 11, "all eleven harnesses are covered");
 }
 
 async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
@@ -564,6 +608,8 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
     { name: "prime-agent", parse: createPrimeAgentParser(), line: `{"type":"auto_retry_end","success":false}` },
     { name: "dsh", parse: createDshParser(), line: `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error"}}` },
     { name: "dsh/max-tokens", parse: createDshParser(), line: `{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"max-tokens"}}` },
+    { name: "zcode", parse: createZcodeParser(), line: `{"type":"turn.failed","sessionId":"sess_s","seq":1,"timestamp":1,"payload":{"error":{},"turnPhase":"model_creation"}}` },
+    { name: "zcode/request", parse: createZcodeParser(), line: `{"type":"session.updated","sessionId":"sess_s","seq":1,"timestamp":1,"payload":{"type":"model_request_failed","attempt":1,"maxAttempts":3}}` },
   ];
 
   for (const { name, parse, line } of cases) {
@@ -587,6 +633,7 @@ async function main(): Promise<void> {
   await testOpenCode();
   await testQwen();
   await testPiFamily();
+  await testZcode();
   await testNoHarnessFoldsAFailureIntoAMessage();
   await testMalformedFailuresDegradeInsteadOfVanishing();
 

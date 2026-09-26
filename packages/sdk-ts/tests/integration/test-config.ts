@@ -128,8 +128,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "pi", "prime-agent", "dsh"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh`);
+  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "pi", "prime-agent", "dsh", "zcode"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode`);
   }
   return type as AgentType;
 }
@@ -211,6 +211,11 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         type: "dsh",
         apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
         model: process.env.DSH_MODEL || "openrouter/deepseek/deepseek-v4.1-flash",
+    case "zcode":
+      return {
+        type: "zcode",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.ZCODE_MODEL || "openrouter/z-ai/glm-5.3-flash",
       };
 
     default:

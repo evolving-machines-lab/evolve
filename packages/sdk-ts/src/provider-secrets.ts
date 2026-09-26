@@ -14,7 +14,8 @@ export type ProviderRuntimeToken = {
     | "droid"
     | "pi"
     | "prime-agent"
-    | "dsh";
+    | "dsh"
+    | "zcode";
   credentialMode: "provider_key" | "evolve_key";
   token: string;
   bindingSecret: string;
@@ -101,7 +102,8 @@ function isRuntimeTokenResponse(value: unknown): value is ProviderRuntimeToken {
       record.provider === "droid" ||
       record.provider === "pi" ||
       record.provider === "prime-agent" ||
-      record.provider === "dsh"
+      record.provider === "dsh" ||
+      record.provider === "zcode"
     ) &&
     (record.credentialMode === "provider_key" ||
       record.credentialMode === "evolve_key") &&

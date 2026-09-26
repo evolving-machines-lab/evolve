@@ -14,6 +14,7 @@
 #   - Kimi Code
 #   - pi (+ the pi-mcp-adapter extension) and Prime Agent (+ its Python kernel)
 #   - DeepSeek Harness (dsh, pinned)
+#   - Z Code (from the official .deb, on the image's Node 24)
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
 #
@@ -123,6 +124,36 @@ RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/ho
 RUN npm install -g @deepseek-ai/dsh@0.1.7-rc.2 && dsh --version
 
 # ---------------------------------------------------------------------------
+# Z Code (zai-org/ZCode)
+# ---------------------------------------------------------------------------
+# Z.ai ships no npm package or installer: the CLI is the `glm` bundle inside the
+# official Linux .deb (version + sha512 pinned), unpacked under /opt/zcode and run
+# on the image's one Node 24 (its engines pin). The CLI reads the catalog path and
+# its search binaries from the env set below (cli/src/provider-runtime-env.ts,
+# embedded-search-backend.ts).
+RUN set -eu \
+    && ZCODE_VERSION=3.14.3 \
+    && ZCODE_DEB_SHA512=54362bc8bf5b2188ccdeec51349f2c470e52e73f4b06646fbd6d5a990f7012784904c7374656f683c26fc56bf4e023e7d0680a1c42446665a62d9b88e84620d6 \
+    && cd /tmp \
+    && curl -fsSL -o zcode.deb "https://cdn-zcode.z.ai/zcode/electron/releases/${ZCODE_VERSION}/linux-x64/ZCode-${ZCODE_VERSION}-linux-x64.deb" \
+    && echo "${ZCODE_DEB_SHA512}  zcode.deb" | sha512sum -c - \
+    && mkdir -p zcode-deb /opt/zcode \
+    && dpkg-deb -x zcode.deb zcode-deb \
+    && mv zcode-deb/opt/ZCode/resources/glm /opt/zcode/glm \
+    && mv zcode-deb/opt/ZCode/resources/tools /opt/zcode/tools \
+    && mkdir -p /opt/zcode/glm/provider \
+    && cp zcode-deb/opt/ZCode/resources/config/provider/zcode-builtin.json /opt/zcode/glm/provider/zcode-builtin.json \
+    && dpkg-deb -f zcode.deb Version > /opt/zcode/VERSION \
+    && printf '#!/bin/sh\nexec node /opt/zcode/glm/zcode.cjs "$@"\n' > /usr/local/bin/zcode \
+    && chmod +x /usr/local/bin/zcode \
+    && rm -rf zcode.deb zcode-deb \
+    && zcode --version
+ENV ZCODE_BUILTIN_PROVIDER_CONFIG_FILE=/opt/zcode/glm/provider/zcode-builtin.json \
+    ZCODE_BFS_BINARY=/opt/zcode/tools/bfs/bfs \
+    ZCODE_RG_BINARY=/opt/zcode/tools/ripgrep/rg \
+    ZCODE_UGREP_BINARY=/opt/zcode/tools/ugrep/ugrep
+
+# ---------------------------------------------------------------------------
 # MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
 # ---------------------------------------------------------------------------
 RUN npm install -g mcp-remote
@@ -160,6 +191,7 @@ RUN mkdir -p /home/user/.claude/skills \
              /home/user/.pi/agent/skills \
              /home/user/.prime/agent/skills \
              /home/user/.dsh/skills \
+             /home/user/.zcode/skills \
              /opt/evolve/prime-agent \
     && chown -R user:user /home/user /opt/evolve/prime-agent
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, Union, runtime_checkable
 
 
-AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid', 'pi', 'prime-agent', 'dsh']
+AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid', 'pi', 'prime-agent', 'dsh', 'zcode']
 WorkspaceMode = Literal['knowledge', 'swe', 'task']
 BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
 BrowserConfig = Union[BrowserProvider, Dict[str, Any]]

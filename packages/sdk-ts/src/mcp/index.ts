@@ -15,6 +15,7 @@ import {
   writeDroidMcpConfig,
   writePiMcpConfig,
   writePrimeAgentMcpConfig,
+  writeZcodeMcpConfig,
 } from "./json";
 import { writeCodexMcpConfig } from "./toml";
 import { writeDshMcpConfig } from "./yaml";
@@ -32,6 +33,7 @@ import { writeDshMcpConfig } from "./yaml";
  * - pi: JSON to ~/.pi/agent/mcp.json (the pi-mcp-adapter extension's file)
  * - Prime Agent: JSON to ~/.prime/agent/settings.json (mcpServers key)
  * - dsh: YAML patch rows to ~/.dsh/evolve-mcp.patch.yml
+ * - Z Code: JSON to ~/.zcode/cli/config.json (mcp.servers key)
  */
 export async function writeMcpConfig(
   agentType: AgentType,
@@ -83,6 +85,8 @@ export async function writeMcpConfig(
 
     case "dsh":
       await writeDshMcpConfig(sandbox, servers, homeDir);
+    case "zcode":
+      await writeZcodeMcpConfig(sandbox, servers, homeDir);
       break;
 
     default:
@@ -100,6 +104,8 @@ export {
   writeDroidMcpConfig,
   writePiMcpConfig,
   writePrimeAgentMcpConfig,
+  writeZcodeMcpConfig,
+  writeZcodeProviderConfig,
   writeJsonSpendHeaders,
   writeQwenThinkingConfig,
   writeDroidGatewaySettings,

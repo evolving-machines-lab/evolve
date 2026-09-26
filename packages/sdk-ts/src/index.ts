@@ -269,6 +269,7 @@ export {
   createGeminiParser,
   createPiParser,
   createPrimeAgentParser,
+  createZcodeParser,
   parseQwenOutput,
 } from "./parsers";
 
@@ -307,6 +308,8 @@ export {
   writeDshRoutePatch,
   writeGeminiMcpConfig,
   writeQwenMcpConfig,
+  writeZcodeMcpConfig,
+  writeZcodeProviderConfig,
 } from "./mcp";
 
 // =============================================================================

@@ -93,7 +93,8 @@ type RuntimeProvider =
   | "droid"
   | "pi"
   | "prime-agent"
-  | "dsh";
+  | "dsh"
+  | "zcode";
 
 function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
   const openAiCompatible = new Set<RuntimeProvider>([
@@ -105,6 +106,7 @@ function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
     "pi",
     "prime-agent",
     "dsh",
+    "zcode",
   ]);
   const suffix = openAiCompatible.has(provider) ? "/v1" : "";
   const baseUrl = `https://dashboard.test/api/model-proxy/${provider}${suffix}`;
@@ -158,6 +160,8 @@ class MockCommands implements SandboxCommands {
   public mode: SpawnMode = "instant";
   /** The stdout lines an instant spawn prints (one noop line by default). */
   public stdoutScript: string[] | null = null;
+  /** The exit code an instant, uninterrupted spawn reports. */
+  public exitCode = 0;
   public killSucceeds = true;
   public activeHandle: SandboxCommandHandle | null = null;
 
@@ -211,7 +215,7 @@ class MockCommands implements SandboxCommands {
         for (const line of this.stdoutScript ?? ['{"type":"noop"}']) options?.onStdout?.(line + "\n");
         finished = true;
         resolveWait?.({
-          exitCode: interrupted ? 130 : 0,
+          exitCode: interrupted ? 130 : this.exitCode,
           stdout: interrupted ? "" : "ok",
           stderr: "",
         });
@@ -1984,6 +1988,9 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
     { agentType: "pi", provider: "pi", tokenMustBeInSandboxConfig: true },
     { agentType: "prime-agent", provider: "prime-agent", tokenMustBeInSandboxConfig: true },
     { agentType: "dsh", provider: "dsh", tokenMustBeInSandboxConfig: true },
+    // zcode reads its key from the per-run provider file, written into the
+    // sandbox (the writes are part of sandboxConfig below), never from env.
+    { agentType: "zcode", provider: "zcode", tokenMustBeInSandboxConfig: true },
   ];
 
   try {
@@ -2761,7 +2768,7 @@ async function testExternalGatewayMutualExclusivity(): Promise<void> {
 }
 
 async function testExternalGatewayPerHarnessWiring(): Promise<void> {
-  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/pi/prime-agent/dsh)");
+  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/pi/prime-agent/dsh/zcode)");
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
@@ -3022,13 +3029,65 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
     const directPatch = dshDirectSandbox.files.writes.get("/home/user/.dsh/evolve-route.patch.yml") ?? "";
     assert(directPatch.includes('model: "deepseek/deepseek-v4.1-flash"'), "dsh direct mode names OpenRouter's own model id in the patch");
     assert(!directPatch.includes("headers:"), "dsh direct mode carries no spend headers");
+
+    // zcode: routed by the per-run provider file alone (no --model flag, no
+    // credential env read by the CLI): the caller's base URL and key VERBATIM,
+    // the roster wire id, no LiteLLM headers.
+    const zcode = await runHarness("zcode", "openrouter/z-ai/glm-5.3-flash");
+    const providerRaw = zcode.files.get("/home/user/.zcode/v2/provider_config.json") ?? "";
+    assert(providerRaw.length > 0, "zcode externalGateway writes the provider file");
+    const providerDoc = JSON.parse(providerRaw) as {
+      config: {
+        providerConfigRules: { providerRules: Array<{ config: { access: { apiKey: string }; api: { baseUrl: string; headers?: unknown } } }> };
+        defaultModelSelection: { modelId: string; options: { reasoningLevel: string } };
+      };
+    };
+    const zcodeProvider = providerDoc.config.providerConfigRules.providerRules[0]?.config;
+    assertEqual(zcodeProvider?.api.baseUrl, EXTERNAL_URL, "zcode provider file points at the external base URL VERBATIM");
+    assertEqual(zcodeProvider?.access.apiKey, EXTERNAL_KEY, "zcode provider file carries the caller-minted key literally");
+    assertEqual(zcodeProvider?.api.headers, undefined, "zcode external provider file carries NO LiteLLM spend headers");
+    assertEqual(providerDoc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3-flash", "zcode provider file names the roster wire id");
+    assertEqual(providerDoc.config.defaultModelSelection.options.reasoningLevel, "high", "zcode provider file stamps the pinned effort as its reasoning level");
+    assert(zcode.command.includes("zcode -p ") && zcode.command.includes("--output-format stream-json"), "zcode command is the headless stream-json prompt");
+    assert(!zcode.command.includes("--model"), "zcode command carries no --model flag (the CLI has none)");
+    assert(zcode.command.includes("ZCODE_MODEL_TELEMETRY_ENABLED='0'"), "zcode command switches telemetry off");
+    assert(zcode.command.includes("ZCODE_PERSONAL_PROVIDER_CONFIG_FILE='/home/user/.zcode/v2/provider_config.json'"), "zcode command pins the provider file path against a task's .env");
+    assert(!("OPENAI_BASE_URL" in zcode.spawnEnvs), "zcode spawn env carries no base URL env: routing rides the provider file");
+
+    // zcode direct mode: OpenRouter's own id, the user's key, no headers.
+    const zcodeDirectCommands = new MockCommands();
+    const zcodeDirectSandbox = new MockSandbox("direct-zcode", zcodeDirectCommands);
+    const zcodeDirectKit = new Evolve()
+      .withAgent({ type: "zcode", model: "openrouter/z-ai/glm-5.3", providerApiKey: "sk-or-direct" })
+      .withSandbox(new MockProvider(zcodeDirectSandbox))
+      .withWorkspaceMode("task")
+      .withWorkingDirectory("/task");
+    try {
+      await zcodeDirectKit.run({ prompt: "solve", timeoutMs: 10_000 });
+    } finally {
+      await zcodeDirectKit.kill().catch(() => {});
+    }
+    const directDoc = JSON.parse(zcodeDirectSandbox.files.writes.get("/home/user/.zcode/v2/provider_config.json") ?? "{}") as {
+      config?: {
+        providerConfigRules: { providerRules: Array<{ config: { access: { apiKey: string }; api: { baseUrl: string; headers?: unknown } } }> };
+        defaultModelSelection: { modelId: string };
+      };
+    };
+    assertEqual(directDoc.config?.defaultModelSelection.modelId, "z-ai/glm-5.3", "zcode direct mode sends OpenRouter its own model id");
+    assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.api.baseUrl, "https://openrouter.ai/api/v1", "zcode direct mode points at OpenRouter");
+    assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.access.apiKey, "sk-or-direct", "zcode direct mode carries the user's OpenRouter key");
+    assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.api.headers, undefined, "zcode direct mode sends no spend headers");
+    assert(
+      zcodeDirectCommands.runCommands.some((command) => command === "chmod 600 '/home/user/.zcode/v2/provider_config.json'"),
+      "zcode tightens the provider file to 0600 after writing it",
+    );
   } finally {
     globalThis.fetch = previousFetch;
   }
 }
 
 /** The real captured streams the parser tests run on, one line per element. */
-function fixtureLines(harness: "pi" | "prime-agent", name: string): string[] {
+function fixtureLines(harness: "pi" | "prime-agent" | "zcode", name: string): string[] {
   const path = fileURLToPath(new URL(`../fixtures/${harness}/${name}.jsonl`, import.meta.url));
   return readFileSync(path, "utf8").split("\n").filter((line) => line.trim().length > 0);
 }
@@ -3050,7 +3109,7 @@ async function testPiFamilyStreamVerdict(): Promise<void> {
   const END_OK = '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop","timestamp":1,"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"total":0}}}}';
   const END_ERR = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"500: boom","timestamp":1}}';
   const END_ABORTED = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","timestamp":1}}';
-  const cases: Array<{ name: string; type: "pi" | "prime-agent" | "droid"; lines: string[]; reason: LifecycleReason; agent: string }> = [
+  const cases: Array<{ name: string; type: "pi" | "prime-agent" | "zcode" | "droid"; lines: string[]; reason: LifecycleReason; agent: string }> = [
     // The captured streams (tests/fixtures, the parser tests' fixtures).
     { name: "pi capture: the retry loop gave up (model-error-retries)", type: "pi", lines: fixtureLines("pi", "model-error-retries"), reason: "run_failed", agent: "error" },
     { name: "prime-agent capture: the retry loop gave up (model-error-retries)", type: "prime-agent", lines: fixtureLines("prime-agent", "model-error-retries"), reason: "run_failed", agent: "error" },
@@ -3063,6 +3122,24 @@ async function testPiFamilyStreamVerdict(): Promise<void> {
     { name: "pi: a failed call that a retry recovered", type: "pi", lines: [END_ERR, '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":1}', END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
     { name: "prime-agent: a failure Prime never retried (no willRetry, no auto_retry_end)", type: "prime-agent", lines: [END_ERR, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
     { name: "prime-agent: the last call aborted, exit code still 0", type: "prime-agent", lines: [END_ABORTED, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
+    // Z Code never prints a stop reason of its own: its failures are the parser's fatal errors
+    // (turn.failed, a non-success turn.completed), read the same way at exit 0.
+    { name: "zcode capture: the 429/500 ladder gave up (glm-E1)", type: "zcode", lines: fixtureLines("zcode", "glm-E1"), reason: "run_failed", agent: "error" },
+    { name: "zcode capture: a 400 not retried (glm-PROBE1)", type: "zcode", lines: fixtureLines("zcode", "glm-PROBE1"), reason: "run_failed", agent: "error" },
+    { name: "zcode capture: the turn was cancelled, no result line (glm-E3)", type: "zcode", lines: fixtureLines("zcode", "glm-E3"), reason: "run_failed", agent: "error" },
+    { name: "zcode capture: a plain tool run (glm-T2-flash)", type: "zcode", lines: fixtureLines("zcode", "glm-T2-flash"), reason: "run_complete", agent: "idle" },
+    {
+      name: "zcode: a request failure the ladder recovered from",
+      type: "zcode",
+      lines: [
+        '{"type":"session.updated","sessionId":"sess_v","seq":1,"timestamp":1,"payload":{"type":"model_request_failed","attempt":1,"maxAttempts":3,"statusCode":429,"errorCode":"model_rate_limited","retryable":true,"message":"Rate limit exceeded"}}',
+        '{"type":"session.updated","sessionId":"sess_v","seq":2,"timestamp":1,"payload":{"usage":{"inputTokens":1,"outputTokens":1},"stopReason":"stop","content":"ok"}}',
+        '{"type":"turn.completed","sessionId":"sess_v","seq":3,"timestamp":1,"payload":{"resultType":"success","response":"ok"}}',
+        '{"type":"result","sessionId":"sess_v","traceId":"t","response":"ok","usage":{"source":"provider","modelRequestCount":2,"inputTokens":1,"outputTokens":1}}',
+      ],
+      reason: "run_complete",
+      agent: "idle",
+    },
     // A harness without the flag keeps the exit code as its verdict, whatever its stream said.
     { name: "droid (control): exit 0 is the verdict", type: "droid", lines: [END_ERR], reason: "run_complete", agent: "idle" },
   ];
@@ -3094,6 +3171,76 @@ async function testPiFamilyStreamVerdict(): Promise<void> {
   }
 }
 
+async function testZcodeProviderFileLivesOnlyWhileTheRunDoes(): Promise<void> {
+  console.log("\n[24] zcode: the provider file (the run's credential) is written before the spawn and removed on every exit path");
+  const PROVIDER_FILE = "/home/user/.zcode/v2/provider_config.json";
+  const REMOVE = `rm -f '${PROVIDER_FILE}'`;
+
+  const scenario = (id: string): { commands: MockCommands; sandbox: MockSandbox; kit: Evolve; events: LifecycleEvent[] } => {
+    const commands = new MockCommands();
+    const sandbox = new MockSandbox(id, commands);
+    const events: LifecycleEvent[] = [];
+    const kit = new Evolve()
+      .withAgent({ type: "zcode", providerApiKey: "test-openrouter-key" })
+      .withSandbox(new MockProvider(sandbox))
+      .withSession(id);
+    kit.on("lifecycle", (event) => events.push(event));
+    return { commands, sandbox, kit, events };
+  };
+  const removals = (commands: MockCommands): number => commands.runCommands.filter((c) => c === REMOVE).length;
+  const orderIsWriteChmodSpawnRemove = (commands: MockCommands, sandbox: MockSandbox): boolean => {
+    const chmodAt = commands.runCommands.indexOf(`chmod 600 '${PROVIDER_FILE}'`);
+    const removeAt = commands.runCommands.indexOf(REMOVE);
+    return sandbox.files.writes.has(PROVIDER_FILE) && chmodAt >= 0 && removeAt > chmodAt && commands.spawned.length === 1;
+  };
+
+  {
+    const { commands, sandbox, kit } = scenario("zc-ok");
+    const result = await kit.run({ prompt: "hello", timeoutMs: 10_000 });
+    assertEqual(result.exitCode, 0, "a successful run");
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "success: written and tightened before the spawn, removed after the wait");
+    assertEqual(removals(commands), 1, "success: exactly one removal");
+  }
+  {
+    const { commands, sandbox, kit } = scenario("zc-fail");
+    commands.exitCode = 1;
+    const result = await kit.run({ prompt: "hello", timeoutMs: 10_000 });
+    assertEqual(result.exitCode, 1, "a run that exits non-zero");
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "non-zero exit: still removed after the wait");
+  }
+  {
+    const { commands, sandbox, kit, events } = scenario("zc-int");
+    commands.mode = "hang";
+    const runPromise = kit.run({ prompt: "long task", timeoutMs: 60_000 });
+    await waitFor(() => commands.activeHandle !== null);
+    assertEqual(removals(commands), 0, "while the run is live the file stays (the CLI reads it at start)");
+    assertEqual(await kit.interrupt(), true, "the run is interrupted");
+    const result = await runPromise;
+    assertEqual(result.exitCode, 130, "…and reports 130");
+    assert(events.some((e) => e.reason === "run_interrupted"), "…with run_interrupted");
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "interrupt: removed once the wait resolves");
+  }
+  {
+    const { commands, sandbox, kit, events } = scenario("zc-bg");
+    const run = await kit.run({ prompt: "turn 1", background: true });
+    assertEqual(run.exitCode, 0, "a background run's handshake");
+    await waitFor(() => events.some((e) => e.reason === "run_background_complete"));
+    await waitFor(() => removals(commands) === 1);
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "background: removed when the watched wait resolves");
+  }
+  {
+    // Only a harness with a provider file has anything to remove.
+    const commands = new MockCommands();
+    const sandbox = new MockSandbox("cl-ok", commands);
+    const kit = new Evolve()
+      .withAgent({ type: "claude", providerApiKey: "test-key" })
+      .withSandbox(new MockProvider(sandbox))
+      .withSession("cl-ok");
+    await kit.run({ prompt: "hello", timeoutMs: 10_000 });
+    assertEqual(commands.runCommands.filter((c) => c.startsWith("rm -f ")).length, 0, "claude: no provider file, no removal");
+  }
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Session Runtime Unit Tests");
@@ -3101,6 +3248,7 @@ async function main(): Promise<void> {
 
   try {
     await testStatusAndLifecycle();
+    await testZcodeProviderFileLivesOnlyWhileTheRunDoes();
     await testPrepareSandboxDoesNotStartAgent();
     await testWithSecretsEvolveApiKeyBoundary();
     await testKillFlushesSessionEnd();
