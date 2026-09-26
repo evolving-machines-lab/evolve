@@ -1202,13 +1202,12 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     providerEnvMap: {
       openrouter: { keyEnv: "OPENROUTER_API_KEY" },
     },
-    // Owner decision 2026-09-25: V4.1 Flash and V4 Pro on both
-    // routes; alias == wire id, the gateway's exact entry for each name.
+    // Owner decision 2026-09-25: V4.1 Flash on both routes, V4 Pro on OpenRouter only (Fireworks
+    // serves it on dedicated deployments, not serverless); alias == wire id, the gateway's exact entry.
     models: [
       { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
       { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
       { alias: "openrouter/deepseek/deepseek-v4-pro-0813", modelId: "openrouter/deepseek/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via OpenRouter" },
-      { alias: "fireworks/deepseek-v4-pro-0813", modelId: "fireworks/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via Fireworks" },
     ],
     // AGENTS.md then CLAUDE.md from the project root down to cwd.
     systemPromptFile: "AGENTS.md",
