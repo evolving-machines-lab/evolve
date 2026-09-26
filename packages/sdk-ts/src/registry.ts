@@ -1008,60 +1008,35 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
 
   antigravity: {
     image: "evolve-all",
-    // Google's Antigravity CLI (binary `antigravity`, the product's `agy`),
-    // 1.2.11, closed source. The only headless auth path that reaches a model
-    // without a browser sign-in is the Gemini API-key path: GEMINI_API_KEY
-    // (the ONE key variable it reads — GOOGLE_API_KEY is ignored) plus
-    // `"modelProvider": "gemini"` in its settings file, with
-    // GOOGLE_GEMINI_BASE_URL as the documented endpoint override
-    // (antigravity.google/docs/cli/install, read 2026-09-25). The recon is
-    // team/dev-items/harness-recon-2026-09-25/05-antigravity.md.
+    // Closed source (agy 1.2.11). The one headless auth path is the Gemini API key: GEMINI_API_KEY (GOOGLE_API_KEY is
+    // ignored) with modelProvider "gemini" in its settings and GOOGLE_GEMINI_BASE_URL as the documented endpoint
+    // override (antigravity.google/docs/cli/install; recon team/dev-items/harness-recon-2026-09-25/05-antigravity.md).
     apiKeyEnv: "GEMINI_API_KEY",
     effortSupport: "level",
     baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
-    // The gateway ROOT, not gemini-cli's `/gemini` passthrough (owner ruling
-    // 2026-09-25: Antigravity's models go to Vertex AI through the gateway).
-    // LiteLLM serves a router-aware Gemini-shaped endpoint at its root
-    // (`/v1beta/models/{model}:streamGenerateContent`) that resolves the
-    // model name against the model list — so a `vertex_ai/<model>` slug lands
-    // on the gateway's Vertex route, metered per call; the `/gemini` prefix
-    // forwards names verbatim to AI Studio, where that slug is a 404 (both
-    // live-proven 2026-09-25). No gatewayPath, therefore.
+    // No gatewayPath: the gateway ROOT, not the /gemini passthrough (owner 2026-09-25: Vertex AI). LiteLLM's root
+    // Gemini endpoint resolves a `vertex_ai/<model>` slug against the model list; under /gemini the same slug is a
+    // 404 at AI Studio (both live-proven 2026-09-25).
     defaultModel: "gemini-3.8-flash",
-    // Owner policy: graded-effort harnesses pin "high". The CLI's own
-    // built-in slugs carry the effort in their name (gemini-3.8-flash-high);
-    // Evolve stamps `--effort` on every run instead (antigravityEffort).
+    // Graded-effort harnesses pin "high" (owner policy); --effort is stamped per run, never baked into the slug.
     defaultReasoningEffort: "high",
-    // Roster (owner 2026-09-25): the latest of each Gemini type only —
-    // Flash, Flash-Lite, Pro — each priced in LiteLLM on `vertex_ai/`. The
-    // alias is the bare Google name (what direct mode sends to the caller's
-    // own Gemini endpoint); the wire id is the gateway's Vertex route, what
-    // the hosted worker's per-arm key must admit and what the CLI names on
-    // the gateway (antigravityModelSlug). The CLI accepts any slug once it
-    // is registered in customModelsConfig (live T6/V1, 1.2.11); a bare
-    // built-in name without a `-<effort>` suffix is refused unregistered.
-    // Only Google models: Claude and GPT exist in the product behind an
-    // interactive Ultra sign-in the sandbox cannot perform.
+    // Roster (owner 2026-09-25): the latest Flash, Flash-Lite and Pro, Google models only (Claude/GPT sit behind an
+    // interactive sign-in). Alias = the bare name direct mode sends; wire id = the gateway's Vertex route, which the
+    // CLI names once registered in customModelsConfig (live T6/V1, 1.2.11).
     models: [
       { alias: "gemini-3.8-flash", modelId: "vertex_ai/gemini-3.8-flash", description: "Latest Flash on Vertex AI: coding + agentic planning" },
       { alias: "gemini-3.5-flash-lite", modelId: "vertex_ai/gemini-3.5-flash-lite", description: "Latest Flash-Lite on Vertex AI: most cost-effective" },
       { alias: "gemini-3.1-pro-preview", modelId: "vertex_ai/gemini-3.1-pro-preview", description: "Latest Pro on Vertex AI: complex agentic + coding" },
     ],
-    // Rules the CLI reads from the workspace root: AGENTS.md or GEMINI.md
-    // (antigravity.google/docs/rules); AGENTS.md is the cross-vendor name.
+    // The CLI reads AGENTS.md or GEMINI.md from the workspace root (docs/rules); AGENTS.md is the cross-vendor name.
     systemPromptFile: "AGENTS.md",
-    // MCP servers live in the shared Antigravity config dir, the file
-    // `agy mcp add` writes (antigravity.google/docs/mcp; live M1). The CLI's
-    // own settings file sits beside it under antigravity-cli/ (below).
+    // The file `agy mcp add` writes (docs/mcp; live M1).
     mcpConfig: {
       settingsDir: "~/.gemini/config",
       filename: "mcp_config.json",
       format: "json",
     },
-    // The shared skills dir every Antigravity product reads (docs/skills;
-    // `~/.gemini/antigravity-cli/skills` is a symlink onto it since the
-    // config migration, live round 2). Project skills under
-    // <workspace>/.agents/skills load too.
+    // The shared dir every Antigravity product reads; antigravity-cli/skills is a symlink onto it (live round 2).
     skillsConfig: {
       targetDir: "~/.gemini/config/skills",
     },
@@ -1073,21 +1048,11 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "gemini-3.5-flash-lite": "vertex_ai/gemini-3.5-flash-lite",
       "gemini-3.1-pro-preview": "vertex_ai/gemini-3.1-pro-preview",
     },
-    // NO spend-tracking path: the CLI sends no custom headers (no env, no
-    // settings key reaches the request — four candidates probed live,
-    // 2026-09-25), so per-run tags are lost; per-session attribution rides
-    // the door's own x-litellm-customer-id, set server-side from the
-    // runtime token. Nor does the CLI offer a per-run header for the hidden
-    // conversation-title call it makes to gemini-3.1-flash-lite-preview on
-    // every run: that model is deliberately NOT routed (owner 2026-09-25),
-    // the call fails, and the run succeeds regardless (live V1).
-    //
-    // The whole ~/.gemini tree is the state (the CLI's settings, brain/
-    // transcripts, conversations/ SQLite store, the shared config/); the
-    // three excludes are the CLI's own installs and caches, measured on the
-    // live home (round 2 footprint): bin/ is a 12.5 MB encoder binary
-    // extracted at first run, builtin/skills the shipped skills rewritten at
-    // every start, cache/ ids and onboarding markers.
+    // No spend-tracking path: the CLI sends no custom headers (four candidates probed live 2026-09-25), so attribution
+    // is per session through the door's own header. Its hidden title call to gemini-3.1-flash-lite-preview is
+    // deliberately not routed (owner 2026-09-25); it fails and the run succeeds (live V1).
+    // ~/.gemini whole is the state; the three excludes are the CLI's own installs and caches (round-2 footprint:
+    // bin/ a 12.5 MB encoder extracted at first run, builtin/ shipped skills rewritten each start, cache/ ids).
     checkpointDirs: ["~/.gemini"],
     checkpointExcludes: [
       ".gemini/antigravity-cli/bin",
@@ -1100,14 +1065,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const continueFlag = isResume ? "--continue " : "";
       const effortFlag = reasoningEffort ? ` --effort ${antigravityEffort(reasoningEffort)}` : "";
       const slug = antigravityModelSlug(model, { isDirectMode, isExternalGateway });
-      // Harbor's proven headless shape (antigravity_cli.py:1528-1558):
-      // permissions skipped, NDJSON on stdout, the cwd registered as the
-      // workspace (without --add-dir headless agy writes bare-filename files
-      // into its own scratch dir), stdin closed (agy waits for EOF on an open
-      // stdin). stderr stays on its own pipe — the run loop reads it apart —
-      // and no --print-timeout: the SDK's own run clock is the bound. The
-      // prompt arrives raw and is quoted here (agent.ts skips escapePrompt
-      // for this harness, the droid precedent).
+      // Harbor's headless shape (antigravity_cli.py:1528-1558). --add-dir: without it headless agy writes bare-filename
+      // files into its own scratch dir; </dev/null: agy waits for EOF on an open stdin. No --print-timeout (the SDK's
+      // run clock is the bound); stderr stays on its own pipe; the prompt arrives raw (agent.ts skips escapePrompt).
       return `antigravity ${continueFlag}--prompt ${shellSingleQuote(prompt)} --model ${shellSingleQuote(slug)}${effortFlag} --dangerously-skip-permissions --output-format stream-json --add-dir "$PWD" < /dev/null`;
     },
   },

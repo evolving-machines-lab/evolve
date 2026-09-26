@@ -166,28 +166,29 @@ export type SessionUpdate =
   | Plan
   | AgentError
   | AgentUsage
-  | UnknownUpdate;
+  | HarnessEvent;
 
 /**
- * A wire line the parser recognised as the harness's own but could not place
- * in the vocabulary above — NOT work, NOT a failure.
+ * A wire line the harness printed that has no ACP slot — kept, never dropped.
  *
- * DELIBERATE EXTENSION BEYOND ACP, for closed-source and unversioned streams
- * (the antigravity CLI publishes no schema; its live stream carried three
- * step types the docs never named). Dropping such a line would hide that the
- * harness said something; folding it into agent text would count it as work.
- * So it is passed through under the harness's own name for it, with the wire
- * object verbatim, and every consumer that switches on `sessionUpdate` keeps
- * its default branch for it (the trajectory builder counts it as an unparsed
- * line). Excluded from isAgentWorkUpdate: a run made only of lines nobody
- * understands did not demonstrably do anything.
+ * DELIBERATE EXTENSION BEYOND ACP, like AgentError and AgentUsage. Two
+ * harness streams are unversioned or grow between releases (the owner's
+ * ruling 2026-09-25: any event type outside the captured vocabulary is passed
+ * through as a generic event and logged, never a failure), and some captured
+ * types are real facts of the run with no ACP shape — a Prime Agent
+ * sub-agent's progress (`rlm_child_update`), a pi automatic retry
+ * (`auto_retry_start`), a compaction. `type` is the harness's own type word
+ * and `payload` the line's other fields, verbatim.
+ *
+ * Excluded from isAgentWorkUpdate: an unknown line is evidence the harness
+ * PRINTED something, never that the agent did work.
  */
-export interface UnknownUpdate {
-  sessionUpdate: "unknown";
-  /** What the harness called the line: its event or step type name, verbatim. */
-  kind: string;
-  /** The wire object, verbatim. */
-  raw: unknown;
+export interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  /** The harness's own type word for the line, verbatim. */
+  type: string;
+  /** Every other field of the line, verbatim. */
+  payload: Record<string, unknown>;
 }
 
 /**
@@ -282,7 +283,7 @@ export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | u
     !!update &&
     update.sessionUpdate !== "error" &&
     update.sessionUpdate !== "usage" &&
-    update.sessionUpdate !== "unknown"
+    update.sessionUpdate !== "harness_event"
   );
 }
 

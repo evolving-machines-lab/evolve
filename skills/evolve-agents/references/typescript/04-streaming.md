@@ -132,7 +132,7 @@ type SessionUpdate =
   | Plan
   | AgentError
   | AgentUsage
-  | UnknownUpdate;
+  | HarnessEvent;
 ```
 
 ### Message Events
@@ -208,7 +208,7 @@ completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool sta
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
-| `UnknownUpdate` | `"unknown"` | A wire line of a kind the parser does not know, passed through verbatim. **Not agent work** — see below |
+| `HarnessEvent` | `"harness_event"` | A line the harness printed that has no slot above — a session fact, or a kind the parser does not know — passed through verbatim. **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -480,20 +480,22 @@ const promptTokens = [...perMessage.values()].reduce((n, u) => n + (u.promptToke
 Like `error`, `usage` is **not agent work**: `isAgentWorkUpdate` answers `false` for it, so a
 stream that carries only accounting still counts as a run that did nothing.
 
-## Lines the parser does not know (`unknown`)
+## Lines with no slot of their own (`harness_event`)
 
-A harness can print a line of a kind its parser has never seen — the antigravity CLI is closed
-source and its live stream carried three step types its docs never named. Such a line is neither
-dropped nor mistaken for agent text: it arrives as its own update, named by the harness's own word
-for it, with the wire object verbatim.
+A harness prints lines that are facts of the run but fit none of the updates above — the session's
+opening `init` line, a retry, a sub-agent's progress — and, because some CLIs are closed source or
+change between releases, lines of a kind the parser has never seen. Neither is dropped or mistaken
+for agent text: it arrives as a `harness_event`, named by the harness's own type word, with the
+line's other fields verbatim. A kind the parser does not know is also logged once per run with
+`console.warn`.
 
 ```typescript
-interface UnknownUpdate {
-  sessionUpdate: "unknown";
-  kind: string;   // the harness's own name for the line, e.g. "step_update:checkpoint"
-  raw: unknown;   // the wire object, verbatim
+interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  type: string;                      // the harness's own type word for the line, e.g. "init"
+  payload: Record<string, unknown>;  // every other field of the line, verbatim
 }
 ```
 
-Like `error` and `usage`, `unknown` is **not agent work**: `isAgentWorkUpdate` answers `false` for
-it. Every consumer that switches on `sessionUpdate` keeps a default branch for it.
+Like `error` and `usage`, `harness_event` is **not agent work**: `isAgentWorkUpdate` answers `false`
+for it. Every consumer that switches on `sessionUpdate` keeps a default branch for it.

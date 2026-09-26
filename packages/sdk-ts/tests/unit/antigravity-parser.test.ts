@@ -166,7 +166,8 @@ async function testSubagent(): Promise<void> {
   assert(textOf(result!.update) === `ponger: conversation ${child}`, "the child conversation id is named in the result text");
   assert((result?.update.rawOutput as { subagents: Array<{ conversation_id: string }> }).subagents[0].conversation_id === child, "subagent_info (with the child's conversation and log_uri) rides rawOutput");
   assert(events.every((e) => e.parentToolCallId === undefined), "the child's steps never appear in the parent stream, so no line is a subagent's");
-  assert(events.filter((e) => e.extra?.step_type === "system_message").length === 0, "system_message (content only in the transcript) produces no event");
+  const system = events.filter((e) => e.extra?.step_type === "system_message");
+  assert(system.length === 1 && system[0].update.sessionUpdate === "harness_event" && system[0].update.type === "system_message", "system_message (the sub-agent's reply; content only in the transcript) is one harness_event");
 }
 
 async function testModelErrorPaths(): Promise<void> {
@@ -256,26 +257,61 @@ async function testJsonEnvelopeAndVertex(): Promise<void> {
   assert(antigravityTokenUsage(null) === null && antigravityTokenUsage("x") === null, "no usage object → null, never zeros");
 }
 
-async function testUnknownPassthrough(): Promise<void> {
-  console.log("\n[7] the closed-source rule: unknown events and step types pass through, never dropped, never work");
-  const parser = createAntigravityParser();
-  parser(INIT);
-  const step = parser(`{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":3,"state":"DONE","step_type":"checkpoint","duration_seconds":0.5,"usage":{"input_tokens":10,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":11}}}`);
-  assert(step?.length === 2 && step[0].update.sessionUpdate === "unknown", "a documented-but-unseen step type (checkpoint) is an unknown update");
-  assert(step?.[0].update.sessionUpdate === "unknown" && step[0].update.kind === "step_update:checkpoint", "the update names the harness's own word for it");
-  assert(step?.[0].update.sessionUpdate === "unknown" && (step[0].update.raw as { step_type: string }).step_type === "checkpoint", "the wire object rides raw, verbatim");
-  assert(step?.[1].update.sessionUpdate === "usage" && step[1].update.scope === "call", "its accounting is still kept");
-  assert(step?.[0].sessionId === CID && step[0].model === "gemini-3.8-flash-low", "the envelope is stamped like any other line");
-  assert(!isAgentWorkUpdate(step?.[0].update), "an unknown update is NOT agent work");
+async function testHarnessEventPassthrough(): Promise<void> {
+  console.log("\n[7] the closed-source rule: no-slot and unknown lines pass through as harness_event, never dropped, never work");
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    const parser = createAntigravityParser();
+    const init = parser(INIT);
+    assert(init?.length === 1 && init[0].update.sessionUpdate === "harness_event" && init[0].update.type === "init", "init is a harness_event named by its event word");
+    assert(
+      init?.[0].update.sessionUpdate === "harness_event" &&
+        init[0].update.payload.conversation_id === CID &&
+        (init[0].update.payload.init as { model: string }).model === "gemini-3.8-flash-low" &&
+        !("event" in init[0].update.payload),
+      "its payload is the line's other fields, verbatim",
+    );
+    assert(init?.[0].sessionId === CID && init[0].model === "gemini-3.8-flash-low", "the envelope is stamped on init too");
+    assert(!isAgentWorkUpdate(init?.[0].update), "a harness_event is NOT agent work");
 
-  const event = parser(`{"event":"control_request","control_request":{"kind":"permission"}}`);
-  assert(event?.length === 1 && event[0].update.sessionUpdate === "unknown" && event[0].update.kind === "control_request", "an unknown top-level event passes through under its name");
+    const checkpoint = parser(`{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":3,"state":"DONE","step_type":"checkpoint","duration_seconds":0.5,"usage":{"input_tokens":10,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":11}}}`);
+    assert(checkpoint?.length === 2 && checkpoint[0].update.sessionUpdate === "harness_event" && checkpoint[0].update.type === "checkpoint", "checkpoint (documented, never observed) is a harness_event named by its step_type");
+    assert(checkpoint?.[0].update.sessionUpdate === "harness_event" && checkpoint[0].update.payload.step_index === 3 && !("step_type" in checkpoint[0].update.payload), "the step's other fields ride the payload");
+    assert(checkpoint?.[1].update.sessionUpdate === "usage" && checkpoint[1].update.scope === "call", "its accounting is still kept");
+    assert(warnings.length === 0, "a type the docs name warns nothing");
 
-  const stray = parser(`{"hello":"world"}`);
-  assert(stray?.length === 1 && stray[0].update.sessionUpdate === "unknown", "a JSON line with no event and no status is still surfaced");
-  assert(parser("not json") === null, "a non-JSON line is dropped");
-  assert(parser(INIT) === null, "init itself emits nothing (its facts are stamped on later lines)");
-  assert(parser(`{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":0,"state":"DONE","step_type":"user_input"}}`) === null, "user_input carries no text on the wire and emits nothing");
+    const system = parser(`{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":7,"state":"DONE","step_type":"system_message","duration_seconds":0.000151}}`);
+    assert(system?.length === 1 && system[0].update.sessionUpdate === "harness_event" && system[0].update.type === "system_message", "system_message (content only in the transcript) is a harness_event");
+
+    parser(`{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":4,"state":"DONE","step_type":"telemetry_ping"}}`);
+    const again = parser(`{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":5,"state":"DONE","step_type":"telemetry_ping"}}`);
+    assert(again?.length === 1 && again[0].update.sessionUpdate === "harness_event" && again[0].update.type === "telemetry_ping", "an unknown step type passes through under its own word");
+    assert(warnings.length === 1 && warnings[0] === `[antigravity parser] unknown step type "telemetry_ping" passed through as harness_event`, "one warning per unknown step type per parser, not per line");
+
+    parser(`{"event":"control_request","control_request":{"kind":"permission"}}`);
+    const event = parser(`{"event":"control_request","control_request":{"kind":"permission"}}`);
+    assert(
+      event?.length === 1 &&
+        event[0].update.sessionUpdate === "harness_event" &&
+        event[0].update.type === "control_request" &&
+        same(event[0].update.payload, { control_request: { kind: "permission" } }),
+      "an unknown top-level event passes through under its name with its other fields",
+    );
+    assert(warnings.length === 2 && warnings[1] === `[antigravity parser] unknown event type "control_request" passed through as harness_event`, "one warning per unknown event type");
+
+    assert(parser(`{"hello":"world"}`) === null, "a JSON object with no event word and no result status is not one of the CLI's lines — dropped (the raw tee keeps it)");
+    assert(parser("not json") === null, "a non-JSON line is dropped");
+    assert(parser(`{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":0,"state":"DONE","step_type":"user_input"}}`) === null, "user_input, the turn's echo of the prompt, stays silent");
+
+    createAntigravityParser()(`{"event":"control_request","control_request":{}}`);
+    assert(warnings.length === 3, "a fresh parser instance warns again");
+  } finally {
+    console.warn = realWarn;
+  }
 }
 
 async function testThinkingDelta(): Promise<void> {
@@ -284,7 +320,7 @@ async function testThinkingDelta(): Promise<void> {
     INIT,
     `{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":1,"state":"ACTIVE","step_type":"agent_response","thinking_delta":"Let me check"}}`,
     `{"event":"step_update","step_update":{"conversation_id":"${CID}","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"OK"}}`,
-  ]);
+  ]).filter((e) => e.update.sessionUpdate !== "harness_event");
   assert(events.length === 2 && events[0].update.sessionUpdate === "agent_thought_chunk" && textOf(events[0].update) === "Let me check", "thinking_delta → agent_thought_chunk");
   assert(events[1].update.sessionUpdate === "agent_message_chunk" && events[1].messageId === `${CID}:1`, "the thought and the text of one step share its message id");
 }
@@ -300,7 +336,7 @@ async function main(): Promise<void> {
   await testModelErrorPaths();
   await testToolFailureAndResume();
   await testJsonEnvelopeAndVertex();
-  await testUnknownPassthrough();
+  await testHarnessEventPassthrough();
   await testThinkingDelta();
 
   console.log("\n" + "=".repeat(60));

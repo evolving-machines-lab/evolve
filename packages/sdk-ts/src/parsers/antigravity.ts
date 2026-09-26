@@ -1,53 +1,36 @@
 /**
  * Antigravity CLI (`antigravity`, Google's `agy`) `--output-format stream-json`
- * → ACP-style events parser.
+ * → ACP-style events.
  *
- * PROVENANCE. The CLI is closed source and publishes no schema, so every shape
- * below comes from two places, in this order of authority: live capture of
- * agy 1.2.11 (26 stream-json runs against the Evolve gateway, 2026-09-25,
- * fixtures in tests/unit/antigravity-parser.test.ts) and the vendor's headless
- * docs page (antigravity.google/docs/cli/headless). Where the two disagree the
- * capture wins and the disagreement is noted. A later agy release may change
- * any of it without anything here failing to compile — which is why a line of
- * a kind this file does not know is passed through as an `unknown` update
- * rather than dropped (parsers/types.ts UnknownUpdate).
- *
- * Three top-level events, every line `{ event, <event>: {...} }`:
+ * The CLI is closed source and publishes no schema. Every shape here comes from
+ * the live capture of agy 1.2.11 (26 runs, 2026-09-25 — the fixtures of
+ * tests/unit/antigravity-parser.test.ts), then from the vendor's headless docs
+ * page; the capture wins where they disagree. Three events, every line
+ * `{ event, <event>: {...} }`:
  *
  *   init         { conversation_id, init: { model, cwd, tools[], permission_mode } }
- *                names the model and the conversation ONCE; both are stamped
- *                on every later event (gemini/droid precedent).
  *   step_update  { conversation_id, step_index, state: ACTIVE|DONE, step_type,
  *                  tool_name?, text_delta?, thinking_delta?, duration_seconds?,
  *                  usage?, tool_info?, subagent_info? }
- *                one conversation step, streamed as several updates.
- *                step_type seen live: user_input, agent_response, tool,
- *                error_message, system_message, subagent (the last three are
- *                undocumented). Documented, never seen: checkpoint.
+ *                step_type live: user_input, agent_response, tool, error_message,
+ *                system_message, subagent; documented, never seen: checkpoint.
  *   result       { conversation_id, status, response, error?, duration_seconds,
- *                  num_turns, usage }
- *                once per process. status seen live: SUCCESS, ERROR. Documented
- *                also: CANCELED, INTERRUPTED, INVALID, WAITING, RUNNING.
+ *                  num_turns, usage }          status live: SUCCESS, ERROR
  *
- * plus the `--output-format json` envelope: the result object bare, no `event`.
+ * and the `--output-format json` envelope: the result object bare.
  *
- * WHAT THE WIRE DOES NOT CARRY. No timestamps (none stamped). No text on
- * user_input, system_message or error_message steps — the error text arrives
- * only on the result line, the messages only in the on-disk transcript. No
- * tool call ids — a tool step is identified by its step_index, which is what
- * pairs its ACTIVE and DONE updates here. A failing shell command produces
- * neither `tool_info.error` nor an exit code (live E2: `exit 3` → a DONE update
- * with parameters only), so a tool result reports what the harness said —
- * completed — and nothing more.
+ * Not on the wire: timestamps (none stamped); text on user_input, system_message
+ * and error_message steps (the on-disk transcript has it); tool call ids (a
+ * step's ACTIVE and DONE updates pair by step_index); a failing command's exit
+ * code or tool_info.error (live E2: `exit 3` → a DONE update with parameters).
  *
- * USAGE. Every DONE agent_response carries `usage` for THAT model call
- * (input_tokens, output_tokens, thinking_tokens, cache_read_tokens,
- * total_tokens — output includes thinking; cache_read is disjoint from input,
- * total excludes it), so it is a per-call usage line keyed by the step; the
- * result's `usage` is the conversation's running total (cumulative across a
- * resumed conversation's turns, live T4) and rides as the run-scoped line.
- * Harbor's arithmetic for this stream (antigravity_cli.py, cache reads added
- * into prompt tokens): promptTokens = input + cache_read.
+ * Usage: a DONE agent_response carries THAT call's usage (output includes
+ * thinking; cache_read is disjoint from input); the result's usage is the
+ * conversation total. promptTokens = input + cache_read, Harbor's arithmetic.
+ *
+ * Lines with no ACP slot — init, system_message, checkpoint, any type this file
+ * does not know — pass through as harness_event (types.ts), one warning per
+ * unknown type; user_input, the turn's own echo of the prompt, stays silent.
  */
 
 import { harnessErrorText } from "./types";
@@ -94,18 +77,19 @@ const TOOL_KINDS: Record<string, ToolKind> = {
 const PATH_PARAMS = ["TargetFile", "AbsolutePath", "DirectoryPath", "SearchPath"];
 const DETAIL_PARAMS = ["CommandLine", ...PATH_PARAMS, "Query", "Pattern", "Url", "Action"];
 
-/** Step types that carry no content on the wire and are agent work of no kind — dropped, documented. */
-const CONTENT_FREE_STEPS = new Set(["user_input", "system_message"]);
+/** Step types with no ACP slot that the capture or the docs name — passed through without a warning. */
+const NO_SLOT_STEPS = new Set(["system_message", "checkpoint"]);
 
 export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] | null {
   let model: string | undefined;
   let conversationId: string | undefined;
-  // Tool and subagent steps whose ACTIVE update opened a tool_call, so a DONE
+  // Tool and subagent steps whose first update opened a tool_call, so a DONE
   // update becomes a tool_call_update rather than a second call.
   const openedSteps = new Set<string>();
   // Every agent_response text delta so far, so the result's `response` (the
   // same text, whole) is not published a second time.
   let streamedText = "";
+  const warned = new Set<string>();
 
   return function parseAntigravityEvent(jsonLine: string): OutputEvent[] | null {
     let data: unknown;
@@ -122,30 +106,28 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
     if (!eventName && typeof data.status === "string" && "conversation_id" in data) {
       return stamp(handleResult(data), data);
     }
+    if (!eventName) return null;
 
     switch (eventName) {
       case "init": {
         const init = asRecord(data.init);
         const named = init ? stringField(init, "model") : "";
         if (named) model = named;
-        const id = stringField(data, "conversation_id");
-        if (id) conversationId = id;
-        return null;
+        return stamp([harnessEvent(eventName, data, "event")], data);
       }
       case "step_update": {
         const step = asRecord(data.step_update);
-        if (!step) return stamp([unknownUpdate(eventName, data)], data);
+        if (!step) return stamp([harnessEvent(eventName, data, "event")], data);
         return stamp(handleStep(step), step);
       }
       case "result": {
         const result = asRecord(data.result);
-        if (!result) return stamp([unknownUpdate(eventName, data)], data);
+        if (!result) return stamp([harnessEvent(eventName, data, "event")], data);
         return stamp(handleResult(result), result);
       }
       default:
-        // A top-level event this file does not know — passed through, never
-        // dropped (closed-source stream, file header).
-        return stamp([unknownUpdate(eventName || "unknown", data)], data);
+        warnOnce("event", eventName);
+        return stamp([harnessEvent(eventName, data, "event")], data);
     }
   };
 
@@ -205,11 +187,9 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
         return updates;
       }
 
-      // A model/agent API failure the run may or may not recover from (live
-      // E1b: seven of these, one per retry, then the result; U1: three, then
-      // the answer). Not terminal, so `fatal` is false; the wire carries no
-      // text on the step itself — the message arrives on the result line —
-      // so this dumps the step rather than emitting a blank (harnessErrorText).
+      // A model API failure the run may recover from (live E1b: one per retry,
+      // then the result; U1: three, then the answer) — never fatal here. The
+      // step carries no text, so the dump stands in (harnessErrorText).
       case "error_message":
         return [
           {
@@ -222,12 +202,13 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
           },
         ];
 
+      // The turn's own echo of the prompt: loop punctuation, silent like every parser's turn start.
+      case "user_input":
+        return [];
+
       default: {
-        if (CONTENT_FREE_STEPS.has(stepType)) return [];
-        // A step type this file does not know (checkpoint is documented but
-        // never observed; a later release may add more). Passed through, and
-        // its accounting kept when it carries some.
-        const passthrough: SessionUpdate[] = [unknownUpdate(`step_update:${stepType || "unknown"}`, step)];
+        if (!NO_SLOT_STEPS.has(stepType)) warnOnce("step", stepType);
+        const passthrough: SessionUpdate[] = [harnessEvent(stepType || "step_update", step, "step_type")];
         const usage = antigravityTokenUsage(step.usage);
         if (usage) passthrough.push({ sessionUpdate: "usage", scope: "call", usage });
         return passthrough;
@@ -237,23 +218,21 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
 
   function handleResult(result: Record<string, unknown>): SessionUpdate[] {
     const updates: SessionUpdate[] = [];
-    // The final text, whole. Published only when the stream did not already
+    // The final text, whole — published only when the stream did not already
     // carry it as deltas (the json envelope, or a response that never streamed).
     const response = stringField(result, "response");
     if (response && !streamedText.includes(response)) {
       streamedText += response;
       updates.push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: response } });
     }
-    // The conversation's total, whatever the status: a run that failed after
-    // real calls did real work, and accounting is never work (types.ts).
+    // The conversation's total, whatever the status: accounting is never work (types.ts).
     const usage = antigravityTokenUsage(result.usage);
     if (usage) updates.push({ sessionUpdate: "usage", scope: "run", usage });
     const status = stringField(result, "status");
     if (status !== "SUCCESS") {
-      // The one place a fatal failure's text appears (E1a, E1b, E3 `interrupted`).
-      // Any non-SUCCESS status is the run ending short of an answer; the
+      // The one place a fatal failure's text appears (live E1a, E1b, E3). The
       // documented CANCELED/INTERRUPTED/INVALID/WAITING/RUNNING were never
-      // observed, so they are not given semantics beyond "not a success".
+      // observed, so any non-SUCCESS status means only "ended short of an answer".
       updates.push({
         sessionUpdate: "error",
         message: harnessErrorText(
@@ -277,8 +256,7 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
     let title = detail ? `${toolName} ${detail}` : toolName;
     if (toolName === "run_command" && detail) title = `\`${detail}\``;
     if (toolName === "call_mcp_tool") {
-      // MCP is one generic tool on this CLI (live M1): the server and tool
-      // names live in its parameters, never in the tool name.
+      // MCP is one generic tool on this CLI (live M1): server and tool names live in its parameters.
       const server = stringField(params, "ServerName");
       const tool = stringField(params, "ToolName");
       if (server || tool) title = `call_mcp_tool ${server}/${tool}`;
@@ -307,7 +285,7 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
     let rawOutput: unknown;
     if (stepType === "subagent") {
       rawOutput = step.subagent_info;
-      // The child conversations the harness named (own transcript under brain/<id>/).
+      // The child conversations the harness named (each has its own transcript under brain/<id>/).
       const lines = subagentEntries(step.subagent_info)
         .map((entry) => {
           const name = stringField(entry, "type_name");
@@ -350,6 +328,13 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
     if (typeof line.step_index !== "number") return undefined;
     return stepKey(line);
   }
+
+  function warnOnce(kind: "event" | "step", type: string): void {
+    const key = `${kind}:${type}`;
+    if (warned.has(key)) return;
+    warned.add(key);
+    console.warn(`[antigravity parser] unknown ${kind} type "${type}" passed through as harness_event`);
+  }
 }
 
 /**
@@ -388,8 +373,13 @@ function lineExtra(line: Record<string, unknown>): Record<string, unknown> | und
   return Object.keys(extra).length > 0 ? extra : undefined;
 }
 
-function unknownUpdate(kind: string, raw: unknown): SessionUpdate {
-  return { sessionUpdate: "unknown", kind, raw };
+/** The line under the harness's own type word, every other field verbatim (types.ts HarnessEvent). */
+function harnessEvent(type: string, line: Record<string, unknown>, typeKey: string): SessionUpdate {
+  const payload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(line)) {
+    if (key !== typeKey) payload[key] = value;
+  }
+  return { sessionUpdate: "harness_event", type, payload };
 }
 
 function subagentEntries(info: unknown): Record<string, unknown>[] {
