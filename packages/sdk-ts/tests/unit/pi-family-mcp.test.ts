@@ -12,6 +12,7 @@ import {
   writePiMcpConfig,
   writePrimeAgentMcpConfig,
 } from "../../src/mcp/json.ts";
+import { homeFileOwnershipCommand } from "../../src/mcp/home-file.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -42,11 +43,15 @@ function createNoopHandle(): SandboxCommandHandle {
 function createMockSandbox() {
   const files = new Map<string, string>();
   const dirs: string[] = [];
+  const ran: string[] = [];
 
   const sandbox: SandboxInstance = {
     sandboxId: "sbx-1",
     commands: {
-      run: async (): Promise<SandboxCommandResult> => ({ exitCode: 0, stdout: "", stderr: "" }),
+      run: async (command: string): Promise<SandboxCommandResult> => {
+        ran.push(command);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
       spawn: async (): Promise<SandboxCommandHandle> => createNoopHandle(),
       list: async (): Promise<ProcessInfo[]> => [],
       kill: async (): Promise<boolean> => true,
@@ -73,6 +78,7 @@ function createMockSandbox() {
   return {
     sandbox,
     dirs,
+    ran,
     seed(path: string, content: string): void {
       files.set(path, content);
     },
@@ -130,7 +136,7 @@ async function testPrimeMcp(): Promise<void> {
 
 async function testModelsJsonRoute(): Promise<void> {
   console.log("\n[3] models.json: the literal base URL, the key by env NAME, the model entry, the headers");
-  const { sandbox, seed, readJson } = createMockSandbox();
+  const { sandbox, seed, readJson, ran } = createMockSandbox();
   seed("/home/user/.pi/agent/models.json", JSON.stringify({ providers: { theirs: { baseUrl: "https://x/v1" } } }));
   await writeModelsJsonRoute(
     sandbox,
@@ -158,6 +164,10 @@ async function testModelsJsonRoute(): Promise<void> {
     "pi: the literal URL, $VAR key reference, the model with reasoning on, the headers at provider level; high needs no thinkingLevelMap",
   );
   assert(same(pi.theirs, { baseUrl: "https://x/v1" }), "another provider in the file survives");
+  assert(
+    ran.length === 1 && ran[0] === homeFileOwnershipCommand("/home/user", "/home/user/.pi/agent/models.json"),
+    "models.json and the directories made for it are handed to the home's owner right after the write",
+  );
 
   await writeModelsJsonRoute(
     sandbox,

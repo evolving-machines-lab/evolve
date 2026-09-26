@@ -47,6 +47,7 @@ function createFakeSandbox(seed?: Record<string, string>) {
   const writes: string[] = [];
 
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async (path: string) => {

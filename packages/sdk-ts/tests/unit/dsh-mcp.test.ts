@@ -11,6 +11,7 @@
 
 import { parse as parseYaml } from "yaml";
 import { renderDshRoutePatch, writeDshMcpConfig, writeDshRoutePatch } from "../../src/mcp/yaml.ts";
+import { homeFileOwnershipCommand } from "../../src/mcp/home-file.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -41,11 +42,15 @@ function createNoopHandle(): SandboxCommandHandle {
 function createMockSandbox() {
   const files = new Map<string, string>();
   const dirs: string[] = [];
+  const ran: string[] = [];
 
   const sandbox: SandboxInstance = {
     sandboxId: "sbx-1",
     commands: {
-      run: async (): Promise<SandboxCommandResult> => ({ exitCode: 0, stdout: "", stderr: "" }),
+      run: async (command: string): Promise<SandboxCommandResult> => {
+        ran.push(command);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
       spawn: async (): Promise<SandboxCommandHandle> => createNoopHandle(),
       list: async (): Promise<ProcessInfo[]> => [],
       kill: async (): Promise<boolean> => true,
@@ -72,6 +77,7 @@ function createMockSandbox() {
   return {
     sandbox,
     dirs,
+    ran,
     text(path: string): string {
       const raw = files.get(path);
       if (raw === undefined) throw new Error(`Missing file: ${path}`);
@@ -170,7 +176,7 @@ function parseRoutePatch(raw: string): Array<Record<string, any>> {
 async function testRoutePatchManaged(): Promise<void> {
   console.log("\n[3] the route patch for the managed gateway: env reads for key, URL and the three spend headers");
 
-  const { sandbox, dirs, text } = createMockSandbox();
+  const { sandbox, dirs, ran, text } = createMockSandbox();
   await writeDshRoutePatch(sandbox, {
     ...ROUTE,
     headerEnvs: {
@@ -180,6 +186,10 @@ async function testRoutePatchManaged(): Promise<void> {
     },
   });
   assert(dirs.includes("/home/user/.dsh"), "creates the patch's directory");
+  assert(
+    ran.length === 1 && ran[0] === homeFileOwnershipCommand("/home/user", "/home/user/.dsh/evolve-route.patch.yml"),
+    "the patch and its directory are handed to the home's owner right after the write",
+  );
   const raw = text("/home/user/.dsh/evolve-route.patch.yml");
 
   assert(raw.includes("baseURL: !!js process.env.EVOLVE_DSH_BASE_URL"), "the base URL is a `!!js process.env` read of the SDK's baseUrlEnv");
@@ -228,6 +238,7 @@ async function testRoutePatchWithoutHeaders(): Promise<void> {
   const homed = createMockSandbox();
   await writeDshRoutePatch(homed.sandbox, ROUTE, "/root");
   assert(homed.text("/root/.dsh/evolve-route.patch.yml").length > 0, "the `~` in the path follows the given home");
+  assert(homed.ran[0] === homeFileOwnershipCommand("/root", "/root/.dsh/evolve-route.patch.yml"), "and so does the hand-over");
 }
 
 async function testEnvNameGuard(): Promise<void> {

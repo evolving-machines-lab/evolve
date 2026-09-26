@@ -14,10 +14,10 @@
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
-import { shellSingleQuote } from "../utils/shell";
 import { expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { EvolveConfigError } from "../utils/config";
 import { validateServers, isNotFoundError } from "./validation";
+import { writeHomeFile } from "./home-file";
 
 /** An existing config file's object: an empty file is no config (the antigravity CLI leaves a 0-byte mcp_config.json);
  *  malformed JSON is refused with the path named, never a bare SyntaxError. */
@@ -308,10 +308,7 @@ export async function writeJsonSpendHeaders(
   headers: Record<string, string>,
   homeDir?: string,
 ): Promise<void> {
-  const settingsDir = getMcpSettingsDir(agentType, homeDir);
   const settingsPath = getMcpSettingsPath(agentType, homeDir);
-
-  await sandbox.files.makeDir(settingsDir);
 
   let config: Record<string, unknown> = {};
   try {
@@ -339,7 +336,7 @@ export async function writeJsonSpendHeaders(
     : {};
   current[leaf] = { ...existing, ...headers };
 
-  await sandbox.files.write(settingsPath, JSON.stringify(config, null, 2));
+  await writeHomeFile(sandbox, settingsPath, JSON.stringify(config, null, 2), { homeDir });
 }
 
 export async function writeQwenThinkingConfig(
@@ -347,10 +344,7 @@ export async function writeQwenThinkingConfig(
   enableThinking: boolean,
   homeDir?: string,
 ): Promise<void> {
-  const settingsDir = getMcpSettingsDir("qwen", homeDir);
   const settingsPath = getMcpSettingsPath("qwen", homeDir);
-
-  await sandbox.files.makeDir(settingsDir);
 
   let config: Record<string, unknown> = {};
   try {
@@ -377,7 +371,7 @@ export async function writeQwenThinkingConfig(
     },
   };
 
-  await sandbox.files.write(settingsPath, JSON.stringify(config, null, 2));
+  await writeHomeFile(sandbox, settingsPath, JSON.stringify(config, null, 2), { homeDir });
 }
 
 /** Write MCP config for Kimi agent (FastMCP-compatible transport field) */
@@ -413,9 +407,6 @@ export async function writeAntigravitySettings(
   homeDir?: string,
 ): Promise<void> {
   const path = expandPath(settingsPath, homeDir);
-  const dir = path.slice(0, path.lastIndexOf("/"));
-
-  await sandbox.files.makeDir(dir);
 
   let settings: Record<string, unknown> = {};
   try {
@@ -441,7 +432,7 @@ export async function writeAntigravitySettings(
     customModels: { ...customModels, [modelSlug]: { modelName: modelSlug } },
   };
 
-  await sandbox.files.write(path, JSON.stringify(settings, null, 2));
+  await writeHomeFile(sandbox, path, JSON.stringify(settings, null, 2), { homeDir });
 }
 
 /**
@@ -505,9 +496,6 @@ export async function writeDroidGatewaySettings(
   homeDir?: string,
 ): Promise<void> {
   const settingsPath = expandPath(config.settingsPath, homeDir);
-  const settingsDir = settingsPath.slice(0, settingsPath.lastIndexOf("/"));
-
-  await sandbox.files.makeDir(settingsDir);
 
   const content = {
     cloudSessionSync: false,
@@ -524,7 +512,7 @@ export async function writeDroidGatewaySettings(
     ],
   };
 
-  await sandbox.files.write(settingsPath, JSON.stringify(content, null, 2));
+  await writeHomeFile(sandbox, settingsPath, JSON.stringify(content, null, 2), { homeDir });
 }
 
 /**
@@ -598,9 +586,6 @@ export async function writeZcodeProviderConfig(
   homeDir?: string,
 ): Promise<void> {
   const filePath = expandPath(config.path, homeDir);
-  const dir = filePath.slice(0, filePath.lastIndexOf("/"));
-
-  await sandbox.files.makeDir(dir);
 
   const api: Record<string, unknown> = {
     type: "openai-chat-completions",
@@ -656,10 +641,8 @@ export async function writeZcodeProviderConfig(
     },
   };
 
-  await sandbox.files.write(filePath, JSON.stringify(document, null, 2));
-  // The file holds the literal key; the sandbox file API writes with the
-  // default mode, so the permission is tightened right after the write.
-  await sandbox.commands.run(`chmod 600 ${shellSingleQuote(filePath)}`, { timeoutMs: 10000 });
+  // The file holds the literal key: 0600, for the home's owner alone.
+  await writeHomeFile(sandbox, filePath, JSON.stringify(document, null, 2), { homeDir, mode: "600" });
 }
 
 /**
@@ -898,8 +881,6 @@ export async function writeModelsJsonRoute(
   const agentDir = expandPath(config.agentDir, homeDir);
   const modelsPath = `${agentDir}/models.json`;
 
-  await sandbox.files.makeDir(agentDir);
-
   let existing: Record<string, unknown> = {};
   try {
     const raw = await sandbox.files.read(modelsPath);
@@ -926,9 +907,11 @@ export async function writeModelsJsonRoute(
   };
   if (Object.keys(headers).length > 0) provider.headers = headers;
 
-  await sandbox.files.write(
+  await writeHomeFile(
+    sandbox,
     modelsPath,
     JSON.stringify({ ...existing, providers: { ...providers, [config.providerName]: provider } }, null, 2),
+    { homeDir },
   );
 }
 

@@ -9,6 +9,7 @@
  */
 
 import { writeZcodeMcpConfig, writeZcodeProviderConfig } from "../../src/mcp/json.ts";
+import { homeFileOwnershipCommand } from "../../src/mcp/home-file.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -118,7 +119,7 @@ async function testMcpHomeDir(): Promise<void> {
 }
 
 async function testProviderFile(): Promise<void> {
-  console.log("\n[4] writes the provider file Z Code reads, then tightens it to 0600");
+  console.log("\n[4] writes the provider file Z Code reads, hands it to the home's owner and tightens it to 0600");
 
   const { sandbox, ran, readJson } = createMockSandbox();
   await writeZcodeProviderConfig(sandbox, {
@@ -160,7 +161,12 @@ async function testProviderFile(): Promise<void> {
   assert(rc.optionSpecs.reasoningLevel.map === 'reasoningLevel == "disabled" ? {} : {"reasoning_effort": reasoningLevel}', "disabled sends no field; a level is reasoning_effort");
   assert(doc.config.defaultModelSelection.modelId === "openrouter/z-ai/glm-5.3-flash" && doc.config.defaultModelSelection.options.reasoningLevel === "high", "the default selection is the run's model at the run's level");
   assert(JSON.stringify(doc.config.modelConfigRules.manualProviderModelRules) === "[]", "no manual rules");
-  assert(ran.length === 1 && ran[0] === "chmod 600 '/home/user/.zcode/v2/provider_config.json'", "the file is chmod 600 right after the write");
+  assert(ran.length === 1, "one command after the write");
+  assert(
+    ran[0] === homeFileOwnershipCommand("/home/user", "/home/user/.zcode/v2/provider_config.json", "600"),
+    "the file and the directories made for it are handed to the home's owner, and the file is chmod 600, in the one command",
+  );
+  assert(ran[0].endsWith("chmod 600 '/home/user/.zcode/v2/provider_config.json'"), "the mode is set on the file");
 }
 
 async function testProviderFileWithoutHeaders(): Promise<void> {

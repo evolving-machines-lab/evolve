@@ -65,6 +65,7 @@ import {
   writeZcodeProviderConfig,
   writeAntigravitySettings,
 } from "./mcp";
+import { writeHomeFile } from "./mcp/home-file";
 import { stringify as stringifyToml } from "smol-toml";
 import { createAgentParser, type AgentParser } from "./parsers";
 import { mountSkills, resolveSkills, type ResolvedSkill, type SkillRef } from "./skills";
@@ -1698,11 +1699,9 @@ export class Agent {
   ): Promise<void> {
     const path = this.sessionIdStatePath();
     if (!path || !this.capturedSessionId) return;
-    await sandbox.files.makeDir(path.slice(0, path.lastIndexOf("/")));
-    await sandbox.files.write(
-      path,
-      JSON.stringify({ sessionId: this.capturedSessionId }, null, 2),
-    );
+    await writeHomeFile(sandbox, path, JSON.stringify({ sessionId: this.capturedSessionId }, null, 2), {
+      homeDir: this.homeDir,
+    });
   }
 
   /**

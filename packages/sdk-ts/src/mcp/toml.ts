@@ -12,8 +12,9 @@
 
 import { parse, stringify } from "smol-toml";
 import type { SandboxInstance, McpServerConfig } from "../types";
-import { getMcpSettingsDir, getMcpSettingsPath, expandPath } from "../registry";
+import { getMcpSettingsPath, expandPath } from "../registry";
 import { validateMcpServer, isNotFoundError } from "./validation";
+import { writeHomeFile } from "./home-file";
 import {
   LITELLM_CUSTOMER_ID_HEADER,
   LITELLM_TAGS_HEADER,
@@ -101,8 +102,9 @@ async function writeTomlDocument(
   sandbox: SandboxInstance,
   path: string,
   doc: TomlTable,
+  homeDir?: string,
 ): Promise<void> {
-  await sandbox.files.write(path, stringify(doc).trimEnd() + "\n");
+  await writeHomeFile(sandbox, path, stringify(doc).trimEnd() + "\n", { homeDir });
 }
 
 // =============================================================================
@@ -177,11 +179,7 @@ export async function writeCodexMcpConfig(
     validateMcpServer(name, config);
   }
 
-  const settingsDir = getMcpSettingsDir("codex", homeDir);
   const settingsPath = getMcpSettingsPath("codex", homeDir);
-
-  // Ensure settings directory exists
-  await sandbox.files.makeDir(settingsDir);
 
   // Read existing config to preserve other settings
   const doc = await readTomlDocument(sandbox, settingsPath);
@@ -202,7 +200,7 @@ export async function writeCodexMcpConfig(
     mcpServers[name] = buildCodexServerTable(name, config);
   }
 
-  await writeTomlDocument(sandbox, settingsPath, doc);
+  await writeTomlDocument(sandbox, settingsPath, doc, homeDir);
 }
 
 // =============================================================================
@@ -227,10 +225,7 @@ export async function writeCodexSpendProvider(
   envHttpHeaders: Record<string, string> = {},
   homeDir?: string,
 ): Promise<void> {
-  const settingsDir = getMcpSettingsDir("codex", homeDir);
   const settingsPath = getMcpSettingsPath("codex", homeDir);
-
-  await sandbox.files.makeDir(settingsDir);
 
   const doc = await readTomlDocument(sandbox, settingsPath);
 
@@ -271,7 +266,7 @@ export async function writeCodexSpendProvider(
   providers["evolve-gateway"] = desiredProvider;
   doc.model_providers = providers;
 
-  await writeTomlDocument(sandbox, settingsPath, doc);
+  await writeTomlDocument(sandbox, settingsPath, doc, homeDir);
 }
 
 // =============================================================================
@@ -307,9 +302,6 @@ export async function writeKimiSpendConfig(
   homeDir?: string,
 ): Promise<void> {
   const configPath = expandPath(config.configPath, homeDir);
-  const configDir = configPath.slice(0, configPath.lastIndexOf("/"));
-
-  await sandbox.files.makeDir(configDir);
 
   // Built from scratch — no reading, no parsing, no merging.
   const doc: TomlTable = {
@@ -340,5 +332,5 @@ export async function writeKimiSpendConfig(
     },
   };
 
-  await writeTomlDocument(sandbox, configPath, doc);
+  await writeTomlDocument(sandbox, configPath, doc, homeDir);
 }

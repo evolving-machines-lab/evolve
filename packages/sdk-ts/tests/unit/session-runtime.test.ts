@@ -3132,8 +3132,8 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
     assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.access.apiKey, "sk-or-direct", "zcode direct mode carries the user's OpenRouter key");
     assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.api.headers, undefined, "zcode direct mode sends no spend headers");
     assert(
-      zcodeDirectCommands.runCommands.some((command) => command === "chmod 600 '/home/user/.zcode/v2/provider_config.json'"),
-      "zcode tightens the provider file to 0600 after writing it",
+      zcodeDirectCommands.runCommands.some((command) => command.endsWith("chmod 600 '/home/user/.zcode/v2/provider_config.json'")),
+      "zcode hands the provider file to the home's owner and tightens it to 0600 after writing it",
     );
   } finally {
     globalThis.fetch = previousFetch;
@@ -3245,7 +3245,8 @@ async function testZcodeProviderFileLivesOnlyWhileTheRunDoes(): Promise<void> {
   };
   const removals = (commands: MockCommands): number => commands.runCommands.filter((c) => c === REMOVE).length;
   const orderIsWriteChmodSpawnRemove = (commands: MockCommands, sandbox: MockSandbox): boolean => {
-    const chmodAt = commands.runCommands.indexOf(`chmod 600 '${PROVIDER_FILE}'`);
+    // The chmod closes the one hand-over command the write ends with (mcp/home-file.ts).
+    const chmodAt = commands.runCommands.findIndex((c) => c.endsWith(`chmod 600 '${PROVIDER_FILE}'`));
     const removeAt = commands.runCommands.indexOf(REMOVE);
     return sandbox.files.writes.has(PROVIDER_FILE) && chmodAt >= 0 && removeAt > chmodAt && commands.spawned.length === 1;
   };

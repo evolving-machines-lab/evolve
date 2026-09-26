@@ -211,7 +211,7 @@ const evolve = new Evolve()
 
 **Network policy.** `outbound: "blocked"` denies all outbound traffic except `allowedDestinations` (hostnames, IPs, or CIDR ranges). Providers that cannot enforce a requested policy reject it with an error — a policy is never silently ignored.
 
-**User and home directory.** `user` runs every command and file operation as that user; providers that cannot enforce it reject it (E2B supports run-as-root). `homeDir` controls where agent config files (settings, session state, skills) are written. Defaults: `/root` when `user` is `"root"`, `/home/<user>` for other users, `/home/user` when no user is given. The default working directory follows as `<homeDir>/workspace`.
+**User and home directory.** `user` runs every command and file operation as that user; providers that cannot enforce it reject it (E2B supports run-as-root). `homeDir` controls where agent config files (settings, session state, skills) are written; the files the SDK writes there belong to whoever owns that directory. Defaults: `/root` when `user` is `"root"`, `/home/<user>` for other users, `/home/user` when no user is given. The default working directory follows as `<homeDir>/workspace`.
 
 Constraints:
 
