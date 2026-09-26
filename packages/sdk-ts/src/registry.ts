@@ -601,12 +601,8 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // default for all of them — stamped explicitly via --effort.
     defaultReasoningEffort: "high",
     models: [
-      // buildCommand sends this modelId, never the alias: Claude Code resolves
-      // a bare alias to ITS current default (`opus` is Opus 5.5 in its docs,
-      // 2026-09-26), which the gateway need not route and a hosted run's key,
-      // scoped to the alias and this id, refuses. The `opus[1m]`/`sonnet[1m]`
-      // rows left for the same reason (alias == wire id, so the CLI resolved
-      // them itself and every hosted run 403'd); Sonnet 5 runs 1M natively.
+      // buildCommand sends this modelId, never the alias: Claude Code resolves a bare alias to its own
+      // current id (`opus` = Opus 5.5), which a run key scoped to the roster refuses. These ids carry 1M natively.
       { alias: "fable", modelId: "claude-fable-5-1", description: "Highest capability, long-horizon agentic work" },
       { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-5", description: "Daily coding, features, tests" },

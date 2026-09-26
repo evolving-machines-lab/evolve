@@ -182,11 +182,8 @@ assert(
 // Fable 5 at all, just leave 5.1"); `fable` is Fable 5.1, and the three
 // legacy rows that pinned Fable 5 by its explicit id are retired names.
 const RETIRED_FABLE_5_NAMES = ["claude-fable-5", "openrouter/anthropic/claude-fable-5"];
-// Retired 2026-09-26 (owner: no stale models on any roster). The `[1m]` rows
-// were aliases Claude Code resolves itself, so alias == wire id and a hosted
-// run's key admitted only the alias while the CLI called the resolved model
-// (every live run 403'd). The Kimi K2.7 Code Raptor route is no longer served
-// by its provider (live 404).
+// Retired 2026-09-26: the `[1m]` aliases resolved to Claude Code's own id (every hosted run 403'd) and
+// the roster's wire ids already carry 1M; the K2.7 Raptor route is no longer served (404).
 const RETIRED_ROSTER_NAMES = ["opus[1m]", "sonnet[1m]", "kimi-k2p7-code-raptor"];
 for (const retired of [...RETIRED_DEEPSEEK_NAMES, ...RETIRED_FABLE_5_NAMES, ...RETIRED_ROSTER_NAMES]) {
   assert(
