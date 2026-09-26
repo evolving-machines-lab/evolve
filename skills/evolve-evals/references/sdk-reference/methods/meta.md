@@ -150,7 +150,7 @@ interface AgentModelOption {
 }
 
 interface RetiredAgent {
-  name: string;
+  agent: string;
   replaced_by: string;
 }
 

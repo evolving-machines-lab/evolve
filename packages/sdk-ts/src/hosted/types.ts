@@ -5735,9 +5735,9 @@ export interface AgentModelOption {
   description: string | null;
 }
 
-/** One retired built-in agent and the agent to use instead. */
+/** One retired built-in agent and the agent to use instead — the row `agent_retired` details carry too. */
 export interface RetiredAgent {
-  name: string;
+  agent: string;
   replaced_by: string;
 }
 

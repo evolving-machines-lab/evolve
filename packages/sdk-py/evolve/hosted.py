@@ -1023,8 +1023,8 @@ class AgentModelOption:
 
 @dataclass
 class RetiredAgent:
-    """One retired built-in agent and the agent to use instead."""
-    name: str
+    """One retired built-in agent and the agent to use instead — the row ``agent_retired`` details carry too."""
+    agent: str
     replaced_by: str
 
 
@@ -3958,10 +3958,10 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
             else None
         ),
         retired_agents=[
-            RetiredAgent(name=item['name'], replaced_by=item['replaced_by'])
+            RetiredAgent(agent=item['agent'], replaced_by=item['replaced_by'])
             for item in raw.get('retired_agents', [])
             if isinstance(item, dict)
-            and isinstance(item.get('name'), str)
+            and isinstance(item.get('agent'), str)
             and isinstance(item.get('replaced_by'), str)
         ],
     )
