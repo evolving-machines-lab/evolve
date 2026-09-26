@@ -12,7 +12,7 @@
 
 import { parse, stringify } from "smol-toml";
 import type { SandboxInstance, McpServerConfig } from "../types";
-import { getMcpSettingsPath, expandPath } from "../registry";
+import { getMcpSettingsDir, getMcpSettingsPath, expandPath } from "../registry";
 import { validateMcpServer, isNotFoundError } from "./validation";
 import { writeHomeFile } from "./home-file";
 import {
@@ -201,7 +201,9 @@ export async function writeCodexMcpConfig(
     mcpServers[name] = buildCodexServerTable(name, config);
   }
 
-  await writeTomlDocument(sandbox, settingsPath, doc, homeDir);
+  // A setup-time write, before the home is handed over: a raw write like the JSON and YAML MCP writers.
+  await sandbox.files.makeDir(getMcpSettingsDir("codex", homeDir));
+  await sandbox.files.write(settingsPath, stringify(doc).trimEnd() + "\n");
 }
 
 // =============================================================================

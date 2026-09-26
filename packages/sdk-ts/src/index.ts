@@ -353,6 +353,8 @@ export {
   // Front-door configuration validation
   EvolveConfigError,
 } from "./utils";
+// A refused hand-over of a per-run config file rejects run(); callers match it by class, like the sandbox errors.
+export { HomeFileError } from "./mcp/home-file";
 
 // =============================================================================
 // STORAGE
