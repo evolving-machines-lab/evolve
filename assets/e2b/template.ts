@@ -42,6 +42,13 @@ export const template = Template()
   .runCmd('curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh')
 
   // Verify installations
+  // ---------------------------------------------------------------------------
+  // Node 24.21.0 — the image's one Node (decision 2026-09-25): the base ships
+  // NodeSource's Node 20, below agent-browser (>= 24), pi (>= 22.19), Prime
+  // Agent (>= 22.8) and Z Code (>= 24). Mirrors the Dockerfile block; sha256
+  // from nodejs.org/dist/v24.21.0/SHASUMS256.txt.
+  // ---------------------------------------------------------------------------
+  .runCmd('set -eu; NODE_VERSION=24.21.0; NODE_SHA256=6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff; cd /tmp && curl -fsSL -o node.tgz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" && echo "${NODE_SHA256}  node.tgz" | sha256sum -c - && apt-get remove -y nodejs && tar -xzf node.tgz -C /usr/local --strip-components=1 --exclude=\'*/CHANGELOG.md\' --exclude=\'*/LICENSE\' --exclude=\'*/README.md\' && rm node.tgz && test "$(command -v node)" = /usr/local/bin/node && test "$(node -v)" = "v${NODE_VERSION}"')
   .runCmd('node -v && npm -v && git --version && google-chrome --version')
 
   // ---------------------------------------------------------------------------
@@ -55,21 +62,15 @@ export const template = Template()
     @google/gemini-cli@latest
     @qwen-code/qwen-code@latest
     opencode-ai@latest
+    @earendil-works/pi-coding-agent@0.87.1
   `.replace(/\n\s+/g, ' ').trim())
 
   // ---------------------------------------------------------------------------
-  // Node 22 for the pi family (the base ships Node 20; pi needs >= 22.19,
-  // Prime >= 22.8): the hosted bundle's pinned tarball and sha256, reached
-  // only through the two launcher shims below. Mirrors the Dockerfile block.
+  // pi's MCP adapter (pi's core has no MCP): pinned, own prefix, scripts and
+  // peers skipped (pi aliases its own packages for extensions). The SDK loads
+  // it with --extension from this path (registry.ts PI_MCP_ADAPTER_EXTENSION).
   // ---------------------------------------------------------------------------
-  .runCmd('set -eu; cd /tmp && curl -fsSL -o node22.tgz https://nodejs.org/dist/v22.23.1/node-v22.23.1-linux-x64.tar.gz && echo "7a8cb04b4a1df4eaf432125324b81b29a088e73570a23259a8de1c65d07fc129  node22.tgz" | sha256sum -c - && mkdir -p /opt/evolve/node22 && tar -xzf node22.tgz -C /opt/evolve/node22 --strip-components=1 && rm node22.tgz && /opt/evolve/node22/bin/node -v')
-
-  // ---------------------------------------------------------------------------
-  // pi 0.87.1 (own prefix, Node 22) + pi-mcp-adapter 2.37.0 (pinned, own
-  // prefix, scripts and peers skipped; the SDK loads it with --extension from
-  // registry.ts PI_MCP_ADAPTER_EXTENSION). The `pi` launcher runs Node 22.
-  // ---------------------------------------------------------------------------
-  .runCmd('set -eu && /opt/evolve/node22/bin/npm install -g --prefix /opt/evolve/pi --no-audit --no-fund @earendil-works/pi-coding-agent@0.87.1 && mkdir -p /opt/evolve/pi-mcp-adapter && /opt/evolve/node22/bin/npm install --prefix /opt/evolve/pi-mcp-adapter --ignore-scripts --legacy-peer-deps --no-audit --no-fund pi-mcp-adapter@2.37.0 && test -f /opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts && printf \'%s\\n\' \'#!/bin/sh\' \'exec /opt/evolve/node22/bin/node /opt/evolve/pi/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js "$@"\' > /usr/local/bin/pi && chmod +x /usr/local/bin/pi && test "$(pi --version)" = "0.87.1"')
+  .runCmd('mkdir -p /opt/evolve/pi-mcp-adapter && npm install --prefix /opt/evolve/pi-mcp-adapter --ignore-scripts --legacy-peer-deps --no-audit --no-fund pi-mcp-adapter@2.37.0 && test -f /opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts && test "$(pi --version)" = "0.87.1"')
 
   // ---------------------------------------------------------------------------
   // Kimi Code
@@ -123,14 +124,13 @@ export const template = Template()
     'for f in prime-agent-$V.tgz prime-agent-ai-$V.tgz prime-agent-core-$V.tgz prime-agent-tui-$V.tgz; do curl -fsSL -o "$f" "https://github.com/PrimeIntellect-ai/prime-agent/releases/download/v$V/$f"; done',
     'printf \'%s\\n\' "e5bf0e349e55b3f75c79e66006c993b10c51ed1c9bf15863b06658fcaf0232b2  prime-agent-$V.tgz" "26f2a9ce723b06a000b50619c4873c10fd2692439d65f7430a234ad31216f465  prime-agent-ai-$V.tgz" "e79c23d2e9b38d168806cd5f3eee643fcadab7f6361cf8e7a2d2e90d00f209d0  prime-agent-core-$V.tgz" "0a28ef155beb9357c5e0f5848d0f6110dbdd2bff8346a0befba5b209e189c0f2  prime-agent-tui-$V.tgz" | sha256sum -c -',
     'printf \'%s\\n\' "{\\"private\\":true,\\"dependencies\\":{\\"prime-agent\\":\\"file:./prime-agent-$V.tgz\\"},\\"overrides\\":{\\"@earendil-works/pi-ai\\":\\"file:./prime-agent-ai-$V.tgz\\",\\"@earendil-works/pi-agent-core\\":\\"file:./prime-agent-core-$V.tgz\\",\\"@earendil-works/pi-tui\\":\\"file:./prime-agent-tui-$V.tgz\\"}}" > package.json',
-    'PATH=/opt/evolve/node22/bin:$PATH PRIME_AGENT_TELEMETRY=0 PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1 npm install --no-audit --no-fund',
+    'PRIME_AGENT_TELEMETRY=0 PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1 npm install --no-audit --no-fund',
     'test -f /home/user/.prime/agent/kernel-venv/.bootstrap-version',
     'rm -rf /home/user/.cache/uv',
   ].join(' && '))
 
-  // The launcher runs Prime with the Node 22 runtime, PATH untouched for its children.
   .setUser('root')
-  .runCmd('printf \'%s\\n\' \'#!/bin/sh\' \'exec /opt/evolve/node22/bin/node /opt/evolve/prime-agent/node_modules/prime-agent/dist/cli.js "$@"\' > /usr/local/bin/prime-agent && chmod +x /usr/local/bin/prime-agent && test "$(prime-agent --version)" = "0.9.6"')
+  .runCmd('ln -sf /opt/evolve/prime-agent/node_modules/.bin/prime-agent /usr/local/bin/prime-agent && test "$(prime-agent --version)" = "0.9.6"')
   .setUser('user')
 
   // ---------------------------------------------------------------------------
