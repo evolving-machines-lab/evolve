@@ -298,6 +298,25 @@ export interface AgentRegistryEntry {
     provider: "generic-chat-completion-api" | "openai" | "anthropic";
     maxOutputTokens?: number;
   };
+  /**
+   * Z Code's per-run provider file (`~/.zcode/v2/provider_config.json`): the
+   * ONE place the CLI reads its model, reasoning level, base URL and API key
+   * — it has no `--model` flag and reads no credential env (ZCode
+   * `apps/zcode-cli/packages/cli/src/arguments.ts`, `provider-runtime-env.ts`
+   * at v3.14.3). The SDK writes it before every spawn, in every mode, with
+   * the literal key at mode 0600, and the spend headers ride `api.headers`
+   * (live-proven 2026-09-25: the request line lists them among the outgoing
+   * headers). `providerId` names the provider entry the CLI selects.
+   */
+  zcodeProviderConfig?: {
+    path: string;
+    providerId: string;
+    providerName: string;
+    /** The window Z Code compacts at — the platform's one number, below every roster route's real ceiling. */
+    contextWindow: number;
+    /** Cap on `max_tokens` per request. */
+    maxOutputTokens: number;
+  };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -380,6 +399,30 @@ export function getOpenCodeReasoningVariant(reasoningEffort?: string): string | 
 function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   const variant = getOpenCodeReasoningVariant(reasoningEffort);
   return variant ? ` --variant ${variant} --thinking` : "";
+}
+
+/**
+ * The reasoning levels Z Code's provider file declares for the Evolve model
+ * entry (`optionSpecs.reasoningLevel.values`), in ascending order. The
+ * platform vocabulary collapses onto them in zcodeReasoningLevel: the file's
+ * `map` sends `disabled` as no field at all (the route's own default — GLM
+ * thinks anyway, live capture 2026-09-25) and every other level verbatim as
+ * OpenAI's `reasoning_effort`.
+ */
+export const ZCODE_REASONING_LEVELS = ["disabled", "low", "medium", "high"] as const;
+export type ZcodeReasoningLevel = (typeof ZCODE_REASONING_LEVELS)[number];
+
+/**
+ * The platform effort as Z Code's reasoning level — the opencode precedent
+ * (getOpenCodeReasoningVariant): the vocabulary a CLI cannot spell collapses
+ * onto its nearest level. `xhigh` and `max` become `high`, `minimal` becomes
+ * `low`, `thinking` becomes `medium`, the off spellings become `disabled`.
+ */
+export function zcodeReasoningLevel(reasoningEffort?: string): ZcodeReasoningLevel {
+  if (!isThinkingEnabled(reasoningEffort)) return "disabled";
+  if (reasoningEffort === "low") return "low";
+  if (reasoningEffort === undefined || reasoningEffort === "medium" || reasoningEffort === "thinking") return "medium";
+  return "high";
 }
 
 // =============================================================================
@@ -940,6 +983,89 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd ${homeDir}/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
+    },
+  },
+
+  zcode: {
+    image: "evolve-all",
+    // SDK-facing direct-mode input only. Z Code reads NO env for its key or
+    // base URL: both live in ~/.zcode/v2/provider_config.json, which the SDK
+    // writes before every run (zcodeProviderConfig below, agent.ts
+    // writeZcodePerRunConfig). Direct mode is OpenRouter, like opencode: the
+    // roster speaks OpenRouter ids and OpenRouter is where a user's own key
+    // can serve GLM. The gateway routes ride verbatim in gateway mode.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/z-ai/glm-5.3",
+    // Owner policy: graded-effort harnesses pin high. Z Code has no effort
+    // flag; the pin lands in the provider file's defaultModelSelection
+    // (zcodeReasoningLevel) on every run, so the level a run used is recorded.
+    defaultReasoningEffort: "high",
+    // OpenRouter-only in direct mode: the fireworks/ routes below are served
+    // through the Evolve gateway only, and direct mode refuses them typed at
+    // configuration (utils/config.ts assertDirectModeServesModel).
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    // Owner decision 2026-09-25: GLM 5.3 and GLM 5.3 Flash on OpenRouter and
+    // Fireworks, under names that show their route (the way the DeepSeek
+    // rows on the other rosters do). Alias == wire id: the id rides into the
+    // provider file verbatim in gateway and external-gateway mode; direct
+    // mode rewrites the OpenRouter rows to OpenRouter's own ids
+    // (directModelAliases). Live-proven on the gateway 2026-09-25: both
+    // OpenRouter routes created the file and answered (round-2 captures).
+    models: [
+      { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
+      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via OpenRouter" },
+      { alias: "fireworks/glm-5.3", modelId: "fireworks/glm-5.3", description: "Zhipu GLM-5.3 via Fireworks" },
+      { alias: "fireworks/glm-5.3-flash", modelId: "fireworks/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via Fireworks" },
+    ],
+    // Z Code reads AGENTS.md from the cwd upward (never CLAUDE.md).
+    systemPromptFile: "AGENTS.md",
+    // User-level config: `mcp.servers` in ~/.zcode/cli/config.json (every
+    // server needs an explicit `type`, live-proven round 2). No project file
+    // is written, so nothing lands in the task directory.
+    mcpConfig: {
+      settingsDir: "~/.zcode/cli",
+      filename: "config.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.zcode/skills",
+    },
+    // Direct mode sends OpenRouter its own ids. The fireworks rows have no
+    // direct-mode home (see providerEnvMap).
+    directModelAliases: {
+      "openrouter/z-ai/glm-5.3": "z-ai/glm-5.3",
+      "openrouter/z-ai/glm-5.3-flash": "z-ai/glm-5.3-flash",
+    },
+    zcodeProviderConfig: {
+      path: "~/.zcode/v2/provider_config.json",
+      providerId: "evolve",
+      providerName: "Evolve gateway",
+      // Every GLM route's real window is above this; Z Code compacts here.
+      contextWindow: PINNED_CONTEXT_WINDOW_TOKENS,
+      maxOutputTokens: 32768,
+    },
+    // The whole ~/.zcode home rides the checkpoint; the provider file (the
+    // literal key) and the two regenerable caches never do.
+    checkpointDirs: [
+      "~/.zcode",
+    ],
+    checkpointExcludes: [
+      ".zcode/v2/provider_config.json",
+      ".zcode/cli/plugins/cache",
+      ".zcode/v2/runtime",
+    ],
+    // `-p` is headless (yolo permission mode by default, no TTY); the model
+    // comes from the provider file, never the command line. Telemetry stays
+    // off by its documented kill switch. Z Code auto-loads a `.env` found in
+    // the cwd or above (dotenv, override:false), so the values set here win
+    // over anything a task directory carries.
+    buildCommand: ({ prompt, isResume }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      return `ZCODE_MODEL_TELEMETRY_ENABLED=0 zcode -p "${prompt}" ${continueFlag}--output-format stream-json`;
     },
   },
 };

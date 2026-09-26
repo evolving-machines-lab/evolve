@@ -88,7 +88,8 @@ type RuntimeProvider =
   | "dashscope"
   | "kimi"
   | "openrouter"
-  | "droid";
+  | "droid"
+  | "zcode";
 
 function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
   const openAiCompatible = new Set<RuntimeProvider>([
@@ -97,6 +98,7 @@ function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
     "kimi",
     "openrouter",
     "droid",
+    "zcode",
   ]);
   const suffix = openAiCompatible.has(provider) ? "/v1" : "";
   const baseUrl = `https://dashboard.test/api/model-proxy/${provider}${suffix}`;
@@ -1971,6 +1973,9 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
     { agentType: "kimi", provider: "kimi", tokenMustBeInSandboxConfig: true },
     { agentType: "opencode", provider: "openrouter", tokenMustBeInSandboxConfig: true },
     { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true },
+    // zcode reads its key from the per-run provider file, written into the
+    // sandbox (the writes are part of sandboxConfig below), never from env.
+    { agentType: "zcode", provider: "zcode", tokenMustBeInSandboxConfig: true },
   ];
 
   try {
@@ -2748,7 +2753,7 @@ async function testExternalGatewayMutualExclusivity(): Promise<void> {
 }
 
 async function testExternalGatewayPerHarnessWiring(): Promise<void> {
-  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid)");
+  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/zcode)");
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
@@ -2935,6 +2940,57 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
     assert(
       !directSandbox.files.writes.has("/home/user/.factory/evolve-settings.json"),
       "droid direct mode writes no Evolve-owned settings file",
+    );
+
+    // zcode: routed by the per-run provider file alone (no --model flag, no
+    // credential env read by the CLI): the caller's base URL and key VERBATIM,
+    // the roster wire id, no LiteLLM headers.
+    const zcode = await runHarness("zcode", "openrouter/z-ai/glm-5.3-flash");
+    const providerRaw = zcode.files.get("/home/user/.zcode/v2/provider_config.json") ?? "";
+    assert(providerRaw.length > 0, "zcode externalGateway writes the provider file");
+    const providerDoc = JSON.parse(providerRaw) as {
+      config: {
+        providerConfigRules: { providerRules: Array<{ config: { access: { apiKey: string }; api: { baseUrl: string; headers?: unknown } } }> };
+        defaultModelSelection: { modelId: string; options: { reasoningLevel: string } };
+      };
+    };
+    const zcodeProvider = providerDoc.config.providerConfigRules.providerRules[0]?.config;
+    assertEqual(zcodeProvider?.api.baseUrl, EXTERNAL_URL, "zcode provider file points at the external base URL VERBATIM");
+    assertEqual(zcodeProvider?.access.apiKey, EXTERNAL_KEY, "zcode provider file carries the caller-minted key literally");
+    assertEqual(zcodeProvider?.api.headers, undefined, "zcode external provider file carries NO LiteLLM spend headers");
+    assertEqual(providerDoc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3-flash", "zcode provider file names the roster wire id");
+    assertEqual(providerDoc.config.defaultModelSelection.options.reasoningLevel, "high", "zcode provider file stamps the pinned effort as its reasoning level");
+    assert(zcode.command.includes("zcode -p ") && zcode.command.includes("--output-format stream-json"), "zcode command is the headless stream-json prompt");
+    assert(!zcode.command.includes("--model"), "zcode command carries no --model flag (the CLI has none)");
+    assert(zcode.command.includes("ZCODE_MODEL_TELEMETRY_ENABLED=0"), "zcode command switches telemetry off");
+    assert(!("OPENAI_BASE_URL" in zcode.spawnEnvs), "zcode spawn env carries no base URL env: routing rides the provider file");
+
+    // zcode direct mode: OpenRouter's own id, the user's key, no headers.
+    const zcodeDirectCommands = new MockCommands();
+    const zcodeDirectSandbox = new MockSandbox("direct-zcode", zcodeDirectCommands);
+    const zcodeDirectKit = new Evolve()
+      .withAgent({ type: "zcode", model: "openrouter/z-ai/glm-5.3", providerApiKey: "sk-or-direct" })
+      .withSandbox(new MockProvider(zcodeDirectSandbox))
+      .withWorkspaceMode("task")
+      .withWorkingDirectory("/task");
+    try {
+      await zcodeDirectKit.run({ prompt: "solve", timeoutMs: 10_000 });
+    } finally {
+      await zcodeDirectKit.kill().catch(() => {});
+    }
+    const directDoc = JSON.parse(zcodeDirectSandbox.files.writes.get("/home/user/.zcode/v2/provider_config.json") ?? "{}") as {
+      config?: {
+        providerConfigRules: { providerRules: Array<{ config: { access: { apiKey: string }; api: { baseUrl: string; headers?: unknown } } }> };
+        defaultModelSelection: { modelId: string };
+      };
+    };
+    assertEqual(directDoc.config?.defaultModelSelection.modelId, "z-ai/glm-5.3", "zcode direct mode sends OpenRouter its own model id");
+    assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.api.baseUrl, "https://openrouter.ai/api/v1", "zcode direct mode points at OpenRouter");
+    assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.access.apiKey, "sk-or-direct", "zcode direct mode carries the user's OpenRouter key");
+    assertEqual(directDoc.config?.providerConfigRules.providerRules[0]?.config.api.headers, undefined, "zcode direct mode sends no spend headers");
+    assert(
+      zcodeDirectCommands.runCommands.some((command) => command === "chmod 600 '/home/user/.zcode/v2/provider_config.json'"),
+      "zcode tightens the provider file to 0600 after writing it",
     );
   } finally {
     globalThis.fetch = previousFetch;

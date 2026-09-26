@@ -12,6 +12,7 @@
 #   - Google Chrome + Playwright for browser automation
 #   - Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Droid
 #   - Kimi Code
+#   - Z Code (from the official .deb, on its own Node 24)
 #   - ACP adapters for Claude and Codex
 #   - Skills from github.com/evolving-machines-lab/evolve
 #
@@ -83,6 +84,42 @@ RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/ho
     && chown -R user:user /home/user/.kimi-code
 
 # ---------------------------------------------------------------------------
+# Z Code (zai-org/ZCode)
+# ---------------------------------------------------------------------------
+# Z.ai publishes no npm package and no installer for the CLI; the headless
+# runtime is the `glm` bundle inside the official Linux .deb, pinned by
+# version AND sha512 (the .deb is Electron's; only resources/glm, the search
+# tools beside it and the built-in provider catalog are kept). The CLI's
+# engines pin Node 24 (apps/zcode-cli/package.json at v3.14.3), which is not
+# the image's node, so a checksummed Node 24 rides beside it under /opt/zcode
+# and the launcher names it explicitly — nothing else in the image sees it.
+# The catalog must sit at <bundle>/provider/zcode-builtin.json or the CLI
+# exits 1 at start (cli/src/provider-runtime-env.ts).
+RUN set -eu \
+    && ZCODE_VERSION=3.14.3 \
+    && ZCODE_DEB_SHA512=54362bc8bf5b2188ccdeec51349f2c470e52e73f4b06646fbd6d5a990f7012784904c7374656f683c26fc56bf4e023e7d0680a1c42446665a62d9b88e84620d6 \
+    && ZCODE_NODE_VERSION=24.21.0 \
+    && ZCODE_NODE_SHA256=6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff \
+    && cd /tmp \
+    && curl -fsSL -o zcode.deb "https://cdn-zcode.z.ai/zcode/electron/releases/${ZCODE_VERSION}/linux-x64/ZCode-${ZCODE_VERSION}-linux-x64.deb" \
+    && echo "${ZCODE_DEB_SHA512}  zcode.deb" | sha512sum -c - \
+    && mkdir -p zcode-deb /opt/zcode \
+    && dpkg-deb -x zcode.deb zcode-deb \
+    && mv zcode-deb/opt/ZCode/resources/glm /opt/zcode/glm \
+    && mv zcode-deb/opt/ZCode/resources/tools /opt/zcode/tools \
+    && mkdir -p /opt/zcode/glm/provider \
+    && cp zcode-deb/opt/ZCode/resources/config/provider/zcode-builtin.json /opt/zcode/glm/provider/zcode-builtin.json \
+    && dpkg-deb -f zcode.deb Version > /opt/zcode/VERSION \
+    && curl -fsSL -o node.tgz "https://nodejs.org/dist/v${ZCODE_NODE_VERSION}/node-v${ZCODE_NODE_VERSION}-linux-x64.tar.gz" \
+    && echo "${ZCODE_NODE_SHA256}  node.tgz" | sha256sum -c - \
+    && mkdir -p /opt/zcode/node \
+    && tar -xzf node.tgz -C /opt/zcode/node --strip-components=1 \
+    && printf '#!/bin/sh\nexec /opt/zcode/node/bin/node /opt/zcode/glm/zcode.cjs "$@"\n' > /usr/local/bin/zcode \
+    && chmod +x /usr/local/bin/zcode \
+    && rm -rf zcode.deb zcode-deb node.tgz \
+    && zcode --version
+
+# ---------------------------------------------------------------------------
 # MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
 # ---------------------------------------------------------------------------
 RUN npm install -g mcp-remote
@@ -117,6 +154,7 @@ RUN mkdir -p /home/user/.claude/skills \
              /home/user/.kimi-code/skills \
              /home/user/.agents/skills \
              /home/user/.factory/skills \
+             /home/user/.zcode/skills \
     && chown -R user:user /home/user
 
 # ---------------------------------------------------------------------------

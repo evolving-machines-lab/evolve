@@ -128,8 +128,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid`);
+  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "zcode"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid, zcode`);
   }
   return type as AgentType;
 }
@@ -190,6 +190,13 @@ export function getAgentConfig(type: AgentType): AgentConfig {
         type: "droid",
         apiKey: env.EVOLVE_API_KEY || env.FACTORY_API_KEY || "",
         model: process.env.DROID_MODEL || "gpt-5.5",
+      };
+
+    case "zcode":
+      return {
+        type: "zcode",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.ZCODE_MODEL || "openrouter/z-ai/glm-5.3-flash",
       };
 
     default:

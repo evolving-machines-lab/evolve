@@ -6,7 +6,7 @@
  * harness put on the wire, verbatim. Consumers that render a trajectory need
  * the real name ("mcp__mcp-server__get_secret"); `kind` only says "other".
  *
- * Covers all 7 parsers, each with an MCP call and a non-MCP call.
+ * Covers all 8 parsers, each with an MCP call and a non-MCP call.
  */
 
 import { createClaudeParser } from "../../src/parsers/claude.ts";
@@ -16,6 +16,7 @@ import { createGeminiParser } from "../../src/parsers/gemini.ts";
 import { createKimiParser } from "../../src/parsers/kimi.ts";
 import { createOpenCodeParser } from "../../src/parsers/opencode.ts";
 import { createQwenParser } from "../../src/parsers/qwen.ts";
+import { createZcodeParser } from "../../src/parsers/zcode.ts";
 import type { OutputEvent } from "../../src/parsers/types.ts";
 
 let passed = 0;
@@ -227,6 +228,36 @@ async function testQwen(): Promise<void> {
   );
 }
 
+/** Z Code: {type:"tool.updated", payload:{kind:"scheduled", toolCallId, toolName, input}} */
+async function testZcode(): Promise<void> {
+  console.log("\n[8] zcode");
+
+  assert(
+    toolNameOf(
+      feed(createZcodeParser(), {
+        type: "tool.updated",
+        sessionId: "sess_z",
+        seq: 1,
+        timestamp: 1,
+        payload: { kind: "scheduled", toolCallId: "z1", toolName: MCP_NAME, input: {}, display: { kind: "mcp_tool", serverName: "mcp-server", toolName: "get_secret" } },
+      })
+    ) === MCP_NAME,
+    "MCP call carries the verbatim wire name"
+  );
+  assert(
+    toolNameOf(
+      feed(createZcodeParser(), {
+        type: "model.streaming",
+        sessionId: "sess_z",
+        seq: 1,
+        timestamp: 1,
+        payload: { kind: "tool_call", assistantMessageId: "msg_1", toolCallId: "z2", toolName: "Read", input: { file_path: "/tmp/a.txt" } },
+      })
+    ) === "Read",
+    "non-MCP tool carries its native name (the model's own tool_call line)"
+  );
+}
+
 async function main(): Promise<void> {
   console.log("\n=== Parser Tool Name Unit Tests ===");
 
@@ -237,6 +268,7 @@ async function main(): Promise<void> {
   await testKimi();
   await testOpenCode();
   await testQwen();
+  await testZcode();
 
   console.log(`\n=== Summary ===`);
   console.log(`Passed: ${passed}`);

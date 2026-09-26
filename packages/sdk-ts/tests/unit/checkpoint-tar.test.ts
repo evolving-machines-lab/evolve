@@ -238,6 +238,19 @@ async function testBuildTarCommandDroid(): Promise<void> {
   assert(cmd.includes(".factory/"), "Includes .factory/ settings, skills, and session state");
 }
 
+async function testBuildTarCommandZcode(): Promise<void> {
+  console.log("\n[6e] buildTarCommand() - zcode");
+
+  const cmd = buildTarCommand("zcode", "/home/user/workspace");
+
+  assert(cmd.includes("workspace/"), "Includes workspace/ directory");
+  assert(cmd.includes(".zcode/"), "Includes the whole .zcode/ home (SQLite session store, config, skills, agents)");
+  assert(!cmd.includes("'.zcode/cli/'"), "Does not include only .zcode/cli/ (mcpConfig.settingsDir overridden by checkpointDirs)");
+  assert(cmd.includes("--exclude='.zcode/v2/provider_config.json'"), "Excludes the provider file (it holds the literal key)");
+  assert(cmd.includes("--exclude='.zcode/cli/plugins/cache'"), "Excludes the bundled plugin cache (re-created at start)");
+  assert(cmd.includes("--exclude='.zcode/v2/runtime'"), "Excludes the provider catalog cache");
+}
+
 // =============================================================================
 // TESTS: Cache excludes in tar command
 // =============================================================================
@@ -338,6 +351,7 @@ async function main(): Promise<void> {
   await testBuildTarCommandKimi();
   await testBuildTarCommandOpencode();
   await testBuildTarCommandDroid();
+  await testBuildTarCommandZcode();
   await testTarExcludes();
   await testCustomWorkingDir();
   await testInvalidWorkingDir();

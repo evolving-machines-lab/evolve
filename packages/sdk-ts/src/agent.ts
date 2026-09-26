@@ -44,6 +44,7 @@ import {
   registryOwnsModel,
   registryWireId,
   resolveReasoningEffort,
+  zcodeReasoningLevel,
   type AgentRegistryEntry,
 } from "./registry";
 import {
@@ -53,6 +54,7 @@ import {
   writeQwenThinkingConfig,
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
+  writeZcodeProviderConfig,
 } from "./mcp";
 import { stringify as stringifyToml } from "smol-toml";
 import { createAgentParser, type AgentParser } from "./parsers";
@@ -167,6 +169,8 @@ function providerRuntimeProviderForAgent(
       return "openrouter";
     case "droid":
       return "droid";
+    case "zcode":
+      return "zcode";
     default:
       return null;
   }
@@ -2163,6 +2167,57 @@ export class Agent {
     );
   }
 
+  /**
+   * Per-run Z Code provider file: the ONE place the CLI reads its model,
+   * reasoning level, base URL and API key (no flags, no credential env), so
+   * every mode writes it before each spawn — gateway (the runtime token and
+   * the LiteLLM spend headers, session and run), external gateway (the
+   * caller's credential and base URL VERBATIM, the roster wire id, no
+   * headers), direct (the OpenRouter key and OpenRouter's own model id).
+   */
+  private async writeZcodePerRunConfig(
+    sandbox: SandboxInstance,
+    runId: string,
+  ): Promise<void> {
+    const config = this.registry.zcodeProviderConfig;
+    if (!config) return;
+    const model = this.agentConfig.model || this.registry.defaultModel;
+    const reasoningLevel = zcodeReasoningLevel(this.reasoningEffort());
+    let connection: { baseUrl: string; apiKey: string; model: string; headers: Record<string, string> };
+    if (this.agentConfig.externalGateway) {
+      connection = {
+        baseUrl: this.agentConfig.baseUrl ?? withOpenAiV1Path(getGatewayUrl()),
+        apiKey: this.agentConfig.apiKey,
+        model: registryWireId(this.registry, model),
+        headers: {},
+      };
+    } else if (this.agentConfig.isDirectMode) {
+      connection = {
+        baseUrl: this.agentConfig.baseUrl ?? this.registry.defaultBaseUrl ?? "",
+        apiKey: this.agentConfig.apiKey,
+        model: this.resolveCommandModel(model),
+        headers: {},
+      };
+    } else {
+      const providerRuntime = this.requireActiveProviderRuntimeToken();
+      connection = {
+        baseUrl: withOpenAiV1Path(providerRuntime?.baseUrl ?? getGatewayUrl()),
+        apiKey: providerRuntime?.token ?? this.agentConfig.apiKey,
+        model: this.resolveCommandModel(model),
+        headers: {
+          [LITELLM_CUSTOMER_ID_HEADER]: this.sessionTag,
+          [LITELLM_TAGS_HEADER]: `${RUN_TAG_PREFIX}${runId}`,
+          ...this.providerRuntimeHeaderUpdates(),
+        },
+      };
+    }
+    await writeZcodeProviderConfig(
+      sandbox,
+      { ...config, ...connection, reasoningLevel },
+      this.homeDir,
+    );
+  }
+
   async run(
     options: RunOptions,
     callbacks?: StreamCallbacks,
@@ -2403,6 +2458,8 @@ export class Agent {
         this.homeDir,
       );
     }
+
+    await this.writeZcodePerRunConfig(sandbox, runId);
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";

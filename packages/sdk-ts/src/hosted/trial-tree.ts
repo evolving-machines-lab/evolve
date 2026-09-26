@@ -151,6 +151,9 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   },
   // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
   droid: { stdoutFile: "droid.txt", harborCopies: [] },
+  // No Harbor adapter: zcode.txt, the same pattern; the captured ~/.zcode
+  // (SQLite session store) sits at agent/.zcode/ alone.
+  zcode: { stdoutFile: "zcode.txt", harborCopies: [] },
 };
 
 /**

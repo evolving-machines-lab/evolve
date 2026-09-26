@@ -19,7 +19,7 @@
 
 <br>
 
-- Run any CLI agent ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), Droid) in secure cloud sandboxes
+- Run any CLI agent ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), Droid, [Z Code](https://github.com/zai-org/ZCode)) in secure cloud sandboxes
 - Checkpointing: snapshot agent state to S3, restore into fresh sandboxes, content-addressed dedup, lineage tracking
 - Persistent filesystem for infinite context
 - Full computer access: terminal, browser, MCP tools

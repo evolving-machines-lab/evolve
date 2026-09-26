@@ -409,7 +409,7 @@ async function runTests(): Promise<void> {
   }
 
   clearEnv();
-  for (const type of ["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid"] as const) {
+  for (const type of ["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid", "zcode"] as const) {
     const result = resolveAgentConfig({
       type,
       apiKey: `gateway-key-${type}`,

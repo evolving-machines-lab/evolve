@@ -14,6 +14,7 @@ import { createGeminiParser } from "./gemini";
 import { createKimiParser } from "./kimi";
 import { createOpenCodeParser } from "./opencode";
 import { createQwenParser } from "./qwen";
+import { createZcodeParser } from "./zcode";
 
 // Re-export types for convenience
 export type { OutputEvent, SessionUpdate, AgentError, AgentUsage, TokenUsage } from "./types";
@@ -53,6 +54,9 @@ export function createAgentParser(agentType: AgentType): AgentParser {
 
     case "droid":
       return createDroidParser();
+
+    case "zcode":
+      return createZcodeParser();
 
     default:
       return () => null;
@@ -117,3 +121,4 @@ export { createGeminiParser } from "./gemini";
 export { createKimiParser } from "./kimi";
 export { createOpenCodeParser } from "./opencode";
 export { createQwenParser, parseQwenOutput } from "./qwen";
+export { createZcodeParser } from "./zcode";

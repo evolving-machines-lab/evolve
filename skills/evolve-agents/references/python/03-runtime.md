@@ -649,7 +649,7 @@ class CheckpointInfo:
     tag: str                      # Session tag at checkpoint time
     timestamp: str                # ISO 8601
     size_bytes: int | None        # Archive size in bytes
-    agent_type: str | None        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid'
+    agent_type: str | None        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'zcode'
     model: str | None             # Model used
     workspace_mode: str | None    # 'knowledge' | 'swe'
     parent_id: str | None         # Parent checkpoint ID (lineage)
@@ -730,7 +730,7 @@ Additionally, every run and command is logged locally to structured JSON lines u
 - `{tag}` – `my-prefix-` + 16 random hex characters (e.g. `my-prefix-a1b2c3d4e5f6g7h8`)
 - `{provider}` – the sandbox provider (e.g. `e2b`)
 - `{sandboxId}` – the active sandbox ID
-- `{agent}` – the agent type (`codex`, `claude`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`)
+- `{agent}` – the agent type (`codex`, `claude`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`, `zcode`)
 - `{timestamp}` – ISO timestamp with `:` and `.` replaced by `-`
 
 Each file contains three entry types:

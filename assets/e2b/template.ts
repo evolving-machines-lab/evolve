@@ -13,6 +13,7 @@ import { Template } from 'e2b'
 //   - OpenCode (opencode-ai)
 //   - Droid CLI
 //   - Kimi Code
+//   - Z Code (from the official .deb, on its own Node 24)
 //   - ACP adapters for Claude and Codex
 //   - Google Chrome for browser automation
 //   - Skills cloned from github.com/evolving-machines-lab/evolve
@@ -62,6 +63,38 @@ export const template = Template()
   .runCmd('curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/home/user/.kimi-code KIMI_NO_MODIFY_PATH=1 bash && ln -sf /home/user/.kimi-code/bin/kimi /usr/local/bin/kimi && kimi --version && chown -R user:user /home/user/.kimi-code')
 
   // ---------------------------------------------------------------------------
+  // Z Code (zai-org/ZCode)
+  // ---------------------------------------------------------------------------
+  // The official Linux .deb, pinned by version and sha512, on its own
+  // checksummed Node 24 (the CLI's engines pin) under /opt/zcode; the
+  // built-in provider catalog copied next to the bundle, where the CLI looks
+  // for it. Mirrors the Dockerfile block step for step.
+  .runCmd(`set -eu
+    && ZCODE_VERSION=3.14.3
+    && ZCODE_DEB_SHA512=54362bc8bf5b2188ccdeec51349f2c470e52e73f4b06646fbd6d5a990f7012784904c7374656f683c26fc56bf4e023e7d0680a1c42446665a62d9b88e84620d6
+    && ZCODE_NODE_VERSION=24.21.0
+    && ZCODE_NODE_SHA256=6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff
+    && cd /tmp
+    && curl -fsSL -o zcode.deb "https://cdn-zcode.z.ai/zcode/electron/releases/\${ZCODE_VERSION}/linux-x64/ZCode-\${ZCODE_VERSION}-linux-x64.deb"
+    && echo "\${ZCODE_DEB_SHA512}  zcode.deb" | sha512sum -c -
+    && mkdir -p zcode-deb /opt/zcode
+    && dpkg-deb -x zcode.deb zcode-deb
+    && mv zcode-deb/opt/ZCode/resources/glm /opt/zcode/glm
+    && mv zcode-deb/opt/ZCode/resources/tools /opt/zcode/tools
+    && mkdir -p /opt/zcode/glm/provider
+    && cp zcode-deb/opt/ZCode/resources/config/provider/zcode-builtin.json /opt/zcode/glm/provider/zcode-builtin.json
+    && dpkg-deb -f zcode.deb Version > /opt/zcode/VERSION
+    && curl -fsSL -o node.tgz "https://nodejs.org/dist/v\${ZCODE_NODE_VERSION}/node-v\${ZCODE_NODE_VERSION}-linux-x64.tar.gz"
+    && echo "\${ZCODE_NODE_SHA256}  node.tgz" | sha256sum -c -
+    && mkdir -p /opt/zcode/node
+    && tar -xzf node.tgz -C /opt/zcode/node --strip-components=1
+    && printf '#!/bin/sh\\nexec /opt/zcode/node/bin/node /opt/zcode/glm/zcode.cjs "$@"\\n' > /usr/local/bin/zcode
+    && chmod +x /usr/local/bin/zcode
+    && rm -rf zcode.deb zcode-deb node.tgz
+    && zcode --version
+  `.replace(/\n\s+/g, ' ').trim())
+
+  // ---------------------------------------------------------------------------
   // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)
   // ---------------------------------------------------------------------------
   .runCmd('npm install -g mcp-remote')
@@ -85,7 +118,7 @@ export const template = Template()
   // Create skills directories for all CLIs. No baked catalog: skills are
   // resolved at run time by the SDK resolver (packages/sdk-ts/src/skills.ts)
   // from real references and mounted into these directories.
-  .runCmd('mkdir -p ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills')
+  .runCmd('mkdir -p ~/.claude/skills ~/.codex/skills ~/.gemini/skills ~/.qwen/skills ~/.kimi-code/skills ~/.agents/skills ~/.factory/skills ~/.zcode/skills')
 
   // ---------------------------------------------------------------------------
   // Factory Droid CLI

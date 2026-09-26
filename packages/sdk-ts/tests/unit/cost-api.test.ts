@@ -11,6 +11,7 @@
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
+import { zcodeReasoningLevel } from "../../src/registry.js";
 
 let passed = 0;
 let failed = 0;
@@ -97,6 +98,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
   assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "high", "opencode pin is high variant");
   assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
+  assertEqual(AGENT_REGISTRY.zcode.defaultReasoningEffort, "high", "zcode pin is high (owner policy: graded harnesses run high)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -359,9 +361,13 @@ async function testCodexSpendTrackingEnvs(): Promise<void> {
 // Fake sandbox for writeCodexSpendProvider tests
 // =============================================================================
 
-function createFakeSandbox(existingContent?: string): { sandbox: any; written: { path: string; content: string }[] } {
+function createFakeSandbox(existingContent?: string): { sandbox: any; written: { path: string; content: string }[]; ran: string[] } {
   const written: { path: string; content: string }[] = [];
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       read: async () => {
@@ -371,7 +377,7 @@ function createFakeSandbox(existingContent?: string): { sandbox: any; written: {
       write: async (path: string, content: string) => { written.push({ path, content }); },
     },
   };
-  return { sandbox, written };
+  return { sandbox, written, ran };
 }
 
 const spendEnvs = { sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID", runTagEnv: "EVOLVE_LITELLM_TAGS" };
@@ -1774,6 +1780,77 @@ async function testDroidSessionStateRoundTrip(): Promise<void> {
   assert(command.includes("--session-id 'droid-session-123'"), "loaded session id is used in next command");
 }
 
+// =============================================================================
+// Z Code: the per-run provider file (model, level, base URL, key, spend headers)
+// =============================================================================
+
+async function testZcodeReasoningLevels(): Promise<void> {
+  console.log("\n[41] zcodeReasoningLevel() collapses the platform vocabulary onto Z Code's four levels");
+  assertEqual(zcodeReasoningLevel("off"), "disabled", "off → disabled");
+  assertEqual(zcodeReasoningLevel("minimal"), "disabled", "minimal → disabled (isThinkingEnabled draws the line)");
+  assertEqual(zcodeReasoningLevel("no-thinking"), "disabled", "no-thinking → disabled");
+  assertEqual(zcodeReasoningLevel("low"), "low", "low → low");
+  assertEqual(zcodeReasoningLevel("medium"), "medium", "medium → medium");
+  assertEqual(zcodeReasoningLevel("thinking"), "medium", "thinking → medium");
+  assertEqual(zcodeReasoningLevel("high"), "high", "high → high");
+  assertEqual(zcodeReasoningLevel("xhigh"), "high", "xhigh → high (the top level Z Code's file declares)");
+  assertEqual(zcodeReasoningLevel("max"), "high", "max → high");
+}
+
+async function testZcodePerRunProviderFileGateway(): Promise<void> {
+  console.log("\n[42] zcode gateway mode writes the provider file with the runtime token, the gateway /v1 and both spend headers");
+  const agent = new Agent({ type: "zcode", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  attachProviderRuntimeToken(agent, "zcode", "https://dashboard.test/api/model-proxy/zcode/v1");
+  const { sandbox, written, ran } = createFakeSandbox(undefined);
+
+  await (agent as any).writeZcodePerRunConfig(sandbox, "run-zcode-001");
+
+  assertEqual(written.length, 1, "writes one file");
+  assertEqual(written[0].path, "/home/user/.zcode/v2/provider_config.json", "the provider file at the sandbox home");
+  const doc = JSON.parse(written[0].content);
+  const provider = doc.config.providerConfigRules.providerRules[0].config;
+  assertEqual(provider.access.apiKey, "evrt_zcode_runtime_token", "the runtime token is the literal key (Z Code expands no env)");
+  assertEqual(provider.api.baseUrl, "https://dashboard.test/api/model-proxy/zcode/v1", "the runtime token's base URL, /v1 kept once");
+  assertEqual(provider.api.type, "openai-chat-completions", "OpenAI chat completions dialect");
+  const headers = provider.api.headers;
+  assertEqual(headers["x-litellm-tags"], "run:run-zcode-001", "sets the run header");
+  assert(typeof headers["x-litellm-customer-id"] === "string" && headers["x-litellm-customer-id"].length > 0, "sets the session header");
+  assertEqual(headers["x-evolve-provider-runtime-binding"], "evrb_zcode_binding_secret", "sets the provider runtime binding header");
+  assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3", "the default model rides verbatim (a gateway route name)");
+  assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "high", "the omitted effort stamps the pin as the reasoning level");
+  assertEqual(ran.join("\n"), "chmod 600 '/home/user/.zcode/v2/provider_config.json'", "the file is tightened to 0600");
+
+  const envs = (agent as any).buildRunEnvs("run-zcode-002") as Record<string, string> | undefined;
+  assertEqual(envs?.OPENROUTER_API_KEY, "evrt_zcode_runtime_token", "the SDK-facing key env carries the token like every OpenAI-compatible harness");
+  assert(!("x-litellm-tags" in (envs ?? {})), "no header env: the headers ride the provider file");
+}
+
+async function testZcodePerRunProviderFileEffort(): Promise<void> {
+  console.log("\n[43] zcode: the caller's effort lands in the provider file");
+  const agent = new Agent({ type: "zcode", apiKey: "test-gateway-key", isDirectMode: false, model: "openrouter/z-ai/glm-5.3-flash", reasoningEffort: "off" } as any, {});
+  attachProviderRuntimeToken(agent, "zcode", "https://dashboard.test/api/model-proxy/zcode/v1");
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeZcodePerRunConfig(sandbox, "run-zcode-003");
+  const doc = JSON.parse(written[0].content);
+  assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "disabled", "off → disabled: no reasoning field on the wire");
+  assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3-flash", "the caller's model");
+  assertEqual(doc.config.modelConfigRules.providerModelRules[0].config.properties.contextWindow, 200000, "the platform's one context window");
+}
+
+async function testZcodeBuildCommand(): Promise<void> {
+  console.log("\n[44] zcode buildCommand(): headless stream-json, no model flag, resume via --continue");
+  const { AGENT_REGISTRY } = await import("../../src/registry.js");
+  const zcode = AGENT_REGISTRY.zcode;
+  assertEqual(zcode.defaultModel, "openrouter/z-ai/glm-5.3", "Z Code defaults to GLM-5.3 via OpenRouter");
+  assertEqual(zcode.apiKeyEnv, "OPENROUTER_API_KEY", "direct mode is OpenRouter");
+  assertEqual(zcode.directModelAliases?.["openrouter/z-ai/glm-5.3-flash"], "z-ai/glm-5.3-flash", "direct mode rewrites to OpenRouter's own id");
+  assertEqual(zcode.gatewayModelAliases, undefined, "gateway mode rewrites nothing: the roster spells the routes");
+  const fresh = zcode.buildCommand({ prompt: "hello", model: "openrouter/z-ai/glm-5.3", isResume: false, reasoningEffort: "high" });
+  assertEqual(fresh, 'ZCODE_MODEL_TELEMETRY_ENABLED=0 zcode -p "hello" --output-format stream-json', "fresh run");
+  const resumed = zcode.buildCommand({ prompt: "again", model: "openrouter/z-ai/glm-5.3", isResume: true, reasoningEffort: "high" });
+  assertEqual(resumed, 'ZCODE_MODEL_TELEMETRY_ENABLED=0 zcode -p "again" --continue --output-format stream-json', "resume continues the latest session in the cwd");
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Cost API Unit Tests");
@@ -1832,6 +1909,10 @@ async function main(): Promise<void> {
   await testDroidGatewayModelAliases();
   await testDroidBuildRunEnvsReturnsUndefined();
   await testDroidSessionStateRoundTrip();
+  await testZcodeReasoningLevels();
+  await testZcodePerRunProviderFileGateway();
+  await testZcodePerRunProviderFileEffort();
+  await testZcodeBuildCommand();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");
