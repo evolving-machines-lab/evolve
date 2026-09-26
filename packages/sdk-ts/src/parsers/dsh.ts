@@ -17,7 +17,7 @@
  * logged once — the stream is unversioned and pre-stable by the vendor's word.
  */
 
-import { harnessErrorText } from "./types";
+import { harnessErrorText, harnessEvent, unknownTypeWarner } from "./types";
 import type {
   OutputEvent,
   PlanEntry,
@@ -52,7 +52,7 @@ const TOOL_KINDS: Record<string, ToolKind> = {
 export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
   let sessionId: string | undefined;
   let lastAssistantText: string | undefined;
-  const warned = new Set<string>();
+  const warnUnknown = unknownTypeWarner("dsh");
 
   return function parseDshEvent(jsonLine: string): OutputEvent[] | null {
     let data: unknown;
@@ -78,7 +78,7 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
       }
 
       case "status": {
-        const update = handleStatus(data, extra, warnOnce);
+        const update = handleStatus(data, extra, warnUnknown);
         if (update) updates.push(update);
         break;
       }
@@ -131,7 +131,7 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
       }
 
       default:
-        warnOnce(`event type ${JSON.stringify(type)}`);
+        warnUnknown("event type", type);
         updates.push(harnessEvent(type, data));
         break;
     }
@@ -143,17 +143,6 @@ export function createDshParser(): (jsonLine: string) => OutputEvent[] | null {
       ...(Object.keys(extra).length > 0 ? { extra } : {}),
     }));
   };
-
-  function warnOnce(what: string): void {
-    if (warned.has(what)) return;
-    warned.add(what);
-    console.warn(`[dsh parser] unknown ${what}`);
-  }
-}
-
-function harnessEvent(type: string, data: Record<string, unknown>): SessionUpdate {
-  const { type: _type, ...payload } = data;
-  return { sessionUpdate: "harness_event", type, payload };
 }
 
 /**
@@ -164,7 +153,7 @@ function harnessEvent(type: string, data: Record<string, unknown>): SessionUpdat
 function handleStatus(
   data: Record<string, unknown>,
   extra: Record<string, unknown>,
-  warnOnce: (what: string) => void,
+  warnUnknown: (what: string, type: string) => void,
 ): SessionUpdate | null {
   const phase = stringField(data, "phase");
   switch (phase) {
@@ -201,7 +190,7 @@ function handleStatus(
     }
 
     default:
-      warnOnce(`status phase ${JSON.stringify(phase)}`);
+      warnUnknown("status phase", phase);
       return harnessEvent("status", data);
   }
 }

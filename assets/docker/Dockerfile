@@ -62,12 +62,8 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --d
 RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 
 # ---------------------------------------------------------------------------
-# Node 24.21.0 — the image's one Node (decision 2026-09-25). The base ships
-# NodeSource's Node 20, below agent-browser (>= 24), pi (>= 22.19), Prime
-# Agent (>= 22.8) and Z Code (>= 24); every other CLI installed here allows 24
-# (engines read from the npm registry 2026-09-25). The official tarball
-# replaces the apt package under /usr/local; sha256 from
-# nodejs.org/dist/v24.21.0/SHASUMS256.txt.
+# Node 24.21.0, the image's one Node: the base image's Node 20 is below agent-browser (>= 24), pi,
+# Prime Agent and Z Code, and every other CLI here allows 24. sha256 from nodejs.org/dist/v24.21.0/SHASUMS256.txt.
 # ---------------------------------------------------------------------------
 RUN set -eu; NODE_VERSION=24.21.0; NODE_SHA256=6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff; cd /tmp \
     && curl -fsSL -o node.tgz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
@@ -97,10 +93,8 @@ RUN npm install -g \
     @earendil-works/pi-coding-agent@0.87.1
 
 # ---------------------------------------------------------------------------
-# pi's MCP adapter (pi's core has no MCP): pinned, its own prefix, scripts and
-# peers skipped — the adapter peers on pi's own packages, which pi aliases at
-# load time, so nothing must be installed beside it. The SDK loads it with
-# `--extension` from this path (registry.ts PI_MCP_ADAPTER_EXTENSION).
+# pi's MCP adapter (pi's core has no MCP), loaded by the SDK with --extension from this path.
+# Peers skipped: pi aliases its own packages at load time, so nothing is installed beside it.
 # ---------------------------------------------------------------------------
 RUN mkdir -p /opt/evolve/pi-mcp-adapter \
     && npm install --prefix /opt/evolve/pi-mcp-adapter --ignore-scripts --legacy-peer-deps --no-audit --no-fund pi-mcp-adapter@2.37.0 \
@@ -127,11 +121,8 @@ RUN npm install -g @deepseek-ai/dsh@0.1.7-rc.2 && dsh --version
 # ---------------------------------------------------------------------------
 # Z Code (zai-org/ZCode)
 # ---------------------------------------------------------------------------
-# Z.ai ships no npm package or installer: the CLI is the `glm` bundle inside the
-# official Linux .deb (version + sha512 pinned), unpacked under /opt/zcode and run
-# on the image's one Node 24 (its engines pin). The CLI reads the catalog path and
-# its search binaries from the env set below (cli/src/provider-runtime-env.ts,
-# embedded-search-backend.ts).
+# No npm package or installer exists: the CLI is the `glm` bundle inside the official .deb (sha512 pinned),
+# unpacked under /opt/zcode. The env below names the catalog and the search binaries the CLI reads from env.
 RUN set -eu \
     && ZCODE_VERSION=3.14.3 \
     && ZCODE_DEB_SHA512=54362bc8bf5b2188ccdeec51349f2c470e52e73f4b06646fbd6d5a990f7012784904c7374656f683c26fc56bf4e023e7d0680a1c42446665a62d9b88e84620d6 \
@@ -230,21 +221,9 @@ RUN ln -sf /home/user/.local/bin/droid /usr/local/bin/droid \
 USER user
 
 # ---------------------------------------------------------------------------
-# Prime Agent v0.9.6 — not on npm. The GitHub release ships an npm-format
-# tarball plus three renamed internal packages; the main tarball's
-# package.json points those at an R2 URL WITHOUT integrity hashes, so each
-# file is verified here against the release's SHA256SUMS (values copied from
-# the v0.9.6 release, 2026-09-25) and the dependencies are pinned to the
-# verified local files with npm overrides. Installed with the image's Node
-# (Prime requires >= 22.8) and as `user`, so the Python kernel bake
-# (PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1: uv, CPython 3.11,
-# prime-agent-runtime and the default packages) lands in this user's home —
-# the venv path derives from $HOME, not from the agent dir. Prime's built-in
-# Python skills (dist/skills/* with a pyproject) go into the same venv: a
-# session syncs any missing one with uv at its first cell, a network call a
-# sealed run cannot make. PRIME_AGENT_KERNEL_PYTHON (ENV below) names the
-# baked interpreter — the vendor's switch that skips that bootstrap check —
-# so a run never bootstraps. The uv download cache is dropped after.
+# Prime Agent v0.9.6, not on npm: its package.json points at unhashed R2 URLs, so each tarball is verified against
+# the release's SHA256SUMS and pinned with npm overrides. Installed as `user` (the kernel venv derives from $HOME),
+# skills baked in (a sealed run cannot uv-sync them); PRIME_AGENT_KERNEL_PYTHON below stops every bootstrap.
 # ---------------------------------------------------------------------------
 RUN set -eu; V=0.9.6; cd /opt/evolve/prime-agent \
     && for f in prime-agent-$V.tgz prime-agent-ai-$V.tgz prime-agent-core-$V.tgz prime-agent-tui-$V.tgz; do \

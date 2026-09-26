@@ -310,7 +310,12 @@ async function testFactsAndUnknown(): Promise<void> {
   }
   assert(warnings.length === 3, `each unknown type is logged once per parser (got ${warnings.length})`);
   assert(warnings.every((w) => w.startsWith("[zcode parser] unknown event type ")), "the log line names the parser and says what it is");
-  assert(warnings[0].endsWith("permission.requested") && warnings[1].endsWith("something.new") && warnings[2].endsWith("session.updated/{compactedMessages,summary}"), "the log names the type (a catch-all payload by its key set)");
+  assert(
+    warnings[0] === '[zcode parser] unknown event type "permission.requested" passed through as harness_event' &&
+      warnings[1] === '[zcode parser] unknown event type "something.new" passed through as harness_event' &&
+      warnings[2] === '[zcode parser] unknown event type "session.updated/{compactedMessages,summary}" passed through as harness_event',
+    "the log names the type (a catch-all payload by its key set), in the wording every parser uses",
+  );
   assert(parse("not json") === null && parse("{}") === null, "a non-JSON line and a line with no type are ignored");
 
   // On a real capture: one envelope of the tool run re-typed to a documented
@@ -337,7 +342,7 @@ async function testFactsAndUnknown(): Promise<void> {
     "…on the run's session, stamped with the model already named, payload verbatim",
   );
   assert(JSON.stringify(withUnseen.filter((e) => e !== added)) === JSON.stringify(plain), "every other event of the capture is byte-identical to the plain parse");
-  assert(warned.length === 1 && warned[0] === "[zcode parser] unknown event type session.closed", "one warning for the one unknown type");
+  assert(warned.length === 1 && warned[0] === '[zcode parser] unknown event type "session.closed" passed through as harness_event', "one warning for the one unknown type");
 }
 
 async function testMcpTitleSetOnce(): Promise<void> {

@@ -6,7 +6,7 @@
  * code. Usage rides per call on a DONE agent_response and whole on result; promptTokens = input + cache_read (Harbor).
  */
 
-import { harnessErrorText } from "./types";
+import { harnessErrorText, harnessEvent, unknownTypeWarner } from "./types";
 import type {
   OutputEvent,
   SessionUpdate,
@@ -58,7 +58,7 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
   // Every agent_response text delta so far, so the result's `response` (the
   // same text, whole) is not published a second time.
   let streamedText = "";
-  const warned = new Set<string>();
+  const warnUnknown = unknownTypeWarner("antigravity");
 
   return function parseAntigravityEvent(jsonLine: string): OutputEvent[] | null {
     let data: unknown;
@@ -95,7 +95,7 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
         return stamp(handleResult(result), result);
       }
       default:
-        warnOnce("event", eventName);
+        warnUnknown("event type", eventName);
         return stamp([harnessEvent(eventName, data, "event")], data);
     }
   };
@@ -175,7 +175,7 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
         return [];
 
       default: {
-        if (!NO_SLOT_STEPS.has(stepType)) warnOnce("step", stepType);
+        if (!NO_SLOT_STEPS.has(stepType)) warnUnknown("step type", stepType);
         const passthrough: SessionUpdate[] = [harnessEvent(stepType || "step_update", step, "step_type")];
         const usage = antigravityTokenUsage(step.usage);
         if (usage) passthrough.push({ sessionUpdate: "usage", scope: "call", usage });
@@ -295,13 +295,6 @@ export function createAntigravityParser(): (jsonLine: string) => OutputEvent[] |
     if (typeof line.step_index !== "number") return undefined;
     return stepKey(line);
   }
-
-  function warnOnce(kind: "event" | "step", type: string): void {
-    const key = `${kind}:${type}`;
-    if (warned.has(key)) return;
-    warned.add(key);
-    console.warn(`[antigravity parser] unknown ${kind} type "${type}" passed through as harness_event`);
-  }
 }
 
 /**
@@ -336,15 +329,6 @@ function lineExtra(line: Record<string, unknown>): Record<string, unknown> | und
     if (value !== undefined && value !== null) extra[key] = value;
   }
   return Object.keys(extra).length > 0 ? extra : undefined;
-}
-
-/** The line under the harness's own type word, every other field verbatim (types.ts HarnessEvent). */
-function harnessEvent(type: string, line: Record<string, unknown>, typeKey: string): SessionUpdate {
-  const payload: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(line)) {
-    if (key !== typeKey) payload[key] = value;
-  }
-  return { sessionUpdate: "harness_event", type, payload };
 }
 
 function subagentEntries(info: unknown): Record<string, unknown>[] {

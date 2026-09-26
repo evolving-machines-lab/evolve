@@ -14,7 +14,7 @@
  * `harness_event` verbatim; unknown types too, warned once per type.
  */
 
-import { harnessErrorText } from "./types";
+import { harnessErrorText, harnessEvent, unknownTypeWarner } from "./types";
 import type {
   OutputEvent,
   SessionUpdate,
@@ -62,7 +62,7 @@ export function createPiFamilyParser(profile: PiFamilyProfile): (jsonLine: strin
   const toolNames = new Map<string, string>();
   const announced = new Set<string>();
   const progressed = new Set<string>();
-  const warned = new Set<string>();
+  const warnUnknown = unknownTypeWarner(profile.harness);
 
   return function parsePiFamilyEvent(jsonLine: string): OutputEvent[] | null {
     let data: unknown;
@@ -130,13 +130,9 @@ export function createPiFamilyParser(profile: PiFamilyProfile): (jsonLine: strin
         return [envelope(harnessEvent(type, data))];
       }
 
-      default: {
-        if (!profile.knownEvents.has(type) && !warned.has(type)) {
-          warned.add(type);
-          console.warn(`[${profile.harness} parser] unknown event type "${type}" passed through as harness_event`);
-        }
+      default:
+        if (!profile.knownEvents.has(type)) warnUnknown("event type", type);
         return [envelope(harnessEvent(type, data))];
-      }
     }
   };
 
@@ -370,15 +366,6 @@ export function piUsage(usage: unknown): TokenUsage | null {
 
 function usageIsZero(usage: TokenUsage): boolean {
   return !usage.promptTokens && !usage.completionTokens && !usage.cachedTokens && !usage.costUsd;
-}
-
-function harnessEvent(type: string, data: Record<string, unknown>): SessionUpdate {
-  const payload: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (key === "type") continue;
-    payload[key] = value;
-  }
-  return { sessionUpdate: "harness_event", type, payload };
 }
 
 /** The text of a message or result `content`: a string, or the text blocks of an array joined. */

@@ -3163,6 +3163,8 @@ async function testPiFamilyStreamVerdict(): Promise<void> {
   const END_OK = '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop","timestamp":1,"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"total":0}}}}';
   const END_ERR = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"500: boom","timestamp":1}}';
   const END_ABORTED = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","timestamp":1}}';
+  // Every pi retry attempt opens with an assistant message_start (fixture model-error-retries, lines 16 and 24).
+  const ASSISTANT_START = '{"type":"message_start","message":{"role":"assistant","content":[],"timestamp":1}}';
   const cases: Array<{ name: string; type: "pi" | "prime-agent" | "zcode" | "droid"; lines: string[]; reason: LifecycleReason; agent: string }> = [
     // The captured streams (tests/fixtures, the parser tests' fixtures).
     { name: "pi capture: the retry loop gave up (model-error-retries)", type: "pi", lines: fixtureLines("pi", "model-error-retries"), reason: "run_failed", agent: "error" },
@@ -3173,7 +3175,7 @@ async function testPiFamilyStreamVerdict(): Promise<void> {
     // The shapes a capture cannot show.
     { name: "pi: the last call succeeded", type: "pi", lines: [END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
     { name: "pi: the retry loop gave up", type: "pi", lines: [END_ERR, '{"type":"agent_end","messages":[],"willRetry":false}', '{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"500: boom"}'], reason: "run_failed", agent: "error" },
-    { name: "pi: a failed call that a retry recovered", type: "pi", lines: [END_ERR, '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":1}', END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
+    { name: "pi: a failed call that a retry recovered", type: "pi", lines: [END_ERR, '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":1}', ASSISTANT_START, END_OK, '{"type":"agent_end","messages":[],"willRetry":false}'], reason: "run_complete", agent: "idle" },
     { name: "prime-agent: a failure Prime never retried (no willRetry, no auto_retry_end)", type: "prime-agent", lines: [END_ERR, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
     { name: "prime-agent: the last call aborted, exit code still 0", type: "prime-agent", lines: [END_ABORTED, '{"type":"agent_end","messages":[]}'], reason: "run_failed", agent: "error" },
     // Z Code never prints a stop reason of its own: its failures are the parser's fatal errors

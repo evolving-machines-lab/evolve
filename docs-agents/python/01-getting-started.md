@@ -391,11 +391,10 @@ These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve fo
 # .env - set env vars for auto-pickup
 ANTHROPIC_API_KEY=sk-...   # claude
 OPENAI_API_KEY=sk-...      # codex, qwen
-GEMINI_API_KEY=...         # gemini
+GEMINI_API_KEY=...         # gemini, antigravity
 KIMI_API_KEY=...           # kimi
 OPENROUTER_API_KEY=sk-...  # opencode, pi, prime-agent, dsh, zcode
 FACTORY_API_KEY=...        # droid
-GEMINI_API_KEY=...         # antigravity (the same variable gemini reads)
 E2B_API_KEY=e2b_...        # sandbox
 ```
 

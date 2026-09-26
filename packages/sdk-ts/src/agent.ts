@@ -330,35 +330,24 @@ function withOpenAiV1Path(baseUrl: string): string {
 // =============================================================================
 
 /**
+ * The stream's verdict at exit 0 (registry verdictFromStream), read line by line: the last
+ * message's stop reason decides, and a fatal parser error fails a harness that prints none.
+ */
+function streamFailedAfter(events: OutputEvent[] | null, failed: boolean): boolean {
+  for (const event of events ?? []) {
+    const stop = event.extra?.stopReason;
+    if (typeof stop === "string") failed = stop === "error" || stop === "aborted";
+    if (event.update.sessionUpdate === "error" && event.update.fatal) failed = true;
+  }
+  return failed;
+}
+
+/**
  * Unified Agent class
  *
  * Uses registry lookup for agent-specific behavior.
  * Tracks hasRun state for continue flag handling.
  */
-/** The stream's verdict at exit 0 (registry verdictFromStream), read line by line. */
-interface StreamVerdict {
-  failed: boolean;
-  /** A failure has been judged by a stop reason: the stream speaks that vocabulary. */
-  stopReasonJudged: boolean;
-}
-
-/** Every message_end-derived event carries the message's stop reason in extra; the last one is the verdict. */
-function streamVerdictAfter(events: OutputEvent[] | null, previous: StreamVerdict): StreamVerdict {
-  let { failed, stopReasonJudged } = previous;
-  for (const event of events ?? []) {
-    const stop = event.extra?.stopReason;
-    if (typeof stop === "string") {
-      failed = stop === "error" || stop === "aborted";
-      if (failed) stopReasonJudged = true;
-    }
-    // Harnesses that never print a stop reason report failure as a fatal error. Once a stop
-    // reason has judged a failure, a later fatal repeats it (pi's agent_end) and cannot
-    // overturn a recovered call.
-    if (!stopReasonJudged && event.update.sessionUpdate === "error" && event.update.fatal) failed = true;
-  }
-  return { failed, stopReasonJudged };
-}
-
 export class Agent {
   private agentConfig: ResolvedAgentConfig;
   private options: AgentOptions;
@@ -2701,7 +2690,7 @@ export class Agent {
 
     // Line buffer for NDJSON parsing (shared by both modes)
     let lineBuffer = "";
-    let streamVerdict: StreamVerdict = { failed: false, stopReasonJudged: false };
+    let streamFailed = false;
 
     // Create parser once (shared by onContent callback and session logger)
     const parser = createAgentParser(this.agentConfig.type);
@@ -2718,7 +2707,7 @@ export class Agent {
 
         // Parse once, use for both session logger and onContent
         const events = parser(line);
-        streamVerdict = streamVerdictAfter(events, streamVerdict);
+        streamFailed = streamFailedAfter(events, streamFailed);
         this.captureHarnessSessionId(line, events);
 
         // Log to session logger with pre-parsed events (non-blocking)
@@ -2755,7 +2744,7 @@ export class Agent {
 
     if (background) {
       this.watchBackgroundOperation(opId, "run", handle, callbacks, sandbox, () =>
-        this.registry.verdictFromStream === true && streamVerdict.failed,
+        this.registry.verdictFromStream === true && streamFailed,
       );
       return {
         sandboxId: sandbox.sandboxId,
@@ -2782,7 +2771,7 @@ export class Agent {
     if (lineBuffer.trim()) {
       // Parse once, use for both session logger and onContent
       const events = parser(lineBuffer);
-      streamVerdict = streamVerdictAfter(events, streamVerdict);
+      streamFailed = streamFailedAfter(events, streamFailed);
       this.captureHarnessSessionId(lineBuffer, events);
 
       // Log to session logger with pre-parsed events (non-blocking)
@@ -2801,7 +2790,7 @@ export class Agent {
 
     // pi and Prime Agent exit 0 whatever happened (registry verdictFromStream):
     // the last assistant message_end decides, never their exit code alone.
-    const succeeded = result.exitCode === 0 && !(this.registry.verdictFromStream && streamVerdict.failed);
+    const succeeded = result.exitCode === 0 && !(this.registry.verdictFromStream && streamFailed);
     const interrupted =
       this.interruptedOperations.delete(opId) || result.exitCode === 130;
     if (interrupted) {

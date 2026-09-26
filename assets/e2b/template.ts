@@ -44,14 +44,11 @@ export const template = Template()
   // UV package manager for Python
   .runCmd('curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh')
 
-  // Verify installations
-  // ---------------------------------------------------------------------------
-  // Node 24.21.0 — the image's one Node (decision 2026-09-25): the base ships
-  // NodeSource's Node 20, below agent-browser (>= 24), pi (>= 22.19), Prime
-  // Agent (>= 22.8) and Z Code (>= 24). Mirrors the Dockerfile block; sha256
-  // from nodejs.org/dist/v24.21.0/SHASUMS256.txt.
-  // ---------------------------------------------------------------------------
+  // Node 24.21.0, the image's one Node: the base image's Node 20 is below agent-browser (>= 24), pi,
+  // Prime Agent and Z Code. Mirrors the Dockerfile block; sha256 from nodejs.org/dist/v24.21.0/SHASUMS256.txt.
   .runCmd('set -eu; NODE_VERSION=24.21.0; NODE_SHA256=6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff; cd /tmp && curl -fsSL -o node.tgz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" && echo "${NODE_SHA256}  node.tgz" | sha256sum -c - && apt-get remove -y nodejs && tar -xzf node.tgz -C /usr/local --strip-components=1 --exclude=\'*/CHANGELOG.md\' --exclude=\'*/LICENSE\' --exclude=\'*/README.md\' && rm node.tgz && test "$(command -v node)" = /usr/local/bin/node && test "$(node -v)" = "v${NODE_VERSION}"')
+
+  // Verify installations
   .runCmd('node -v && npm -v && git --version && google-chrome --version')
 
   // ---------------------------------------------------------------------------
@@ -69,9 +66,8 @@ export const template = Template()
   `.replace(/\n\s+/g, ' ').trim())
 
   // ---------------------------------------------------------------------------
-  // pi's MCP adapter (pi's core has no MCP): pinned, own prefix, scripts and
-  // peers skipped (pi aliases its own packages for extensions). The SDK loads
-  // it with --extension from this path (registry.ts PI_MCP_ADAPTER_EXTENSION).
+  // pi's MCP adapter (pi's core has no MCP), loaded by the SDK with --extension from this path.
+  // Peers skipped: pi aliases its own packages at load time, so nothing is installed beside it.
   // ---------------------------------------------------------------------------
   .runCmd('mkdir -p /opt/evolve/pi-mcp-adapter && npm install --prefix /opt/evolve/pi-mcp-adapter --ignore-scripts --legacy-peer-deps --no-audit --no-fund pi-mcp-adapter@2.37.0 && test -f /opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts && test "$(pi --version)" = "0.87.1"')
 
@@ -91,9 +87,8 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Z Code (zai-org/ZCode)
   // ---------------------------------------------------------------------------
-  // The official Linux .deb (version + sha512 pinned) unpacked under /opt/zcode, run
-  // on the image's one Node 24; the env below names the catalog and the search
-  // binaries the CLI reads from env. Mirrors the Dockerfile block step for step.
+  // No npm package or installer exists: the CLI is the `glm` bundle inside the official .deb (sha512 pinned),
+  // unpacked under /opt/zcode. The env below names the catalog and the search binaries the CLI reads from env.
   .runCmd(`set -eu
     && ZCODE_VERSION=3.14.3
     && ZCODE_DEB_SHA512=54362bc8bf5b2188ccdeec51349f2c470e52e73f4b06646fbd6d5a990f7012784904c7374656f683c26fc56bf4e023e7d0680a1c42446665a62d9b88e84620d6
@@ -162,10 +157,8 @@ export const template = Template()
   .setUser('user')
 
   // ---------------------------------------------------------------------------
-  // Prime Agent v0.9.6 (release tarballs, sha256-verified against the
-  // release's SHA256SUMS; internal packages pinned via npm overrides; kernel
-  // baked at install as `user` so the venv lands in this home). Mirrors the
-  // Dockerfile block, which carries the reasoning.
+  // Prime Agent v0.9.6, not on npm: tarballs verified against the release's SHA256SUMS, internal packages
+  // pinned with npm overrides, installed as `user` so the kernel venv lands in this home. Mirrors the Dockerfile.
   // ---------------------------------------------------------------------------
   .runCmd([
     'set -eu; V=0.9.6; cd /opt/evolve/prime-agent',

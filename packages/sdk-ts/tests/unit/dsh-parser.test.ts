@@ -340,8 +340,10 @@ async function testEdgesAndUnknowns(): Promise<void> {
       "an unknown status phase rides the same way under type status",
     );
     assert(
-      warnings.length === 2 && warnings.every((w) => w.startsWith("[dsh parser] unknown ")) && warnings[0].includes('"compaction"') && warnings[1].includes('"turn_paused"'),
-      "each unknown type is logged once per parser instance, as [dsh parser] unknown …",
+      warnings.length === 2 &&
+        warnings[0] === '[dsh parser] unknown event type "compaction" passed through as harness_event' &&
+        warnings[1] === '[dsh parser] unknown status phase "turn_paused" passed through as harness_event',
+      "each unknown type is logged once per parser instance, in the wording every parser uses",
     );
   } finally {
     console.warn = original;

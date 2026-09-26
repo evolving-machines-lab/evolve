@@ -251,7 +251,7 @@ async function testBuildTarCommandPiFamily(): Promise<void> {
 }
 
 async function testBuildTarCommandDsh(): Promise<void> {
-  console.log("\n[6e] buildTarCommand() - dsh");
+  console.log("\n[6f] buildTarCommand() - dsh");
 
   const cmd = buildTarCommand("dsh", "/home/user/workspace");
 
@@ -260,7 +260,7 @@ async function testBuildTarCommandDsh(): Promise<void> {
 }
 
 async function testBuildTarCommandZcode(): Promise<void> {
-  console.log("\n[6e] buildTarCommand() - zcode");
+  console.log("\n[6g] buildTarCommand() - zcode");
 
   const cmd = buildTarCommand("zcode", "/home/user/workspace");
 
@@ -273,7 +273,7 @@ async function testBuildTarCommandZcode(): Promise<void> {
 }
 
 async function testBuildTarCommandAntigravity(): Promise<void> {
-  console.log("\n[6f] buildTarCommand() - antigravity");
+  console.log("\n[6h] buildTarCommand() - antigravity");
 
   const cmd = buildTarCommand("antigravity", "/home/user/workspace");
 

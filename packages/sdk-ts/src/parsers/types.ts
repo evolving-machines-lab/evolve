@@ -189,6 +189,23 @@ export interface HarnessEvent {
   payload: Record<string, unknown>;
 }
 
+/** The harness_event for one raw line: its type word, and every field but the one that carried it. */
+export function harnessEvent(type: string, line: Record<string, unknown>, typeKey = "type"): HarnessEvent {
+  const { [typeKey]: _type, ...payload } = line;
+  return { sessionUpdate: "harness_event", type, payload };
+}
+
+/** One warning per unknown type for a parser instance: a stream of unknown lines is one line of noise. */
+export function unknownTypeWarner(harness: string): (what: string, type: string) => void {
+  const warned = new Set<string>();
+  return (what, type) => {
+    const key = `${what}:${type}`;
+    if (warned.has(key)) return;
+    warned.add(key);
+    console.warn(`[${harness} parser] unknown ${what} "${type}" passed through as harness_event`);
+  };
+}
+
 /**
  * Token accounting as the harness reported it on one wire line.
  *

@@ -146,7 +146,7 @@ async function testDsh(): Promise<void> {
 }
 
 async function testAntigravity(): Promise<void> {
-  console.log("\n[8] antigravity");
+  console.log("\n[3c] antigravity");
 
   // MCP is one generic tool on this CLI (live M1): the wire name IS
   // call_mcp_tool, and the server and tool names live in its parameters.

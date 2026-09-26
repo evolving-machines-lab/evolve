@@ -13,7 +13,7 @@
  * failed turn is the `error` variant (fatal) with the turn's usage beside it.
  */
 
-import { harnessErrorText } from "./types";
+import { harnessErrorText, harnessEvent, unknownTypeWarner } from "./types";
 import type {
   OutputEvent,
   PlanEntryStatus,
@@ -87,13 +87,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
   const toolCalls = new Map<string, ToolCallRecord>();
   let lastRootMessageId: string | undefined;
   let runUsageEmitted = false;
-  const warnedTypes = new Set<string>();
-
-  function warnUnknown(kind: string): void {
-    if (warnedTypes.has(kind)) return;
-    warnedTypes.add(kind);
-    console.warn(`[zcode parser] unknown event type ${kind}`);
-  }
+  const warnUnknown = unknownTypeWarner("zcode");
 
   return function parseZcodeEvent(jsonLine: string): OutputEvent[] | null {
     let data: unknown;
@@ -152,7 +146,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
             case "model_request_started": {
               const modelId = stringField(payload, "modelId");
               if (modelId && sessionId) models.set(sessionId, modelId);
-              updates.push(harnessEvent(data, type));
+              updates.push(harnessEvent(type, data));
               break;
             }
             case "model_request_completed": {
@@ -178,18 +172,18 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               break;
             }
             case "model_retry_scheduled":
-              updates.push(harnessEvent(data, type));
+              updates.push(harnessEvent(type, data));
               break;
             default:
-              warnUnknown(`session.updated/${payloadType}`);
-              updates.push(harnessEvent(data, type));
+              warnUnknown("event type", `session.updated/${payloadType}`);
+              updates.push(harnessEvent(type, data));
           }
           break;
         }
         if (typeof payload.modelId === "string" && typeof payload.providerId === "string" && "messageCount" in payload) {
           // model_request: the model this session's requests name.
           if (sessionId) models.set(sessionId, payload.modelId);
-          updates.push(harnessEvent(data, type));
+          updates.push(harnessEvent(type, data));
           break;
         }
         if (isRecord(payload.usage) && "stopReason" in payload) {
@@ -212,14 +206,14 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
         if (isRecord(payload.modelSelection)) {
           const modelId = stringField(payload.modelSelection, "modelId");
           if (modelId && sessionId) models.set(sessionId, modelId);
-          updates.push(harnessEvent(data, type));
+          updates.push(harnessEvent(type, data));
           break;
         }
         if (typeof payload.childSessionId === "string" && typeof payload.parentToolCallId === "string") {
           // Sub-agent lifecycle: running (the mapping every child line is
           // stamped from) and completed (the parent's tool result follows).
           childParents.set(payload.childSessionId, payload.parentToolCallId);
-          updates.push(harnessEvent(data, type));
+          updates.push(harnessEvent(type, data));
           break;
         }
         if (isRecord(payload.error) && "retryable" in payload) {
@@ -231,8 +225,8 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
           });
           break;
         }
-        warnUnknown(`session.updated/{${Object.keys(payload).sort().join(",")}}`);
-        updates.push(harnessEvent(data, type));
+        warnUnknown("event type", `session.updated/{${Object.keys(payload).sort().join(",")}}`);
+        updates.push(harnessEvent(type, data));
         break;
       }
 
@@ -281,8 +275,8 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
           }
           default:
             if (!SILENT_STREAMING_KINDS.has(kind)) {
-              warnUnknown(`model.streaming/${kind || "?"}`);
-              updates.push(harnessEvent(data, type));
+              warnUnknown("event type", `model.streaming/${kind || "?"}`);
+              updates.push(harnessEvent(type, data));
             }
         }
         break;
@@ -362,8 +356,8 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
           case "batch":
             break;
           default:
-            warnUnknown(`tool.updated/${kind || "?"}`);
-            updates.push(harnessEvent(data, type));
+            warnUnknown("event type", `tool.updated/${kind || "?"}`);
+            updates.push(harnessEvent(type, data));
         }
         break;
       }
@@ -404,8 +398,8 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
       }
 
       default:
-        if (!FACT_TYPES.has(type)) warnUnknown(type);
-        updates.push(harnessEvent(data, type));
+        if (!FACT_TYPES.has(type)) warnUnknown("event type", type);
+        updates.push(harnessEvent(type, data));
     }
 
     const parentToolCallId = isChild && sessionId ? childParents.get(sessionId) : undefined;
@@ -562,15 +556,6 @@ function toolInfo(toolName: string, input: Record<string, unknown>): {
 
 function agentText(text: string): SessionUpdate {
   return { sessionUpdate: "agent_message_chunk", content: { type: "text", text } };
-}
-
-/** The line under its own type word, every other field verbatim (types.ts HarnessEvent). */
-function harnessEvent(line: Record<string, unknown>, type: string): SessionUpdate {
-  const payload: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(line)) {
-    if (key !== "type") payload[key] = value;
-  }
-  return { sessionUpdate: "harness_event", type, payload };
 }
 
 function copyIfPresent(from: Record<string, unknown>, into: Record<string, unknown>, keys: string[]): void {
