@@ -58,15 +58,15 @@ In `/api/meta`, `agents[].effort_support` identifies the mode: `level`, `binary`
 
 ## Analysis and check models
 
-Trace analysis and task checks use the Claude Code harness. Select their model separately:
+Trace analysis and task checks run on Claude Code unless you choose another agent. Select their agent and model separately from the evaluation arms:
 
-| Operation | Model option |
-| --- | --- |
-| `evolve analyze` | `-m` |
-| `evolve check` | `-m` |
-| Analysis attached to `evolve run` | `--analyze-model` |
+| Operation | Agent option | Model option |
+| --- | --- | --- |
+| `evolve analyze` | `-a` | `-m` |
+| `evolve check` | `-a` | `-m` |
+| Analysis attached to `evolve run` | `--analyze-agent` | `--analyze-model` |
 
-Their default is `openrouter/deepseek/deepseek-v4.1-flash`. Choose from the supported Claude Code roster.
+The default model is `openrouter/deepseek/deepseek-v4.1-flash`. The model must be one of the chosen agent's models, so with an agent that does not list the default, pass `-m` too. In `/api/meta`, `analyze.agents` lists the agents these commands accept, each agent's models, and the effort each model runs at when you pass none.
 
 <Card title="Configure a run" icon="terminal" href="/cli-reference/run">
   All model, effort, concurrency, and budget options.

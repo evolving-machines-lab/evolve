@@ -193,6 +193,11 @@ class AgentUsage(TypedDict):
     scope: Literal["call", "run"]  # one LLM inference, or the harness's whole-run total
     usage: TokenUsage
 
+class HarnessEvent(TypedDict):
+    sessionUpdate: Literal["harness_event"]
+    type: str                  # the harness's own type word for the line
+    payload: dict[str, Any]    # the line's other fields, verbatim
+
 SessionUpdate = Union[
     AgentMessageChunk,
     AgentThoughtChunk,
@@ -202,6 +207,7 @@ SessionUpdate = Union[
     Plan,
     AgentError,
     AgentUsage,
+    HarnessEvent,
 ]
 
 # =============================================================================
@@ -220,11 +226,12 @@ class OutputEvent(TypedDict):
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets
+clock (claude, gemini, opencode, droid and zcode stamp every line; pi and prime-agent stamp every message;
+qwen, kimi, dsh and antigravity stamp none); `model` is
+the model named on the line, or on the harness's init line for gemini, droid and antigravity and on its first request line for zcode; `messageId` lets
 you tell which lines belong to one LLM message (claude prints one line per content block, all with
-the same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the
-`toolCallId` of the `Task`/`agent` call that spawned it.
+the same `message.id`; antigravity keys every line of one `agent_response` step by that step); `parentToolCallId` is set only on a subagent's lines and names the
+`toolCallId` of the `Task`/`agent`/`Agent` call that spawned it (a zcode sub-agent also names its own session under `extra.childSessionId`).
 
 `toolName` is the harness-native tool name, verbatim — `Bash`, `Read`, or the joined `mcp__<server>__<tool>` an MCP call carries. Prefer it over parsing `title`, which is formatted per tool for people to read and is not round-trippable; `toolName` is the identifier the model actually called. It is a deliberate addition to the ACP shape, which names no tool and whose `kind` collapses every MCP tool to `other`, and it is optional — absent on traces recorded before the SDK carried it, and on the occasional call a harness cannot name, so fall back to `kind` there.
 
@@ -290,6 +297,7 @@ UI display. For replay after cleanup, use the `session_id` with
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `HarnessEvent` | `"harness_event"` | A line about the harness's own run (a retry, a sub-agent step, an unknown type). **Not agent work** — see below |
 
 ---
 
@@ -402,16 +410,41 @@ output:
 
 ```python
 def did_work(events):
-    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage") for e in events)
+    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage", "harness_event") for e in events)
 ```
+
+## Harness-reported events (`harness_event`)
+
+A harness also prints lines that describe its own run rather than the agent's work — a retry it is
+about to make, a sub-agent's progress, a compaction, a title call — and any harness can add a new
+line type in a release. None of those fit an ACP update, and none is dropped: each rides through
+as its own update with the harness's own type word and the line's other fields, verbatim. A type the
+parser has never seen is passed through the same way and logged once per type.
+
+```python
+{
+    "update": {
+        "sessionUpdate": "harness_event",
+        "type": "auto_retry_start",          # the harness's own type word, verbatim
+        "payload": {"attempt": 1, "maxAttempts": 3, "delayMs": 2271},  # the line's other fields, verbatim
+    }
+}
+```
+
+**It is not agent work either.** Exclude it exactly as `did_work` above excludes `error` and
+`usage`: a harness that printed a retry schedule has not done anything for the task yet.
 
 ## Harness-reported usage (`usage`)
 
 Every harness prints its own token accounting on the stream, and it arrives as its own update so
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
-opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
-whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
-simply has no `usage` events.
+opencode prints each step's tokens and cost, pi and prime-agent print each model call's tokens on
+its `message_end` line (prompt tokens are input plus cache reads plus cache writes, as Harbor counts
+them; a cost is reported only when the harness prices the call itself), dsh prints each step's tokens, zcode prints each model request's
+tokens (reasoning and cache counts under their own names in `extra`, never a cost), antigravity prints each model call's tokens
+on the step that made it, and codex, gemini, claude, qwen, droid, zcode and antigravity print a whole-run total on their terminal line
+(antigravity's total is the conversation's, cumulative across a resumed run's turns). Kimi's
+stream-json prints no usage at all, so a kimi run simply has no `usage` events.
 
 ```python
 {
@@ -449,3 +482,25 @@ prompt_tokens = sum(u.get("promptTokens", 0) for u in per_message.values())
 
 Like `error`, `usage` is **not agent work**: a stream that carries only accounting still counts as a
 run that did nothing.
+
+## Harness-reported facts (`harness_event`)
+
+A harness also writes lines that are neither output, nor a tool, nor a failure, nor usage: a
+scheduled retry, a sub-agent's status, a session title, a compaction record, or a line type the
+parser does not know yet. Those pass through as their own update, under the harness's own name for
+the line, with the line's other fields verbatim:
+
+```python
+{
+    "update": {
+        "sessionUpdate": "harness_event",
+        "type": "session.titleUpdated",  # the harness's own type word for the line
+        "payload": {"seq": 1, "payload": {"title": "…"}},  # the line's other fields, verbatim
+    }
+}
+```
+
+Like `error` and `usage`, a `harness_event` is **not agent work**: a stream that carries only such
+lines still counts as a run that did nothing. A line type the parser does not know is also logged
+once per run (`[<harness> parser] unknown event type …`), so a vendor release that adds a line type
+never breaks a run and never disappears from the transcript.

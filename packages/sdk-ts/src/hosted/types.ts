@@ -539,8 +539,8 @@ export interface Rubric {
  * openrouter/deepseek/deepseek-v4.1-flash at its per-model effort (high)
  * over the platform's default analyze rubric and its default prompt body.
  *
- * The analyzer always runs the claude-code harness (Harbor's default analyze
- * agent) in its own sealed sandbox — on the provider `sandbox_provider`
+ * The analyzer runs on the `agent` harness (default claude, Harbor's claude-code)
+ * in its own sealed sandbox — on the provider `sandbox_provider`
  * names, or the platform's analysis default when it names none; its spend is
  * capped per analysis and metered as its own line, never blended into the
  * trial's own bill.
@@ -549,12 +549,14 @@ export interface Rubric {
  * exact names — `n_concurrent` (`-n/--n-concurrent`), `passing` / `failing`,
  * `n_trials` (`-l/--n-trials`; their cli/analyze.py:278-290). All omitted
  * is every analyzable trial, as wide as the organization's
- * `max_concurrent_analyses` allows. Harbor's `-a/--agent`, `--job-name`,
+ * `max_concurrent_analyses` allows. Harbor's `--job-name`,
  * `-o/--jobs-dir`, `-k/--n-attempts` and the local-runner kwargs are not
  * on this surface; the contract (`AnalyzeConfigInput` in spec/openapi.yaml)
  * records each with its reason.
  */
 export interface AnalyzeConfigInput {
+  /** Harbor's `-a/--agent`, spelled as the arms spell it (claude, not claude-code) so one set of names covers arms and reviewers; omitted: claude. The agents: `GET /api/meta` `analyze.agents`. */
+  agent?: string;
   /**
    * Model the analyzer agent runs — Harbor's `--model`. The default is
    * openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
@@ -572,7 +574,7 @@ export interface AnalyzeConfigInput {
    * spelling is accepted and stored AS GIVEN (the default is the roster
    * alias), the wire id is resolved only when the analyzer runs, and every
    * stored analysis serves the spelling it was created under. Must be on
-   * the claude roster (`GET /api/meta`, `agents[].models`); anything else
+   * the agent's roster (`GET /api/meta`, `analyze.agents[].models`); anything else
    * is refused at accept (`invalid_input`, roster in the message).
    */
   model_name?: string;
@@ -600,15 +602,14 @@ export interface AnalyzeConfigInput {
   prompt?: string;
   /**
    * Reasoning effort the analyzer runs at — the platform's `agents[].
-   * reasoning_effort` vocabulary applied to the analyzer, which IS the
-   * claude harness: the accepted values are `GET /api/meta`'s
-   * `analyze.reasoning_efforts`, an unknown value is refused
+   * reasoning_effort` vocabulary applied to the analyzer's agent: the accepted
+   * values are `GET /api/meta`'s `analyze.agents[].reasoning_efforts`, an unknown value is refused
    * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
-   * applies (`analyze.models[].default_reasoning_effort`: high on
+   * applies (`analyze.agents[].models[].default_reasoning_effort`: high on
    * openrouter/deepseek/deepseek-v4.1-flash, the default model — DeepSeek's
    * own documented default, the owner's ruling 2026-09-10; max on
    * glm-5.3-flash — the platform's ruling 2026-09-08, the effort its
-   * published scores use; the claude harness default elsewhere). The
+   * published scores use; the agent's own default elsewhere, none where it takes none). The
    * effort is always passed to the analyzer explicitly and
    * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
    * extension: Harbor's analyze has no effort option; this is the run
@@ -686,10 +687,12 @@ export interface AnalyzeConfigInput {
  * the day, resolved at accept and stored, so the record always states the
  * policy it executes (same law as RetryConfig). Echoed on the job body when
  * the job was created with `analyze`; each analysis additionally carries the
- * exact policy IT ran under (`Trial.analysis.model_name` / `.rubric` /
- * `.prompt`), which a later manual re-analysis may have changed.
+ * exact policy IT ran under (`Trial.analysis.agent` / `.model_name` /
+ * `.rubric` / `.prompt`), which a later manual re-analysis may have changed.
  */
 export interface AnalyzeConfig {
+  /** The agent this policy's analyses run on — as named, or the default (claude). */
+  agent: string;
   model_name: string;
   rubric: Rubric;
   /** The caller's prompt template as stored; null = the platform's default analyze body. */
@@ -697,10 +700,10 @@ export interface AnalyzeConfig {
   /**
    * The effort this policy's analyses run at. Named at create it is served
    * as stored; when the create named none, this echoes the per-model
-   * default of the day for `model_name` — the value the next enqueue under
-   * this policy stamps (the same nuance as `sandbox_provider` below).
+   * default of the day for `model_name` on `agent` — the value the next enqueue under
+   * this policy stamps (the same nuance as `sandbox_provider` below). Null when the agent takes no effort.
    */
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   /**
    * The provider this policy's analyses run on. Named at create it is served
    * as stored, forever. When the create named none, this echoes the
@@ -1700,11 +1703,13 @@ export interface TrialAnalysis {
    * `failed`, never left `running` forever.
    */
   status: AnalysisStatus;
+  /** The agent THIS analysis ran on; every analysis from before the choice existed ran on claude. */
+  agent: string;
   model_name: string;
   /**
    * The reasoning effort THIS analysis ran at — passed to the analyzer
-   * explicitly, so it is what the model was asked for. Null only on
-   * analyses recorded before the effort was stamped.
+   * explicitly, so it is what the model was asked for. Null when its agent
+   * takes no effort, or on analyses recorded before the effort was stamped.
    */
   reasoning_effort: string | null;
   rubric: Rubric;
@@ -2492,10 +2497,11 @@ export interface CheckRow {
   name: string;
   status: CheckStatus;
   source: CheckSource;
+  agent: string;
   /** The checker's model. */
   model_name: string;
-  /** The effort every task's checker ran at. */
-  reasoning_effort: string;
+  /** The effort every task's checker ran at; null when its agent takes none. */
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
   /** The owning organization's slug (every check has one). */
   org: string;
@@ -4934,10 +4940,10 @@ export interface AnalysesClient {
    * one directory named as Harbor names the wrapper trial
    * (`analyze-<analyzed trial dir>__<7 chars>/`): config.json, lock.json,
    * result.json, trial.log, exception.txt (an infrastructure failure only),
-   * agent/claude-code.txt (Harbor's tee name for claude-code),
+   * agent/<Harbor's tee name for its agent> (claude-code.txt, codex.txt, …),
    * agent/stderr.log, agent/trace-parsed.jsonl, the captured home at its
-   * real names with agent/agent-home.json beside it and Harbor's copy at
-   * agent/sessions/, verifier/{test-stdout.txt,reward.txt,reward.json}
+   * real names with agent/agent-home.json beside it and Harbor's copy at its
+   * per-agent slot (agent/sessions/ for claude and codex), verifier/{test-stdout.txt,reward.txt,reward.json}
    * when the validator ruled (reward 1 = a valid analysis.json, 0 = it was
    * refused), and artifacts/manifest.json with artifacts/analysis.json (the
    * validated {summary, checks}) on a completed run — absent artifacts are
@@ -4964,8 +4970,8 @@ export interface AnalysesClient {
 /**
  * Task-check configuration — Harbor's `harbor check` vocabulary (their
  * cli/analyze.py:84-148 check_command), the spec's `CheckConfigInput`. The
- * rubric-agent trio is the analyze door's, under the same rules
- * (`AnalyzeConfigInput` states them; refusals name `check.*`): `model_name`
+ * rubric-agent knobs are the analyze door's, under the same rules
+ * (`AnalyzeConfigInput` states them; refusals name `check.*`): `agent` (`-a/--agent`), `model_name`
  * (Harbor's check default is `claude-sonnet-4-6`; this platform's is the
  * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
  * default for both rubric
@@ -4983,14 +4989,15 @@ export interface AnalysesClient {
  * (`-x/--exclude-task-name`), `n_tasks` (`-l/--n-tasks`) — applied in
  * checker.py's order (:132-138: include, exclude, then the cap) over the
  * sorted task directory names, Python fnmatch globs against the NAME.
- * Harbor's `-a/--agent`, `--job-name`, `-o/--jobs-dir`, `-k/--n-attempts`
- * and the local-runner kwargs are not on this surface; the contract records
- * each with its reason.
+ * Harbor's `-o/--jobs-dir`, `-k/--n-attempts` and the local-runner kwargs
+ * are not on this surface; the contract records each with its reason.
  */
 export interface CheckConfigInput {
   /** A name for the check (Harbor's `--job-name`); omitted, the accept timestamp `YYYY-MM-DD__HH-MM-SS`. 1-120 characters. */
   name?: string;
-  /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
+  /** The agent the checker runs on (Harbor's `-a/--agent`) — the analyze door's `agent`, same rule. Omitted: claude. */
+  agent?: string;
+  /** Model the checker agent runs (Harbor's `-m/--model`); must be on the agent's roster (`GET /api/meta`). */
   model_name?: string;
   /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (`checks().defaults()`). */
   rubric?: Rubric;
@@ -5095,9 +5102,11 @@ export interface Check {
   name: string;
   status: CheckStatus;
   source: CheckSource;
+  /** The agent every task's checker ran on — named at create, or the default (claude). */
+  agent: string;
   model_name: string;
-  /** The effort every task's checker ran at — named at create, or the model's default, resolved at accept. */
-  reasoning_effort: string;
+  /** The effort every task's checker ran at — named at create, or the model's default on the agent, resolved at accept; null when the agent takes none. */
+  reasoning_effort: string | null;
   rubric: Rubric;
   /** The prompt template as stored; null = the platform's default check body. */
   prompt: string | null;
@@ -5132,12 +5141,13 @@ export interface Check {
  * this serves as the template text.
  */
 export interface AnalyzeDefaults {
+  agent: string;
   model_name: string;
   rubric: Rubric;
   /** The built-in analyze prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
   prompt: string;
-  /** The effort the default model runs at when the config names none. */
-  reasoning_effort: string;
+  /** The effort the default model runs at on the default agent when the config names none; null if that agent takes none. */
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
 
@@ -5148,12 +5158,13 @@ export interface AnalyzeDefaults {
  * template text.
  */
 export interface CheckDefaults {
+  agent: string;
   model_name: string;
   rubric: Rubric;
   /** The built-in check prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
   prompt: string;
-  /** The effort the default model runs at when the config names none. */
-  reasoning_effort: string;
+  /** The effort the default model runs at on the default agent when the config names none; null if that agent takes none. */
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
 
@@ -5261,9 +5272,9 @@ export interface ChecksClient {
    * the TASK CHECK id (`Check.results[].id`). Each folder is Harbor's
    * TrialPaths for the checker's run: config.json, lock.json, result.json,
    * trial.log, exception.txt (an infrastructure failure only),
-   * agent/claude-code.txt, agent/stderr.log, agent/trace-parsed.jsonl, the
-   * captured home at its real names with agent/agent-home.json and Harbor's
-   * copy at agent/sessions/, verifier/{test-stdout.txt,reward.txt,
+   * agent/<its agent's tee name>, agent/stderr.log, agent/trace-parsed.jsonl, the
+   * captured home at its real names with agent/agent-home.json and Harbor's copy at its
+   * per-agent slot (agent/sessions/ for claude and codex), verifier/{test-stdout.txt,reward.txt,
    * reward.json} when the validator ruled (reward 1 = a valid
    * check-result.json, 0 = it was refused), artifacts/manifest.json and
    * artifacts/check-result.json (the validated flat checks) on a completed
@@ -5881,16 +5892,18 @@ export interface CapabilityDocument {
     dataset_version: StatusVocabulary;
   };
   /**
-   * The trace analyzer's roster and defaults: the model an omitted
-   * `analyze.model_name` takes, the efforts `analyze.reasoning_effort`
-   * accepts (the claude harness's — the analyzer IS that harness), and
-   * every roster model with the effort an omitted `reasoning_effort` takes
-   * for it. Absent on servers predating the field.
+   * The rubric agents' roster and defaults, the analyzer's and the checker's alike, so a client
+   * knows what "omitted" meant. Absent on servers predating the field.
    */
   analyze?: {
+    default_agent: string;
     default_model: string;
-    reasoning_efforts: string[];
-    models: { alias: string; model_id: string; default_reasoning_effort: string }[];
+    agents: {
+      name: string;
+      /** Empty for an agent that takes no effort. */
+      reasoning_efforts: string[];
+      models: { alias: string; model_id: string; default_reasoning_effort: string | null }[];
+    }[];
   };
   limits: {
     /**

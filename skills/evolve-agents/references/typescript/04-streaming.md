@@ -110,11 +110,12 @@ interface OutputEvent {
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets you
+clock (claude, gemini, opencode, droid and zcode stamp every line; pi and prime-agent stamp every message;
+qwen, kimi, dsh and antigravity stamp none); `model` is
+the model named on the line, or on the harness's init line for gemini, droid and antigravity and on its first request line for zcode; `messageId` lets you
 tell which lines belong to one LLM message (claude prints one line per content block, all with the
-same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
-of the `Task`/`agent` call that spawned it.
+same `message.id`; antigravity keys every line of one `agent_response` step by that step); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
+of the `Task`/`agent`/`Agent` call that spawned it (a zcode sub-agent also names its own session under `extra.childSessionId`).
 
 ---
 
@@ -131,7 +132,8 @@ type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | HarnessEvent;
 ```
 
 ### Message Events
@@ -207,6 +209,7 @@ completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool sta
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `HarnessEvent` | `"harness_event"` | A line about the harness's own run (a retry, a sub-agent step, an unknown type). **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -432,13 +435,38 @@ import { isAgentWorkUpdate } from "@evolvingmachines/evolve";
 const didWork = events.some((e) => isAgentWorkUpdate(e.update));
 ```
 
+## Harness-reported events (`harness_event`)
+
+A harness also prints lines that describe its own run rather than the agent's work — a retry it is
+about to make, a sub-agent's progress, a compaction, a title call — and any harness can add a new
+line type in a release. None of those fit an ACP update, and none is dropped: each rides through
+as its own update with the harness's own type word and the line's other fields, verbatim. A type the
+parser has never seen is passed through the same way and logged once per type.
+
+```typescript
+interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  /** The harness's own type word for the line, verbatim. */
+  type: string;
+  /** Every other field of the line, verbatim. */
+  payload: Record<string, unknown>;
+}
+```
+
+**It is not agent work either.** `isAgentWorkUpdate` excludes it, exactly as it excludes `error`
+and `usage`: a harness that printed a retry schedule has not done anything for the task yet.
+
 ## Harness-reported usage (`usage`)
 
 Every harness prints its own token accounting on the stream, and it arrives as its own update so
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
-opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
-whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
-simply has no `usage` events.
+opencode prints each step's tokens and cost, pi and prime-agent print each model call's tokens on
+its `message_end` line (prompt tokens are input plus cache reads plus cache writes, as Harbor counts
+them; a cost is reported only when the harness prices the call itself), dsh prints each step's tokens, zcode prints each model request's
+tokens (reasoning and cache counts under their own names in `extra`, never a cost), antigravity prints each model call's tokens
+on the step that made it, and codex, gemini, claude, qwen, droid, zcode and antigravity print a whole-run total on their terminal line
+(antigravity's total is the conversation's, cumulative across a resumed run's turns). Kimi's
+stream-json prints no usage at all, so a kimi run simply has no `usage` events.
 
 ```typescript
 interface AgentUsage {
@@ -476,3 +504,23 @@ const promptTokens = [...perMessage.values()].reduce((n, u) => n + (u.promptToke
 
 Like `error`, `usage` is **not agent work**: `isAgentWorkUpdate` answers `false` for it, so a
 stream that carries only accounting still counts as a run that did nothing.
+
+## Harness-reported facts (`harness_event`)
+
+A harness also writes lines that are neither output, nor a tool, nor a failure, nor usage: a
+scheduled retry, a sub-agent's status, a session title, a compaction record, or a line type the
+parser does not know yet. Those pass through as their own update, under the harness's own name for
+the line, with the line's other fields verbatim:
+
+```typescript
+interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  type: string;                      // the harness's own type word for the line
+  payload: Record<string, unknown>;  // the line's other fields, verbatim
+}
+```
+
+Like `error` and `usage`, a `harness_event` is **not agent work**: `isAgentWorkUpdate` answers
+`false` for it. A line type the parser does not know is also logged once per run
+(`[<harness> parser] unknown event type …`), so a vendor release that adds a line type never breaks
+a run and never disappears from the transcript.

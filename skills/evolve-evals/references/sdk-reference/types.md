@@ -208,10 +208,11 @@ interface RetryConfig {
 }
 
 interface AnalyzeConfig {
+  agent: string;
   model_name: string;
   rubric: Rubric;
   prompt: string | null;
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
   n_concurrent: number | null;
   passing: boolean;
@@ -316,8 +317,9 @@ interface CheckRow {
   name: string;
   status: CheckStatus;
   source: CheckSource;
+  agent: string;
   model_name: string;
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
   org: string;
   visibility: JobVisibility;
@@ -757,6 +759,7 @@ interface TrialAnalysis {
   job_id: string;
   task_name: string;
   status: AnalysisStatus;
+  agent: string;
   model_name: string;
   reasoning_effort: string | null;
   rubric: Rubric;
@@ -788,10 +791,11 @@ interface AnalysisFailure {
 }
 
 interface AnalyzeDefaults {
+  agent: string;
   model_name: string;
   rubric: Rubric;
   prompt: string;
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
 ```
@@ -806,8 +810,9 @@ interface Check {
   name: string;
   status: CheckStatus;
   source: CheckSource;
+  agent: string;
   model_name: string;
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   rubric: Rubric;
   prompt: string | null;
   sandbox_provider: EvalSandboxProvider;
@@ -843,10 +848,11 @@ interface TaskCheck {
 }
 
 interface CheckDefaults {
+  agent: string;
   model_name: string;
   rubric: Rubric;
   prompt: string;
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
 ```
