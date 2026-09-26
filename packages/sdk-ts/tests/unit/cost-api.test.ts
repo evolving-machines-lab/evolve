@@ -11,6 +11,7 @@
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
+import { homeFileOwnershipCommand, homeFilePrepareCommand } from "../../src/mcp/home-file.js";
 import { zcodeEnvPins, zcodeReasoningLevel } from "../../src/registry.js";
 
 let passed = 0;
@@ -162,7 +163,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const kimiGw = new Agent({ type: "kimi", apiKey: "gw-key", isDirectMode: false } as any, {});
   attachProviderRuntimeToken(kimiGw, "kimi", "https://dashboard.test/api/model-proxy/kimi/v1");
   const tomlWrites: Array<{ path: string; content: string }> = [];
-  const fakeSandbox = { files: { makeDir: async () => {}, write: async (p: string, c: string) => { tomlWrites.push({ path: p, content: c }); } } };
+  const fakeSandbox = { commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) }, files: { makeDir: async () => {}, write: async (p: string, c: string) => { tomlWrites.push({ path: p, content: c }); } } };
   await (kimiGw as any).writeKimiPerRunConfig(fakeSandbox, "run-effort-pin");
   assertEqual(tomlWrites.length, 1, "kimi gateway path writes exactly one config");
   assert(tomlWrites[0].content.includes('effort = "max"'), "kimi gateway config.toml stamps the max pin when effort is omitted");
@@ -419,10 +420,12 @@ const spendEnvs = { sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID", runTagEnv: "EVO
 
 async function testTomlFreshConfig(): Promise<void> {
   console.log("\n[7] writeCodexSpendProvider() on empty config");
-  const { sandbox, written } = createFakeSandbox(undefined);
+  const { sandbox, written, ran } = createFakeSandbox(undefined);
   await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
 
   assertEqual(written.length, 1, "writes config file");
+  assertEqual(ran.length, 2, "prepare before the write, hand-over after");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.codex/config.toml", []), "config.toml is handed to the home's owner");
   const content = written[0].content;
   assert(content.startsWith('model_provider = "evolve-gateway"'), "root key is first line");
   assert(content.includes("[model_providers.evolve-gateway]"), "has provider section");
@@ -771,7 +774,11 @@ async function testTomlRootKeyDriftRepair(): Promise<void> {
 async function testQwenWriteJsonSpendHeaders(): Promise<void> {
   console.log("\n[19] writeJsonSpendHeaders() writes headers at correct JSON path");
   const written: { path: string; content: string }[] = [];
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       read: async () => { throw Object.assign(new Error("not found"), { code: "ENOENT" }); },
@@ -790,6 +797,7 @@ async function testQwenWriteJsonSpendHeaders(): Promise<void> {
   const config = JSON.parse(written[0].content);
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-abc", "customer-id at correct path");
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-tags"], "run:run-123", "run tag at correct path");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.qwen/settings.json", []), "settings.json is handed to the home's owner");
 }
 
 async function testQwenWriteJsonPreservesExistingConfig(): Promise<void> {
@@ -800,6 +808,7 @@ async function testQwenWriteJsonPreservesExistingConfig(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => existing,
@@ -912,6 +921,7 @@ async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => afterFirstRun,
@@ -953,7 +963,11 @@ const kimiConnection = {
 async function testKimiWriteSpendConfigFresh(): Promise<void> {
   console.log("\n[25] writeKimiSpendConfig() writes deterministic config from scratch");
   const written: { path: string; content: string }[] = [];
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       write: async (path: string, content: string) => { written.push({ path, content }); },
@@ -969,6 +983,7 @@ async function testKimiWriteSpendConfigFresh(): Promise<void> {
 
   assertEqual(written.length, 1, "writes one file");
   assertEqual(written[0].path, "/home/user/.kimi-code/config.toml", "writes Kimi Code config path");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.kimi-code/config.toml", []), "config.toml is handed to the home's owner");
   const content = written[0].content;
   assert(content.includes('default_model = "evolve-default"'), "has default_model");
   assert(content.includes("default_thinking = true"), "enables default thinking");
@@ -995,6 +1010,7 @@ async function testKimiWriteSpendConfigPerRunOverwrite(): Promise<void> {
   console.log("\n[26] writeKimiSpendConfig() overwrites entirely on second run (no merge)");
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       write: async (path: string, content: string) => { written.push({ path, content }); },
@@ -1215,6 +1231,7 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
   // wiring paths agree.
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       write: async (path: string, content: string) => { written.push({ path, content }); },
@@ -1372,6 +1389,7 @@ async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => existing,
@@ -1408,6 +1426,7 @@ async function testQwenThinkingConfigPreservesSettings(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => existing,
@@ -1637,7 +1656,7 @@ async function testDroidBuildEnvironmentVariablesDirect(): Promise<void> {
 
 async function testDroidWriteGatewaySettings(): Promise<void> {
   console.log("\n[36] writeDroidGatewaySettings() writes custom model with spend headers");
-  const { sandbox, written } = createFakeSandbox(undefined);
+  const { sandbox, written, ran } = createFakeSandbox(undefined);
 
   await writeDroidGatewaySettings(
     sandbox,
@@ -1658,6 +1677,7 @@ async function testDroidWriteGatewaySettings(): Promise<void> {
   );
 
   assertEqual(written[0].path, "/home/user/.factory/evolve-settings.json", "writes dedicated Droid settings file");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.factory/evolve-settings.json", []), "the settings file is handed to the home's owner");
   const parsed = JSON.parse(written[0].content);
   const model = parsed.customModels?.[0];
   assertEqual(parsed.cloudSessionSync, false, "disables Factory cloud sync for gateway mode");
@@ -1782,6 +1802,7 @@ async function testDroidSessionStateRoundTrip(): Promise<void> {
   console.log("\n[40] Droid session id is captured and persisted");
   const files = new Map<string, string>();
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async (path: string) => {
@@ -1937,7 +1958,11 @@ async function testDshDirectModePatch(): Promise<void> {
 async function testDshSessionStateRoundTrip(): Promise<void> {
   console.log("\n[45] dsh session id is captured from the `session` line and persisted under ~/.dsh");
   const files = new Map<string, string>();
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       read: async (path: string) => {
@@ -1955,6 +1980,7 @@ async function testDshSessionStateRoundTrip(): Promise<void> {
   (agent as any).captureHarnessSessionId(`{"type":"session","sessionId":"session-fab655c4","cwd":"/work"}`, null);
   await (agent as any).writeCapturedSessionId(sandbox);
   assert(files.has("/home/user/.dsh/evolve-session.json"), "the id is persisted at the registry's sessionIdStateFile");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.dsh/evolve-session.json", []), "the state file is handed to the home's owner like every other home write");
 
   const agent2 = new Agent(config as any, {});
   await (agent2 as any).loadCapturedSessionId(sandbox);
@@ -2006,7 +2032,11 @@ async function testZcodePerRunProviderFileGateway(): Promise<void> {
   assertEqual(headers["x-evolve-provider-runtime-binding"], "evrb_zcode_binding_secret", "sets the provider runtime binding header");
   assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3", "the default model rides verbatim (a gateway route name)");
   assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "high", "the omitted effort stamps the pin as the reasoning level");
-  assertEqual(ran.join("\n"), "chmod 600 '/home/user/.zcode/v2/provider_config.json'", "the file is tightened to 0600");
+  assertEqual(
+    ran.join("\n"),
+    [homeFilePrepareCommand("/home/user", "/home/user/.zcode/v2/provider_config.json"), homeFileOwnershipCommand("/home/user", "/home/user/.zcode/v2/provider_config.json", [], { mode: "600" })].join("\n"),
+    "the directories are prepared before the write; the file is handed to the home's owner and tightened to 0600 after it",
+  );
 
   const envs = (agent as any).buildRunEnvs("run-zcode-002") as Record<string, string> | undefined;
   assert(!("OPENROUTER_API_KEY" in (envs ?? {})), "no key env in gateway mode: the token lives only in the provider file, which is all the CLI reads");

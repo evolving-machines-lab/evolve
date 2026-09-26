@@ -76,7 +76,7 @@ Read on demand when the user's task requires them:
 |-------|-----------|--------|
 | Sandbox providers (E2B, Modal, Daytona) | [TS](references/typescript/02-configuration.md#sandbox-providers) | [PY](references/python/02-configuration.md#sandbox-providers) |
 | Provider auto-resolution from env | [TS](references/typescript/02-configuration.md#auto-resolution) | [PY](references/python/02-configuration.md#auto-resolution) |
-| Sandbox create options (image, network, user, homeDir) | [TS](references/typescript/02-configuration.md#sandbox-create-options) | [PY](references/python/02-configuration.md#sandbox-create-options) |
+| Sandbox create options (image, network, user, homeDir, homeOwner) | [TS](references/typescript/02-configuration.md#sandbox-create-options) | [PY](references/python/02-configuration.md#sandbox-create-options) |
 | Workspace modes (knowledge / swe) | [TS](references/typescript/02-configuration.md#workspace-modes) | [PY](references/python/02-configuration.md#workspace-modes) |
 | Full builder/constructor API | [TS](references/typescript/02-configuration.md#evolve-instance) | [PY](references/python/02-configuration.md#evolve-instance) |
 | Browser automation guide (setup, live view, replay) | [TS](references/typescript/02-configuration.md#browser-automation) | [PY](references/python/02-configuration.md#browser-automation) |

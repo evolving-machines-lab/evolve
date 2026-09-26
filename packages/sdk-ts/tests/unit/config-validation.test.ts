@@ -210,6 +210,16 @@ function testAgentConstructorGuards(): void {
 
   assert(error instanceof EvolveConfigError, "an empty model rejects at construction too");
   assertEqual((error as EvolveConfigError).field, "model", "the error names the model field");
+
+  const config: ResolvedAgentConfig = { type: "opencode", apiKey: "key", isDirectMode: true };
+  const owner = thrownBy(() => new Agent(config, { sandboxCreateOptions: { homeOwner: "agent; id" } }));
+  assert(owner instanceof EvolveConfigError, "a homeOwner the shell could read rejects at construction");
+  assertEqual((owner as EvolveConfigError).field, "homeOwner", "the error names the homeOwner field");
+  assertEqual(
+    thrownBy(() => new Agent(config, { sandboxCreateOptions: { homeOwner: "1001:1001" } })),
+    undefined,
+    "a uid:gid homeOwner constructs",
+  );
 }
 
 /**

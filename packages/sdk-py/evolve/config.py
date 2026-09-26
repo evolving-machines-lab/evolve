@@ -35,6 +35,9 @@ class SandboxCreateOptions(TypedDict, total=False):
     # Home directory for agent config paths. Default: "/root" when user is
     # "root", "/home/<user>" otherwise, "/home/user" when no user is given.
     homeDir: str
+    # The account the agent config files are written for (a user name, a uid,
+    # or uid:gid) when it is not the owner of homeDir. Default: homeDir's owner.
+    homeOwner: str
 
 
 @dataclass

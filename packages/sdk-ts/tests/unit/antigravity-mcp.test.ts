@@ -11,6 +11,7 @@
 import { writeAntigravityMcpConfig, writeAntigravitySettings } from "../../src/mcp/json.ts";
 import { AGENT_REGISTRY, antigravityEffort, antigravityModelSlug } from "../../src/registry.ts";
 import { EvolveConfigError } from "../../src/utils/config.ts";
+import { homeFileOwnershipCommand, homeFilePrepareCommand } from "../../src/mcp/home-file.ts";
 import type { SandboxInstance, SandboxCommandHandle, SandboxCommandResult, ProcessInfo } from "../../src/types.ts";
 
 let passed = 0;
@@ -37,11 +38,15 @@ function createNoopHandle(): SandboxCommandHandle {
 function createMockSandbox() {
   const files = new Map<string, string>();
   const dirs: string[] = [];
+  const ran: string[] = [];
 
   const sandbox: SandboxInstance = {
     sandboxId: "sbx-1",
     commands: {
-      run: async (): Promise<SandboxCommandResult> => ({ exitCode: 0, stdout: "", stderr: "" }),
+      run: async (command: string): Promise<SandboxCommandResult> => {
+        ran.push(command);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
       spawn: async (): Promise<SandboxCommandHandle> => createNoopHandle(),
       list: async (): Promise<ProcessInfo[]> => [],
       kill: async (): Promise<boolean> => true,
@@ -70,6 +75,7 @@ function createMockSandbox() {
   return {
     sandbox,
     dirs,
+    ran,
     files,
     readJson(path: string): Record<string, unknown> {
       const raw = files.get(path);
@@ -164,11 +170,12 @@ async function testEmptyAndMalformedExisting(): Promise<void> {
 async function testSettings(): Promise<void> {
   console.log("\n[3] writes ~/.gemini/antigravity-cli/settings.json for a run");
 
-  const { sandbox, readJson, dirs } = createMockSandbox();
+  const { sandbox, readJson, ran } = createMockSandbox();
   const settingsPath = AGENT_REGISTRY.antigravity.antigravitySettings!.settingsPath;
   await writeAntigravitySettings(sandbox, settingsPath, "vertex_ai/gemini-3.5-flash-lite");
 
-  assert(dirs.includes("/home/user/.gemini/antigravity-cli"), "creates the CLI's settings dir");
+  assert(ran.length === 2 && ran[0] === homeFilePrepareCommand("/home/user", "/home/user/.gemini/antigravity-cli/settings.json"), "the CLI's settings dir is prepared before the write");
+  assert(ran[1] === homeFileOwnershipCommand("/home/user", "/home/user/.gemini/antigravity-cli/settings.json", []), "settings.json is handed to the home's owner after every rewrite");
   const json = readJson("/home/user/.gemini/antigravity-cli/settings.json");
   assert(json.modelProvider === "gemini", "modelProvider gemini: the documented API-key auth path");
   assert(json.telemetryEnabled === false, "telemetryEnabled false: the key the binary keeps (enableTelemetry is dropped on rewrite)");

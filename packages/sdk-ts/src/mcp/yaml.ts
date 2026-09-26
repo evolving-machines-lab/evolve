@@ -13,6 +13,7 @@ import { stringify as stringifyYaml } from "yaml";
 import type { SandboxInstance, McpServerConfig } from "../types";
 import { DSH_REASONING_EFFORTS, expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { validateServers } from "./validation";
+import { writeHomeFile } from "./home-file";
 
 // =============================================================================
 // MCP PATCH
@@ -181,9 +182,7 @@ export async function writeDshRoutePatch(
   sandbox: SandboxInstance,
   config: DshRoutePatchConfig,
   homeDir?: string,
+  homeOwner?: string,
 ): Promise<void> {
-  const path = expandPath(config.path, homeDir);
-  const dir = path.slice(0, path.lastIndexOf("/"));
-  await sandbox.files.makeDir(dir);
-  await sandbox.files.write(path, renderDshRoutePatch(config));
+  await writeHomeFile(sandbox, expandPath(config.path, homeDir), renderDshRoutePatch(config), { homeDir, owner: homeOwner });
 }
