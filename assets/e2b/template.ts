@@ -65,10 +65,9 @@ export const template = Template()
   // ---------------------------------------------------------------------------
   // Z Code (zai-org/ZCode)
   // ---------------------------------------------------------------------------
-  // The official Linux .deb, pinned by version and sha512, on its own
-  // checksummed Node 24 (the CLI's engines pin) under /opt/zcode; the
-  // built-in provider catalog copied next to the bundle, where the CLI looks
-  // for it. Mirrors the Dockerfile block step for step.
+  // The official Linux .deb (version + sha512 pinned) on its own Node 24 under
+  // /opt/zcode; the env below names the catalog and the search binaries the CLI
+  // reads from env. Mirrors the Dockerfile block step for step.
   .runCmd(`set -eu
     && ZCODE_VERSION=3.14.3
     && ZCODE_DEB_SHA512=54362bc8bf5b2188ccdeec51349f2c470e52e73f4b06646fbd6d5a990f7012784904c7374656f683c26fc56bf4e023e7d0680a1c42446665a62d9b88e84620d6
@@ -93,6 +92,12 @@ export const template = Template()
     && rm -rf zcode.deb zcode-deb node.tgz
     && zcode --version
   `.replace(/\n\s+/g, ' ').trim())
+  .setEnvs({
+    ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: '/opt/zcode/glm/provider/zcode-builtin.json',
+    ZCODE_BFS_BINARY: '/opt/zcode/tools/bfs/bfs',
+    ZCODE_RG_BINARY: '/opt/zcode/tools/ripgrep/rg',
+    ZCODE_UGREP_BINARY: '/opt/zcode/tools/ugrep/ugrep',
+  })
 
   // ---------------------------------------------------------------------------
   // MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)

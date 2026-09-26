@@ -1,66 +1,16 @@
 /**
- * Z Code parser.
+ * Z Code parser: `zcode -p … --output-format stream-json` (ZCode v3.14.3, CLI 0.16.9).
  *
- * Consumes `zcode -p … --output-format stream-json` (ZCode v3.14.3, CLI
- * 0.16.9): one NDJSON line per internal session event in the "ZCode
- * Protocol" envelope — {type, eventId, sessionId, turnId?, seq, timestamp
- * (epoch ms), traceId, payload} — plus the CLI-private closing line
- * {type:"result", sessionId, traceId, turnId, response, usage, eventCount,
- * projection}.
+ * Shapes come from the vendor's zod protocol (packages/shared/src/zcode-protocol)
+ * and the CLI's NDJSON writer (headless-workflow.ts, prompt-command.ts); which
+ * types appear and how the catch-all `session.updated` payloads are told apart
+ * is live capture (2026-09-25). The stream is CLI-private and unversioned, so
+ * an unknown type is logged once and passed through as `harness_event`.
  *
- * PROVENANCE. The envelope, the type names and every per-type payload schema
- * are zod definitions in the vendor's source (packages/shared/src/
- * zcode-protocol/index.ts at v3.14.3; the mapper apps/zcode-cli/packages/
- * bootstrap/src/zcode-protocol/session-mapper.ts; the NDJSON writer
- * apps/zcode-cli/packages/cli/src/headless-workflow.ts; the result line
- * prompt-command.ts). The stream itself is declared CLI-PRIVATE and
- * UNVERSIONED by the vendor (headless-workflow.ts), and its one catch-all
- * type, `session.updated`, drops the internal event name (session-mapper.ts),
- * so WHICH types appear in practice and HOW the catch-all payloads are told
- * apart is LIVE CAPTURE (2026-09-25, fourteen headless runs against the Evolve
- * gateway: plain answer, tool use, resume, MCP, skills, sub-agent, model
- * error, tool failure, two cancellations). The rules below hold for every
- * capture; a vendor release may change them without anything failing to
- * compile, so an unknown type is logged once and passed through as a
- * `harness_event`, never a failure (decision 2026-09-25).
- *
- * WHAT THE STREAM SAYS (observed), and what each line becomes:
- *   turn.started            the prompt (`input`); `inputSource:"subagent"` on a child
- *   session.updated         the catch-all — classified by payload shape:
- *     payload.type model_request_started (harness_event; names the model) |
- *       model_request_completed (usage, finishReason) | model_request_failed
- *       (error, non-fatal: errorCode, statusCode, retryable) |
- *       model_retry_scheduled (harness_event)
- *     {providerId, modelId, messageCount}          model_request: harness_event, names the model
- *     {usage, stopReason, content}                  model_complete: text only when none was streamed
- *     {toolCallId, status}                          the tool ledger (silent)
- *     {modelSelection}                              a sub-agent's model: harness_event
- *     {agentId, childSessionId, parentToolCallId, status}  sub-agent lifecycle: harness_event
- *   model.streaming         kind text_delta | reasoning_delta | tool_call;
- *                           start | finish | *_start | *_end | tool_input_delta are silent brackets
- *   tool.updated            kind scheduled | started | progress | result | error; batch is silent
- *   turn.completed          resultType success (silent) | cancelled | error_* (error, fatal; usage)
- *   turn.failed             error{message, code, …}, turnPhase (error, fatal)
- *   result                  the run total (usage) and the final response
- *   session.titleUpdated, session.resumed, checkpoint.created,
- *   streamRecovery.updated  session-level facts with no ACP slot: harness_event
- *
- * SUB-AGENTS write into the SAME stream under their own `sessionId`
- * (`sess_subagent_agent_<id>`); the parent announces the child with
- * {agentId, childSessionId, parentToolCallId, status:"running"} right after
- * its `Agent` tool starts. Every child line from then on is stamped
- * `parentToolCallId` (the delegating call); the child's own title line
- * arrives one line earlier and carries no parent yet. Every child line keeps
- * the RUN's session id on the envelope and names its own under
- * `extra.childSessionId`. The run totals
- * (`turn.completed.usage`, `result.usage`) count the parent's requests only
- * — the child's tokens are in its own per-call `usage` events.
- *
- * THE EXIT CODE IS NOT A VERDICT: the CLI exits 0 whenever the prompt
- * finished, whatever `resultType` says, and a cancelled turn ends with
- * `turn.completed{resultType:"cancelled"}` and no `result` line at all. So a
- * non-success `turn.completed` and every `turn.failed` are the `error`
- * variant (fatal), and the turn's usage rides beside them.
+ * Sub-agents write into the same stream under their own sessionId; child lines
+ * after the parent's announcement carry `parentToolCallId` and keep the run's
+ * session id on the envelope. The exit code is no verdict: a cancelled or
+ * failed turn is the `error` variant (fatal) with the turn's usage beside it.
  */
 
 import { harnessErrorText } from "./types";
@@ -118,6 +68,8 @@ interface ToolCallRecord {
   name: string;
   input: Record<string, unknown>;
   emitted: boolean;
+  /** The scheduled line's MCP display (server + tool), when it named one. */
+  title?: string;
 }
 
 export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null {
@@ -343,11 +295,18 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
         if (assistantMessageId) messageId = assistantMessageId;
         switch (kind) {
           case "scheduled": {
+            const mcpTitle = mcpDisplayTitle(payload.display);
+            const known = toolCalls.get(toolCallId);
+            if (known?.emitted) {
+              if (mcpTitle) known.title = mcpTitle;
+              break;
+            }
             const update = recordToolCall(
               toolCalls,
               toolCallId,
               stringField(payload, "toolName"),
               asRecord(payload.input) ?? {},
+              mcpTitle,
             );
             if (update) updates.push(update);
             break;
@@ -358,7 +317,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               sessionUpdate: "tool_call_update",
               toolCallId,
               status: "in_progress",
-              title: toolCalls.get(toolCallId)?.name || stringField(payload, "toolName") || undefined,
+              title: titleOf(toolCalls.get(toolCallId)) || stringField(payload, "toolName") || undefined,
             });
             break;
           }
@@ -383,7 +342,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               sessionUpdate: "tool_call_update",
               toolCallId,
               status: result.success === false ? "failed" : "completed",
-              title: toolCalls.get(toolCallId)?.name || undefined,
+              title: titleOf(toolCalls.get(toolCallId)) || undefined,
               content: contentList(result.content),
               rawOutput: payload.result,
             });
@@ -397,7 +356,7 @@ export function createZcodeParser(): (jsonLine: string) => OutputEvent[] | null 
               sessionUpdate: "tool_call_update",
               toolCallId,
               status: "failed",
-              title: toolCalls.get(toolCallId)?.name || undefined,
+              title: titleOf(toolCalls.get(toolCallId)) || undefined,
               content: contentList(harnessErrorText([error?.message, error?.code], payload.error ?? payload)),
               rawOutput: payload.error,
             });
@@ -510,23 +469,21 @@ function zcodeTokenUsage(usage: unknown): TokenUsage | null {
 }
 
 /**
- * The first line that names a tool call emits it — `model.streaming
- * tool_call` (the model produced it) or `tool.updated scheduled` (the runtime
- * queued it), whichever arrives first; every capture shows both, in that
- * order, and a cancellation right after the model's line still leaves the
- * call in the trace.
+ * The first line naming a call emits it (the model's `tool_call` or the runtime's `scheduled`,
+ * whichever comes first), so a cancellation right after the model's line still leaves it in the trace.
  */
 function recordToolCall(
   toolCalls: Map<string, ToolCallRecord>,
   toolCallId: string,
   name: string,
   input: Record<string, unknown>,
+  mcpTitle?: string,
 ): SessionUpdate | null {
   if (!toolCallId) return null;
   const existing = toolCalls.get(toolCallId);
   if (existing?.emitted) return null;
   const toolName = name || existing?.name || "Tool";
-  toolCalls.set(toolCallId, { name: toolName, input, emitted: true });
+  toolCalls.set(toolCallId, { name: toolName, input, emitted: true, title: mcpTitle });
 
   if (normalizeToolName(toolName) === "todowrite") {
     const plan = handleTodoWrite(input);
@@ -537,7 +494,7 @@ function recordToolCall(
   return {
     sessionUpdate: "tool_call",
     toolCallId,
-    title,
+    title: mcpTitle ?? title,
     toolName,
     kind,
     status: "pending",
@@ -545,6 +502,19 @@ function recordToolCall(
     content,
     locations,
   };
+}
+
+/** `display{kind:"mcp_tool", serverName, toolName}` on the scheduled line names the server behind an `mcp__` call. */
+function mcpDisplayTitle(display: unknown): string | undefined {
+  const record = asRecord(display);
+  if (record?.kind !== "mcp_tool") return undefined;
+  const server = stringField(record, "serverName");
+  const tool = stringField(record, "toolName");
+  return server && tool ? `${server} ${tool} (MCP)` : undefined;
+}
+
+function titleOf(record: ToolCallRecord | undefined): string {
+  return record?.title ?? record?.name ?? "";
 }
 
 function handleTodoWrite(input: Record<string, unknown>): SessionUpdate | null {

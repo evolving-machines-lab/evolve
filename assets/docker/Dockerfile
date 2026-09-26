@@ -86,15 +86,10 @@ RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh | KIMI_INSTALL_DIR=/ho
 # ---------------------------------------------------------------------------
 # Z Code (zai-org/ZCode)
 # ---------------------------------------------------------------------------
-# Z.ai publishes no npm package and no installer for the CLI; the headless
-# runtime is the `glm` bundle inside the official Linux .deb, pinned by
-# version AND sha512 (the .deb is Electron's; only resources/glm, the search
-# tools beside it and the built-in provider catalog are kept). The CLI's
-# engines pin Node 24 (apps/zcode-cli/package.json at v3.14.3), which is not
-# the image's node, so a checksummed Node 24 rides beside it under /opt/zcode
-# and the launcher names it explicitly — nothing else in the image sees it.
-# The catalog must sit at <bundle>/provider/zcode-builtin.json or the CLI
-# exits 1 at start (cli/src/provider-runtime-env.ts).
+# Z.ai ships no npm package or installer: the CLI is the `glm` bundle inside the
+# official Linux .deb (version + sha512 pinned), on its own Node 24 (its engines
+# pin) under /opt/zcode. The CLI reads the catalog path and its search binaries
+# from the env set below (cli/src/provider-runtime-env.ts, embedded-search-backend.ts).
 RUN set -eu \
     && ZCODE_VERSION=3.14.3 \
     && ZCODE_DEB_SHA512=54362bc8bf5b2188ccdeec51349f2c470e52e73f4b06646fbd6d5a990f7012784904c7374656f683c26fc56bf4e023e7d0680a1c42446665a62d9b88e84620d6 \
@@ -118,6 +113,10 @@ RUN set -eu \
     && chmod +x /usr/local/bin/zcode \
     && rm -rf zcode.deb zcode-deb node.tgz \
     && zcode --version
+ENV ZCODE_BUILTIN_PROVIDER_CONFIG_FILE=/opt/zcode/glm/provider/zcode-builtin.json \
+    ZCODE_BFS_BINARY=/opt/zcode/tools/bfs/bfs \
+    ZCODE_RG_BINARY=/opt/zcode/tools/ripgrep/rg \
+    ZCODE_UGREP_BINARY=/opt/zcode/tools/ugrep/ugrep
 
 # ---------------------------------------------------------------------------
 # MCP Tools (HTTP-to-STDIO bridge for remote MCP servers)

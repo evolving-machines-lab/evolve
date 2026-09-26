@@ -11,7 +11,7 @@
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
-import { zcodeReasoningLevel } from "../../src/registry.js";
+import { zcodeEnvPins, zcodeReasoningLevel } from "../../src/registry.js";
 
 let passed = 0;
 let failed = 0;
@@ -1795,6 +1795,7 @@ async function testZcodeReasoningLevels(): Promise<void> {
   assertEqual(zcodeReasoningLevel("high"), "high", "high → high");
   assertEqual(zcodeReasoningLevel("xhigh"), "high", "xhigh → high (the top level Z Code's file declares)");
   assertEqual(zcodeReasoningLevel("max"), "high", "max → high");
+  assertEqual(zcodeReasoningLevel(undefined), "high", "an omitted effort is the roster pin (one value, one home)");
 }
 
 async function testZcodePerRunProviderFileGateway(): Promise<void> {
@@ -1821,7 +1822,7 @@ async function testZcodePerRunProviderFileGateway(): Promise<void> {
   assertEqual(ran.join("\n"), "chmod 600 '/home/user/.zcode/v2/provider_config.json'", "the file is tightened to 0600");
 
   const envs = (agent as any).buildRunEnvs("run-zcode-002") as Record<string, string> | undefined;
-  assertEqual(envs?.OPENROUTER_API_KEY, "evrt_zcode_runtime_token", "the SDK-facing key env carries the token like every OpenAI-compatible harness");
+  assert(!("OPENROUTER_API_KEY" in (envs ?? {})), "no key env in gateway mode: the token lives only in the provider file, which is all the CLI reads");
   assert(!("x-litellm-tags" in (envs ?? {})), "no header env: the headers ride the provider file");
 }
 
@@ -1845,10 +1846,22 @@ async function testZcodeBuildCommand(): Promise<void> {
   assertEqual(zcode.apiKeyEnv, "OPENROUTER_API_KEY", "direct mode is OpenRouter");
   assertEqual(zcode.directModelAliases?.["openrouter/z-ai/glm-5.3-flash"], "z-ai/glm-5.3-flash", "direct mode rewrites to OpenRouter's own id");
   assertEqual(zcode.gatewayModelAliases, undefined, "gateway mode rewrites nothing: the roster spells the routes");
-  const fresh = zcode.buildCommand({ prompt: "hello", model: "openrouter/z-ai/glm-5.3", isResume: false, reasoningEffort: "high" });
-  assertEqual(fresh, 'ZCODE_MODEL_TELEMETRY_ENABLED=0 zcode -p "hello" --output-format stream-json', "fresh run");
-  const resumed = zcode.buildCommand({ prompt: "again", model: "openrouter/z-ai/glm-5.3", isResume: true, reasoningEffort: "high" });
-  assertEqual(resumed, 'ZCODE_MODEL_TELEMETRY_ENABLED=0 zcode -p "again" --continue --output-format stream-json', "resume continues the latest session in the cwd");
+  const pins =
+    "ZCODE_STORAGE_DIR='/home/user/.zcode' ZCODE_DATA_BASE_DIR='/home/user' ZCODE_SESSION_DB_PATH='/home/user/.zcode/cli/db/db.sqlite' " +
+    "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE='/home/user/.zcode/v2/provider_config.json' ZCODE_HTTP_PROXY='' ZCODE_NO_PROXY='' ZCODE_AGENT_CA_CERT='' " +
+    "ZCODE_MODEL_TELEMETRY_ENABLED='0'";
+  const fresh = zcode.buildCommand({ prompt: "hello", model: "openrouter/z-ai/glm-5.3", isResume: false, reasoningEffort: "high", homeDir: "/home/user" });
+  assertEqual(fresh, `${pins} zcode -p "hello" --output-format stream-json`, "fresh run: every pin, then the headless command");
+  const resumed = zcode.buildCommand({ prompt: "again", model: "openrouter/z-ai/glm-5.3", isResume: true, reasoningEffort: "high", homeDir: "/home/user" });
+  assertEqual(resumed, `${pins} zcode -p "again" --continue --output-format stream-json`, "resume continues the latest session in the cwd");
+  // The pinned set: what a task's .env could otherwise move (home, store, provider file) or re-route (proxy, CA), plus telemetry.
+  assertEqual(
+    Object.keys(zcodeEnvPins("/h")).sort().join(","),
+    "ZCODE_AGENT_CA_CERT,ZCODE_DATA_BASE_DIR,ZCODE_HTTP_PROXY,ZCODE_MODEL_TELEMETRY_ENABLED,ZCODE_NO_PROXY,ZCODE_PERSONAL_PROVIDER_CONFIG_FILE,ZCODE_SESSION_DB_PATH,ZCODE_STORAGE_DIR",
+    "the pinned ZCODE_* set",
+  );
+  assert(!("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE" in zcodeEnvPins("/h")), "the built-in catalog path is the image's and the bundle's to pin: an empty value aborts the CLI");
+  assert(Object.values(zcodeEnvPins("/h")).every((v) => typeof v === "string"), "every pin is a string (an empty one blocks the .env and leaves the setting unset)");
 }
 
 async function main(): Promise<void> {

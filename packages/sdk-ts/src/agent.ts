@@ -550,6 +550,9 @@ export class Agent {
     void handle
       .wait()
       .then(async (result) => {
+        if (kind === "run" && sandbox) {
+          await this.removeZcodePerRunConfig(sandbox);
+        }
         const interrupted =
           this.interruptedOperations.delete(opId) || result.exitCode === 130;
         if (interrupted) {
@@ -568,7 +571,10 @@ export class Agent {
         const nextState = result.exitCode === 0 ? "idle" : "error";
         this.finalizeOperation(opId, callbacks, reason, nextState);
       })
-      .catch(() => {
+      .catch(async () => {
+        if (kind === "run" && sandbox) {
+          await this.removeZcodePerRunConfig(sandbox);
+        }
         this.interruptedOperations.delete(opId);
         this.finalizeOperation(opId, callbacks, failedReason, "error");
       });
@@ -1413,7 +1419,9 @@ export class Agent {
   private shouldExposeProviderRuntimeTokenEnv(): boolean {
     return (
       this.agentConfig.type !== "kimi" &&
-      !this.registry.gatewayConfigEnv
+      !this.registry.gatewayConfigEnv &&
+      // The credential is literal in the provider file; the CLI reads no key env.
+      !this.registry.zcodeProviderConfig
     );
   }
 
@@ -2168,12 +2176,8 @@ export class Agent {
   }
 
   /**
-   * Per-run Z Code provider file: the ONE place the CLI reads its model,
-   * reasoning level, base URL and API key (no flags, no credential env), so
-   * every mode writes it before each spawn — gateway (the runtime token and
-   * the LiteLLM spend headers, session and run), external gateway (the
-   * caller's credential and base URL VERBATIM, the roster wire id, no
-   * headers), direct (the OpenRouter key and OpenRouter's own model id).
+   * Z Code reads model, level, URL and key from its provider file only, so every
+   * mode writes it before each spawn (gateway mode adds the spend headers).
    */
   private async writeZcodePerRunConfig(
     sandbox: SandboxInstance,
@@ -2216,6 +2220,17 @@ export class Agent {
       { ...config, ...connection, reasoningLevel },
       this.homeDir,
     );
+  }
+
+  /** The provider file holds the run's credential literally, so it lives only while the run does. */
+  private async removeZcodePerRunConfig(sandbox: SandboxInstance): Promise<void> {
+    const config = this.registry.zcodeProviderConfig;
+    if (!config) return;
+    try {
+      await sandbox.commands.run(`rm -f '${expandPath(config.path, this.homeDir)}'`, { timeoutMs: 10000 });
+    } catch {
+      // The run's own outcome stands; a sandbox already gone has no file left.
+    }
   }
 
   async run(
@@ -2532,6 +2547,7 @@ export class Agent {
     } catch (error) {
       this.interruptedOperations.delete(opId);
       this.finalizeOperation(opId, callbacks, "run_failed", "error");
+      await this.removeZcodePerRunConfig(sandbox);
       throw error;
     }
 
@@ -2544,6 +2560,7 @@ export class Agent {
     } else {
       this.finalizeOperation(opId, callbacks, "run_failed", "error");
     }
+    await this.removeZcodePerRunConfig(sandbox);
 
     // Process any remaining buffered content
     if (lineBuffer.trim()) {

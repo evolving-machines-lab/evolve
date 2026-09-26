@@ -578,6 +578,18 @@ async function runTests(): Promise<void> {
     assert(message.includes("served through the Evolve gateway"), "…and says it is served through the Evolve gateway");
     assert(message.includes("fireworks"), "…and names the route that has no direct-mode key");
   }
+  {
+    // zcode: the same refusal for its two Fireworks rows; its OpenRouter rows are served.
+    const served = resolveAgentConfig({ type: "zcode", model: "openrouter/z-ai/glm-5.3" });
+    assertEqual(served.isDirectMode, true, "zcode: OPENROUTER_API_KEY serves an OpenRouter roster id in direct mode");
+    for (const gatewayOnly of ["fireworks/glm-5.3", "fireworks/glm-5.3-flash"]) {
+      const error = refusal(() => resolveAgentConfig({ type: "zcode", model: gatewayOnly }));
+      assert(error instanceof EvolveConfigError, `zcode: OPENROUTER_API_KEY + "${gatewayOnly}" is refused with EvolveConfigError`);
+      assertEqual((error as EvolveConfigError | undefined)?.field, "model", "…on the model field");
+      const message = (error as Error)?.message ?? "";
+      assert(message.includes(`"${gatewayOnly}"`) && message.includes("served through the Evolve gateway") && message.includes("fireworks"), "…naming the model, the gateway and the route without a key");
+    }
+  }
 
   clearEnv();
   {

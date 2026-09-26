@@ -150,6 +150,8 @@ class MockCommands implements SandboxCommands {
     options?: SandboxRunOptions,
   ) => SandboxCommandResult;
   public mode: SpawnMode = "instant";
+  /** The exit code an instant, uninterrupted spawn reports. */
+  public exitCode = 0;
   public killSucceeds = true;
   public activeHandle: SandboxCommandHandle | null = null;
 
@@ -203,7 +205,7 @@ class MockCommands implements SandboxCommands {
         options?.onStdout?.('{"type":"noop"}\n');
         finished = true;
         resolveWait?.({
-          exitCode: interrupted ? 130 : 0,
+          exitCode: interrupted ? 130 : this.exitCode,
           stdout: interrupted ? "" : "ok",
           stderr: "",
         });
@@ -2962,7 +2964,8 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
     assertEqual(providerDoc.config.defaultModelSelection.options.reasoningLevel, "high", "zcode provider file stamps the pinned effort as its reasoning level");
     assert(zcode.command.includes("zcode -p ") && zcode.command.includes("--output-format stream-json"), "zcode command is the headless stream-json prompt");
     assert(!zcode.command.includes("--model"), "zcode command carries no --model flag (the CLI has none)");
-    assert(zcode.command.includes("ZCODE_MODEL_TELEMETRY_ENABLED=0"), "zcode command switches telemetry off");
+    assert(zcode.command.includes("ZCODE_MODEL_TELEMETRY_ENABLED='0'"), "zcode command switches telemetry off");
+    assert(zcode.command.includes("ZCODE_PERSONAL_PROVIDER_CONFIG_FILE='/home/user/.zcode/v2/provider_config.json'"), "zcode command pins the provider file path against a task's .env");
     assert(!("OPENAI_BASE_URL" in zcode.spawnEnvs), "zcode spawn env carries no base URL env: routing rides the provider file");
 
     // zcode direct mode: OpenRouter's own id, the user's key, no headers.
@@ -2997,6 +3000,76 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
   }
 }
 
+async function testZcodeProviderFileLivesOnlyWhileTheRunDoes(): Promise<void> {
+  console.log("\n[23] zcode: the provider file (the run's credential) is written before the spawn and removed on every exit path");
+  const PROVIDER_FILE = "/home/user/.zcode/v2/provider_config.json";
+  const REMOVE = `rm -f '${PROVIDER_FILE}'`;
+
+  const scenario = (id: string): { commands: MockCommands; sandbox: MockSandbox; kit: Evolve; events: LifecycleEvent[] } => {
+    const commands = new MockCommands();
+    const sandbox = new MockSandbox(id, commands);
+    const events: LifecycleEvent[] = [];
+    const kit = new Evolve()
+      .withAgent({ type: "zcode", providerApiKey: "test-openrouter-key" })
+      .withSandbox(new MockProvider(sandbox))
+      .withSession(id);
+    kit.on("lifecycle", (event) => events.push(event));
+    return { commands, sandbox, kit, events };
+  };
+  const removals = (commands: MockCommands): number => commands.runCommands.filter((c) => c === REMOVE).length;
+  const orderIsWriteChmodSpawnRemove = (commands: MockCommands, sandbox: MockSandbox): boolean => {
+    const chmodAt = commands.runCommands.indexOf(`chmod 600 '${PROVIDER_FILE}'`);
+    const removeAt = commands.runCommands.indexOf(REMOVE);
+    return sandbox.files.writes.has(PROVIDER_FILE) && chmodAt >= 0 && removeAt > chmodAt && commands.spawned.length === 1;
+  };
+
+  {
+    const { commands, sandbox, kit } = scenario("zc-ok");
+    const result = await kit.run({ prompt: "hello", timeoutMs: 10_000 });
+    assertEqual(result.exitCode, 0, "a successful run");
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "success: written and tightened before the spawn, removed after the wait");
+    assertEqual(removals(commands), 1, "success: exactly one removal");
+  }
+  {
+    const { commands, sandbox, kit } = scenario("zc-fail");
+    commands.exitCode = 1;
+    const result = await kit.run({ prompt: "hello", timeoutMs: 10_000 });
+    assertEqual(result.exitCode, 1, "a run that exits non-zero");
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "non-zero exit: still removed after the wait");
+  }
+  {
+    const { commands, sandbox, kit, events } = scenario("zc-int");
+    commands.mode = "hang";
+    const runPromise = kit.run({ prompt: "long task", timeoutMs: 60_000 });
+    await waitFor(() => commands.activeHandle !== null);
+    assertEqual(removals(commands), 0, "while the run is live the file stays (the CLI reads it at start)");
+    assertEqual(await kit.interrupt(), true, "the run is interrupted");
+    const result = await runPromise;
+    assertEqual(result.exitCode, 130, "…and reports 130");
+    assert(events.some((e) => e.reason === "run_interrupted"), "…with run_interrupted");
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "interrupt: removed once the wait resolves");
+  }
+  {
+    const { commands, sandbox, kit, events } = scenario("zc-bg");
+    const run = await kit.run({ prompt: "turn 1", background: true });
+    assertEqual(run.exitCode, 0, "a background run's handshake");
+    await waitFor(() => events.some((e) => e.reason === "run_background_complete"));
+    await waitFor(() => removals(commands) === 1);
+    assert(orderIsWriteChmodSpawnRemove(commands, sandbox), "background: removed when the watched wait resolves");
+  }
+  {
+    // Only a harness with a provider file has anything to remove.
+    const commands = new MockCommands();
+    const sandbox = new MockSandbox("cl-ok", commands);
+    const kit = new Evolve()
+      .withAgent({ type: "claude", providerApiKey: "test-key" })
+      .withSandbox(new MockProvider(sandbox))
+      .withSession("cl-ok");
+    await kit.run({ prompt: "hello", timeoutMs: 10_000 });
+    assertEqual(commands.runCommands.filter((c) => c.startsWith("rm -f ")).length, 0, "claude: no provider file, no removal");
+  }
+}
+
 async function main(): Promise<void> {
   console.log("\n============================================================");
   console.log("Session Runtime Unit Tests");
@@ -3004,6 +3077,7 @@ async function main(): Promise<void> {
 
   try {
     await testStatusAndLifecycle();
+    await testZcodeProviderFileLivesOnlyWhileTheRunDoes();
     await testPrepareSandboxDoesNotStartAgent();
     await testWithSecretsEvolveApiKeyBoundary();
     await testKillFlushesSessionEnd();

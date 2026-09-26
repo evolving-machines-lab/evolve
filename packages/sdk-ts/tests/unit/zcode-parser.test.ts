@@ -135,7 +135,10 @@ async function testMcp(): Promise<void> {
   assert(call?.toolName === "mcp__everything__get-sum", "the verbatim MCP tool name is carried");
   assert(call?.kind === "other", "an MCP tool is kind other");
   assert(JSON.stringify(call?.rawInput) === JSON.stringify({ a: 40, b: 2 }), "the MCP input rides rawInput");
+  assert(call?.title === "mcp__everything__get-sum", "the model's own line comes first, so the tool_call's title is the verbatim name");
+  const started = ofKind(events, "tool_call_update").find((e) => e.update.status === "in_progress");
   const done = ofKind(events, "tool_call_update").find((e) => e.update.status === "completed");
+  assert(started?.update.title === "everything get-sum (MCP)" && done?.update.title === "everything get-sum (MCP)", "the scheduled line's display names the server and tool; every later update carries that title");
   assert(textOf(done?.update ?? {}) === "The sum of 40 and 2 is 42.", "the MCP result text is the tool's own");
   assert(joinedAgentText(events).includes("42"), "the answer follows");
 }

@@ -126,14 +126,8 @@ function toDroidFormat(config: McpServerConfig): Record<string, unknown> {
 }
 
 /**
- * Transform to Z Code MCP format
- *
- * Z Code's config schema is a discriminated union on `type` — `stdio`
- * {command, args, cwd, env}, `http` {url, headers}, `sse` {url, headers} —
- * and strict: a server without `type` is dropped with a warning, and an
- * unknown key rejects the entry (ZCode adapters/src/config/schema.ts at
- * v3.14.3; live-proven 2026-09-25). So the type is always written and only
- * the keys the schema names ride through.
+ * Z Code's MCP schema is a strict union on `type` (stdio | http | sse): the type is always
+ * written and only the keys the schema names ride through (a stray key rejects the entry).
  */
 function toZcodeFormat(config: McpServerConfig): Record<string, unknown> {
   const transport = detectTransport(config);
@@ -508,19 +502,8 @@ export interface ZcodeProviderConfigInput {
 }
 
 /**
- * Write Z Code's personal provider file — the ONE place the CLI reads its
- * model, reasoning level, base URL and API key (it has no `--model` flag and
- * reads no credential env). Built from scratch every run, mode 0600 (the key
- * is literal), never merged: nothing else is meant to live in it.
- *
- * Shape: ZCode packages/provider/src/config/*.ts at v3.14.3 (schemaVersion 1;
- * providerConfigRules → the provider entry with `access.type:"api-key"`,
- * `api.type:"openai-chat-completions"`, `api.headers`; modelConfigRules →
- * the model's contextWindow, `maxOutputTokens` map and the `reasoningLevel`
- * option whose `map` turns the selected level into the request field;
- * defaultModelSelection → what a new session runs). Live-proven 2026-09-25:
- * the `api.headers` reached the gateway on every request, and `disabled`
- * sends no reasoning field at all (the route's own default).
+ * Z Code's provider file, built from scratch every run at mode 0600: the CLI reads its model,
+ * level, base URL and key here and nowhere else (ZCode packages/provider/src/config at v3.14.3).
  */
 export async function writeZcodeProviderConfig(
   sandbox: SandboxInstance,
