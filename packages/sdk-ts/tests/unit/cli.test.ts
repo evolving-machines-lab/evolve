@@ -10228,6 +10228,10 @@ async function testAnalyzeShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Read the trial at {trial_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("reward_hacking")), "every criterion is named under RUBRIC");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).search, "", "no -a: the default agent's policy, no query");
+    const named = captureIO();
+    assertEqual(await runCli(["analyze", "--show-defaults", "-a", "kimi", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "kimi", "-a rides the defaults door's ?agent=; the server resolves it, the CLI holds no roster");
     assertEqual(await runCli(["analyze", "eval-1", "--show-defaults", ...AUTH], captureIO().io), 2, "--show-defaults with a <job-id> is a usage error");
     assertEqual(await runCli(["analyze", "--show-defaults", "--model", "x", "--watch", ...AUTH], captureIO().io), 2, "--show-defaults with an analyzer or output flag is a usage error, never silently ignored");
     assertEqual(await runCli(["analyze", ...AUTH], captureIO().io), 2, "a bare analyze without a job id and without --show-defaults is a usage error");
@@ -10269,6 +10273,9 @@ async function testCheckShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Check the task at {task_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("pinned_dependencies")), "every criterion is named under RUBRIC");
+    const named = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", "-a", "codex", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "codex", "-a rides the defaults door's ?agent=");
     const withPath = captureIO();
     assertEqual(await runCli(["check", "./tasks", "--show-defaults", ...AUTH], withPath.io), 2, "--show-defaults with a <path> is a usage error");
     assertEqual(await runCli(["check", "--show-defaults", "-d", "tb4", ...AUTH], captureIO().io), 2, "--show-defaults with -d is a usage error");

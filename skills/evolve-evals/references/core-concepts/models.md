@@ -66,7 +66,7 @@ Trace analysis and task checks run on Claude Code unless you choose another agen
 | `evolve check` | `-a` | `-m` |
 | Analysis attached to `evolve run` | `--analyze-agent` | `--analyze-model` |
 
-The default model is `openrouter/deepseek/deepseek-v4.1-flash`. The model must be one of the chosen agent's models, so with an agent that does not list the default, pass `-m` too. In `/api/meta`, `analyze.agents` lists the agents these commands accept, each agent's models, and the effort each model runs at when you pass none.
+Omit the model and the agent runs its default: `openrouter/deepseek/deepseek-v4.1-flash` on every agent whose models include it, otherwise that agent's own default model. A model you name must be one of the chosen agent's models. In `/api/meta`, `analyze.agents` lists the agents these commands accept, each agent's default model and models, and the effort each model runs at when you pass none. `evolve analyze --show-defaults -a <agent>` prints what that agent runs under.
 
 **[Configure a run](/cli-reference/run)**
 

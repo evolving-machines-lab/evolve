@@ -558,24 +558,27 @@ export interface AnalyzeConfigInput {
   /** Harbor's `-a/--agent`, spelled as the arms spell it (claude, not claude-code) so one set of names covers arms and reviewers; omitted: claude. The agents: `GET /api/meta` `analyze.agents`. */
   agent?: string;
   /**
-   * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
-   * roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
-   * effort high — the owner's ruling 2026-09-10: far more parallel capacity
+   * Model the analyzer agent runs — Harbor's `--model`. Omitted, the agent's
+   * default: the platform's pick, openrouter/deepseek/deepseek-v4.1-flash
+   * (`GET /api/meta` `analyze.default_model`), on every agent whose roster
+   * carries it, else that agent's own default (`analyze.agents[].default_model`,
+   * the model the SDK runs that agent on when none is named). The platform's
+   * pick is DeepSeek V4.1 Flash served through OpenRouter, at its default
+   * effort high (the owner's ruling 2026-09-10: far more parallel capacity
    * through OpenRouter's provider pool than one pinned Fireworks host) — a
    * recorded deviation from Harbor's default analyze model (their
    * cli/analyze.py `claude-haiku-4-5`): analysis is input-dominated, and
    * this is the roster's intelligence-per-input-dollar pick; `glm-5.3-flash`
    * (at max, the effort its published scores use) and `haiku` stay on the
-   * roster as alternatives, `glm-5.3` to escalate, and the same model on
-   * its Fireworks route, `fireworks/deepseek-v4.1-flash`, is a further
-   * option (the OpenRouter id stays the default). The value speaks
-   * the same vocabulary as `agents[].model_name`: either advertised
-   * spelling is accepted and stored AS GIVEN (the default is the roster
-   * alias), the wire id is resolved only when the analyzer runs, and every
-   * stored analysis serves the spelling it was created under. Must be on
-   * the agent's roster (`GET /api/meta`, `analyze.agents[].models`); anything else
-   * is refused at accept (`invalid_input`, roster in the message).
+   * claude roster as alternatives, `glm-5.3` to escalate, and the same model
+   * on its Fireworks route, `fireworks/deepseek-v4.1-flash`, is a further
+   * option (the OpenRouter id stays the pick). The value speaks the same
+   * vocabulary as `agents[].model_name`: either advertised spelling is
+   * accepted and stored AS GIVEN (the default is the roster alias), the wire
+   * id is resolved only when the analyzer runs, and every stored analysis
+   * serves the spelling it was created under. A named model must be on the
+   * agent's roster (`GET /api/meta`, `analyze.agents[].models`); anything
+   * else is refused at accept (`invalid_input`, roster in the message).
    */
   model_name?: string;
   rubric?: Rubric;
@@ -4902,8 +4905,8 @@ export interface AnalysesClient {
    * feed's species-blind events door, which answers `trial_not_found`.
    */
   list(options?: ListAnalysesOptions): AnalysisList;
-  /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): model, effort, provider, rubric and the unrendered prompt template. */
-  defaults(): Promise<AnalyzeDefaults>;
+  /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): agent, model, effort, provider, rubric and the unrendered prompt template. `{ agent }` reads what that agent runs under — its default model and the effort it takes; an unknown name is refused `invalid_input`. */
+  defaults(options?: { agent?: string }): Promise<AnalyzeDefaults>;
   /**
    * The result document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same
@@ -4997,7 +5000,7 @@ export interface CheckConfigInput {
   name?: string;
   /** The agent the checker runs on (Harbor's `-a/--agent`) — the analyze door's `agent`, same rule. Omitted: claude. */
   agent?: string;
-  /** Model the checker agent runs (Harbor's `-m/--model`); must be on the agent's roster (`GET /api/meta`). */
+  /** Model the checker agent runs (Harbor's `-m/--model`) — the analyze door's `model_name`, same rule: omitted, the agent's default (`GET /api/meta` `analyze.agents[].default_model`); named, on the agent's roster. */
   model_name?: string;
   /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (`checks().defaults()`). */
   rubric?: Rubric;
@@ -5135,35 +5138,38 @@ export interface Check {
 }
 
 /**
- * The policy an empty analyze config resolves to (GET /api/analyses/defaults):
- * each key the value `AnalyzeConfig` echoes for a job created with
- * `analyze: {}`, except `prompt`, which `AnalyzeConfig` serves as null and
- * this serves as the template text.
+ * The policy an empty analyze config resolves to (GET /api/analyses/defaults),
+ * or one naming only `agent` when `defaults({ agent })` names it: each key the
+ * value `AnalyzeConfig` echoes for a job created with that config, except
+ * `prompt`, which `AnalyzeConfig` serves as null and this serves as the
+ * template text.
  */
 export interface AnalyzeDefaults {
   agent: string;
+  /** The model an omitted `model_name` takes on `agent` (`GET /api/meta` `analyze.agents[].default_model`). */
   model_name: string;
   rubric: Rubric;
   /** The built-in analyze prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
   prompt: string;
-  /** The effort the default model runs at on the default agent when the config names none; null if that agent takes none. */
+  /** The effort `model_name` runs at on `agent` when the config names none; null if that agent takes none. */
   reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
 
 /**
- * The policy an empty check config resolves to (GET /api/checks/defaults):
- * each key the value `Check` echoes for a check created with no config,
- * except `prompt`, which `Check` serves as null and this serves as the
- * template text.
+ * The policy an empty check config resolves to (GET /api/checks/defaults), or
+ * one naming only `agent` when `defaults({ agent })` names it: each key the
+ * value `Check` echoes for a check created with that config, except `prompt`,
+ * which `Check` serves as null and this serves as the template text.
  */
 export interface CheckDefaults {
   agent: string;
+  /** The model an omitted `model_name` takes on `agent` (`GET /api/meta` `analyze.agents[].default_model`). */
   model_name: string;
   rubric: Rubric;
   /** The built-in check prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
   prompt: string;
-  /** The effort the default model runs at on the default agent when the config names none; null if that agent takes none. */
+  /** The effort `model_name` runs at on `agent` when the config names none; null if that agent takes none. */
   reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
@@ -5238,8 +5244,8 @@ export interface ChecksClient {
   get(checkId: string): Promise<Check>;
   /** Every check you may read, newest first (cursor-paged); `{ scope, status, dataset }` narrow it. */
   list(options?: ListChecksOptions): CheckList;
-  /** The defaults a check runs under when its config names nothing (GET /api/checks/defaults): model, effort, provider, rubric and the unrendered prompt template. */
-  defaults(): Promise<CheckDefaults>;
+  /** The defaults a check runs under when its config names nothing (GET /api/checks/defaults): agent, model, effort, provider, rubric and the unrendered prompt template. `{ agent }` reads what that agent runs under — its default model and the effort it takes; an unknown name is refused `invalid_input`. */
+  defaults(options?: { agent?: string }): Promise<CheckDefaults>;
   /** Poll a check until every task settled; resolves with the final Check. */
   watch(checkId: string, options?: WatchCheckOptions): Promise<Check>;
   /**
@@ -5897,9 +5903,12 @@ export interface CapabilityDocument {
    */
   analyze?: {
     default_agent: string;
+    /** The platform's pick — what an omitted `model_name` takes on every agent whose roster carries it. */
     default_model: string;
     agents: {
       name: string;
+      /** What an omitted `model_name` takes on this agent; one of its `models[].alias`. */
+      default_model: string;
       /** Empty for an agent that takes no effort. */
       reasoning_efforts: string[];
       models: { alias: string; model_id: string; default_reasoning_effort: string | null }[];
