@@ -196,14 +196,22 @@ async function testRoutePatchManaged(): Promise<void> {
   assert(same(provider?.compat, { supportsDeveloperRole: false, maxTokensField: "max_tokens" }), "the two compat switches the vendor names for an OpenAI-compatible gateway");
   assert(same(provider?.models?.[0]?.id, ROUTE.model) && provider.models[0].contextWindow === 128000 && provider.models[0].maxTokens === 32000, "the one model row carries the wire id and its sizes");
   assert(
-    same(provider?.models?.[0]?.reasoningEfforts, { off: null, minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" }),
-    "every pi-ai level is declared with itself as the wire spelling; off is valueless (send nothing)",
+    same(provider?.models?.[0]?.reasoningEfforts, { low: "low", medium: "medium", high: "high" }),
+    "exactly the three accepted levels are declared, each with itself as the wire spelling (no off, nothing unproven)",
   );
   assert(same(byId["agent-default-model"]?.config, { provider: "evolve", model: ROUTE.model, reasoningEffort: "high" }), "the default model row selects the route, the model and the effort");
   assert(same(byId["session-log-deepseek"]?.config, { enabled: false }), "the session-log upload is off");
   assert(same(byId["plugin-package-inventory-deepseek"]?.config, { enabled: false }), "the plugin-inventory upload is off");
   assert(byId["session-title-llm"]?.disabled === true, "the hidden title model call is off");
-  assert(same(doc.map((row) => row.id), ["llm-pi-ai", "agent-default-model", "session-log-deepseek", "plugin-package-inventory-deepseek", "session-title-llm"]), "exactly these five rows, in this order");
+  assert(
+    raw.includes("- id: tool-web\n  config:\n    search: false\n    fetch: true\n    searchTimeoutMs: 60000\n"),
+    "the tool-web row turns web_search off (it would carry DEEPSEEK_API_KEY past the gateway) and restates fetch and the timeout, since a row replaces the whole config",
+  );
+  assert(same(byId["tool-web"]?.config, { search: false, fetch: true, searchTimeoutMs: 60000 }), "parsed: search off, fetch on, the base's 60 s timeout kept");
+  assert(
+    same(doc.map((row) => row.id), ["llm-pi-ai", "agent-default-model", "session-log-deepseek", "plugin-package-inventory-deepseek", "session-title-llm", "tool-web"]),
+    "exactly these six rows, in this order",
+  );
 }
 
 async function testRoutePatchWithoutHeaders(): Promise<void> {

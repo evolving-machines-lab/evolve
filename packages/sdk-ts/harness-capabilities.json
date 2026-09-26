@@ -262,14 +262,9 @@
       ],
       "effortSupport": "level",
       "efforts": [
-        "off",
-        "minimal",
         "low",
         "medium",
-        "high",
-        "xhigh",
-        "max",
-        "thinking"
+        "high"
       ],
       "defaultEffort": "high",
       "supportsConfig": false,

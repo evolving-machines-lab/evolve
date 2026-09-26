@@ -11,7 +11,7 @@
 
 import { stringify as stringifyYaml } from "yaml";
 import type { SandboxInstance, McpServerConfig } from "../types";
-import { DSH_REASONING_LEVELS, expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
+import { DSH_REASONING_EFFORTS, expandPath, getMcpSettingsDir, getMcpSettingsPath } from "../registry";
 import { validateServers } from "./validation";
 
 // =============================================================================
@@ -142,9 +142,9 @@ export function renderDshRoutePatch(config: DshRoutePatchConfig): string {
     `          - id: ${quoted(config.model)}`,
     `            contextWindow: ${config.contextWindow}`,
     `            maxTokens: ${config.maxTokens}`,
-    // A hand-declared model offers no levels until declared; `off` valueless sends nothing (providers.md "Reasoning effort").
+    // A hand-declared model offers no levels until declared (providers.md "Reasoning effort").
     "            reasoningEfforts:",
-    ...DSH_REASONING_LEVELS.map((level) => (level === "off" ? "              off: null" : `              ${level}: ${level}`)),
+    ...DSH_REASONING_EFFORTS.map((level) => `              ${level}: ${level}`),
     "- id: agent-default-model",
     "  config:",
     `    provider: ${quoted(config.providerName)}`,
@@ -164,6 +164,13 @@ export function renderDshRoutePatch(config: DshRoutePatchConfig): string {
     // One hidden model call per session otherwise.
     "- id: session-title-llm",
     "  disabled: true",
+    // web_search would send DEEPSEEK_API_KEY to DeepSeek's own search API, past the gateway;
+    // a patch row replaces the whole config, so fetch and the timeout are restated at the base's values.
+    "- id: tool-web",
+    "  config:",
+    "    search: false",
+    "    fetch: true",
+    "    searchTimeoutMs: 60000",
     "",
   );
   return lines.join("\n");

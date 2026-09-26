@@ -76,13 +76,16 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
  * takes there — pure data derivation from its effortSupport. The
  * harness-capabilities artifact generator and picker UIs share this.
  */
-export function harnessEffortVocabulary(support: EffortSupport): {
+export function harnessEffortVocabulary(
+  support: EffortSupport,
+  efforts?: readonly ReasoningEffort[],
+): {
   efforts: readonly ReasoningEffort[];
   defaultEffort: ReasoningEffort | null;
 } {
   if (support === "none") return { efforts: [], defaultEffort: null };
   return {
-    efforts: support === "binary" ? BINARY_EFFORT_VALUES : REASONING_EFFORTS,
+    efforts: efforts ?? (support === "binary" ? BINARY_EFFORT_VALUES : REASONING_EFFORTS),
     defaultEffort: DEFAULT_REASONING_EFFORT,
   };
 }
@@ -164,6 +167,9 @@ export interface AgentRegistryEntry {
    * advertises exactly the vocabulary the local SDK drives.
    */
   effortSupport: EffortSupport;
+
+  /** The subset of the level vocabulary this CLI can honor; absent = the whole vocabulary for its effortSupport. */
+  efforts?: readonly ReasoningEffort[];
 
   /** Environment variable name for API key */
   apiKeyEnv: string;
@@ -393,20 +399,18 @@ function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   return variant ? ` --variant ${variant} --thinking` : "";
 }
 
-/**
- * pi-ai's levels are off/minimal/low/medium/high/xhigh/max (deepseek-harness
- * llm-pi-ai/src/catalog.ts THINKING_LEVEL_GATE): graded values ride verbatim,
- * the on/off spellings fold. `off` omits the field, so the provider's default applies.
- */
+/** The pi-ai levels dsh's patch declares and the SDK accepts — the three proven on the wire (owner ruling 2026-09-25). */
+export const DSH_REASONING_EFFORTS = ["low", "medium", "high"] as const satisfies readonly ReasoningEffort[];
+
+/** Typed refusal outside the roster: dsh sends the effort on every request, so an unlisted value would be recorded but never applied. */
 export function getDshReasoningEffort(reasoningEffort?: string): string | undefined {
   if (!reasoningEffort) return undefined;
-  if (reasoningEffort === "off" || reasoningEffort === "none" || reasoningEffort === "no-thinking") return "off";
-  if (reasoningEffort === "thinking") return "medium";
-  return reasoningEffort;
+  if ((DSH_REASONING_EFFORTS as readonly string[]).includes(reasoningEffort)) return reasoningEffort;
+  throw new Error(
+    `Evolve agent config: agent "dsh" honors reasoning effort ${DSH_REASONING_EFFORTS.map((e) => `"${e}"`).join(", ")} only; ` +
+      `"${reasoningEffort}" is not one of them and would be recorded but never applied.`,
+  );
 }
-
-/** Every pi-ai thinking level, in escalation order — the `reasoningEfforts` keys dsh's patch declares. */
-export const DSH_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 // =============================================================================
 // AGENT REGISTRY
@@ -980,6 +984,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // dsh's web_search would send to DeepSeek's own search API.
     apiKeyEnv: "OPENROUTER_API_KEY",
     effortSupport: "level",
+    efforts: DSH_REASONING_EFFORTS,
     // Read by the patch as `!!js process.env.EVOLVE_DSH_BASE_URL`; every mode sets it ending in /v1.
     baseUrlEnv: "EVOLVE_DSH_BASE_URL",
     defaultModel: "openrouter/deepseek/deepseek-v4.1-flash",

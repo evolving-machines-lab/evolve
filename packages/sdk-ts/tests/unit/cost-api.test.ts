@@ -1805,13 +1805,23 @@ async function testDshBuildCommand(): Promise<void> {
   const rooted = dsh.buildCommand({ prompt: "x", model: "m", isResume: false, homeDir: "/root" });
   assert(rooted.includes("DSH_HOME=/root/.dsh") && rooted.includes("--patch /root/.dsh/evolve-route.patch.yml"), "the home follows homeDir (eval boxes run as root)");
 
-  // The effort ladder: graded values verbatim, the on/off spellings folded.
+  // The effort roster: the three proven levels ride verbatim; everything else is a typed refusal.
   assertEqual(getDshReasoningEffort("high"), "high", "high rides verbatim");
-  assertEqual(getDshReasoningEffort("xhigh"), "xhigh", "xhigh rides verbatim (a pi-ai level)");
-  assertEqual(getDshReasoningEffort("thinking"), "medium", "thinking → medium");
-  assertEqual(getDshReasoningEffort("no-thinking"), "off", "no-thinking → off");
-  assertEqual(getDshReasoningEffort("none"), "off", "none → off");
+  assertEqual(getDshReasoningEffort("medium"), "medium", "medium rides verbatim");
+  assertEqual(getDshReasoningEffort("low"), "low", "low rides verbatim");
   assertEqual(getDshReasoningEffort(undefined), undefined, "no effort → none named");
+  for (const refused of ["off", "none", "no-thinking", "minimal", "xhigh", "max", "thinking"]) {
+    let message = "";
+    try {
+      getDshReasoningEffort(refused);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert(
+      message.includes('agent "dsh" honors reasoning effort "low", "medium", "high" only') && message.includes(`"${refused}"`),
+      `"${refused}" is refused typed, naming dsh, the roster and the value`,
+    );
+  }
 }
 
 async function testDshGatewayEnvsAndPatch(): Promise<void> {
@@ -1852,14 +1862,14 @@ async function testDshExternalGatewayPatch(): Promise<void> {
     isDirectMode: true,
     externalGateway: { revoke: async () => {} },
     model: "openrouter/deepseek/deepseek-v4-pro-0813",
-    reasoningEffort: "thinking",
+    reasoningEffort: "medium",
   } as any, {});
   const { sandbox, written } = createFakeSandbox(undefined);
   await (agent as any).writeDshPerRunPatch(sandbox);
   const patch = written[0].content;
   assert(patch.includes('model: "openrouter/deepseek/deepseek-v4-pro-0813"'), "externalGateway sends the roster id verbatim (alias == wire id) — never the direct-mode OpenRouter spelling");
   assert(!patch.includes("headers:"), "externalGateway patch carries no LiteLLM headers");
-  assert(patch.includes('reasoningEffort: "medium"'), "thinking maps to pi-ai's medium");
+  assert(patch.includes('reasoningEffort: "medium"'), "the caller's level is stamped verbatim");
   const envs = (agent as any).buildRunEnvs("run-x") as Record<string, string>;
   assertEqual(envs.OPENROUTER_API_KEY, "sk-external", "the caller's key rides the patch's apiKeyEnv");
   assertEqual(envs.EVOLVE_DSH_BASE_URL, "https://gateway.example.com/v1", "the caller's base URL rides the patch's baseURL env VERBATIM");

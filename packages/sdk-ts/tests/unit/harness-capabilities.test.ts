@@ -254,6 +254,11 @@ assert(
   "dsh advertises graded effort pinned at high (DeepSeek's documented default)",
 );
 assert(
+  JSON.stringify(artifact.harnesses.dsh.efforts) === JSON.stringify(["low", "medium", "high"]) &&
+    JSON.stringify(AGENT_REGISTRY.dsh.efforts) === JSON.stringify(["low", "medium", "high"]),
+  "dsh advertises exactly low/medium/high — the SDK refusal, the artifact and the docs state the same set",
+);
+assert(
   artifact.harnesses.dsh.supportsConfig === false && artifact.harnesses.dsh.presets.length === 0,
   "dsh advertises no native config document and no presets",
 );

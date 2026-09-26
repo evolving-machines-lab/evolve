@@ -326,7 +326,7 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"droid"` | `"high"` — matches Droid’s own default for Opus 5, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
-| `"dsh"` | `"high"` — DeepSeek's documented default, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; `"off"` sends no effort field, so the provider's own default applies |
+| `"dsh"` | `"high"` — DeepSeek's documented default, pinned by Evolve | `"low"` `"medium"` `"high"` only; `"off"` (and its spellings) is refused at configuration — dsh sends the effort on every request, so it cannot be switched off |
 
 When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
 
