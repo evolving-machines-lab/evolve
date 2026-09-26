@@ -126,12 +126,17 @@ export const template = Template()
     'printf \'%s\\n\' "{\\"private\\":true,\\"dependencies\\":{\\"prime-agent\\":\\"file:./prime-agent-$V.tgz\\"},\\"overrides\\":{\\"@earendil-works/pi-ai\\":\\"file:./prime-agent-ai-$V.tgz\\",\\"@earendil-works/pi-agent-core\\":\\"file:./prime-agent-core-$V.tgz\\",\\"@earendil-works/pi-tui\\":\\"file:./prime-agent-tui-$V.tgz\\"}}" > package.json',
     'PRIME_AGENT_TELEMETRY=0 PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1 npm install --no-audit --no-fund',
     'test -f /home/user/.prime/agent/kernel-venv/.bootstrap-version',
+    // Prime's built-in Python skills into the same venv (a session would sync them with uv at its first cell).
+    'uv pip install --python /home/user/.prime/agent/kernel-venv/bin/python $(for d in /opt/evolve/prime-agent/node_modules/prime-agent/dist/skills/*/; do [ -f "$d/pyproject.toml" ] && printf \' --editable %s\' "$d"; done)',
+    'for d in /opt/evolve/prime-agent/node_modules/prime-agent/dist/skills/*/; do [ -f "$d/pyproject.toml" ] || continue; /home/user/.prime/agent/kernel-venv/bin/python -c "import $(basename "$d" | tr - _)" || exit 1; done',
     'rm -rf /home/user/.cache/uv',
   ].join(' && '))
 
   .setUser('root')
   .runCmd('ln -sf /opt/evolve/prime-agent/node_modules/.bin/prime-agent /usr/local/bin/prime-agent && test "$(prime-agent --version)" = "0.9.6"')
   .setUser('user')
+  // The baked kernel's interpreter: with it set, Prime runs no bootstrap and no skill sync.
+  .setEnvs({ PRIME_AGENT_KERNEL_PYTHON: '/home/user/.prime/agent/kernel-venv/bin/python' })
 
   // ---------------------------------------------------------------------------
   // Gemini Extensions (Nano Banana for image generation)

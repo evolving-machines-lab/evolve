@@ -183,8 +183,12 @@ USER user
 # (Prime requires >= 22.8) and as `user`, so the Python kernel bake
 # (PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1: uv, CPython 3.11,
 # prime-agent-runtime and the default packages) lands in this user's home —
-# the venv path derives from $HOME, not from the agent dir — and a run never
-# pays the ~13 s network bootstrap. The uv download cache is dropped after.
+# the venv path derives from $HOME, not from the agent dir. Prime's built-in
+# Python skills (dist/skills/* with a pyproject) go into the same venv: a
+# session syncs any missing one with uv at its first cell, a network call a
+# sealed run cannot make. PRIME_AGENT_KERNEL_PYTHON (ENV below) names the
+# baked interpreter — the vendor's switch that skips that bootstrap check —
+# so a run never bootstraps. The uv download cache is dropped after.
 # ---------------------------------------------------------------------------
 RUN set -eu; V=0.9.6; cd /opt/evolve/prime-agent \
     && for f in prime-agent-$V.tgz prime-agent-ai-$V.tgz prime-agent-core-$V.tgz prime-agent-tui-$V.tgz; do \
@@ -199,12 +203,16 @@ RUN set -eu; V=0.9.6; cd /opt/evolve/prime-agent \
     && printf '%s\n' "{\"private\":true,\"dependencies\":{\"prime-agent\":\"file:./prime-agent-$V.tgz\"},\"overrides\":{\"@earendil-works/pi-ai\":\"file:./prime-agent-ai-$V.tgz\",\"@earendil-works/pi-agent-core\":\"file:./prime-agent-core-$V.tgz\",\"@earendil-works/pi-tui\":\"file:./prime-agent-tui-$V.tgz\"}}" > package.json \
     && PRIME_AGENT_TELEMETRY=0 PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1 npm install --no-audit --no-fund \
     && test -f /home/user/.prime/agent/kernel-venv/.bootstrap-version \
+    && uv pip install --python /home/user/.prime/agent/kernel-venv/bin/python $(for d in /opt/evolve/prime-agent/node_modules/prime-agent/dist/skills/*/; do [ -f "$d/pyproject.toml" ] && printf ' --editable %s' "$d"; done) \
+    && for d in /opt/evolve/prime-agent/node_modules/prime-agent/dist/skills/*/; do [ -f "$d/pyproject.toml" ] || continue; /home/user/.prime/agent/kernel-venv/bin/python -c "import $(basename "$d" | tr - _)" || exit 1; done \
     && rm -rf /home/user/.cache/uv
 
 USER root
 RUN ln -sf /opt/evolve/prime-agent/node_modules/.bin/prime-agent /usr/local/bin/prime-agent \
     && test "$(prime-agent --version)" = "0.9.6"
 USER user
+# The baked kernel's interpreter: with it set, Prime runs no bootstrap and no skill sync.
+ENV PRIME_AGENT_KERNEL_PYTHON=/home/user/.prime/agent/kernel-venv/bin/python
 
 # ---------------------------------------------------------------------------
 # Skills: no baked catalog. Skills are resolved at run time by the SDK's
