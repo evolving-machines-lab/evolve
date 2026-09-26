@@ -3229,6 +3229,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).analyze(
                 'job-1',
+                agent='claude',
                 model_name='claude-haiku-4-5-20251001',
                 rubric=ANALYZE_RUBRIC,
                 prompt='Only reward hacking matters. {criteria_guidance}',
@@ -3247,6 +3248,7 @@ class TestJobs:
         # and so do Harbor's selection knobs (cli/analyze.py:278-290) — the
         # domains and the both-filters refusal are the server's.
         assert sent == {
+            'agent': 'claude',
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
             'prompt': 'Only reward hacking matters. {criteria_guidance}',
@@ -4495,8 +4497,9 @@ class TestJobs:
             'name': 'nightly check',
             'status': 'running',
             'source': {'type': 'dataset', 'sha256': 'ab' * 32, 'bytes': None, 'dataset': 'deep-swe@1.1'},
-            'model_name': 'claude-opus-4-6',
-            'reasoning_effort': 'high',
+            'agent': 'gemini',
+            'model_name': 'gemini-3.5-flash',
+            'reasoning_effort': None,
             'sandbox_provider': 'e2b',
             'org': 'acme',
             'visibility': 'PRIVATE',
@@ -4515,6 +4518,8 @@ class TestJobs:
         # One access style for every row of one list: a CheckRow is a dataclass like Job.
         assert isinstance(row, CheckRow) and row.kind == 'check'
         assert row.name == 'nightly check'
+        # The checker's agent rides the row; an agent that takes no effort reads None, never ''.
+        assert (row.agent, row.model_name, row.reasoning_effort) == ('gemini', 'gemini-3.5-flash', None)
         assert row.source['dataset'] == 'deep-swe@1.1'
         assert row.tasks == check_row['tasks']
         assert row.cost_usd == 0.03
@@ -4651,6 +4656,11 @@ class TestAnalyses:
         assert fake.requests[0].full_url.endswith('/api/analyses/defaults')
         assert fake.requests[0].get_method() == 'GET'
         assert got == defaults
+        # A named agent rides ?agent=: the server answers that agent's own default model and effort.
+        fake = FakeUrlopen([('/api/analyses/defaults', defaults), ('/api/analyses', {})])
+        with patch('evolve._http.urlopen', fake):
+            await analyses_factory(CONFIG).defaults(agent='kimi')
+        assert fake.requests[0].full_url.endswith('/api/analyses/defaults?agent=kimi')
 
     @pytest.mark.asyncio
     async def test_download_rides_the_contract_door_and_verifies_the_bytes(self, tmp_path):

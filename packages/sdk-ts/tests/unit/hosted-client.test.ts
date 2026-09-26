@@ -7989,8 +7989,13 @@ async function testAnalysesDefaults() {
     const got = await analyses({ apiKey: "test-key", baseUrl: BASE }).defaults();
     const url = new URL(fetchCalls[fetchCalls.length - 1].url);
     assertEqual(url.pathname, "/api/analyses/defaults", "one GET on the defaults door");
+    assertEqual(url.search, "", "no agent named: the default agent's policy, no query");
     assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
     assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
+    await analyses({ apiKey: "test-key", baseUrl: BASE }).defaults({ agent: "kimi" });
+    const named = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(named.pathname, "/api/analyses/defaults", "the same door");
+    assertEqual(named.searchParams.get("agent"), "kimi", "a named agent rides ?agent= — the server answers that agent's own default model and effort");
   } finally {
     restoreFetch();
   }
@@ -8013,8 +8018,13 @@ async function testChecksDefaults() {
     const got = await checks({ apiKey: "test-key", baseUrl: BASE }).defaults();
     const url = new URL(fetchCalls[fetchCalls.length - 1].url);
     assertEqual(url.pathname, "/api/checks/defaults", "one GET on the defaults door");
+    assertEqual(url.search, "", "no agent named: the default agent's policy, no query");
     assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
     assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
+    await checks({ apiKey: "test-key", baseUrl: BASE }).defaults({ agent: "codex" });
+    const named = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(named.pathname, "/api/checks/defaults", "the same door");
+    assertEqual(named.searchParams.get("agent"), "codex", "a named agent rides ?agent= — that agent's own default model and effort");
   } finally {
     restoreFetch();
   }

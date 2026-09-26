@@ -406,6 +406,13 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
   },
   "system-log": { kind: "boolean", help: "Record the box's own system log stream beside agent and verifier (read it back with `trial logs --stream system`)", group: "Job" },
   analyze: { kind: "boolean", help: "Analyze each trial's trace against a rubric as it settles", group: "Analysis" },
+  "analyze-agent": {
+    kind: "string",
+    value: "<name>",
+    help: "Agent the analyzer runs on; implies --analyze",
+    default: "the analyze default",
+    group: "Analysis",
+  },
   "analyze-model": {
     kind: "string",
     value: "<name>",
@@ -1801,20 +1808,29 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
     summary: "Judge a finished job's trial traces against a rubric",
     notes:
       "Each trial gets its own analysis run; `analysis list --job <id>` finds them again. " +
-      "--show-defaults prints the platform's analyze defaults and exits.",
+      "--show-defaults prints the analyze defaults (with -a, that agent's) and exits.",
     flags: {
+      // Harbor's -a/--agent (their cli/analyze.py:258), in the arms' agent names.
+      agent: {
+        kind: "string",
+        short: "a",
+        value: "<name>",
+        help: "Agent the analyzer runs on",
+        default: "claude",
+        group: "Analyzer",
+      },
       model: {
         kind: "string",
         short: "m",
         value: "<name>",
-        help: "Model the analyzer runs",
-        default: "openrouter/deepseek/deepseek-v4.1-flash",
+        help: "Model the analyzer runs, on the agent's roster",
+        default: "the agent's default model; --show-defaults -a prints it",
         group: "Analyzer",
       },
-      // The one option beyond Harbor's analyze trio, recorded as the hosted
+      // The one option beyond Harbor's analyze options, recorded as the hosted
       // extension it is: `run`'s own --effort (the platform's reasoning_effort
-      // vocabulary, GET /api/meta) applied to the analyzer, which IS the claude
-      // harness. Same flag name as `run`; the server refuses an unknown value
+      // vocabulary, GET /api/meta) applied to the analyzer's agent. Same flag
+      // name as `run`; the server refuses a value the agent does not take
       // exactly as it refuses an arm's.
       effort: {
         kind: "string",
@@ -1848,7 +1864,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       },
       "show-defaults": {
         kind: "boolean",
-        help: "Print the built-in prompt, rubric, model, effort and provider, then exit",
+        help: "Print the default agent, model, effort, provider, prompt and rubric, then exit; -a picks the agent",
         group: "Analyzer",
       },
       // Harbor's selection and width options, their exact spellings
@@ -1895,11 +1911,11 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
   },
   // Harbor's `check` is a top-level command too (their cli/main.py:163
   // binds check_command beside analyze); its flags are theirs
-  // (cli/analyze.py:84-148), the same trio as analyze plus the task
+  // (cli/analyze.py:84-148), the same as analyze's plus the task
   // selection: -i/--include-task-name, -x/--exclude-task-name (globs,
   // repeatable), -l/--n-tasks. Not carried, for the analyze verb's own
-  // reasons: -a/--agent, --ak, --ae, --ek, -k/--n-attempts, --job-name,
-  // -o/--jobs-dir, -c/--config. --effort and --json are the platform's
+  // reasons: --ak, --ae, --ek, -k/--n-attempts, -o/--jobs-dir, -c/--config
+  // (--job-name is --name). --effort and --json are the platform's
   // conventions, as on analyze; --watch follows the hosted 202; -d/--dataset
   // is the hosted source (the flag's help states the deviation).
   check: {
@@ -1914,12 +1930,20 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
         help: "A name for the check; default: the accept timestamp",
         group: "Checker",
       },
+      agent: {
+        kind: "string",
+        short: "a",
+        value: "<name>",
+        help: "Agent the checker runs on",
+        default: "claude",
+        group: "Checker",
+      },
       model: {
         kind: "string",
         short: "m",
         value: "<name>",
-        help: "Model the checker runs",
-        default: "openrouter/deepseek/deepseek-v4.1-flash",
+        help: "Model the checker runs, on the agent's roster",
+        default: "the agent's default model; --show-defaults -a prints it",
         group: "Checker",
       },
       effort: {
@@ -1954,7 +1978,7 @@ const TOP_LEVEL_COMMANDS: Record<string, CommandSpec> = {
       },
       "show-defaults": {
         kind: "boolean",
-        help: "Print the built-in prompt, rubric, model, effort and provider, then exit",
+        help: "Print the default agent, model, effort, provider, prompt and rubric, then exit; -a picks the agent",
         group: "Checker",
       },
       "n-concurrent": {
@@ -3490,6 +3514,7 @@ export function buildJobInput(
   // override the file's fields one by one, the same merge rule as retry.
   const analyzeArmed =
     f.analyze === true ||
+    f["analyze-agent"] !== undefined ||
     f["analyze-model"] !== undefined ||
     f["analyze-rubric"] !== undefined ||
     f["analyze-prompt"] !== undefined ||
@@ -3497,6 +3522,7 @@ export function buildJobInput(
     f["analyze-effort"] !== undefined ||
     base.analyze !== undefined;
   const analyze: AnalyzeConfigInput = { ...(base.analyze ?? {}) };
+  if (f["analyze-agent"] !== undefined) analyze.agent = String(f["analyze-agent"]);
   if (f["analyze-model"] !== undefined) analyze.model_name = String(f["analyze-model"]);
   if (f["analyze-rubric"] !== undefined) {
     analyze.rubric = loadRubricFile(String(f["analyze-rubric"]), read);
@@ -3808,6 +3834,11 @@ function fmtAgent(agent: AgentArm | AgentArmInput): string {
   return agent.version ? `${base}:${agent.version}` : base;
 }
 
+/** A rubric agent as an arm reads (`agent:model`); a server predating the agent field names the model alone. */
+function fmtRubricAgent(run: { agent?: string; model_name: string }): string {
+  return run.agent ? `${run.agent}:${run.model_name}` : run.model_name;
+}
+
 /**
  * The one-line analysis tally — the job detail's "analysis" row and the
  * analyze verb's progress/final lines share it, so the same numbers always
@@ -3985,7 +4016,7 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   if (e.analyze) {
     rows.push([
       "analyze",
-      `${e.analyze.model_name} · ${e.analyze.rubric.criteria.length} ` +
+      `${fmtRubricAgent(e.analyze)} · ${e.analyze.rubric.criteria.length} ` +
         `criteri${e.analyze.rubric.criteria.length === 1 ? "on" : "a"}` +
         (e.analyze.sandbox_provider ? ` · ${e.analyze.sandbox_provider}` : ""),
     ]);
@@ -4178,7 +4209,9 @@ const JOB_COLUMNS: ListColumn<JobListItem>[] = [
     key: "agents",
     header: "AGENTS",
     cell: (e) =>
-      e.kind === "check" ? `${e.model_name} (${e.reasoning_effort})` : e.agents.map(fmtAgent).join(", "),
+      e.kind === "check"
+        ? fmtRubricAgent(e) + (e.reasoning_effort ? ` (${e.reasoning_effort})` : "")
+        : e.agents.map(fmtAgent).join(", "),
   },
   { key: "trials", header: "TRIALS", cell: (e) => String(e.kind === "check" ? e.tasks.total : e.trials.total) },
   {
@@ -4495,7 +4528,7 @@ export function trialDetailLines(run: Trial): string[] {
     const analysis = run.analysis;
     // The id closes the loop to the analysis verbs: `evolve analysis
     // show|trace|download <id>` read the ANALYZER's own side of this row.
-    rows.push(["analysis", `${analysis.status} · ${analysis.model_name} · ${analysis.id}`]);
+    rows.push(["analysis", `${analysis.status} · ${fmtRubricAgent(analysis)} · ${analysis.id}`]);
     // The outcome tally first, then one row per criterion verdict.
     if (analysis.status === "completed") rows.push(["  outcomes", outcomeTally(analysis.checks)]);
     for (const [name, check] of Object.entries(analysis.checks ?? {})) {
@@ -4528,6 +4561,7 @@ export function analysisDetailLines(analysis: TrialAnalysis): string[] {
   const rows: string[][] = [
     ["analysis id", analysis.id],
     ["status", analysis.status],
+    ...(analysis.agent ? [["agent", analysis.agent]] : []),
     ["model", analysis.model_name],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
   ];
@@ -5750,7 +5784,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   const watch = inv.flags.watch === true;
   const quiet = inv.flags.quiet === true;
   if (inv.flags["show-defaults"] === true) {
-    return printDefaults(inv, io, () => analyses(clientConfig(inv)).defaults(), "analyze", "<job-id>");
+    return printDefaults(inv, io, (options) => analyses(clientConfig(inv)).defaults(options), "analyze", "<job-id>");
   }
   if (inv.positionals[0] === undefined) {
     throw new CliUsageError("analyze takes a <job-id> (or --show-defaults)");
@@ -5761,6 +5795,8 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
   // owns every acceptance refusal — the rubric bounds, the model roster, the
   // one-wave-at-a-time law.
   const req: AnalyzeConfigInput = {};
+  // -a rides verbatim: the agent list and each agent's roster are the server's.
+  if (inv.flags.agent !== undefined) req.agent = String(inv.flags.agent);
   if (inv.flags.model !== undefined) req.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) req.rubric = loadRubricFile(String(inv.flags.rubric));
   // -p rides as the file's TEXT (Harbor's -p/--prompt read_text()); the
@@ -5959,7 +5995,8 @@ export function checkDetailLines(check: Check): string[] {
         : `archive ${check.source.bytes} bytes sha256 ${check.source.sha256.slice(0, 12)}…`,
     ],
     ["tasks", `${check.results.length} (${checkTally(check)})`],
-    ["model", `${check.model_name} at effort ${check.reasoning_effort}`],
+    ...(check.agent ? [["agent", check.agent]] : []),
+    ["model", check.reasoning_effort ? `${check.model_name} at effort ${check.reasoning_effort}` : check.model_name],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
     ["provider", check.sandbox_provider],
     // PRIVATE or LINK (an unlisted link reaches the check); `check shares` prints the link and the addresses.
@@ -5975,24 +6012,24 @@ export function checkDetailLines(check: Check): string[] {
   return [...table(rows), "", ...checkResultLines(check)];
 }
 
-/** `analyze --show-defaults` and `check --show-defaults`: one door, so the two verbs cannot drift. */
+/** `analyze --show-defaults` and `check --show-defaults`: one door, so the two verbs cannot drift; -a names the agent whose defaults print. */
 async function printDefaults(
   inv: Invocation,
   io: CliIO,
-  read: () => Promise<AnalyzeDefaults | CheckDefaults>,
+  read: (options?: { agent?: string }) => Promise<AnalyzeDefaults | CheckDefaults>,
   verb: "analyze" | "check",
   positional: "<job-id>" | "<path>",
 ): Promise<number> {
   // A stray knob or selector would be silently ignored; refusing keeps the verb honest.
-  const allowed = new Set(["show-defaults", ...Object.keys(GLOBAL_FLAGS)]);
+  const allowed = new Set(["show-defaults", "agent", ...Object.keys(GLOBAL_FLAGS)]);
   const stray = Object.keys(inv.flags).filter((k) => !allowed.has(k));
   if (inv.positionals[0] !== undefined || stray.length > 0) {
     throw new CliUsageError(
-      `--show-defaults prints the platform's ${verb} defaults and takes no ${positional} and no other ${verb} flag` +
+      `--show-defaults prints the platform's ${verb} defaults and takes no ${positional} and no ${verb} flag but -a/--agent` +
         (stray.length > 0 ? ` (given: ${stray.map((k) => "--" + k).join(", ")})` : ""),
     );
   }
-  const defaults = await read();
+  const defaults = await read(inv.flags.agent === undefined ? undefined : { agent: String(inv.flags.agent) });
   if (inv.flags.json === true) {
     io.out(JSON.stringify(defaults));
   } else {
@@ -6005,8 +6042,9 @@ async function printDefaults(
 function rubricDefaultsLines(defaults: AnalyzeDefaults | CheckDefaults): string[] {
   const criteria = defaults.rubric.criteria.length;
   const lines = table([
+    ...(defaults.agent ? [["agent", defaults.agent]] : []),
     ["model", defaults.model_name],
-    ["effort", defaults.reasoning_effort],
+    ["effort", defaults.reasoning_effort ?? "-"],
     ["provider", defaults.sandbox_provider],
     ["rubric", `${criteria} criteri${criteria === 1 ? "on" : "a"}`],
   ]);
@@ -6034,10 +6072,11 @@ async function cmdCheck(inv: Invocation, io: CliIO): Promise<number> {
   const quiet = inv.flags.quiet === true;
   const client = checks(clientConfig(inv));
   if (inv.flags["show-defaults"] === true) {
-    return printDefaults(inv, io, () => client.defaults(), "check", "<path>");
+    return printDefaults(inv, io, (options) => client.defaults(options), "check", "<path>");
   }
   const knobs: CheckConfigInput = {};
   if (inv.flags.name !== undefined) knobs.name = String(inv.flags.name);
+  if (inv.flags.agent !== undefined) knobs.agent = String(inv.flags.agent);
   if (inv.flags.model !== undefined) knobs.model_name = String(inv.flags.model);
   if (inv.flags.rubric !== undefined) knobs.rubric = loadRubricFile(String(inv.flags.rubric));
   if (inv.flags.prompt !== undefined) knobs.prompt = loadPromptFile(String(inv.flags.prompt));
@@ -6112,12 +6151,13 @@ const CHECK_COLUMNS: ListColumn<Check>[] = [
   { key: "id", header: "ID", cell: (c) => c.id },
   { key: "status", header: "STATUS", cell: (c) => c.status },
   { key: "tasks", header: "TASKS", cell: (c) => String(c.results.length) },
+  { key: "agent", header: "AGENT", cell: (c) => c.agent ?? "-" },
   { key: "model", header: "MODEL", cell: (c) => c.model_name },
   { key: "spent", header: "SPENT", cell: (c) => (c.cost_usd !== null ? `$${c.cost_usd.toFixed(4)}` : "-") },
   { key: "created", header: "CREATED", cell: (c) => c.created_at },
   { key: "finished", header: "FINISHED", cell: (c) => c.finished_at ?? "-" },
 ];
-const CHECK_DEFAULT_COLUMNS = ["id", "status", "tasks", "model", "spent", "created"];
+const CHECK_DEFAULT_COLUMNS = ["id", "status", "tasks", "agent", "model", "spent", "created"];
 
 async function cmdCheckList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, CHECK_COLUMNS)) return 0;
@@ -7297,13 +7337,14 @@ const ANALYSIS_COLUMNS: ListColumn<TrialAnalysis>[] = [
   { key: "task", header: "TASK", cell: (a) => a.task_name },
   { key: "job", header: "JOB", cell: (a) => a.job_id },
   { key: "trial", header: "TRIAL", cell: (a) => a.trial_id },
+  { key: "agent", header: "AGENT", cell: (a) => a.agent ?? "-" },
   { key: "model", header: "MODEL", cell: (a) => a.model_name },
   { key: "attempts", header: "ATTEMPTS", cell: (a) => String(a.attempts ?? 1) },
   { key: "spent", header: "SPENT", cell: fmtAnalysisSpent },
   { key: "created", header: "CREATED", cell: (a) => a.created_at },
   { key: "finished", header: "FINISHED", cell: (a) => a.finished_at ?? "-" },
 ];
-const ANALYSIS_DEFAULT_COLUMNS = ["id", "status", "task", "model", "spent", "created"];
+const ANALYSIS_DEFAULT_COLUMNS = ["id", "status", "task", "agent", "model", "spent", "created"];
 
 async function cmdAnalysisList(inv: Invocation, io: CliIO): Promise<number> {
   if (columnsHelpRequested(inv, io, ANALYSIS_COLUMNS)) return 0;

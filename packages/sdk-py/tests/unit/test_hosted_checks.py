@@ -121,6 +121,7 @@ class TestChecksCreate:
         with patch('evolve._http.urlopen', fake):
             accepted = await checks_factory(CONFIG).create(
                 str(task_dir),
+                agent='droid',
                 model_name='glm-5.3',
                 include_task_names=['hello-*'],
                 n_tasks=3,
@@ -135,6 +136,7 @@ class TestChecksCreate:
         # server refuses a bad policy before receiving the upload.
         assert list(parts) == ['config', 'archive']
         assert json.loads(parts['config'].decode('utf-8')) == {
+            'agent': 'droid',
             'model_name': 'glm-5.3',
             'include_task_names': ['hello-*'],
             'n_tasks': 3,
@@ -297,6 +299,11 @@ class TestChecksRead:
         assert fake.requests[0].full_url.endswith('/api/checks/defaults')
         assert fake.requests[0].get_method() == 'GET'
         assert got == defaults
+        # A named agent rides ?agent=: the server answers that agent's own default model and effort.
+        fake = FakeUrlopen([('/api/checks/defaults', defaults), ('/api/checks', {})])
+        with patch('evolve._http.urlopen', fake):
+            await checks_factory(CONFIG).defaults(agent='codex')
+        assert fake.requests[0].full_url.endswith('/api/checks/defaults?agent=codex')
 
     @pytest.mark.asyncio
     async def test_watch_polls_to_completed_and_reports_progress(self):

@@ -3879,6 +3879,7 @@ function testBuildJobInputAnalyze() {
       "-d", "deep-swe",
       "-a", "codex",
       "-m", "m",
+      "--analyze-agent", "claude",
       "--analyze-model", "claude-haiku-4-5-20251001",
       "--analyze-rubric", "rubric.json",
       "--analyze-provider", "modal",
@@ -3889,12 +3890,19 @@ function testBuildJobInputAnalyze() {
   assertEqual(
     withFields.analyze,
     {
+      agent: "claude",
       model_name: "claude-haiku-4-5-20251001",
       rubric: CLI_RUBRIC,
       sandbox_provider: "modal",
       reasoning_effort: "low",
     },
-    "--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
+    "--analyze-agent/--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
+  );
+  // The agent alone arms the trigger too, verbatim: the agent list is the server's.
+  assertEqual(
+    buildJobInput(parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m", "--analyze-agent", "opencode"])).analyze,
+    { agent: "opencode" },
+    "--analyze-agent alone implies --analyze and rides verbatim"
   );
 
   // The provider VALUE is the server's to rule (the lineup lives on GET
@@ -4123,7 +4131,7 @@ async function testAnalyzeVerbWatchFollows() {
     let code: number;
     try {
       code = await runCli(
-        ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", "-p", promptPath, "--watch", ...AUTH],
+        ["analyze", "eval-1", "-a", "claude", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", "-p", promptPath, "--watch", ...AUTH],
         io
       );
     } finally {
@@ -4134,8 +4142,8 @@ async function testAnalyzeVerbWatchFollows() {
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
-      "-m/-e/-p/--effort ride the body as model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
+      { agent: "claude", model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
+      "-a/-m/-e/-p/--effort ride the body as agent/model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
     );
     assert(jobReads >= 3, "follows the wave by polling the job (past the pre-flight read)");
     assert(
@@ -5604,6 +5612,7 @@ function analysisResultFixture(overrides: Record<string, unknown> = {}): Record<
     job_id: "job-1",
     task_name: "roy-polymorph-cn",
     status: "failed",
+    agent: "claude",
     model_name: "glm-5.3-flash",
     rubric: CLI_RUBRIC,
     summary: null,
@@ -9456,6 +9465,7 @@ function wireCheckRow(overrides: Record<string, unknown> = {}): Record<string, u
     name: "nightly check",
     status: "running",
     source: { type: "dataset", sha256: "ab".repeat(32), bytes: null, dataset: "deep-swe@1.1" },
+    agent: "claude",
     model_name: "claude-opus-4-6",
     reasoning_effort: "high",
     sandbox_provider: "e2b",
@@ -9500,7 +9510,14 @@ async function testJobListKind() {
 
     const cols = captureIO(false);
     await runCli(["job", "list", "--kind", "check", "--columns", "kind,name,agents,trials", ...AUTH], cols.io);
-    assertEqual(cols.out[1], "check\tnightly check\tclaude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+    assertEqual(cols.out[1], "check\tnightly check\tclaude:claude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireCheckRow({ agent: "gemini", model_name: "gemini-3.5-flash", reasoning_effort: null })], nextCursor: null, hasMore: false },
+    });
+    const noEffort = captureIO(false);
+    await runCli(["job", "list", "--kind", "check", "--columns", "agents", ...AUTH], noEffort.io);
+    assertEqual(noEffort.out[1], "gemini:gemini-3.5-flash", "an agent that takes no effort shows none — never the word null");
 
     // One spelling for one answer: the Jobs page asks kind=all and says "No jobs".
     setMockResponse("/api/jobs", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
@@ -9562,8 +9579,8 @@ async function testAnalysisList() {
 
     const piped = captureIO(false);
     assertEqual(await runCli(["analysis", "list", ...AUTH], piped.io), 0, "list exits 0");
-    assertEqual(piped.out[0], "ID\tSTATUS\tTASK\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
-    assert(piped.out[1].startsWith("an-1\tfailed\tabs-module-cache-flags\tglm-5.3-flash\t"), "rows are tab-separated");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASK\tAGENT\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("an-1\tfailed\tabs-module-cache-flags\tclaude\tglm-5.3-flash\t"), "rows are tab-separated");
     assert(piped.out[2].startsWith("an-2\tcompleted\ttricky-task\t"), "every row of the page renders");
 
     const tty = captureIO(true);
@@ -9868,6 +9885,7 @@ function wireCheck(overrides: Record<string, unknown> = {}): Record<string, unkn
     id: "chk-1",
     status: "queued",
     source: { type: "archive", sha256: "ab".repeat(32), bytes: 1234 },
+    agent: "claude",
     model_name: "glm-5.3-flash",
     reasoning_effort: "max",
     rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
@@ -9931,7 +9949,7 @@ async function testCheckVerb() {
     server.setReply(202, wireCheck());
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["check", taskDir, "--name", "nightly tb4", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
+      ["check", taskDir, "--name", "nightly tb4", "-a", "droid", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
       io
     );
     assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
@@ -9944,8 +9962,8 @@ async function testCheckVerb() {
     const configJson = /name="config"\r\n\r\n([^\r]+)\r\n/.exec(body)?.[1] ?? "";
     assertEqual(
       JSON.parse(configJson),
-      { name: "nightly tb4", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
-      "--name/-m/-n/-i/-l ride the config part as name/model_name/n_concurrent/include_task_names/n_tasks"
+      { name: "nightly tb4", agent: "droid", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
+      "--name/-a/-m/-n/-i/-l ride the config part as name/agent/model_name/n_concurrent/include_task_names/n_tasks"
     );
     assert(body.includes('filename="hello-world.tar.gz"'), "the archive is named by the directory");
     assert(out.some((l) => l.startsWith("check id") && l.includes("chk-1")), "prints the accepted check");
@@ -10162,8 +10180,8 @@ async function testCheckReadVerbs() {
     assertEqual(url.pathname, "/api/checks", "one GET on the checks list");
     assertEqual(url.searchParams.get("status"), "completed", "--status rides the query");
     assertEqual(url.searchParams.get("scope"), "shared", "--scope rides the query");
-    assertEqual(piped.out[0], "ID\tSTATUS\tTASKS\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
-    assert(piped.out[1].startsWith("chk-1\tcompleted\t1\tglm-5.3-flash\t$0.0123"), "the row renders");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASKS\tAGENT\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("chk-1\tcompleted\t1\tclaude\tglm-5.3-flash\t$0.0123"), "the row renders");
     const badStatus = captureIO();
     assertEqual(await runCli(["check", "list", "--status", "failed", ...AUTH], badStatus.io), 2, "the check ladder has no failed word — a usage error (exit 2) at the keyboard");
     assert(badStatus.err.some((l) => l.includes("queued, running, completed")), "the refusal names the ladder");
@@ -10186,6 +10204,7 @@ async function testAnalyzeShowDefaults() {
   installMockFetch();
   try {
     const defaults = {
+      agent: "claude",
       model_name: "openrouter/deepseek/deepseek-v4.1-flash",
       rubric: { criteria: [{ name: "score_is_earned", description: "d", guidance: "g" }, { name: "reward_hacking", description: "d", guidance: "g" }] },
       prompt: "Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}",
@@ -10201,6 +10220,7 @@ async function testAnalyzeShowDefaults() {
     assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
     const human = captureIO();
     assertEqual(await runCli(["analyze", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("agent") && l.includes("claude")), "the agent row");
     assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
     assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
     assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
@@ -10208,6 +10228,10 @@ async function testAnalyzeShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Read the trial at {trial_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("reward_hacking")), "every criterion is named under RUBRIC");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).search, "", "no -a: the default agent's policy, no query");
+    const named = captureIO();
+    assertEqual(await runCli(["analyze", "--show-defaults", "-a", "kimi", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "kimi", "-a rides the defaults door's ?agent=; the server resolves it, the CLI holds no roster");
     assertEqual(await runCli(["analyze", "eval-1", "--show-defaults", ...AUTH], captureIO().io), 2, "--show-defaults with a <job-id> is a usage error");
     assertEqual(await runCli(["analyze", "--show-defaults", "--model", "x", "--watch", ...AUTH], captureIO().io), 2, "--show-defaults with an analyzer or output flag is a usage error, never silently ignored");
     assertEqual(await runCli(["analyze", ...AUTH], captureIO().io), 2, "a bare analyze without a job id and without --show-defaults is a usage error");
@@ -10223,6 +10247,7 @@ async function testCheckShowDefaults() {
   installMockFetch();
   try {
     const defaults = {
+      agent: "claude",
       model_name: "openrouter/deepseek/deepseek-v4.1-flash",
       rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
       prompt: "Check the task at {task_path}\n{file_tree}\n{criteria_guidance}",
@@ -10240,6 +10265,7 @@ async function testCheckShowDefaults() {
     assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
     const human = captureIO();
     assertEqual(await runCli(["check", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("agent") && l.includes("claude")), "the agent row");
     assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
     assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
     assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
@@ -10247,6 +10273,9 @@ async function testCheckShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Check the task at {task_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("pinned_dependencies")), "every criterion is named under RUBRIC");
+    const named = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", "-a", "codex", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "codex", "-a rides the defaults door's ?agent=");
     const withPath = captureIO();
     assertEqual(await runCli(["check", "./tasks", "--show-defaults", ...AUTH], withPath.io), 2, "--show-defaults with a <path> is a usage error");
     assertEqual(await runCli(["check", "--show-defaults", "-d", "tb4", ...AUTH], captureIO().io), 2, "--show-defaults with -d is a usage error");

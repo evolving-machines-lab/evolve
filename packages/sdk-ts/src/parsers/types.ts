@@ -164,7 +164,47 @@ export type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | HarnessEvent;
+
+/**
+ * A wire line the harness printed that has no ACP slot — kept, never dropped.
+ *
+ * DELIBERATE EXTENSION BEYOND ACP, like AgentError and AgentUsage. Harness
+ * streams are unversioned and grow between releases (the owner's ruling
+ * 2026-09-25: any event type outside the captured vocabulary is passed
+ * through as a generic event and logged, never a failure), and some captured
+ * types are real facts of the run with no ACP shape — a sub-agent's
+ * progress, an automatic retry, a compaction. `type` is the harness's own
+ * type word and `payload` the line's other fields, verbatim.
+ *
+ * Excluded from isAgentWorkUpdate: an unknown line is evidence the harness
+ * PRINTED something, never that the agent did work.
+ */
+export interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  /** The harness's own type word for the line, verbatim. */
+  type: string;
+  /** Every other field of the line, verbatim. */
+  payload: Record<string, unknown>;
+}
+
+/** The harness_event for one raw line: its type word, and every field but the one that carried it. */
+export function harnessEvent(type: string, line: Record<string, unknown>, typeKey = "type"): HarnessEvent {
+  const { [typeKey]: _type, ...payload } = line;
+  return { sessionUpdate: "harness_event", type, payload };
+}
+
+/** One warning per unknown type for a parser instance: a stream of unknown lines is one line of noise. */
+export function unknownTypeWarner(harness: string): (what: string, type: string) => void {
+  const warned = new Set<string>();
+  return (what, type) => {
+    const key = `${what}:${type}`;
+    if (warned.has(key)) return;
+    warned.add(key);
+    console.warn(`[${harness} parser] unknown ${what} "${type}" passed through as harness_event`);
+  };
+}
 
 /**
  * Token accounting as the harness reported it on one wire line.
@@ -254,13 +294,18 @@ export interface AgentError {
  * cannot drift between callers.
  */
 export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | undefined): boolean {
-  return !!update && update.sessionUpdate !== "error" && update.sessionUpdate !== "usage";
+  return (
+    !!update &&
+    update.sessionUpdate !== "error" &&
+    update.sessionUpdate !== "usage" &&
+    update.sessionUpdate !== "harness_event"
+  );
 }
 
 /**
  * The harness's failure text for an AgentError.message, in ITS OWN WORDS.
  *
- * The seven harnesses put that text in seven different places — codex in
+ * Every harness puts that text in a place of its own — codex in
  * `message`, gemini in `error.message`, opencode in `error.data.message` (and
  * in `error.name` when data is empty), claude in an `errors: string[]`, droid
  * in `message`, kimi in `error_message`, qwen in `error.message` — so each

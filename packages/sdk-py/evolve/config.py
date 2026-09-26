@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, Union, runtime_checkable
 
 
-AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
+AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid', 'pi', 'prime-agent', 'dsh', 'zcode', 'antigravity']
 WorkspaceMode = Literal['knowledge', 'swe', 'task']
 BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
 BrowserConfig = Union[BrowserProvider, Dict[str, Any]]
@@ -35,6 +35,9 @@ class SandboxCreateOptions(TypedDict, total=False):
     # Home directory for agent config paths. Default: "/root" when user is
     # "root", "/home/<user>" otherwise, "/home/user" when no user is given.
     homeDir: str
+    # The account the agent config files are written for (a user name, a uid,
+    # or uid:gid) when it is not the owner of homeDir. Default: homeDir's owner.
+    homeOwner: str
 
 
 @dataclass
@@ -206,7 +209,7 @@ class AgentConfig:
     All fields are optional - TS SDK auto-detects from environment variables.
 
     Args:
-        type: Agent type (codex, claude, gemini, qwen, kimi, opencode, droid) - defaults to 'claude'
+        type: Agent type (codex, claude, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity) - defaults to 'claude'
         api_key: Evolve API key for gateway mode (defaults to EVOLVE_API_KEY env var)
         provider_api_key: Provider API key for direct mode / BYOK (defaults to provider env var)
         oauth_token: OAuth token for Claude Max subscription (defaults to CLAUDE_CODE_OAUTH_TOKEN env var)

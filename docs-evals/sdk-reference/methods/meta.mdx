@@ -81,9 +81,14 @@ interface CapabilityDocument {
     dataset_version: StatusVocabulary;
   };
   analyze?: {
+    default_agent: string;
     default_model: string;
-    reasoning_efforts: string[];
-    models: { alias: string; model_id: string; default_reasoning_effort: string }[];
+    agents: {
+      name: string;
+      default_model: string;
+      reasoning_efforts: string[];
+      models: { alias: string; model_id: string; default_reasoning_effort: string | null }[];
+    }[];
   };
   limits: {
     job: {

@@ -11,6 +11,8 @@
 import { Agent } from "../../dist/index.js";
 import { writeCodexSpendProvider, writeKimiSpendConfig } from "../../src/mcp/toml.js";
 import { writeDroidGatewaySettings, writeJsonSpendHeaders, writeQwenThinkingConfig } from "../../src/mcp/json.js";
+import { homeFileOwnershipCommand, homeFilePrepareCommand } from "../../src/mcp/home-file.js";
+import { zcodeEnvPins, zcodeReasoningLevel } from "../../src/registry.js";
 
 let passed = 0;
 let failed = 0;
@@ -97,6 +99,11 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
   assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "high", "opencode pin is high variant");
   assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
+  assertEqual(AGENT_REGISTRY.pi.defaultReasoningEffort, "high", "pi pin is high (owner policy; pi's own default is medium)");
+  assertEqual(AGENT_REGISTRY["prime-agent"].defaultReasoningEffort, "high", "prime-agent pin is high (owner policy; Prime's own default is medium)");
+  assertEqual(AGENT_REGISTRY.dsh.defaultReasoningEffort, "high", "dsh pin is high (DeepSeek's documented default)");
+  assertEqual(AGENT_REGISTRY.zcode.defaultReasoningEffort, "high", "zcode pin is high (owner policy: graded harnesses run high)");
+  assertEqual(AGENT_REGISTRY.antigravity.defaultReasoningEffort, "high", "antigravity pin is high (owner policy: graded harnesses run high)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -113,6 +120,37 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const droidCmd = (droidAgent as any).buildCommand("hello") as string;
   assert(droidCmd.includes("--reasoning-effort high"), "droid omitted effort stamps high on the command");
 
+  // pi and Prime Agent: omitted effort stamps --thinking high; the SDK's
+  // binary spellings map onto their shared scale (thinking → medium, no-thinking → off).
+  const piAgent = new Agent({ type: "pi", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  assert(((piAgent as any).buildCommand("hello") as string).includes("--thinking high"), "pi omitted effort stamps --thinking high");
+  const primeAgent = new Agent({ type: "prime-agent", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  assert(((primeAgent as any).buildCommand("hello") as string).includes("--thinking high"), "prime-agent omitted effort stamps --thinking high");
+  const piThinking = new Agent({ type: "pi", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "thinking" } as any, {});
+  assert(((piThinking as any).buildCommand("hello") as string).includes("--thinking medium"), "pi 'thinking' is the vendors' default level, medium");
+  const piOff = new Agent({ type: "pi", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "no-thinking" } as any, {});
+  assert(((piOff as any).buildCommand("hello") as string).includes("--thinking off"), "pi 'no-thinking' is off");
+
+  // Prime's daemon socket lives under TMPDIR (108-byte socket path limit); pi loads its MCP
+  // adapter only when the run configured MCP servers.
+  assert(((primeAgent as any).buildCommand("hello") as string).includes(" TMPDIR=/tmp prime-agent "), "prime-agent command pins TMPDIR=/tmp");
+  const piNoMcp = AGENT_REGISTRY.pi.buildCommand({ prompt: "p", model: "m", isResume: false } as never);
+  const piMcp = AGENT_REGISTRY.pi.buildCommand({ prompt: "p", model: "m", isResume: false, mcpConfigured: true } as never);
+  assert(!piNoMcp.includes("--extension"), "pi without MCP servers loads no adapter extension");
+  assert(
+    piMcp.includes('--extension "${PI_MCP_ADAPTER_EXTENSION:-/opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts}"'),
+    "pi with MCP servers loads the adapter from the fleet path, an env override allowed",
+  );
+
+  // antigravity: omitted effort stamps --effort high; the gateway-mode model
+  // is the Vertex route spelling of the default alias.
+  const agyAgent = new Agent({ type: "antigravity", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const agyCmd = (agyAgent as any).buildCommand("hello") as string;
+  assert(agyCmd.includes("--effort high"), "antigravity omitted effort stamps high on the command");
+  assert(agyCmd.includes("--model 'vertex_ai/gemini-3.8-flash'"), "antigravity gateway mode names the default model's Vertex route");
+  const agyMax = new Agent({ type: "antigravity", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "xhigh" } as any, {});
+  assert(((agyMax as any).buildCommand("hello") as string).includes("--effort max"), "antigravity maps xhigh onto the CLI's max");
+
   // kimi: omitted effort stamps max thinking in the KIMI_MODEL_* envs
   // (direct wiring path; the config.toml path resolves through the same
   // Agent.reasoningEffort()).
@@ -125,7 +163,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const kimiGw = new Agent({ type: "kimi", apiKey: "gw-key", isDirectMode: false } as any, {});
   attachProviderRuntimeToken(kimiGw, "kimi", "https://dashboard.test/api/model-proxy/kimi/v1");
   const tomlWrites: Array<{ path: string; content: string }> = [];
-  const fakeSandbox = { files: { makeDir: async () => {}, write: async (p: string, c: string) => { tomlWrites.push({ path: p, content: c }); } } };
+  const fakeSandbox = { commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) }, files: { makeDir: async () => {}, write: async (p: string, c: string) => { tomlWrites.push({ path: p, content: c }); } } };
   await (kimiGw as any).writeKimiPerRunConfig(fakeSandbox, "run-effort-pin");
   assertEqual(tomlWrites.length, 1, "kimi gateway path writes exactly one config");
   assert(tomlWrites[0].content.includes('effort = "max"'), "kimi gateway config.toml stamps the max pin when effort is omitted");
@@ -359,9 +397,13 @@ async function testCodexSpendTrackingEnvs(): Promise<void> {
 // Fake sandbox for writeCodexSpendProvider tests
 // =============================================================================
 
-function createFakeSandbox(existingContent?: string): { sandbox: any; written: { path: string; content: string }[] } {
+function createFakeSandbox(existingContent?: string): { sandbox: any; written: { path: string; content: string }[]; ran: string[] } {
   const written: { path: string; content: string }[] = [];
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       read: async () => {
@@ -371,17 +413,19 @@ function createFakeSandbox(existingContent?: string): { sandbox: any; written: {
       write: async (path: string, content: string) => { written.push({ path, content }); },
     },
   };
-  return { sandbox, written };
+  return { sandbox, written, ran };
 }
 
 const spendEnvs = { sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID", runTagEnv: "EVOLVE_LITELLM_TAGS" };
 
 async function testTomlFreshConfig(): Promise<void> {
   console.log("\n[7] writeCodexSpendProvider() on empty config");
-  const { sandbox, written } = createFakeSandbox(undefined);
+  const { sandbox, written, ran } = createFakeSandbox(undefined);
   await writeCodexSpendProvider(sandbox, "https://gateway.example.com", spendEnvs);
 
   assertEqual(written.length, 1, "writes config file");
+  assertEqual(ran.length, 2, "prepare before the write, hand-over after");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.codex/config.toml", []), "config.toml is handed to the home's owner");
   const content = written[0].content;
   assert(content.startsWith('model_provider = "evolve-gateway"'), "root key is first line");
   assert(content.includes("[model_providers.evolve-gateway]"), "has provider section");
@@ -730,7 +774,11 @@ async function testTomlRootKeyDriftRepair(): Promise<void> {
 async function testQwenWriteJsonSpendHeaders(): Promise<void> {
   console.log("\n[19] writeJsonSpendHeaders() writes headers at correct JSON path");
   const written: { path: string; content: string }[] = [];
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       read: async () => { throw Object.assign(new Error("not found"), { code: "ENOENT" }); },
@@ -749,6 +797,7 @@ async function testQwenWriteJsonSpendHeaders(): Promise<void> {
   const config = JSON.parse(written[0].content);
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-customer-id"], "session-abc", "customer-id at correct path");
   assertEqual(config.model?.generationConfig?.customHeaders?.["x-litellm-tags"], "run:run-123", "run tag at correct path");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.qwen/settings.json", []), "settings.json is handed to the home's owner");
 }
 
 async function testQwenWriteJsonPreservesExistingConfig(): Promise<void> {
@@ -759,6 +808,7 @@ async function testQwenWriteJsonPreservesExistingConfig(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => existing,
@@ -871,6 +921,7 @@ async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => afterFirstRun,
@@ -912,7 +963,11 @@ const kimiConnection = {
 async function testKimiWriteSpendConfigFresh(): Promise<void> {
   console.log("\n[25] writeKimiSpendConfig() writes deterministic config from scratch");
   const written: { path: string; content: string }[] = [];
+  const ran: string[] = [];
   const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
     files: {
       makeDir: async () => {},
       write: async (path: string, content: string) => { written.push({ path, content }); },
@@ -928,6 +983,7 @@ async function testKimiWriteSpendConfigFresh(): Promise<void> {
 
   assertEqual(written.length, 1, "writes one file");
   assertEqual(written[0].path, "/home/user/.kimi-code/config.toml", "writes Kimi Code config path");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.kimi-code/config.toml", []), "config.toml is handed to the home's owner");
   const content = written[0].content;
   assert(content.includes('default_model = "evolve-default"'), "has default_model");
   assert(content.includes("default_thinking = true"), "enables default thinking");
@@ -954,6 +1010,7 @@ async function testKimiWriteSpendConfigPerRunOverwrite(): Promise<void> {
   console.log("\n[26] writeKimiSpendConfig() overwrites entirely on second run (no merge)");
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       write: async (path: string, content: string) => { written.push({ path, content }); },
@@ -1174,6 +1231,7 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
   // wiring paths agree.
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       write: async (path: string, content: string) => { written.push({ path, content }); },
@@ -1331,6 +1389,7 @@ async function testQwenWriteJsonPreservesUserDefinedHeaders(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => existing,
@@ -1367,6 +1426,7 @@ async function testQwenThinkingConfigPreservesSettings(): Promise<void> {
   });
   const written: { path: string; content: string }[] = [];
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async () => existing,
@@ -1596,7 +1656,7 @@ async function testDroidBuildEnvironmentVariablesDirect(): Promise<void> {
 
 async function testDroidWriteGatewaySettings(): Promise<void> {
   console.log("\n[36] writeDroidGatewaySettings() writes custom model with spend headers");
-  const { sandbox, written } = createFakeSandbox(undefined);
+  const { sandbox, written, ran } = createFakeSandbox(undefined);
 
   await writeDroidGatewaySettings(
     sandbox,
@@ -1617,6 +1677,7 @@ async function testDroidWriteGatewaySettings(): Promise<void> {
   );
 
   assertEqual(written[0].path, "/home/user/.factory/evolve-settings.json", "writes dedicated Droid settings file");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.factory/evolve-settings.json", []), "the settings file is handed to the home's owner");
   const parsed = JSON.parse(written[0].content);
   const model = parsed.customModels?.[0];
   assertEqual(parsed.cloudSessionSync, false, "disables Factory cloud sync for gateway mode");
@@ -1741,6 +1802,7 @@ async function testDroidSessionStateRoundTrip(): Promise<void> {
   console.log("\n[40] Droid session id is captured and persisted");
   const files = new Map<string, string>();
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async (path: string) => {
@@ -1757,21 +1819,281 @@ async function testDroidSessionStateRoundTrip(): Promise<void> {
     isDirectMode: false,
   };
   const agent = new Agent(config as any, {});
-  (agent as any).captureDroidSession("", [{
+  (agent as any).captureHarnessSessionId("", [{
     sessionId: "droid-session-123",
     update: {
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text: "ok" },
     },
   }]);
-  await (agent as any).writeDroidSessionState(sandbox);
+  await (agent as any).writeCapturedSessionId(sandbox);
 
   const agent2 = new Agent(config as any, {});
-  await (agent2 as any).loadDroidSessionState(sandbox);
+  await (agent2 as any).loadCapturedSessionId(sandbox);
   (agent2 as any).hasRun = true;
   const command = (agent2 as any).buildCommand("continue") as string;
 
   assert(command.includes("--session-id 'droid-session-123'"), "loaded session id is used in next command");
+}
+
+// =============================================================================
+// dsh routing (the Evolve-owned --patch file; env-named key, URL and headers)
+// =============================================================================
+
+async function testDshBuildCommand(): Promise<void> {
+  console.log("\n[41] dsh buildCommand() runs the headless profile with the Evolve patches; model and effort ride the patch");
+  const { AGENT_REGISTRY, getDshReasoningEffort } = await import("../../src/registry.js");
+  const dsh = AGENT_REGISTRY.dsh;
+  assertEqual(dsh.defaultModel, "openrouter/deepseek/deepseek-v4.1-flash", "dsh defaults to DeepSeek V4.1 Flash via OpenRouter");
+  assertEqual(dsh.apiKeyEnv, "OPENROUTER_API_KEY", "dsh's SDK-facing key env is OPENROUTER_API_KEY (the patch's apiKeyEnv)");
+  assertEqual(dsh.baseUrlEnv, "EVOLVE_DSH_BASE_URL", "dsh's base URL env is the one the patch reads at boot");
+  assertEqual(dsh.sessionIdStateFile, "~/.dsh/evolve-session.json", "dsh keeps the stream-announced session id for --session-id");
+  assertEqual(dsh.mcpConfig.filename, "evolve-mcp.patch.yml", "dsh's MCP config is a second patch under ~/.dsh");
+
+  const cmd = dsh.buildCommand({ prompt: "hello", model: "openrouter/deepseek/deepseek-v4.1-flash", isResume: false, reasoningEffort: "high" });
+  assert(cmd.startsWith("DSH_HOME=/home/user/.dsh DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1 dsh --profile headless"), "the command pins the home, bypasses approvals by env, disables telemetry and runs the headless profile");
+  assert(cmd.includes("--patch /home/user/.dsh/evolve-route.patch.yml"), "the route patch is always passed");
+  assert(cmd.includes("if [ -f /home/user/.dsh/evolve-mcp.patch.yml ]; then printf ' --patch /home/user/.dsh/evolve-mcp.patch.yml'; fi"), "the MCP patch is passed only when it exists");
+  assert(cmd.endsWith('--json -- "hello"'), "JSON streaming, then the prompt after --");
+  assert(!cmd.includes("openrouter/") && !cmd.includes("high"), "neither the model nor the effort rides the command line");
+  assert(!cmd.includes("--session-id"), "a first run passes no --session-id");
+
+  const resumed = dsh.buildCommand({ prompt: "again", model: "m", isResume: true, sessionId: "session-abc" });
+  assert(resumed.includes("--json --session-id 'session-abc' -- \"again\""), "a resume passes the captured id with --session-id");
+  const noId = dsh.buildCommand({ prompt: "again", model: "m", isResume: true });
+  assert(!noId.includes("--session-id"), "a resume with no captured id starts fresh rather than passing an empty id");
+
+  const rooted = dsh.buildCommand({ prompt: "x", model: "m", isResume: false, homeDir: "/root" });
+  assert(rooted.includes("DSH_HOME=/root/.dsh") && rooted.includes("--patch /root/.dsh/evolve-route.patch.yml"), "the home follows homeDir (eval boxes run as root)");
+
+  // The effort roster: the three proven levels ride verbatim; everything else is a typed refusal.
+  assertEqual(getDshReasoningEffort("high"), "high", "high rides verbatim");
+  assertEqual(getDshReasoningEffort("medium"), "medium", "medium rides verbatim");
+  assertEqual(getDshReasoningEffort("low"), "low", "low rides verbatim");
+  assertEqual(getDshReasoningEffort(undefined), undefined, "no effort → none named");
+  for (const refused of ["off", "none", "no-thinking", "minimal", "xhigh", "max", "thinking"]) {
+    let message = "";
+    try {
+      getDshReasoningEffort(refused);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert(
+      message.includes('agent "dsh" honors reasoning effort "low", "medium", "high" only') && message.includes(`"${refused}"`),
+      `"${refused}" is refused typed, naming dsh, the roster and the value`,
+    );
+  }
+}
+
+async function testDshGatewayEnvsAndPatch(): Promise<void> {
+  console.log("\n[42] dsh gateway mode: runtime token + gateway URL in the patch's envs, spend tags per run, headers read from env in the patch");
+  const agent = new Agent({ type: "dsh", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  attachProviderRuntimeToken(agent, "dsh", "https://dashboard.test/api/model-gateway/v1");
+
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.OPENROUTER_API_KEY, "evrt_dsh_runtime_token", "the runtime token lands in OPENROUTER_API_KEY (the patch's apiKeyEnv)");
+  assertEqual(envs.EVOLVE_DSH_BASE_URL, "https://dashboard.test/api/model-gateway/v1", "the door's /v1 base URL lands in EVOLVE_DSH_BASE_URL");
+  assertEqual(envs.EVOLVE_PROVIDER_RUNTIME_BINDING, "evrb_dsh_binding_secret", "the runtime binding secret rides its env (spendTrackingEnvs path)");
+  assert(typeof envs.EVOLVE_LITELLM_CUSTOMER_ID === "string" && envs.EVOLVE_LITELLM_CUSTOMER_ID.length > 0, "the session tag rides EVOLVE_LITELLM_CUSTOMER_ID at boot");
+  assert(!("EVOLVE_API_KEY" in envs), "the account key is never exposed");
+
+  const runEnvs = (agent as any).buildRunEnvs("run-dsh-001") as Record<string, string>;
+  assertEqual(runEnvs.EVOLVE_LITELLM_TAGS, "run:run-dsh-001", "the run tag rides EVOLVE_LITELLM_TAGS per run");
+  assertEqual(runEnvs.EVOLVE_LITELLM_CUSTOMER_ID, envs.EVOLVE_LITELLM_CUSTOMER_ID, "the session tag is re-sent per run");
+  assertEqual(runEnvs.OPENROUTER_API_KEY, "evrt_dsh_runtime_token", "the token is re-injected per spawn");
+
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeDshPerRunPatch(sandbox);
+  assertEqual(written[0].path, "/home/user/.dsh/evolve-route.patch.yml", "writes the Evolve-owned route patch");
+  const patch = written[0].content;
+  assert(patch.includes('"x-litellm-customer-id": !!js process.env.EVOLVE_LITELLM_CUSTOMER_ID'), "the session tag header reads its env");
+  assert(patch.includes('"x-litellm-tags": !!js process.env.EVOLVE_LITELLM_TAGS'), "the run tag header reads its env");
+  assert(patch.includes('"x-evolve-provider-runtime-binding": !!js process.env.EVOLVE_PROVIDER_RUNTIME_BINDING'), "the binding header reads its env");
+  assert(patch.includes('model: "openrouter/deepseek/deepseek-v4.1-flash"'), "gateway mode names the gateway's exact entry (no alias rewrite)");
+  assert(patch.includes('reasoningEffort: "high"'), "the pinned effort is stamped");
+  assert(!patch.includes("evrt_dsh_runtime_token") && !patch.includes("dashboard.test"), "the patch carries no token and no URL value");
+}
+
+async function testDshExternalGatewayPatch(): Promise<void> {
+  console.log("\n[43] dsh externalGateway: wire id verbatim, no headers");
+  const agent = new Agent({
+    type: "dsh",
+    apiKey: "sk-external",
+    baseUrl: "https://gateway.example.com/v1",
+    isDirectMode: true,
+    externalGateway: { revoke: async () => {} },
+    model: "openrouter/deepseek/deepseek-v4-pro-0813",
+    reasoningEffort: "medium",
+  } as any, {});
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeDshPerRunPatch(sandbox);
+  const patch = written[0].content;
+  assert(patch.includes('model: "openrouter/deepseek/deepseek-v4-pro-0813"'), "externalGateway sends the roster id verbatim (alias == wire id) — never the direct-mode OpenRouter spelling");
+  assert(!patch.includes("headers:"), "externalGateway patch carries no LiteLLM headers");
+  assert(patch.includes('reasoningEffort: "medium"'), "the caller's level is stamped verbatim");
+  const envs = (agent as any).buildRunEnvs("run-x") as Record<string, string>;
+  assertEqual(envs.OPENROUTER_API_KEY, "sk-external", "the caller's key rides the patch's apiKeyEnv");
+  assertEqual(envs.EVOLVE_DSH_BASE_URL, "https://gateway.example.com/v1", "the caller's base URL rides the patch's baseURL env VERBATIM");
+}
+
+async function testDshDirectModePatch(): Promise<void> {
+  console.log("\n[44] dsh direct mode: OpenRouter's own id, OpenRouter's key env, no headers");
+  const agent = new Agent({
+    type: "dsh",
+    apiKey: "or-key",
+    baseUrl: "https://openrouter.ai/api/v1",
+    isDirectMode: true,
+    model: "openrouter/deepseek/deepseek-v4.1-flash",
+  } as any, {});
+  const envs = (agent as any).buildEnvironmentVariables() as Record<string, string>;
+  assertEqual(envs.OPENROUTER_API_KEY, "or-key", "direct mode sets OPENROUTER_API_KEY");
+  assertEqual(envs.EVOLVE_DSH_BASE_URL, "https://openrouter.ai/api/v1", "direct mode sets the OpenRouter API root");
+  assertEqual((agent as any).buildRunEnvs("run-y"), undefined, "direct mode adds no per-run envs");
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeDshPerRunPatch(sandbox);
+  assert(written[0].content.includes('model: "deepseek/deepseek-v4.1-flash"'), "direct mode strips the gateway's openrouter/ route prefix (directModelAliases)");
+  assert(!written[0].content.includes("headers:"), "direct mode carries no headers");
+}
+
+async function testDshSessionStateRoundTrip(): Promise<void> {
+  console.log("\n[45] dsh session id is captured from the `session` line and persisted under ~/.dsh");
+  const files = new Map<string, string>();
+  const ran: string[] = [];
+  const sandbox = {
+    commands: {
+      run: async (command: string) => { ran.push(command); return { exitCode: 0, stdout: "", stderr: "" }; },
+    },
+    files: {
+      makeDir: async () => {},
+      read: async (path: string) => {
+        const value = files.get(path);
+        if (!value) throw Object.assign(new Error("not found"), { code: "ENOENT" });
+        return value;
+      },
+      write: async (path: string, content: string) => { files.set(path, content); },
+    },
+  };
+  const config = { type: "dsh", apiKey: "test-gateway-key", isDirectMode: false };
+  const agent = new Agent(config as any, {});
+  // The opening line carries the id but yields no event (the parser returns
+  // null for it), so the capture must read the raw line.
+  (agent as any).captureHarnessSessionId(`{"type":"session","sessionId":"session-fab655c4","cwd":"/work"}`, null);
+  await (agent as any).writeCapturedSessionId(sandbox);
+  assert(files.has("/home/user/.dsh/evolve-session.json"), "the id is persisted at the registry's sessionIdStateFile");
+  assertEqual(ran[1], homeFileOwnershipCommand("/home/user", "/home/user/.dsh/evolve-session.json", []), "the state file is handed to the home's owner like every other home write");
+
+  const agent2 = new Agent(config as any, {});
+  await (agent2 as any).loadCapturedSessionId(sandbox);
+  (agent2 as any).hasRun = true;
+  const command = (agent2 as any).buildCommand("continue") as string;
+  assert(command.includes("--session-id 'session-fab655c4'"), "the loaded id is used in the next command");
+
+  const claude = new Agent({ type: "claude", apiKey: "k", isDirectMode: false } as any, {});
+  (claude as any).captureHarnessSessionId(`{"type":"system","session_id":"c1"}`, null);
+  assert((claude as any).capturedSessionId === undefined, "a harness with no sessionIdStateFile captures nothing");
+}
+
+// =============================================================================
+// Z Code: the per-run provider file (model, level, base URL, key, spend headers)
+// =============================================================================
+
+async function testZcodeReasoningLevels(): Promise<void> {
+  console.log("\n[46] zcodeReasoningLevel() collapses the platform vocabulary onto Z Code's four levels");
+  assertEqual(zcodeReasoningLevel("off"), "disabled", "off → disabled");
+  assertEqual(zcodeReasoningLevel("minimal"), "disabled", "minimal → disabled (isThinkingEnabled draws the line)");
+  assertEqual(zcodeReasoningLevel("no-thinking"), "disabled", "no-thinking → disabled");
+  assertEqual(zcodeReasoningLevel("low"), "low", "low → low");
+  assertEqual(zcodeReasoningLevel("medium"), "medium", "medium → medium");
+  assertEqual(zcodeReasoningLevel("thinking"), "medium", "thinking → medium");
+  assertEqual(zcodeReasoningLevel("high"), "high", "high → high");
+  assertEqual(zcodeReasoningLevel("xhigh"), "high", "xhigh → high (the top level Z Code's file declares)");
+  assertEqual(zcodeReasoningLevel("max"), "high", "max → high");
+  assertEqual(zcodeReasoningLevel(undefined), "high", "an omitted effort is the roster pin (one value, one home)");
+}
+
+async function testZcodePerRunProviderFileGateway(): Promise<void> {
+  console.log("\n[47] zcode gateway mode writes the provider file with the runtime token, the gateway /v1 and both spend headers");
+  const agent = new Agent({ type: "zcode", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  attachProviderRuntimeToken(agent, "zcode", "https://dashboard.test/api/model-proxy/zcode/v1");
+  const { sandbox, written, ran } = createFakeSandbox(undefined);
+
+  await (agent as any).writeZcodePerRunConfig(sandbox, "run-zcode-001");
+
+  assertEqual(written.length, 1, "writes one file");
+  assertEqual(written[0].path, "/home/user/.zcode/v2/provider_config.json", "the provider file at the sandbox home");
+  const doc = JSON.parse(written[0].content);
+  const provider = doc.config.providerConfigRules.providerRules[0].config;
+  assertEqual(provider.access.apiKey, "evrt_zcode_runtime_token", "the runtime token is the literal key (Z Code expands no env)");
+  assertEqual(provider.api.baseUrl, "https://dashboard.test/api/model-proxy/zcode/v1", "the runtime token's base URL, /v1 kept once");
+  assertEqual(provider.api.type, "openai-chat-completions", "OpenAI chat completions dialect");
+  const headers = provider.api.headers;
+  assertEqual(headers["x-litellm-tags"], "run:run-zcode-001", "sets the run header");
+  assert(typeof headers["x-litellm-customer-id"] === "string" && headers["x-litellm-customer-id"].length > 0, "sets the session header");
+  assertEqual(headers["x-evolve-provider-runtime-binding"], "evrb_zcode_binding_secret", "sets the provider runtime binding header");
+  assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3", "the default model rides verbatim (a gateway route name)");
+  assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "high", "the omitted effort stamps the pin as the reasoning level");
+  assertEqual(
+    ran.join("\n"),
+    [homeFilePrepareCommand("/home/user", "/home/user/.zcode/v2/provider_config.json"), homeFileOwnershipCommand("/home/user", "/home/user/.zcode/v2/provider_config.json", [], { mode: "600" })].join("\n"),
+    "the directories are prepared before the write; the file is handed to the home's owner and tightened to 0600 after it",
+  );
+
+  const envs = (agent as any).buildRunEnvs("run-zcode-002") as Record<string, string> | undefined;
+  assert(!("OPENROUTER_API_KEY" in (envs ?? {})), "no key env in gateway mode: the token lives only in the provider file, which is all the CLI reads");
+  assert(!("x-litellm-tags" in (envs ?? {})), "no header env: the headers ride the provider file");
+
+  // The same rule in the other two modes: the caller's or the user's key rides the provider file only.
+  const external = new Agent(
+    { type: "zcode", apiKey: "sk-litellm-task", isDirectMode: true, baseUrl: "https://litellm.test/v1", externalGateway: { apiKey: "sk-litellm-task", baseUrl: "https://litellm.test/v1", revoke: async () => {} } } as any,
+    {},
+  );
+  const externalBoot = (external as any).buildEnvironmentVariables() as Record<string, string>;
+  const externalRun = ((external as any).buildRunEnvs("run-zcode-004") ?? {}) as Record<string, string>;
+  assert(!("OPENROUTER_API_KEY" in externalBoot) && !("OPENROUTER_API_KEY" in externalRun), "external-gateway mode: no key env at boot or per run");
+  const direct = new Agent({ type: "zcode", apiKey: "sk-or-user", isDirectMode: true, model: "openrouter/z-ai/glm-5.3" } as any, {});
+  const directBoot = (direct as any).buildEnvironmentVariables() as Record<string, string>;
+  assert(!("OPENROUTER_API_KEY" in directBoot), "direct mode: no key env at boot either");
+  assert(!Object.values(externalBoot).includes("sk-litellm-task") && !Object.values(directBoot).includes("sk-or-user"), "the key appears in no env value in either mode");
+}
+
+async function testZcodePerRunProviderFileEffort(): Promise<void> {
+  console.log("\n[48] zcode: the caller's effort lands in the provider file");
+  const agent = new Agent({ type: "zcode", apiKey: "test-gateway-key", isDirectMode: false, model: "openrouter/z-ai/glm-5.3-flash", reasoningEffort: "off" } as any, {});
+  attachProviderRuntimeToken(agent, "zcode", "https://dashboard.test/api/model-proxy/zcode/v1");
+  const { sandbox, written } = createFakeSandbox(undefined);
+  await (agent as any).writeZcodePerRunConfig(sandbox, "run-zcode-003");
+  const doc = JSON.parse(written[0].content);
+  assertEqual(doc.config.defaultModelSelection.options.reasoningLevel, "disabled", "off → disabled: no reasoning field on the wire");
+  assertEqual(doc.config.defaultModelSelection.modelId, "openrouter/z-ai/glm-5.3-flash", "the caller's model");
+  assertEqual(doc.config.modelConfigRules.providerModelRules[0].config.properties.contextWindow, 200000, "the platform's one context window");
+}
+
+async function testZcodeBuildCommand(): Promise<void> {
+  console.log("\n[49] zcode buildCommand(): headless stream-json, no model flag, resume via --continue");
+  const { AGENT_REGISTRY } = await import("../../src/registry.js");
+  const zcode = AGENT_REGISTRY.zcode;
+  assertEqual(zcode.defaultModel, "openrouter/z-ai/glm-5.3", "Z Code defaults to GLM-5.3 via OpenRouter");
+  assertEqual(zcode.apiKeyEnv, "OPENROUTER_API_KEY", "direct mode is OpenRouter");
+  assertEqual(zcode.directModelAliases?.["openrouter/z-ai/glm-5.3-flash"], "z-ai/glm-5.3-flash", "direct mode rewrites to OpenRouter's own id");
+  assertEqual(zcode.gatewayModelAliases, undefined, "gateway mode rewrites nothing: the roster spells the routes");
+  const pins =
+    "ZCODE_STORAGE_DIR='/home/user/.zcode' ZCODE_DATA_BASE_DIR='/home/user' ZCODE_SESSION_DB_PATH='/home/user/.zcode/cli/db/db.sqlite' " +
+    "ZCODE_SESSION_DB='/home/user/.zcode/cli/db/db.sqlite' " +
+    "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE='/home/user/.zcode/v2/provider_config.json' ZCODE_HTTP_PROXY='' ZCODE_NO_PROXY='' ZCODE_AGENT_CA_CERT='' " +
+    "ZCODE_MODEL_TELEMETRY_ENABLED='0'";
+  const fresh = zcode.buildCommand({ prompt: "hello", model: "openrouter/z-ai/glm-5.3", isResume: false, reasoningEffort: "high", homeDir: "/home/user" });
+  assertEqual(fresh, `${pins} zcode -p "hello" --output-format stream-json`, "fresh run: every pin, then the headless command");
+  const resumed = zcode.buildCommand({ prompt: "again", model: "openrouter/z-ai/glm-5.3", isResume: true, reasoningEffort: "high", homeDir: "/home/user" });
+  assertEqual(resumed, `${pins} zcode -p "again" --continue --output-format stream-json`, "resume continues the latest session in the cwd");
+  // The pinned set: what a task's .env could otherwise move (home, store, provider file) or re-route (proxy, CA), plus telemetry.
+  assertEqual(
+    Object.keys(zcodeEnvPins("/h")).sort().join(","),
+    "ZCODE_AGENT_CA_CERT,ZCODE_DATA_BASE_DIR,ZCODE_HTTP_PROXY,ZCODE_MODEL_TELEMETRY_ENABLED,ZCODE_NO_PROXY,ZCODE_PERSONAL_PROVIDER_CONFIG_FILE,ZCODE_SESSION_DB,ZCODE_SESSION_DB_PATH,ZCODE_STORAGE_DIR",
+    "the pinned ZCODE_* set (both spellings of the session store: the CLI maps them to one setting, last enumerated wins)",
+  );
+  assertEqual(zcodeEnvPins("/h").ZCODE_SESSION_DB, zcodeEnvPins("/h").ZCODE_SESSION_DB_PATH, "the alias pins the same path");
+  assert(!("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE" in zcodeEnvPins("/h")), "the built-in catalog path is the image's and the bundle's to pin: an empty value aborts the CLI");
+  assert(Object.values(zcodeEnvPins("/h")).every((v) => typeof v === "string"), "every pin is a string (an empty one blocks the .env and leaves the setting unset)");
 }
 
 async function main(): Promise<void> {
@@ -1832,6 +2154,15 @@ async function main(): Promise<void> {
   await testDroidGatewayModelAliases();
   await testDroidBuildRunEnvsReturnsUndefined();
   await testDroidSessionStateRoundTrip();
+  await testDshBuildCommand();
+  await testDshGatewayEnvsAndPatch();
+  await testDshExternalGatewayPatch();
+  await testDshDirectModePatch();
+  await testDshSessionStateRoundTrip();
+  await testZcodeReasoningLevels();
+  await testZcodePerRunProviderFileGateway();
+  await testZcodePerRunProviderFileEffort();
+  await testZcodeBuildCommand();
   console.log("\n============================================================");
   console.log(`Results: ${passed} passed, ${failed} failed`);
   console.log("============================================================");

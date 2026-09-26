@@ -93,7 +93,7 @@ export function buildHarnessCapabilitiesArtifact(): HarnessCapabilitiesArtifact 
   // Sorted so the artifact's bytes are stable regardless of registry entry order.
   for (const name of Object.keys(AGENT_REGISTRY).sort()) {
     const entry = AGENT_REGISTRY[name as keyof typeof AGENT_REGISTRY];
-    const vocabulary = harnessEffortVocabulary(entry.effortSupport);
+    const vocabulary = harnessEffortVocabulary(entry.effortSupport, entry.efforts);
     harnesses[name] = {
       defaultModel: entry.defaultModel,
       models: entry.models.map((model) => ({

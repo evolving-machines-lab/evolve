@@ -210,13 +210,14 @@ evolve = Evolve(
         },
         'user': 'root',                     # (optional) Run all commands and file ops as this user
         'homeDir': '/root',                 # (optional) Home dir for agent config paths
+        'homeOwner': 'root',                # (optional) Account the config files are written for
     },
 )
 ```
 
 **Network policy.** `'outbound': 'blocked'` denies all outbound traffic except `allowedDestinations` (hostnames, IPs, or CIDR ranges). Providers that cannot enforce a requested policy reject it with an error — a policy is never silently ignored.
 
-**User and home directory.** `user` runs every command and file operation as that user; providers that cannot enforce it reject it (E2B supports run-as-root). `homeDir` controls where agent config files (settings, session state, skills) are written. Defaults: `/root` when `user` is `'root'`, `/home/<user>` for other users, `/home/user` when no user is given. The default working directory follows as `<homeDir>/workspace`.
+**User and home directory.** `user` runs every command and file operation as that user; providers that cannot enforce it reject it (E2B supports run-as-root). `homeDir` controls where agent config files (settings, session state, skills) are written. The files the SDK writes there belong to whoever owns that directory, or to `homeOwner` when you name one (a user name, a uid, or `uid:gid`) — for a home the agent's account does not own. Defaults: `/root` when `user` is `'root'`, `/home/<user>` for other users, `/home/user` when no user is given. The default working directory follows as `<homeDir>/workspace`.
 
 Constraints:
 
@@ -264,7 +265,7 @@ evolve = Evolve(
 
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     config=AgentConfig(
-        type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' - defaults to 'claude'
+        type='codex',                        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'pi' | 'prime-agent' | 'dsh' | 'zcode' | 'antigravity' - defaults to 'claude'
         model='gpt-5.3-codex',               # (optional) Uses default if omitted. Use 'fable' for Claude Fable 5.1 or 'sonnet[1m]' / 'opus[1m]' for 1M context (Claude only)
         reasoning_effort='medium',           # (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve stamps its pinned per-harness default (see Getting Started → Agent Reference)
         # max_context_size=128000,           # (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
@@ -375,6 +376,7 @@ McpServerConfig = {
     'command': str, 'args': list, 'cwd': str,        # STDIO
     'url': str, 'headers': dict[str, str],           # HTTP/SSE
     'env': dict[str, str],                           # Common
+    'envVars': list[str],                            # Names of sandbox env vars the server reads by name (codex, prime-agent)
 }
 ```
 

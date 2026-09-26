@@ -2051,6 +2051,8 @@ export interface SandboxCreateOptions {
   user?: string;
   /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
   homeDir?: string;
+  /** Account the SDK hands its agent config files to; not consumed by the provider. */
+  homeOwner?: string;
 }
 
 /** Options for listing sandboxes */
@@ -2149,6 +2151,9 @@ export interface SandboxProvider {
 // CONFIGURATION
 // ============================================================
 
+/** Wraps the one request that creates a box, for the SDK to retry a door's 429/503 before any box exists. */
+export type CreateRequestRetry = <T>(send: () => Promise<T>) => Promise<T>;
+
 export interface DaytonaConfig {
   /** Daytona API key. Default: reads from DAYTONA_API_KEY env var */
   apiKey?: string;
@@ -2174,6 +2179,8 @@ export interface DaytonaConfig {
    * @internal
    */
   managedToolboxUrl?: string;
+  /** @internal Resolved by the Evolve SDK with managedToolboxUrl; unset means the create request is sent once. */
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 interface ResolvedDaytonaConfig {
@@ -2183,6 +2190,7 @@ interface ResolvedDaytonaConfig {
   defaultTimeoutMs?: number;
   snapshotName?: string;
   managedToolboxUrl?: string;
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 // ============================================================
@@ -2238,7 +2246,11 @@ function rewriteToolboxProxyUrls(payload: unknown, managedToolboxUrl: string): v
  * the DATA (any DTO carrying toolboxProxyUrl), not about which call returned
  * it.
  */
-function wrapManagedSandboxApi<T extends object>(api: T, managedToolboxUrl: string): T {
+function wrapManagedSandboxApi<T extends object>(
+  api: T,
+  managedToolboxUrl: string,
+  retryCreateRequest?: CreateRequestRetry,
+): T {
   return new Proxy(api, {
     get(target, prop, receiver) {
       if (prop === "getToolboxProxyUrl") {
@@ -2249,7 +2261,13 @@ function wrapManagedSandboxApi<T extends object>(api: T, managedToolboxUrl: stri
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== "function") return value;
       return function (this: unknown, ...args: unknown[]) {
-        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+        const send = () => (value as (...a: unknown[]) => unknown).apply(target, args);
+        // createSandbox is the one call the door may refuse before a box exists; a start poll or a
+        // toolbox call fails loudly instead, or a second box would be made while the first still bills.
+        const result =
+          prop === "createSandbox" && retryCreateRequest
+            ? retryCreateRequest(() => send() as Promise<unknown>)
+            : send();
         if (result instanceof Promise) {
           return result.then((response) => {
             rewriteToolboxProxyUrls((response as { data?: unknown } | undefined)?.data, managedToolboxUrl);
@@ -2266,13 +2284,14 @@ class ManagedDaytona extends Daytona {
   constructor(
     config: ConstructorParameters<typeof Daytona>[0],
     managedToolboxUrl: string,
+    retryCreateRequest?: CreateRequestRetry,
   ) {
     super(config);
     // `sandboxApi` is TypeScript-private but a plain runtime property, and it
     // is the single instance shared with every Sandbox the client hands out —
     // so wrapping it here covers create, get, list, refreshData and fork alike.
     const self = this as unknown as { sandboxApi: object };
-    self.sandboxApi = wrapManagedSandboxApi(self.sandboxApi, managedToolboxUrl);
+    self.sandboxApi = wrapManagedSandboxApi(self.sandboxApi, managedToolboxUrl, retryCreateRequest);
   }
 }
 
@@ -3347,8 +3366,12 @@ export class DaytonaProvider implements SandboxProvider {
       // is a Dashboard route handler, which can never terminate that socket.
       useDeprecatedPolling: true,
     };
+    if (config.retryCreateRequest && !config.managedToolboxUrl) {
+      // Provider law: the seam lives in the managed wrap, so without the door it would be silently ignored.
+      throw new Error("retryCreateRequest rides the managed door: set managedToolboxUrl with it.");
+    }
     this.client = config.managedToolboxUrl
-      ? new ManagedDaytona(clientConfig, config.managedToolboxUrl)
+      ? new ManagedDaytona(clientConfig, config.managedToolboxUrl, config.retryCreateRequest)
       : new Daytona(clientConfig);
     if (config.managedToolboxUrl) {
       this.managedStream = { toolboxUrl: config.managedToolboxUrl, apiKey: config.apiKey };

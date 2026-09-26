@@ -6,6 +6,7 @@
  */
 
 import type { AgentPreset, AgentType, ReasoningEffort, SkillsConfig } from "./types";
+import { shellSingleQuote } from "./utils/shell";
 import { DEFAULT_HOME_DIR } from "./constants";
 
 // =============================================================================
@@ -76,13 +77,16 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
  * takes there — pure data derivation from its effortSupport. The
  * harness-capabilities artifact generator and picker UIs share this.
  */
-export function harnessEffortVocabulary(support: EffortSupport): {
+export function harnessEffortVocabulary(
+  support: EffortSupport,
+  efforts?: readonly ReasoningEffort[],
+): {
   efforts: readonly ReasoningEffort[];
   defaultEffort: ReasoningEffort | null;
 } {
   if (support === "none") return { efforts: [], defaultEffort: null };
   return {
-    efforts: support === "binary" ? BINARY_EFFORT_VALUES : REASONING_EFFORTS,
+    efforts: efforts ?? (support === "binary" ? BINARY_EFFORT_VALUES : REASONING_EFFORTS),
     defaultEffort: DEFAULT_REASONING_EFFORT,
   };
 }
@@ -112,7 +116,7 @@ export interface McpConfigInfo {
   /** Config filename (e.g., "settings.json" or "config.toml") */
   filename: string;
   /** Config format */
-  format: "json" | "toml";
+  format: "json" | "toml" | "yaml";
   /** Whether to use workingDir for project-level config (Claude only) */
   projectConfig?: boolean;
 }
@@ -147,6 +151,8 @@ export interface BuildCommandOptions {
    * names belong to the caller's gateway, never to Evolve's alias maps).
    */
   isExternalGateway?: boolean;
+  /** Whether the run configured MCP servers (pi loads its adapter extension only then). */
+  mcpConfigured?: boolean;
   /** Skills enabled for this run */
   skills?: string[];
   /** Sandbox home directory (default: "/home/user") */
@@ -164,6 +170,9 @@ export interface AgentRegistryEntry {
    * advertises exactly the vocabulary the local SDK drives.
    */
   effortSupport: EffortSupport;
+
+  /** The subset of the level vocabulary this CLI can honor; absent = the whole vocabulary for its effortSupport. */
+  efforts?: readonly ReasoningEffort[];
 
   /** Environment variable name for API key */
   apiKeyEnv: string;
@@ -298,6 +307,37 @@ export interface AgentRegistryEntry {
     provider: "generic-chat-completion-api" | "openai" | "anthropic";
     maxOutputTokens?: number;
   };
+  /**
+   * The pi family's only route: a models.json provider entry written per run
+   * with the LITERAL base URL (pi never expands $VAR there), selected by --provider.
+   */
+  modelsJsonRoute?: {
+    /** The agent dir (~ expanded) that holds models.json. */
+    agentDir: string;
+    /** The provider name the command's --provider selects. */
+    providerName: string;
+    /** How the file names the key env: pi wants "$VAR" (docs/models.md), Prime Agent the bare "VAR". */
+    apiKeyRef: "dollar" | "bare";
+  };
+  /** Vendor defaults wrong for a metered run, deep-merged into the settings file at setup. */
+  settingsStamp?: { path: string; document: Record<string, unknown> };
+  /**
+   * Z Code's per-run provider file: the CLI's only source of model, level, base
+   * URL and key (no `--model` flag, no credential env; ZCode cli/src at v3.14.3).
+   */
+  zcodeProviderConfig?: {
+    path: string;
+    providerId: string;
+    providerName: string;
+    /** The window Z Code compacts at — the platform's one number, below every roster route's real ceiling. */
+    contextWindow: number;
+    /** Cap on `max_tokens` per request. */
+    maxOutputTokens: number;
+  };
+  /** Antigravity-only: the CLI's settings file, rewritten before every run (mcp/json.ts writeAntigravitySettings). */
+  antigravitySettings?: {
+    settingsPath: string;
+  };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -346,6 +386,19 @@ export interface AgentRegistryEntry {
   checkpointDirs?: string[];
   /** Additional relative paths to exclude from checkpoint tar. */
   checkpointExcludes?: string[];
+  /** The CLI exits 0 whatever happened: at exit 0 the last assistant message_end is the verdict (agent.ts). */
+  verdictFromStream?: true;
+  /** Where the SDK keeps the stream-captured session id for CLIs that resume by `--session-id` (droid, dsh). */
+  sessionIdStateFile?: string;
+  /** dsh only: the Evolve-owned `--patch` that routes the CLI (mcp/yaml.ts); it names env variables, never values. */
+  dshRoutePatch?: {
+    path: string;
+    /** The pi-ai provider route name the patch declares and the default model selects. */
+    providerName: string;
+    contextWindow: number;
+    /** The request's `max_tokens`. */
+    maxTokens: number;
+  };
 }
 
 /**
@@ -380,6 +433,146 @@ export function getOpenCodeReasoningVariant(reasoningEffort?: string): string | 
 function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   const variant = getOpenCodeReasoningVariant(reasoningEffort);
   return variant ? ` --variant ${variant} --thinking` : "";
+}
+
+/** The pi-ai levels dsh's patch declares and the SDK accepts — the three proven on the wire (owner ruling 2026-09-25). */
+export const DSH_REASONING_EFFORTS = ["low", "medium", "high"] as const satisfies readonly ReasoningEffort[];
+
+/** Typed refusal outside the roster: dsh sends the effort on every request, so an unlisted value would be recorded but never applied. */
+export function getDshReasoningEffort(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  if ((DSH_REASONING_EFFORTS as readonly string[]).includes(reasoningEffort)) return reasoningEffort;
+  throw new Error(
+    `Evolve agent config: agent "dsh" honors reasoning effort ${DSH_REASONING_EFFORTS.map((e) => `"${e}"`).join(", ")} only; ` +
+      `"${reasoningEffort}" is not one of them and would be recorded but never applied.`,
+  );
+}
+
+// =============================================================================
+// THE PI FAMILY (pi, Prime Agent): one models.json route, one thinking scale
+// =============================================================================
+
+/** The models.json provider name both CLIs' commands select (`--provider evolve`). */
+export const PI_FAMILY_PROVIDER = "evolve";
+
+/** Where pi-mcp-adapter's entry point is; a fleet default (the image's path below), never a user option. */
+export const PI_MCP_ADAPTER_EXTENSION_ENV = "PI_MCP_ADAPTER_EXTENSION";
+
+/** Where the evolve-all image installs pi-mcp-adapter (assets/docker/Dockerfile). */
+export const PI_MCP_ADAPTER_EXTENSION = "/opt/evolve/pi-mcp-adapter/node_modules/pi-mcp-adapter/index.ts";
+
+/** --thinking takes the SDK's graded words as they are; the binary spellings map onto the vendors' scale. */
+export function piThinkingLevel(reasoningEffort?: string): string | undefined {
+  if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "none" || reasoningEffort === "no-thinking") return "off";
+  if (reasoningEffort === "thinking") return "medium";
+  return reasoningEffort;
+}
+
+/**
+ * The wire model: the roster's `openrouter/<vendor>/<model>` rides verbatim to
+ * either gateway; OpenRouter itself (direct mode) wants the id without the prefix.
+ */
+export function piFamilyWireModel(
+  model: string,
+  mode: { isDirectMode?: boolean; isExternalGateway?: boolean },
+): string {
+  if (mode.isDirectMode && !mode.isExternalGateway && model.startsWith("openrouter/")) {
+    return model.slice("openrouter/".length);
+  }
+  return model;
+}
+
+/**
+ * The OpenRouter roster the OpenRouter-only harnesses share (opencode, pi,
+ * Prime Agent); alias == wire id, the gateway's `openrouter/*` wildcard serves each.
+ */
+const OPENROUTER_ROSTER: readonly ModelInfo[] = [
+  // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models, read 2026-09-15).
+  { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
+  // GPT-6 Astra under OpenRouter's id (read 2026-09-15, listed at OpenAI's own rate).
+  { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
+  { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
+  { alias: "openrouter/google/gemini-3.6-flash", modelId: "openrouter/google/gemini-3.6-flash", description: "Gemini 3.6 Flash via OpenRouter" },
+  { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
+  { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
+  { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
+  // Through the Evolve gateway this id reaches the platform's one GLM-5.3-Flash, served from Fireworks (ruling 2026-09-08).
+  { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)" },
+  // The analyzer's default (owner 2026-09-10), priced from OpenRouter's own bill.
+  { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+];
+
+/** The levels the provider file declares for the Evolve model entry; `disabled` sends no reasoning field. */
+export const ZCODE_REASONING_LEVELS = ["disabled", "low", "medium", "high"] as const;
+export type ZcodeReasoningLevel = (typeof ZCODE_REASONING_LEVELS)[number];
+
+/** The platform effort collapsed onto Z Code's four levels (the opencode precedent); an omitted effort is the roster pin. */
+export function zcodeReasoningLevel(reasoningEffort?: string): ZcodeReasoningLevel {
+  const effort = reasoningEffort ?? AGENT_REGISTRY.zcode.defaultReasoningEffort;
+  if (!isThinkingEnabled(effort)) return "disabled";
+  if (effort === "low") return "low";
+  if (effort === "medium" || effort === "thinking") return "medium";
+  return "high";
+}
+
+/**
+ * The ZCODE_* variables a task's `.env` could move or re-route (the CLI auto-loads one from the
+ * cwd upward, override:false): a value on the command wins, an empty one leaves the setting unset.
+ * The built-in catalog path is pinned by the image and the bundle instead (empty aborts the CLI).
+ */
+export function zcodeEnvPins(homeDir: string): Record<string, string> {
+  return {
+    ZCODE_STORAGE_DIR: `${homeDir}/.zcode`,
+    ZCODE_DATA_BASE_DIR: homeDir,
+    ZCODE_SESSION_DB_PATH: `${homeDir}/.zcode/cli/db/db.sqlite`,
+    // The CLI's alias of SESSION_DB_PATH; unpinned, a later-enumerated .env key would win.
+    ZCODE_SESSION_DB: `${homeDir}/.zcode/cli/db/db.sqlite`,
+    ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: `${homeDir}/.zcode/v2/provider_config.json`,
+    ZCODE_HTTP_PROXY: "",
+    ZCODE_NO_PROXY: "",
+    ZCODE_AGENT_CA_CERT: "",
+    ZCODE_MODEL_TELEMETRY_ENABLED: "0",
+  };
+}
+
+/**
+ * agy's `--effort` word: low|medium|high|max (`agy --help`, 1.2.11), no off switch — off/minimal → low, xhigh → max,
+ * thinking → medium; a word outside Evolve's vocabulary rides verbatim so the CLI refuses it loudly (exit 2).
+ */
+export function antigravityEffort(reasoningEffort: string): string {
+  switch (reasoningEffort) {
+    case "off":
+    case "none":
+    case "no-thinking":
+    case "minimal":
+    case "low":
+      return "low";
+    case "medium":
+    case "thinking":
+      return "medium";
+    case "high":
+      return "high";
+    case "xhigh":
+    case "max":
+      return "max";
+    default:
+      return reasoningEffort;
+  }
+}
+
+/**
+ * The `--model` slug: a roster alias becomes its wire id on an external gateway (the SDK's own gateway already applied
+ * gatewayModelAliases; direct mode keeps the bare name). One function, so settings.json and the command never differ.
+ */
+export function antigravityModelSlug(model: string, mode: { isExternalGateway?: boolean }): string {
+  if (mode.isExternalGateway) return registryWireId(AGENT_REGISTRY.antigravity, model);
+  return model;
 }
 
 // =============================================================================
@@ -776,37 +969,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     },
     gatewayConfigEnv: "OPENCODE_CONFIG_CONTENT",
     models: [
-      // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models,
-      // read 2026-09-15: anthropic/claude-fable-5.1).
-      { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
-      { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
-      // GPT-6 Astra under OpenRouter's id (openrouter.ai/api/v1/models, read
-      // 2026-09-15: openai/gpt-6-astra, listed at OpenAI's own rate).
-      { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
-      { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
-      { alias: "openrouter/google/gemini-3.6-flash", modelId: "openrouter/google/gemini-3.6-flash", description: "Gemini 3.6 Flash via OpenRouter" },
-      { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
-      { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
-      { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
-      // The OpenRouter spelling is the only one this harness can carry: its
-      // roster speaks OpenRouter ids and buildCommand below prefixes
-      // `openrouter/` onto any bare name (direct mode sends the id to
-      // OpenRouter itself). Through the Evolve gateway the name reaches the
-      // platform's one GLM-5.3-Flash, served from Fireworks (the ruling
-      // 2026-09-08), exactly like the bare `glm-5.3-flash` elsewhere.
-      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)" },
-      // DeepSeek V4.1 Flash under its OpenRouter id (the owner's ruling
-      // 2026-09-10; the analyzer's default), which is this harness's native
-      // OpenRouter form: direct mode sends the id to OpenRouter itself;
-      // through the Evolve gateway the litellm provider carries it verbatim
-      // (agent.ts buildGatewayConfigJson keys the model by this id,
-      // buildCommand sends `litellm/openrouter/...`) onto the gateway's
-      // exact entry for it, priced from OpenRouter's own bill.
-      { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      ...OPENROUTER_ROSTER,
       // The same model on its second route, Fireworks (owner 2026-09-11: a
       // further option). Gateway-only: a roster id rides the command line
       // verbatim (opencodeRoutedModel below), so buildCommand sends
@@ -930,6 +1093,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     checkpointDirs: [
       "~/.factory",
     ],
+    // Droid resumes by the id its stream announced; the SDK keeps it here
+    // between runs (agent.ts captureHarnessSessionId).
+    sessionIdStateFile: "~/.factory/evolve-session.json",
     buildCommand: ({ prompt, model, isResume, sessionId, reasoningEffort, isDirectMode, isExternalGateway, homeDir = DEFAULT_HOME_DIR }) => {
       // Gateway AND external-gateway modes route through the Evolve-owned
       // settings file (custom model at the gateway); only plain direct mode
@@ -940,6 +1106,288 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd ${homeDir}/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
+    },
+  },
+
+  pi: {
+    image: "evolve-all",
+    // OpenRouter-only, like opencode (owner 2026-09-25); models.json names this var.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/anthropic/claude-opus-5",
+    // pi's own default is medium; owner policy pins graded harnesses at high.
+    defaultReasoningEffort: "high",
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    models: [...OPENROUTER_ROSTER],
+    // pi reads AGENTS.md (and CLAUDE.md) from the cwd (core/resource-loader.ts).
+    systemPromptFile: "AGENTS.md",
+    // pi's core has no MCP: the pi-mcp-adapter extension reads this file.
+    mcpConfig: {
+      settingsDir: "~/.pi/agent",
+      filename: "mcp.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.pi/agent/skills",
+    },
+    modelsJsonRoute: { agentDir: "~/.pi/agent", providerName: PI_FAMILY_PROVIDER, apiKeyRef: "dollar" },
+    verdictFromStream: true,
+    // pi's default cache warming issues extra requests that show up as usage.
+    settingsStamp: {
+      path: "~/.pi/agent/settings.json",
+      document: { cacheWarming: "off", enableInstallTelemetry: false },
+    },
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isDirectMode, isExternalGateway, mcpConfigured, homeDir = DEFAULT_HOME_DIR }) => {
+      const agentDir = `${homeDir}/.pi/agent`;
+      const continueFlag = isResume ? "--continue " : "";
+      const level = piThinkingLevel(reasoningEffort);
+      const thinkingFlag = level ? ` --thinking ${level}` : "";
+      const wireModel = piFamilyWireModel(model, { isDirectMode, isExternalGateway });
+      // The adapter loads only when MCP servers were configured; a run without them never pays its startup.
+      const adapterFlag = mcpConfigured ? ` --extension "\${${PI_MCP_ADAPTER_EXTENSION_ENV}:-${PI_MCP_ADAPTER_EXTENSION}}"` : "";
+      // --approve: project resources and skills load only with trust granted, and JSON mode cannot ask.
+      // --session-dir: one flat dir (the default nests per cwd). The PI_* vars stop every pi.dev call.
+      return `PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 pi --mode json --approve ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} --session-dir ${agentDir}/sessions${adapterFlag} -- "${prompt}" </dev/null`;
+    },
+  },
+
+  "prime-agent": {
+    image: "evolve-all",
+    // OpenRouter-only (owner 2026-09-25); models.json names this var, bare (Prime's spelling).
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/anthropic/claude-opus-5",
+    // Prime's own default is medium; owner policy pins graded harnesses at high.
+    defaultReasoningEffort: "high",
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    models: [...OPENROUTER_ROSTER],
+    systemPromptFile: "AGENTS.md",
+    // Prime reads MCP servers from the GLOBAL settings.json only (project-level maps are ignored).
+    mcpConfig: {
+      settingsDir: "~/.prime/agent",
+      filename: "settings.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.prime/agent/skills",
+    },
+    modelsJsonRoute: { agentDir: "~/.prime/agent", providerName: PI_FAMILY_PROVIDER, apiKeyRef: "bare" },
+    verdictFromStream: true,
+    // Prime's waitForUsage parks a 429'd session until the provider's reset; a metered run's clock is the only budget.
+    settingsStamp: {
+      path: "~/.prime/agent/settings.json",
+      document: { retry: { provider: { waitForUsage: { enabled: false, pauseUntilReset: false } } } },
+    },
+    // The Python kernel venv (~214 MB, a reproducible install) never rides a checkpoint.
+    checkpointExcludes: [
+      ".prime/agent/kernel-venv",
+    ],
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isDirectMode, isExternalGateway }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      const level = piThinkingLevel(reasoningEffort);
+      const thinkingFlag = level ? ` --thinking ${level}` : "";
+      const wireModel = piFamilyWireModel(model, { isDirectMode, isExternalGateway });
+      // --cwd "$PWD": a daemon-side worker runs the session, so the spawn cwd travels explicitly.
+      // TMPDIR: the daemon socket lives under it (108-byte socket path limit). Exit 0 is no verdict (verdictFromStream).
+      return `PRIME_AGENT_TELEMETRY=0 TMPDIR=/tmp prime-agent --mode json --offline --cwd "$PWD" ${continueFlag}--provider ${PI_FAMILY_PROVIDER} --model ${wireModel}${thinkingFlag} -- "${prompt}" </dev/null`;
+    },
+  },
+  // dsh: routing rides an Evolve-owned --patch file (dshRoutePatch), never flags.
+  dsh: {
+    image: "evolve-all",
+    // The patch's apiKeyEnv names this env; never DEEPSEEK_API_KEY, which
+    // dsh's web_search would send to DeepSeek's own search API.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    efforts: DSH_REASONING_EFFORTS,
+    // Read by the patch as `!!js process.env.EVOLVE_DSH_BASE_URL`; every mode sets it ending in /v1.
+    baseUrlEnv: "EVOLVE_DSH_BASE_URL",
+    defaultModel: "openrouter/deepseek/deepseek-v4.1-flash",
+    // DeepSeek's documented default; owner policy pins graded harnesses high.
+    defaultReasoningEffort: "high",
+    // Direct mode is OpenRouter-only, like opencode; the fireworks/ names are gateway routes.
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    // Owner decision 2026-09-25: V4.1 Flash and V4 Pro on both
+    // routes; alias == wire id, the gateway's exact entry for each name.
+    models: [
+      { alias: "openrouter/deepseek/deepseek-v4.1-flash", modelId: "openrouter/deepseek/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via OpenRouter" },
+      { alias: "fireworks/deepseek-v4.1-flash", modelId: "fireworks/deepseek-v4.1-flash", description: "DeepSeek V4.1 Flash via Fireworks" },
+      { alias: "openrouter/deepseek/deepseek-v4-pro-0813", modelId: "openrouter/deepseek/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via OpenRouter" },
+      { alias: "fireworks/deepseek-v4-pro-0813", modelId: "fireworks/deepseek-v4-pro-0813", description: "DeepSeek V4 Pro via Fireworks" },
+    ],
+    // AGENTS.md then CLAUDE.md from the project root down to cwd.
+    systemPromptFile: "AGENTS.md",
+    // MCP rows are a second patch file (mcp/yaml.ts); dsh reads no .mcp.json.
+    mcpConfig: {
+      settingsDir: "~/.dsh",
+      filename: "evolve-mcp.patch.yml",
+      format: "yaml",
+    },
+    // $DSH_HOME/skills, inside the captured home.
+    skillsConfig: {
+      targetDir: "~/.dsh/skills",
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    // OpenRouter itself knows the id without the gateway's openrouter/ route prefix.
+    directModelAliases: {
+      "openrouter/deepseek/deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+      "openrouter/deepseek/deepseek-v4-pro-0813": "deepseek/deepseek-v4-pro-0813",
+    },
+    // The patch's `headers` map reads these per request, so the file stays static per session.
+    spendTrackingEnvs: {
+      sessionTagEnv: "EVOLVE_LITELLM_CUSTOMER_ID",
+      runTagEnv: "EVOLVE_LITELLM_TAGS",
+    },
+    dshRoutePatch: {
+      path: "~/.dsh/evolve-route.patch.yml",
+      providerName: "evolve",
+      // The window every live run used; maxTokens is the request's max_tokens.
+      contextWindow: 128000,
+      maxTokens: 32000,
+    },
+    // dsh resumes only by `--session-id <id>` from its opening `session` line.
+    sessionIdStateFile: "~/.dsh/evolve-session.json",
+    buildCommand: ({ prompt, isResume, sessionId, homeDir = DEFAULT_HOME_DIR }) => {
+      const dshHome = `${homeDir}/.dsh`;
+      const routePatch = `${dshHome}/evolve-route.patch.yml`;
+      const mcpPatch = `${dshHome}/evolve-mcp.patch.yml`;
+      const mcpFlag = `$(if [ -f ${mcpPatch} ]; then printf ' --patch ${mcpPatch}'; fi)`;
+      const resumeFlag = isResume && sessionId ? ` --session-id ${shellSingleQuote(sessionId)}` : "";
+      // No permission flag exists: the env unconfines the sandbox and never asks.
+      return `DSH_HOME=${dshHome} DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1 dsh --profile headless --patch ${routePatch}${mcpFlag} --json${resumeFlag} -- "${prompt}"`;
+    },
+  },
+
+  zcode: {
+    image: "evolve-all",
+    // The SDK's direct-mode input; the CLI reads its key and URL from the provider file, never env.
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    effortSupport: "level",
+    defaultModel: "openrouter/z-ai/glm-5.3",
+    // Owner policy: graded-effort harnesses pin high; the pin lands in the provider file every run.
+    defaultReasoningEffort: "high",
+    // Direct mode is OpenRouter only; the fireworks/ routes are refused typed there (utils/config.ts).
+    providerEnvMap: {
+      openrouter: { keyEnv: "OPENROUTER_API_KEY" },
+    },
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    // Owner decision 2026-09-25: GLM 5.3 and GLM 5.3 Flash under route-spelled names; alias == wire id.
+    models: [
+      { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
+      { alias: "openrouter/z-ai/glm-5.3-flash", modelId: "openrouter/z-ai/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via OpenRouter" },
+      { alias: "fireworks/glm-5.3", modelId: "fireworks/glm-5.3", description: "Zhipu GLM-5.3 via Fireworks" },
+      { alias: "fireworks/glm-5.3-flash", modelId: "fireworks/glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via Fireworks" },
+    ],
+    // Z Code reads AGENTS.md from the cwd upward (never CLAUDE.md).
+    systemPromptFile: "AGENTS.md",
+    // User-level MCP file; every server carries an explicit `type` (the schema drops one without).
+    mcpConfig: {
+      settingsDir: "~/.zcode/cli",
+      filename: "config.json",
+      format: "json",
+    },
+    skillsConfig: {
+      targetDir: "~/.zcode/skills",
+    },
+    // Direct mode sends OpenRouter its own ids; the fireworks rows have no direct-mode home.
+    directModelAliases: {
+      "openrouter/z-ai/glm-5.3": "z-ai/glm-5.3",
+      "openrouter/z-ai/glm-5.3-flash": "z-ai/glm-5.3-flash",
+    },
+    zcodeProviderConfig: {
+      path: "~/.zcode/v2/provider_config.json",
+      providerId: "evolve",
+      providerName: "Evolve gateway",
+      // Every GLM route's real window is above this; Z Code compacts here.
+      contextWindow: PINNED_CONTEXT_WINDOW_TOKENS,
+      maxOutputTokens: 32768,
+    },
+    // The whole ~/.zcode home rides the checkpoint; the provider file (literal key) and two caches never do.
+    checkpointDirs: [
+      "~/.zcode",
+    ],
+    checkpointExcludes: [
+      ".zcode/v2/provider_config.json",
+      ".zcode/cli/plugins/cache",
+      ".zcode/v2/runtime",
+    ],
+    // Exit 0 is no verdict: turn.failed and a non-success turn.completed are fatal errors (verdictFromStream).
+    verdictFromStream: true,
+    // `-p` is headless (yolo, no TTY); the model comes from the provider file. Every ZCODE_* a
+    // task's `.env` could move or re-route is pinned on the command (zcodeEnvPins).
+    buildCommand: ({ prompt, isResume, homeDir = DEFAULT_HOME_DIR }) => {
+      const continueFlag = isResume ? "--continue " : "";
+      const pins = Object.entries(zcodeEnvPins(homeDir))
+        .map(([name, value]) => `${name}=${shellSingleQuote(value)}`)
+        .join(" ");
+      return `${pins} zcode -p "${prompt}" ${continueFlag}--output-format stream-json`;
+    },
+  },
+
+  antigravity: {
+    image: "evolve-all",
+    // Closed source (agy 1.2.11). The one headless auth path is the Gemini API key (GOOGLE_API_KEY is ignored) with
+    // modelProvider "gemini" in its settings and GOOGLE_GEMINI_BASE_URL as the documented endpoint override (docs/cli/install).
+    apiKeyEnv: "GEMINI_API_KEY",
+    effortSupport: "level",
+    baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
+    // No gatewayPath: the gateway ROOT, not the /gemini passthrough (owner 2026-09-25: Vertex AI). LiteLLM's root Gemini
+    // endpoint resolves `vertex_ai/<model>` against the model list; under /gemini the same slug is a 404 (live-proven).
+    defaultModel: "gemini-3.8-flash",
+    // Graded-effort harnesses pin "high" (owner policy); --effort is stamped per run, never baked into the slug.
+    defaultReasoningEffort: "high",
+    // Roster (owner 2026-09-25): the latest Flash, Flash-Lite and Pro, Google models only. Alias = the bare name direct
+    // mode sends; wire id = the gateway's Vertex route, which the CLI names once registered (measured live 2026-09-25).
+    models: [
+      { alias: "gemini-3.8-flash", modelId: "vertex_ai/gemini-3.8-flash", description: "Latest Flash on Vertex AI: coding + agentic planning" },
+      { alias: "gemini-3.5-flash-lite", modelId: "vertex_ai/gemini-3.5-flash-lite", description: "Latest Flash-Lite on Vertex AI: most cost-effective" },
+      { alias: "gemini-3.1-pro-preview", modelId: "vertex_ai/gemini-3.1-pro-preview", description: "Latest Pro on Vertex AI: complex agentic + coding" },
+    ],
+    // The CLI reads AGENTS.md or GEMINI.md from the workspace root (docs/rules); AGENTS.md is the cross-vendor name.
+    systemPromptFile: "AGENTS.md",
+    // The file `agy mcp add` writes (vendor docs, confirmed live 2026-09-25).
+    mcpConfig: {
+      settingsDir: "~/.gemini/config",
+      filename: "mcp_config.json",
+      format: "json",
+    },
+    // The shared dir every Antigravity product reads; antigravity-cli/skills is a symlink onto it (measured live 2026-09-25).
+    skillsConfig: {
+      targetDir: "~/.gemini/config/skills",
+    },
+    antigravitySettings: {
+      settingsPath: "~/.gemini/antigravity-cli/settings.json",
+    },
+    gatewayModelAliases: {
+      "gemini-3.8-flash": "vertex_ai/gemini-3.8-flash",
+      "gemini-3.5-flash-lite": "vertex_ai/gemini-3.5-flash-lite",
+      "gemini-3.1-pro-preview": "vertex_ai/gemini-3.1-pro-preview",
+    },
+    // No spend-tracking path (the CLI sends no custom headers, probed live 2026-09-25): attribution is per session; its
+    // hidden title call is not routed and fails harmlessly (measured live 2026-09-25). ~/.gemini whole is the state minus the CLI's own installs and caches.
+    checkpointDirs: ["~/.gemini"],
+    checkpointExcludes: [
+      ".gemini/antigravity-cli/bin",
+      ".gemini/antigravity-cli/builtin",
+      ".gemini/antigravity-cli/cache",
+    ],
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isExternalGateway }) => {
+      // `--continue` resumes the most recent conversation in this home — the
+      // one the previous run left, since a sandbox home holds no other.
+      const continueFlag = isResume ? "--continue " : "";
+      const effortFlag = reasoningEffort ? ` --effort ${antigravityEffort(reasoningEffort)}` : "";
+      const slug = antigravityModelSlug(model, { isExternalGateway });
+      // Harbor's headless shape (antigravity_cli.py:1528-1558): --add-dir (else bare-filename files land in the CLI's scratch
+      // dir), </dev/null (agy waits for EOF on an open stdin), no --print-timeout (the SDK's run clock bounds), prompt raw.
+      return `antigravity ${continueFlag}--prompt ${shellSingleQuote(prompt)} --model ${shellSingleQuote(slug)}${effortFlag} --dangerously-skip-permissions --output-format stream-json --add-dir "$PWD" < /dev/null`;
     },
   },
 };
@@ -1019,10 +1467,6 @@ export function isValidAgentType(type: string): type is AgentType {
  */
 export function expandPath(path: string, homeDir: string = DEFAULT_HOME_DIR): string {
   return path.replace(/^~/, homeDir);
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**

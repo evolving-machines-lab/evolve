@@ -245,6 +245,12 @@ export interface SandboxCreateOptions {
    * "/home/user" when no user is given.
    */
   homeDir?: string;
+  /**
+   * The account the agent config files are written for — a user name, a uid,
+   * or uid:gid — when it is not the owner of homeDir. Default: whoever owns
+   * homeDir. The files the SDK writes there are handed to this account.
+   */
+  homeOwner?: string;
 }
 
 /** Options for listing sandboxes (capability: SandboxProvider.list). */
@@ -563,7 +569,19 @@ export interface SandboxProvider {
 // =============================================================================
 
 /** Supported agent types (headless CLI agents only, no ACP) */
-export type AgentType = "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
+export type AgentType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "qwen"
+  | "kimi"
+  | "opencode"
+  | "droid"
+  | "pi"
+  | "prime-agent"
+  | "dsh"
+  | "zcode"
+  | "antigravity";
 
 /** Agent type constants for use in code */
 export const AGENT_TYPES = {
@@ -574,6 +592,11 @@ export const AGENT_TYPES = {
   KIMI: "kimi",
   OPENCODE: "opencode",
   DROID: "droid",
+  PI: "pi",
+  PRIME_AGENT: "prime-agent",
+  DSH: "dsh",
+  ZCODE: "zcode",
+  ANTIGRAVITY: "antigravity",
 } as const;
 
 // =============================================================================
