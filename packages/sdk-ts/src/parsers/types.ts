@@ -18,6 +18,7 @@
  * plan                 → TodoWrite updates
  * error                → A failure the harness reported (never work)
  * usage                → Token accounting the harness reported (never work)
+ * unknown              → A wire line of a kind the parser does not know (never work)
  * ```
  *
  * @example UI Integration
@@ -164,7 +165,30 @@ export type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | UnknownUpdate;
+
+/**
+ * A wire line the parser recognised as the harness's own but could not place
+ * in the vocabulary above — NOT work, NOT a failure.
+ *
+ * DELIBERATE EXTENSION BEYOND ACP, for closed-source and unversioned streams
+ * (the antigravity CLI publishes no schema; its live stream carried three
+ * step types the docs never named). Dropping such a line would hide that the
+ * harness said something; folding it into agent text would count it as work.
+ * So it is passed through under the harness's own name for it, with the wire
+ * object verbatim, and every consumer that switches on `sessionUpdate` keeps
+ * its default branch for it (the trajectory builder counts it as an unparsed
+ * line). Excluded from isAgentWorkUpdate: a run made only of lines nobody
+ * understands did not demonstrably do anything.
+ */
+export interface UnknownUpdate {
+  sessionUpdate: "unknown";
+  /** What the harness called the line: its event or step type name, verbatim. */
+  kind: string;
+  /** The wire object, verbatim. */
+  raw: unknown;
+}
 
 /**
  * Token accounting as the harness reported it on one wire line.
@@ -254,17 +278,23 @@ export interface AgentError {
  * cannot drift between callers.
  */
 export function isAgentWorkUpdate(update: { sessionUpdate?: unknown } | null | undefined): boolean {
-  return !!update && update.sessionUpdate !== "error" && update.sessionUpdate !== "usage";
+  return (
+    !!update &&
+    update.sessionUpdate !== "error" &&
+    update.sessionUpdate !== "usage" &&
+    update.sessionUpdate !== "unknown"
+  );
 }
 
 /**
  * The harness's failure text for an AgentError.message, in ITS OWN WORDS.
  *
- * The seven harnesses put that text in seven different places — codex in
+ * The eight harnesses put that text in eight different places — codex in
  * `message`, gemini in `error.message`, opencode in `error.data.message` (and
  * in `error.name` when data is empty), claude in an `errors: string[]`, droid
- * in `message`, kimi in `error_message`, qwen in `error.message` — so each
- * parser passes its own fields, in its own preference order, as `candidates`.
+ * in `message`, kimi in `error_message`, qwen in `error.message`, antigravity
+ * in `result.error` — so each parser passes its own fields, in its own
+ * preference order, as `candidates`.
  *
  * THE ONE RULE THIS HOLDS FOR ALL OF THEM: the result is never empty. A
  * failure that arrives with no text would render as an event that says

@@ -97,6 +97,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
   assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "high", "opencode pin is high variant");
   assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
+  assertEqual(AGENT_REGISTRY.antigravity.defaultReasoningEffort, "high", "antigravity pin is high (owner policy: graded harnesses run high)");
   assertEqual(AGENT_REGISTRY.gemini.defaultReasoningEffort, undefined, "gemini has no effort control, no pin");
 
   // Resolution: caller's value wins, pin fills omission.
@@ -112,6 +113,15 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   const droidAgent = new Agent({ type: "droid", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
   const droidCmd = (droidAgent as any).buildCommand("hello") as string;
   assert(droidCmd.includes("--reasoning-effort high"), "droid omitted effort stamps high on the command");
+
+  // antigravity: omitted effort stamps --effort high; the gateway-mode model
+  // is the Vertex route spelling of the default alias.
+  const agyAgent = new Agent({ type: "antigravity", apiKey: "test-gateway-key", isDirectMode: false } as any, {});
+  const agyCmd = (agyAgent as any).buildCommand("hello") as string;
+  assert(agyCmd.includes("--effort high"), "antigravity omitted effort stamps high on the command");
+  assert(agyCmd.includes("--model 'vertex_ai/gemini-3.8-flash'"), "antigravity gateway mode names the default model's Vertex route");
+  const agyMax = new Agent({ type: "antigravity", apiKey: "test-gateway-key", isDirectMode: false, reasoningEffort: "xhigh" } as any, {});
+  assert(((agyMax as any).buildCommand("hello") as string).includes("--effort max"), "antigravity maps xhigh onto the CLI's max");
 
   // kimi: omitted effort stamps max thinking in the KIMI_MODEL_* envs
   // (direct wiring path; the config.toml path resolves through the same

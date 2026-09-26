@@ -88,7 +88,8 @@ type RuntimeProvider =
   | "dashscope"
   | "kimi"
   | "openrouter"
-  | "droid";
+  | "droid"
+  | "antigravity";
 
 function runtimeTokenResponse(provider: RuntimeProvider = "anthropic") {
   const openAiCompatible = new Set<RuntimeProvider>([
@@ -1963,14 +1964,25 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
     agentType: string;
     provider: RuntimeProvider;
     tokenMustBeInSandboxConfig: boolean;
+    /**
+     * Whether the SDK can hand the CLI the runtime BINDING secret (the door's
+     * second, header-borne secret). Every CLI with a custom-header or
+     * config-file channel carries it; the antigravity CLI has neither (no
+     * header reaches its requests — four candidates probed live 2026-09-25),
+     * so the door exempts that one provider from the binding requirement,
+     * as it already does for every trial box (verify.ts header), and the SDK
+     * deliberately delivers nothing.
+     */
+    carriesBinding: boolean;
   }> = [
-    { agentType: "claude", provider: "anthropic", tokenMustBeInSandboxConfig: true },
-    { agentType: "codex", provider: "openai", tokenMustBeInSandboxConfig: true },
-    { agentType: "gemini", provider: "gemini", tokenMustBeInSandboxConfig: true },
-    { agentType: "qwen", provider: "dashscope", tokenMustBeInSandboxConfig: true },
-    { agentType: "kimi", provider: "kimi", tokenMustBeInSandboxConfig: true },
-    { agentType: "opencode", provider: "openrouter", tokenMustBeInSandboxConfig: true },
-    { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true },
+    { agentType: "claude", provider: "anthropic", tokenMustBeInSandboxConfig: true, carriesBinding: true },
+    { agentType: "codex", provider: "openai", tokenMustBeInSandboxConfig: true, carriesBinding: true },
+    { agentType: "gemini", provider: "gemini", tokenMustBeInSandboxConfig: true, carriesBinding: true },
+    { agentType: "qwen", provider: "dashscope", tokenMustBeInSandboxConfig: true, carriesBinding: true },
+    { agentType: "kimi", provider: "kimi", tokenMustBeInSandboxConfig: true, carriesBinding: true },
+    { agentType: "opencode", provider: "openrouter", tokenMustBeInSandboxConfig: true, carriesBinding: true },
+    { agentType: "droid", provider: "droid", tokenMustBeInSandboxConfig: true, carriesBinding: true },
+    { agentType: "antigravity", provider: "antigravity", tokenMustBeInSandboxConfig: true, carriesBinding: false },
   ];
 
   try {
@@ -2027,8 +2039,10 @@ async function testManagedGatewayAgentsUseRuntimeProxyLifecycle(): Promise<void>
         `${item.agentType} sandbox config does not contain raw Evolve API key`,
       );
       assert(
-        sandboxConfig.includes(expectedBinding),
-        `${item.agentType} sandbox config includes runtime binding secret`,
+        sandboxConfig.includes(expectedBinding) === item.carriesBinding,
+        item.carriesBinding
+          ? `${item.agentType} sandbox config includes runtime binding secret`
+          : `${item.agentType} sandbox config carries NO binding secret — the CLI has no header channel for it`,
       );
       if (item.tokenMustBeInSandboxConfig) {
         assert(
@@ -2748,7 +2762,7 @@ async function testExternalGatewayMutualExclusivity(): Promise<void> {
 }
 
 async function testExternalGatewayPerHarnessWiring(): Promise<void> {
-  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid)");
+  console.log("\n[22] externalGateway wiring per harness (gemini/qwen/kimi/opencode/droid/antigravity)");
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     throw new Error(`unexpected fetch in externalGateway mode: ${String(input)}`);
@@ -2932,6 +2946,46 @@ async function testExternalGatewayPerHarnessWiring(): Promise<void> {
       (directCommands.spawned[0] ?? "").includes("--model 'claude-fable-5.1'"),
       "droid direct mode passes Factory's dot id to --model verbatim",
     );
+
+    // antigravity: gemini's env pair on the gateway ROOT (the caller's base
+    // URL verbatim — no /gemini suffix, the Vertex route lives at the root),
+    // the auto-updater off at boot and per spawn, and the CLI's own settings
+    // file written with API-key auth, telemetry off and the ROSTER WIRE ID
+    // registered — the slug the command then names, so `--model` accepts it.
+    const agy = await runHarness("antigravity", "gemini-3.8-flash");
+    assertEqual(agy.bootEnvs.GEMINI_API_KEY, EXTERNAL_KEY, "antigravity boot env injects GEMINI_API_KEY");
+    assertEqual(agy.bootEnvs.GOOGLE_GEMINI_BASE_URL, EXTERNAL_URL, "antigravity boot env injects GOOGLE_GEMINI_BASE_URL VERBATIM (gateway root)");
+    assertEqual(agy.spawnEnvs.GEMINI_API_KEY, EXTERNAL_KEY, "antigravity spawn env re-injects GEMINI_API_KEY");
+    assertEqual(agy.spawnEnvs.GOOGLE_GEMINI_BASE_URL, EXTERNAL_URL, "antigravity spawn env re-injects GOOGLE_GEMINI_BASE_URL");
+    assertEqual(agy.bootEnvs.AGY_CLI_DISABLE_AUTO_UPDATE, "true", "antigravity boot env disables the background auto-updater");
+    assertEqual(agy.spawnEnvs.AGY_CLI_DISABLE_AUTO_UPDATE, "true", "antigravity spawn env re-disables the auto-updater");
+    assert(!("EVOLVE_API_KEY" in agy.bootEnvs), "antigravity externalGateway never exposes EVOLVE_API_KEY");
+    assert(!("GEMINI_DEFAULT_AUTH_TYPE" in agy.bootEnvs) && !("GEMINI_CLI_TRUST_WORKSPACE" in agy.bootEnvs), "antigravity carries none of gemini-cli's own env switches");
+    const agySettingsRaw = agy.files.get("/home/user/.gemini/antigravity-cli/settings.json") ?? "";
+    assert(agySettingsRaw.length > 0, "antigravity externalGateway writes ~/.gemini/antigravity-cli/settings.json");
+    const agySettings = JSON.parse(agySettingsRaw) as {
+      modelProvider?: string;
+      telemetryEnabled?: boolean;
+      allowNonWorkspaceAccess?: boolean;
+      customModelsConfig?: { customModels?: Record<string, { modelName?: string }> };
+    };
+    assertEqual(agySettings.modelProvider, "gemini", "antigravity settings select the API-key auth path");
+    assertEqual(agySettings.telemetryEnabled, false, "antigravity settings turn telemetry off");
+    assertEqual(agySettings.allowNonWorkspaceAccess, true, "antigravity settings allow non-workspace paths");
+    assertEqual(
+      agySettings.customModelsConfig?.customModels?.["vertex_ai/gemini-3.8-flash"]?.modelName,
+      "vertex_ai/gemini-3.8-flash",
+      "antigravity externalGateway registers the roster WIRE ID (the gateway root's Vertex route) for the alias",
+    );
+    assert(agy.command.includes("--model 'vertex_ai/gemini-3.8-flash'"), "antigravity command names the same wire id it registered");
+    assert(agy.command.includes("--effort high"), "antigravity command stamps the pinned effort");
+    assert(agy.command.includes("--dangerously-skip-permissions --output-format stream-json --add-dir \"$PWD\" < /dev/null"), "antigravity command runs headless in the task workspace with stdin closed");
+    const agyVerbatim = await runHarness("antigravity", "gw-agy-model");
+    assert(agyVerbatim.command.includes("--model 'gw-agy-model'"), "antigravity externalGateway sends a non-roster caller model VERBATIM");
+    const agyVerbatimSettings = JSON.parse(agyVerbatim.files.get("/home/user/.gemini/antigravity-cli/settings.json") ?? "{}") as {
+      customModelsConfig?: { customModels?: Record<string, unknown> };
+    };
+    assert("gw-agy-model" in (agyVerbatimSettings.customModelsConfig?.customModels ?? {}), "antigravity registers the verbatim caller model too");
     assert(
       !directSandbox.files.writes.has("/home/user/.factory/evolve-settings.json"),
       "droid direct mode writes no Evolve-owned settings file",

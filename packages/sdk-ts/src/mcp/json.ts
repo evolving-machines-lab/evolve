@@ -1,14 +1,15 @@
 /**
  * MCP JSON Configuration Writer
  *
- * Handles MCP config for Claude, Gemini, Qwen, Kimi, Droid, and OpenCode agents.
- * Uses registry for paths - no hardcoded values.
+ * Handles MCP config for Claude, Gemini, Qwen, Kimi, Droid, OpenCode, and
+ * Antigravity agents. Uses registry for paths - no hardcoded values.
  *
  * Transport formats by agent:
  * - Claude: { type: "http"|"sse"|"stdio", url: "..." }
  * - Gemini: { url: "...", type: "http"|"sse" } | { command: "..." }
  * - Qwen:   { httpUrl: "..." } | { url: "..." } | { command: "..." }
  * - Kimi Code: { url: "...", transport?: "http"|"sse" } | { command: "...", transport: "stdio" }
+ * - Antigravity: { serverUrl: "...", headers? } | { command: "...", args?, env?, cwd? }
  */
 
 import type { SandboxInstance, McpServerConfig } from "../types";
@@ -124,6 +125,32 @@ function toDroidFormat(config: McpServerConfig): Record<string, unknown> {
   return { type: transport === "stdio" ? "stdio" : "http", ...rest };
 }
 
+/**
+ * Transform to Antigravity MCP format
+ *
+ * ~/.gemini/config/mcp_config.json, the file `agy mcp add` writes
+ * (antigravity.google/docs/mcp, read 2026-09-25; Harbor antigravity_cli.py
+ * _build_mcp_config): a remote server is `{ serverUrl, headers? }` for both
+ * streamable HTTP and SSE — the legacy `url`/`httpUrl` keys are rejected,
+ * `httpUrl` even parsed as a stdio command — and a stdio server is
+ * `{ command, args?, env?, cwd? }`. No transport field exists; the key names
+ * decide. Evolve's own `type` and header aliases are folded in, never copied.
+ */
+function toAntigravityFormat(config: McpServerConfig): Record<string, unknown> {
+  const transport = detectTransport(config);
+  const { type, url, httpHeaders, envHttpHeaders, bearerTokenEnvVar, envVars, headers, ...rest } = config;
+  if (transport === "stdio" && config.command) {
+    return { ...rest };
+  }
+  if (url) {
+    const result: Record<string, unknown> = { ...rest, serverUrl: url };
+    const merged = headers ?? httpHeaders;
+    if (merged && Object.keys(merged).length > 0) result.headers = merged;
+    return result;
+  }
+  return { ...rest };
+}
+
 // =============================================================================
 // GENERIC JSON WRITER
 // =============================================================================
@@ -132,7 +159,7 @@ type ConfigTransformer = (config: McpServerConfig) => Record<string, unknown>;
 
 async function writeJsonMcpConfig(
   sandbox: SandboxInstance,
-  agentType: "gemini" | "qwen" | "kimi",
+  agentType: "gemini" | "qwen" | "kimi" | "antigravity",
   servers: Record<string, McpServerConfig>,
   transform: ConfigTransformer,
   homeDir?: string
@@ -335,6 +362,78 @@ export async function writeKimiMcpConfig(
   homeDir?: string
 ): Promise<void> {
   await writeJsonMcpConfig(sandbox, "kimi", servers, toKimiFormat, homeDir);
+}
+
+/** Write MCP config for the Antigravity agent (~/.gemini/config/mcp_config.json) */
+export async function writeAntigravityMcpConfig(
+  sandbox: SandboxInstance,
+  servers: Record<string, McpServerConfig>,
+  homeDir?: string
+): Promise<void> {
+  await writeJsonMcpConfig(sandbox, "antigravity", servers, toAntigravityFormat, homeDir);
+}
+
+// =============================================================================
+// ANTIGRAVITY SETTINGS (~/.gemini/antigravity-cli/settings.json)
+// =============================================================================
+
+/**
+ * Write the Antigravity CLI's own settings file for a run, merged over whatever
+ * is there (the CLI rewrites the file at every start, sorting keys and dropping
+ * the ones it does not know, so only keys it keeps are written):
+ *
+ *   modelProvider "gemini"        the documented API-key auth path — without it
+ *                                 the CLI falls back to browser sign-in and hangs
+ *   telemetryEnabled false        the key the binary keeps (the documented
+ *                                 `enableTelemetry` is dropped on rewrite; live)
+ *   allowNonWorkspaceAccess true  tasks may touch paths outside the --add-dir root
+ *   customModelsConfig            the run's model slug registered under its own
+ *                                 name — `--model` refuses any slug outside the
+ *                                 CLI's built-in effort-suffixed list otherwise
+ *                                 (exit 1, no request); a registered slug is sent
+ *                                 to the endpoint unchanged (live T6, V1)
+ *
+ * Earlier registrations are kept (a resumed conversation may name another slug).
+ */
+export async function writeAntigravitySettings(
+  sandbox: SandboxInstance,
+  settingsPath: string,
+  modelSlug: string,
+  homeDir?: string,
+): Promise<void> {
+  const path = expandPath(settingsPath, homeDir);
+  const dir = path.slice(0, path.lastIndexOf("/"));
+
+  await sandbox.files.makeDir(dir);
+
+  let settings: Record<string, unknown> = {};
+  try {
+    const existing = await sandbox.files.read(path);
+    if (typeof existing === "string" && existing.trim()) {
+      settings = JSON.parse(existing);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const customModelsConfig =
+    typeof settings.customModelsConfig === "object" && settings.customModelsConfig !== null
+      ? (settings.customModelsConfig as Record<string, unknown>)
+      : {};
+  const customModels =
+    typeof customModelsConfig.customModels === "object" && customModelsConfig.customModels !== null
+      ? (customModelsConfig.customModels as Record<string, unknown>)
+      : {};
+
+  settings.modelProvider = "gemini";
+  settings.telemetryEnabled = false;
+  settings.allowNonWorkspaceAccess = true;
+  settings.customModelsConfig = {
+    ...customModelsConfig,
+    customModels: { ...customModels, [modelSlug]: { modelName: modelSlug } },
+  };
+
+  await sandbox.files.write(path, JSON.stringify(settings, null, 2));
 }
 
 /**

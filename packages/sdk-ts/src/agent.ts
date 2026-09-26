@@ -37,6 +37,7 @@ import type {
 } from "./types";
 import { VALIDATION_PRESETS } from "./types";
 import {
+  antigravityModelSlug,
   expandPath,
   getAgentConfig,
   getOpenCodeReasoningVariant,
@@ -53,6 +54,7 @@ import {
   writeQwenThinkingConfig,
   writeKimiSpendConfig,
   writeDroidGatewaySettings,
+  writeAntigravitySettings,
 } from "./mcp";
 import { stringify as stringifyToml } from "smol-toml";
 import { createAgentParser, type AgentParser } from "./parsers";
@@ -167,10 +169,21 @@ function providerRuntimeProviderForAgent(
       return "openrouter";
     case "droid":
       return "droid";
+    case "antigravity":
+      return "antigravity";
     default:
       return null;
   }
 }
+
+/**
+ * The antigravity CLI's background self-updater runs "during regular runs"
+ * (its install.sh) and would replace the pinned binary under a running
+ * session; this is the documented switch that stops it
+ * (antigravity.google/docs/cli/troubleshooting). Set in every mode, at boot
+ * and per spawn, so no run can race a stale env.
+ */
+const ANTIGRAVITY_AUTO_UPDATE_OFF = { AGY_CLI_DISABLE_AUTO_UPDATE: "true" } as const;
 
 /**
  * Escape prompt for bash double-quoted strings
@@ -900,6 +913,10 @@ export class Agent {
       envVars.IS_SANDBOX = "1";
     }
 
+    if (this.agentConfig.type === "antigravity") {
+      Object.assign(envVars, ANTIGRAVITY_AUTO_UPDATE_OFF);
+    }
+
     if (this.managedBrowserSession && this.options.managedBrowser) {
       Object.assign(
         envVars,
@@ -1438,6 +1455,9 @@ export class Agent {
       if (this.agentConfig.type === "gemini") {
         envs.GEMINI_CLI_TRUST_WORKSPACE = "true";
       }
+      if (this.agentConfig.type === "antigravity") {
+        Object.assign(envs, ANTIGRAVITY_AUTO_UPDATE_OFF);
+      }
       return envs;
     }
     const providerRuntime = this.activeProviderRuntimeToken();
@@ -1448,6 +1468,9 @@ export class Agent {
     }
     if (this.agentConfig.type === "gemini") {
       envs.GEMINI_DEFAULT_AUTH_TYPE = GEMINI_GATEWAY_AUTH_TYPE;
+    }
+    if (this.agentConfig.type === "antigravity") {
+      Object.assign(envs, ANTIGRAVITY_AUTO_UPDATE_OFF);
     }
     if (this.registry.baseUrlEnv && this.shouldExposeProviderRuntimeTokenEnv()) {
       envs[this.registry.baseUrlEnv] = providerRuntime.baseUrl;
@@ -1699,6 +1722,11 @@ export class Agent {
       // ("Invalid auth method selected"). The env var alone is insufficient.
       await this.writeGeminiGatewayAuthSettings(sandbox);
     }
+    // Antigravity selects API-key auth from its settings file in EVERY mode
+    // (modelProvider "gemini"; without it the CLI falls back to browser
+    // sign-in and hangs on the OAuth URL), and the same file registers the
+    // run's model slug; written again before each run (writeAntigravityRunSettings).
+    await this.writeAntigravityRunSettings(sandbox);
     // Default: run setup command (e.g., "codex login --with-api-key")
     if (this.registry.setupCommand) {
       await sandbox.commands.run(this.registry.setupCommand, {
@@ -1749,6 +1777,33 @@ export class Agent {
     };
 
     await sandbox.files.write(settingsPath, JSON.stringify(settings, null, 2));
+  }
+
+  /**
+   * The antigravity CLI's settings file for this run (registry
+   * antigravitySettings; mcp/json.ts writeAntigravitySettings): API-key
+   * auth, telemetry off, and the model slug the command will name registered
+   * under customModelsConfig — the SAME slug buildCommand sends
+   * (antigravityModelSlug), or `--model` refuses it. The CLI rewrites the
+   * file at every start, keeping these keys; rewriting it before each run
+   * (the droid settings precedent) makes a resumed session as sure as the
+   * first. No-op for every other harness.
+   */
+  private async writeAntigravityRunSettings(sandbox: SandboxInstance): Promise<void> {
+    const settings = this.registry.antigravitySettings;
+    if (!settings) return;
+    const model = this.resolveCommandModel(
+      this.agentConfig.model || this.registry.defaultModel,
+    );
+    await writeAntigravitySettings(
+      sandbox,
+      settings.settingsPath,
+      antigravityModelSlug(model, {
+        isDirectMode: this.agentConfig.isDirectMode,
+        isExternalGateway: Boolean(this.agentConfig.externalGateway),
+      }),
+      this.homeDir,
+    );
   }
 
   private async setupAgentPlugins(sandbox: SandboxInstance): Promise<void> {
@@ -2090,7 +2145,12 @@ export class Agent {
    */
   private buildCommand(prompt: string, resume?: boolean): string {
     return this.registry.buildCommand({
-      prompt: this.agentConfig.type === "droid" ? prompt : escapePrompt(prompt),
+      // droid and antigravity single-quote the raw prompt themselves; every
+      // other entry interpolates it into a double-quoted shell string.
+      prompt:
+        this.agentConfig.type === "droid" || this.agentConfig.type === "antigravity"
+          ? prompt
+          : escapePrompt(prompt),
       model: this.resolveCommandModel(
         this.agentConfig.model || this.registry.defaultModel,
       ),
@@ -2370,6 +2430,10 @@ export class Agent {
     }
 
     await this.writeKimiPerRunConfig(sandbox, runId);
+
+    // Per-run antigravity settings: the model slug the command names must be
+    // registered in the CLI's settings file before it starts.
+    await this.writeAntigravityRunSettings(sandbox);
 
     // Per-run Droid gateway settings: Droid custom models read extraHeaders from
     // settings at startup, so rewrite the Evolve-owned settings file each run.

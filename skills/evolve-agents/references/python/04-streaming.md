@@ -193,6 +193,11 @@ class AgentUsage(TypedDict):
     scope: Literal["call", "run"]  # one LLM inference, or the harness's whole-run total
     usage: TokenUsage
 
+class UnknownUpdate(TypedDict):
+    sessionUpdate: Literal["unknown"]
+    kind: str     # the harness's own name for the line, e.g. "step_update:checkpoint"
+    raw: Any      # the wire object, verbatim
+
 SessionUpdate = Union[
     AgentMessageChunk,
     AgentThoughtChunk,
@@ -202,6 +207,7 @@ SessionUpdate = Union[
     Plan,
     AgentError,
     AgentUsage,
+    UnknownUpdate,
 ]
 
 # =============================================================================
@@ -220,10 +226,10 @@ class OutputEvent(TypedDict):
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets
+clock (claude, gemini, opencode and droid stamp every line; qwen, kimi and antigravity stamp none); `model` is
+the model named on the line, or on the harness's init line for gemini, droid and antigravity; `messageId` lets
 you tell which lines belong to one LLM message (claude prints one line per content block, all with
-the same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the
+the same `message.id`; antigravity keys every line of one `agent_response` step by that step); `parentToolCallId` is set only on a subagent's lines and names the
 `toolCallId` of the `Task`/`agent` call that spawned it.
 
 `toolName` is the harness-native tool name, verbatim — `Bash`, `Read`, or the joined `mcp__<server>__<tool>` an MCP call carries. Prefer it over parsing `title`, which is formatted per tool for people to read and is not round-trippable; `toolName` is the identifier the model actually called. It is a deliberate addition to the ACP shape, which names no tool and whose `kind` collapses every MCP tool to `other`, and it is optional — absent on traces recorded before the SDK carried it, and on the occasional call a harness cannot name, so fall back to `kind` there.
@@ -290,6 +296,7 @@ UI display. For replay after cleanup, use the `session_id` with
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `UnknownUpdate` | `"unknown"` | A wire line of a kind the parser does not know, passed through verbatim. **Not agent work** — see below |
 
 ---
 
@@ -402,16 +409,17 @@ output:
 
 ```python
 def did_work(events):
-    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage") for e in events)
+    return any(e.get("update", {}).get("sessionUpdate") not in ("error", "usage", "unknown") for e in events)
 ```
 
 ## Harness-reported usage (`usage`)
 
 Every harness prints its own token accounting on the stream, and it arrives as its own update so
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
-opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
-whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
-simply has no `usage` events.
+opencode prints each step's tokens and cost, antigravity prints each model call's tokens on the step
+that made it, and codex, gemini, claude, qwen, droid and antigravity print a whole-run total on their
+terminal line (antigravity's total is the conversation's, cumulative across a resumed run's turns). Kimi's
+stream-json prints no usage at all, so a kimi run simply has no `usage` events.
 
 ```python
 {
@@ -449,3 +457,23 @@ prompt_tokens = sum(u.get("promptTokens", 0) for u in per_message.values())
 
 Like `error`, `usage` is **not agent work**: a stream that carries only accounting still counts as a
 run that did nothing.
+
+## Lines the parser does not know (`unknown`)
+
+A harness can print a line of a kind its parser has never seen — the antigravity CLI is closed
+source and its live stream carried three step types its docs never named. Such a line is neither
+dropped nor mistaken for agent text: it arrives as its own update, named by the harness's own word
+for it, with the wire object verbatim.
+
+```python
+{
+    "update": {
+        "sessionUpdate": "unknown",
+        "kind": "step_update:checkpoint",  # the harness's own name for the line
+        "raw": {"step_index": 3, "step_type": "checkpoint"},  # the wire object, verbatim
+    },
+}
+```
+
+Like `error` and `usage`, `unknown` is **not agent work**: the work predicate answers `False` for
+it. Every consumer that switches on `sessionUpdate` keeps a default branch for it.

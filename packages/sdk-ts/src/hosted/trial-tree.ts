@@ -54,7 +54,8 @@
  *   agent/<harness>.txt       the harness process's stdout stream at Harbor's
  *                             own tee name for the harness (claude-code.txt,
  *                             codex.txt, gemini-cli.txt, qwen-code.txt,
- *                             kimi-code.txt, opencode.txt; droid.txt is the
+ *                             kimi-code.txt, opencode.txt,
+ *                             antigravity-stream.jsonl; droid.txt is the
  *                             platform's own, and stdout.log serves a harness
  *                             Harbor has no name for), when stored
  *   agent/stderr.log          the harness process's stderr stream, when stored
@@ -151,6 +152,12 @@ export const HARNESS_TRIAL_LAYOUTS: Record<string, HarnessTrialLayout> = {
   },
   // No Harbor adapter: droid.txt follows their <harness>.txt pattern, recorded as ours.
   droid: { stdoutFile: "droid.txt", harborCopies: [] },
+  // antigravity_cli.py:984 tees the stream-json stdout as antigravity-stream.jsonl;
+  // its brain/ transcript and conversations/ store are copied out as two renamed
+  // FILES (antigravity-cli.trajectory.jsonl, antigravity-conversation.db,
+  // :1323-1343), never a subtree — no copy slot; the captured ~/.gemini sits
+  // at agent/.gemini/ alone (the one home rule).
+  antigravity: { stdoutFile: "antigravity-stream.jsonl", harborCopies: [] },
 };
 
 /**
@@ -164,6 +171,7 @@ const HARBOR_AGENT_NAMES: Record<string, string> = {
   "qwen-coder": "qwen",
   "kimi-code": "kimi",
   opencode: "opencode",
+  "antigravity-cli": "antigravity",
 };
 
 /** The layout for a harness LABEL: an SDK id, Harbor's name for one, else the default. */

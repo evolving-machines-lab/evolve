@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Unit Test: THE HARNESS-ERROR LAW, across all seven parsers.
+ * Unit Test: THE HARNESS-ERROR LAW, across all eight parsers.
  *
  * The law lives in parsers/types.ts (AgentError): a failure the HARNESS itself
  * reported is the `error` variant — never an agent_message_chunk, never
@@ -11,7 +11,7 @@
  * diagnosis on codex.
  *
  * codex was the only parser that obeyed. This suite pins the same two
- * properties for all seven:
+ * properties for all eight:
  *   1. the failure is surfaced, with the harness's own text VERBATIM;
  *   2. it is never counted as agent work (isAgentWorkUpdate === false).
  *
@@ -30,6 +30,8 @@
  *             packages/opencode/src/cli/cmd/run.ts:678-691, 776-786
  *   qwen      SDKResultMessageError, qwen-code
  *             packages/sdk-typescript/src/types/protocol.ts:152-170
+ *   antigravity  live capture, agy 1.2.11 (`--output-format stream-json`,
+ *             round-2 E1a: the result line of a 500 from the model endpoint)
  *
  * ONE TRAP WORTH NAMING: {"type":"error"} does NOT mean the same thing in
  * every harness. In gemini it is a non-fatal warning and the run continues;
@@ -37,6 +39,7 @@
  * from each harness's own terminal signal rather than from the event name.
  */
 
+import { createAntigravityParser } from "../../src/parsers/antigravity.ts";
 import { createClaudeParser } from "../../src/parsers/claude.ts";
 import { createCodexParser } from "../../src/parsers/codex.ts";
 import { createDroidParser } from "../../src/parsers/droid.ts";
@@ -428,6 +431,14 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
       parse: createQwenParser(),
       lines: [`{"type":"result","subtype":"error_during_execution","session_id":"s","is_error":true,"error":{"message":"boom"}}`],
     },
+    {
+      name: "antigravity",
+      parse: createAntigravityParser(),
+      // The run total rides beside it as a usage line (never work); the
+      // error_message step that precedes it live is text-less and is
+      // covered by antigravity-parser.test.ts.
+      lines: [`{"event":"result","result":{"conversation_id":"c","status":"ERROR","response":"","error":"boom","duration_seconds":0,"num_turns":1,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}`],
+    },
   ];
 
   for (const { name, parse, lines } of cases) {
@@ -438,7 +449,7 @@ async function testNoHarnessFoldsAFailureIntoAMessage(): Promise<void> {
     assert(errorsOf(events)[0]?.message === "boom", `${name}: the message is exactly what the harness said`);
   }
 
-  assert(cases.length === 7, "all seven harnesses are covered");
+  assert(cases.length === 8, "all eight harnesses are covered");
 }
 
 async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
@@ -453,6 +464,8 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
     { name: "gemini", parse: createGeminiParser(), line: `{"type":"error","severity":"error"}` },
     { name: "gemini/result", parse: createGeminiParser(), line: `{"type":"result","status":"error"}` },
     { name: "opencode", parse: createOpenCodeParser(), line: `{"type":"error","sessionID":"s","error":{}}` },
+    { name: "antigravity/result", parse: createAntigravityParser(), line: `{"event":"result","result":{"conversation_id":"c","status":"ERROR","response":""}}` },
+    { name: "antigravity/step", parse: createAntigravityParser(), line: `{"event":"step_update","step_update":{"conversation_id":"c","step_index":1,"state":"DONE","step_type":"error_message"}}` },
   ];
 
   for (const { name, parse, line } of cases) {
@@ -464,7 +477,7 @@ async function testMalformedFailuresDegradeInsteadOfVanishing(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("=".repeat(60));
-  console.log("THE HARNESS-ERROR LAW — all seven parsers");
+  console.log("THE HARNESS-ERROR LAW — all eight parsers");
   console.log("=".repeat(60));
 
   await testClaude();

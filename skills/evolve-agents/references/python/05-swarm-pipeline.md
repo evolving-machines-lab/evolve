@@ -722,7 +722,7 @@ Override the default agent for any operation. There is no separate override type
 ```python
 @dataclass
 class AgentConfig:
-    type: Literal['claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
+    type: Literal['claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode', 'droid', 'antigravity']
     api_key: str | None = None
     model: str | None = None
     reasoning_effort: Literal['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking'] | None = None

@@ -298,6 +298,16 @@ export interface AgentRegistryEntry {
     provider: "generic-chat-completion-api" | "openai" | "anthropic";
     maxOutputTokens?: number;
   };
+  /**
+   * Antigravity-only: the CLI's own settings file, written before every run
+   * (mcp/json.ts writeAntigravitySettings) — API-key auth (`modelProvider`),
+   * telemetry off, non-workspace paths allowed, and the run's model slug
+   * registered under `customModelsConfig`, without which `--model` refuses
+   * any slug outside the CLI's built-in effort-suffixed list.
+   */
+  antigravitySettings?: {
+    settingsPath: string;
+  };
   /** Environment variable that CLI reads for custom outbound HTTP headers */
   customHeadersEnv?: string;
   /** Format for custom headers env var: "newline" (Claude) or "comma" (Gemini). Default: "newline" */
@@ -380,6 +390,59 @@ export function getOpenCodeReasoningVariant(reasoningEffort?: string): string | 
 function getOpenCodeReasoningFlags(reasoningEffort?: string): string {
   const variant = getOpenCodeReasoningVariant(reasoningEffort);
   return variant ? ` --variant ${variant} --thinking` : "";
+}
+
+/**
+ * The `--effort` word the antigravity CLI takes for an Evolve effort. Its
+ * vocabulary is `low|medium|high|max` (`agy --help`, 1.2.11) and it has no
+ * off switch: thinking cannot be disabled, so `off`/`minimal` land on `low`,
+ * the floor the CLI offers; `xhigh` on `max`; the binary spelling `thinking`
+ * on `medium`. A word outside Evolve's own vocabulary rides verbatim so the
+ * CLI refuses it loudly (exit 2) rather than this table guessing.
+ */
+export function antigravityEffort(reasoningEffort: string): string {
+  switch (reasoningEffort) {
+    case "off":
+    case "none":
+    case "no-thinking":
+    case "minimal":
+    case "low":
+      return "low";
+    case "medium":
+    case "thinking":
+      return "medium";
+    case "high":
+      return "high";
+    case "xhigh":
+    case "max":
+      return "max";
+    default:
+      return reasoningEffort;
+  }
+}
+
+/**
+ * The model slug antigravity's `--model` receives — and the slug the SDK
+ * registers under `customModelsConfig` before the run (one function, so the
+ * two can never name different slugs). Per route:
+ *
+ *   gateway mode       the caller's word after gatewayModelAliases (the Evolve
+ *                      gateway's `vertex_ai/<model>` route spelling, applied
+ *                      by agent.ts resolveCommandModel before this is called);
+ *   external gateway   the roster's wire id for a roster alias, any other name
+ *                      verbatim — the hosted worker's key admits exactly the
+ *                      alias and its wire id, and the wire id is the gateway
+ *                      root's Vertex route (live-proven 2026-09-25: the same
+ *                      name on the `/gemini` passthrough is a 404);
+ *   direct mode        the bare name verbatim: the caller's own Gemini API
+ *                      endpoint knows no `vertex_ai/` prefix.
+ */
+export function antigravityModelSlug(
+  model: string,
+  mode: { isDirectMode?: boolean; isExternalGateway?: boolean },
+): string {
+  if (mode.isExternalGateway) return registryWireId(AGENT_REGISTRY.antigravity, model);
+  return model;
 }
 
 // =============================================================================
@@ -940,6 +1003,112 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       const reasoningFlag = reasoningEffort ? ` --reasoning-effort ${reasoningEffort}` : "";
       const resumeFlag = isResume && sessionId ? `--session-id ${shellSingleQuote(sessionId)} ` : "";
       return `printf '%s' ${shellSingleQuote(prompt)} | droid ${settingsFlag}exec ${resumeFlag}--skip-permissions-unsafe --cwd ${homeDir}/workspace --output-format stream-json --model ${shellSingleQuote(commandModel)}${reasoningFlag}`;
+    },
+  },
+
+  antigravity: {
+    image: "evolve-all",
+    // Google's Antigravity CLI (binary `antigravity`, the product's `agy`),
+    // 1.2.11, closed source. The only headless auth path that reaches a model
+    // without a browser sign-in is the Gemini API-key path: GEMINI_API_KEY
+    // (the ONE key variable it reads — GOOGLE_API_KEY is ignored) plus
+    // `"modelProvider": "gemini"` in its settings file, with
+    // GOOGLE_GEMINI_BASE_URL as the documented endpoint override
+    // (antigravity.google/docs/cli/install, read 2026-09-25). The recon is
+    // team/dev-items/harness-recon-2026-09-25/05-antigravity.md.
+    apiKeyEnv: "GEMINI_API_KEY",
+    effortSupport: "level",
+    baseUrlEnv: "GOOGLE_GEMINI_BASE_URL",
+    // The gateway ROOT, not gemini-cli's `/gemini` passthrough (owner ruling
+    // 2026-09-25: Antigravity's models go to Vertex AI through the gateway).
+    // LiteLLM serves a router-aware Gemini-shaped endpoint at its root
+    // (`/v1beta/models/{model}:streamGenerateContent`) that resolves the
+    // model name against the model list — so a `vertex_ai/<model>` slug lands
+    // on the gateway's Vertex route, metered per call; the `/gemini` prefix
+    // forwards names verbatim to AI Studio, where that slug is a 404 (both
+    // live-proven 2026-09-25). No gatewayPath, therefore.
+    defaultModel: "gemini-3.8-flash",
+    // Owner policy: graded-effort harnesses pin "high". The CLI's own
+    // built-in slugs carry the effort in their name (gemini-3.8-flash-high);
+    // Evolve stamps `--effort` on every run instead (antigravityEffort).
+    defaultReasoningEffort: "high",
+    // Roster (owner 2026-09-25): the latest of each Gemini type only —
+    // Flash, Flash-Lite, Pro — each priced in LiteLLM on `vertex_ai/`. The
+    // alias is the bare Google name (what direct mode sends to the caller's
+    // own Gemini endpoint); the wire id is the gateway's Vertex route, what
+    // the hosted worker's per-arm key must admit and what the CLI names on
+    // the gateway (antigravityModelSlug). The CLI accepts any slug once it
+    // is registered in customModelsConfig (live T6/V1, 1.2.11); a bare
+    // built-in name without a `-<effort>` suffix is refused unregistered.
+    // Only Google models: Claude and GPT exist in the product behind an
+    // interactive Ultra sign-in the sandbox cannot perform.
+    models: [
+      { alias: "gemini-3.8-flash", modelId: "vertex_ai/gemini-3.8-flash", description: "Latest Flash on Vertex AI: coding + agentic planning" },
+      { alias: "gemini-3.5-flash-lite", modelId: "vertex_ai/gemini-3.5-flash-lite", description: "Latest Flash-Lite on Vertex AI: most cost-effective" },
+      { alias: "gemini-3.1-pro-preview", modelId: "vertex_ai/gemini-3.1-pro-preview", description: "Latest Pro on Vertex AI: complex agentic + coding" },
+    ],
+    // Rules the CLI reads from the workspace root: AGENTS.md or GEMINI.md
+    // (antigravity.google/docs/rules); AGENTS.md is the cross-vendor name.
+    systemPromptFile: "AGENTS.md",
+    // MCP servers live in the shared Antigravity config dir, the file
+    // `agy mcp add` writes (antigravity.google/docs/mcp; live M1). The CLI's
+    // own settings file sits beside it under antigravity-cli/ (below).
+    mcpConfig: {
+      settingsDir: "~/.gemini/config",
+      filename: "mcp_config.json",
+      format: "json",
+    },
+    // The shared skills dir every Antigravity product reads (docs/skills;
+    // `~/.gemini/antigravity-cli/skills` is a symlink onto it since the
+    // config migration, live round 2). Project skills under
+    // <workspace>/.agents/skills load too.
+    skillsConfig: {
+      targetDir: "~/.gemini/config/skills",
+    },
+    antigravitySettings: {
+      settingsPath: "~/.gemini/antigravity-cli/settings.json",
+    },
+    gatewayModelAliases: {
+      "gemini-3.8-flash": "vertex_ai/gemini-3.8-flash",
+      "gemini-3.5-flash-lite": "vertex_ai/gemini-3.5-flash-lite",
+      "gemini-3.1-pro-preview": "vertex_ai/gemini-3.1-pro-preview",
+    },
+    // NO spend-tracking path: the CLI sends no custom headers (no env, no
+    // settings key reaches the request — four candidates probed live,
+    // 2026-09-25), so per-run tags are lost; per-session attribution rides
+    // the door's own x-litellm-customer-id, set server-side from the
+    // runtime token. Nor does the CLI offer a per-run header for the hidden
+    // conversation-title call it makes to gemini-3.1-flash-lite-preview on
+    // every run: that model is deliberately NOT routed (owner 2026-09-25),
+    // the call fails, and the run succeeds regardless (live V1).
+    //
+    // The whole ~/.gemini tree is the state (the CLI's settings, brain/
+    // transcripts, conversations/ SQLite store, the shared config/); the
+    // three excludes are the CLI's own installs and caches, measured on the
+    // live home (round 2 footprint): bin/ is a 12.5 MB encoder binary
+    // extracted at first run, builtin/skills the shipped skills rewritten at
+    // every start, cache/ ids and onboarding markers.
+    checkpointDirs: ["~/.gemini"],
+    checkpointExcludes: [
+      ".gemini/antigravity-cli/bin",
+      ".gemini/antigravity-cli/builtin",
+      ".gemini/antigravity-cli/cache",
+    ],
+    buildCommand: ({ prompt, model, isResume, reasoningEffort, isDirectMode, isExternalGateway }) => {
+      // `--continue` resumes the most recent conversation in this home — the
+      // one the previous run left, since a sandbox home holds no other.
+      const continueFlag = isResume ? "--continue " : "";
+      const effortFlag = reasoningEffort ? ` --effort ${antigravityEffort(reasoningEffort)}` : "";
+      const slug = antigravityModelSlug(model, { isDirectMode, isExternalGateway });
+      // Harbor's proven headless shape (antigravity_cli.py:1528-1558):
+      // permissions skipped, NDJSON on stdout, the cwd registered as the
+      // workspace (without --add-dir headless agy writes bare-filename files
+      // into its own scratch dir), stdin closed (agy waits for EOF on an open
+      // stdin). stderr stays on its own pipe — the run loop reads it apart —
+      // and no --print-timeout: the SDK's own run clock is the bound. The
+      // prompt arrives raw and is quoted here (agent.ts skips escapePrompt
+      // for this harness, the droid precedent).
+      return `antigravity ${continueFlag}--prompt ${shellSingleQuote(prompt)} --model ${shellSingleQuote(slug)}${effortFlag} --dangerously-skip-permissions --output-format stream-json --add-dir "$PWD" < /dev/null`;
     },
   },
 };

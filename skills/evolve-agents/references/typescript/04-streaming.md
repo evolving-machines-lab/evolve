@@ -110,10 +110,10 @@ interface OutputEvent {
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets you
+clock (claude, gemini, opencode and droid stamp every line; qwen, kimi and antigravity stamp none); `model` is
+the model named on the line, or on the harness's init line for gemini, droid and antigravity; `messageId` lets you
 tell which lines belong to one LLM message (claude prints one line per content block, all with the
-same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
+same `message.id`; antigravity keys every line of one `agent_response` step by that step); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
 of the `Task`/`agent` call that spawned it.
 
 ---
@@ -131,7 +131,8 @@ type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | UnknownUpdate;
 ```
 
 ### Message Events
@@ -207,6 +208,7 @@ completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool sta
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `UnknownUpdate` | `"unknown"` | A wire line of a kind the parser does not know, passed through verbatim. **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -436,9 +438,10 @@ const didWork = events.some((e) => isAgentWorkUpdate(e.update));
 
 Every harness prints its own token accounting on the stream, and it arrives as its own update so
 you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
-opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
-whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
-simply has no `usage` events.
+opencode prints each step's tokens and cost, antigravity prints each model call's tokens on the step
+that made it, and codex, gemini, claude, qwen, droid and antigravity print a whole-run total on their
+terminal line (antigravity's total is the conversation's, cumulative across a resumed run's turns). Kimi's
+stream-json prints no usage at all, so a kimi run simply has no `usage` events.
 
 ```typescript
 interface AgentUsage {
@@ -476,3 +479,21 @@ const promptTokens = [...perMessage.values()].reduce((n, u) => n + (u.promptToke
 
 Like `error`, `usage` is **not agent work**: `isAgentWorkUpdate` answers `false` for it, so a
 stream that carries only accounting still counts as a run that did nothing.
+
+## Lines the parser does not know (`unknown`)
+
+A harness can print a line of a kind its parser has never seen — the antigravity CLI is closed
+source and its live stream carried three step types its docs never named. Such a line is neither
+dropped nor mistaken for agent text: it arrives as its own update, named by the harness's own word
+for it, with the wire object verbatim.
+
+```typescript
+interface UnknownUpdate {
+  sessionUpdate: "unknown";
+  kind: string;   // the harness's own name for the line, e.g. "step_update:checkpoint"
+  raw: unknown;   // the wire object, verbatim
+}
+```
+
+Like `error` and `usage`, `unknown` is **not agent work**: `isAgentWorkUpdate` answers `false` for
+it. Every consumer that switches on `sessionUpdate` keeps a default branch for it.

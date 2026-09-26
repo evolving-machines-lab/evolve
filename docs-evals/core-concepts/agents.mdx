@@ -22,6 +22,7 @@ One arm
 | `kimi` | Kimi Code |
 | `opencode` | OpenCode |
 | `droid` | Droid |
+| `antigravity` | Antigravity CLI (Google; Gemini models on Vertex AI through the gateway) |
 
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \

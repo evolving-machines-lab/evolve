@@ -1,6 +1,6 @@
 # Evolve TypeScript SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -301,6 +301,7 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | `"kimi"` | `"kimi-k3"` `"kimi-k2.7-code"` `"kimi-k3-raptor"` `"kimi-k2p7-code-raptor"` | `"kimi-k3"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
 | `"opencode"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-5.6-luna"` `"openrouter/google/gemini-3.6-flash"` `"openrouter/qwen/qwen3.7-max"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"droid"` | `"claude-fable-5.1"` `"claude-opus-5"` `"claude-sonnet-5"` `"claude-haiku-4-5"` `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gemini-3.6-flash"` `"qwen3.7-max"` `"kimi-k3"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"claude-opus-5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
+| `"antigravity"` | `"gemini-3.8-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` | `"gemini-3.8-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` |
 
 `"gemini-3.7-flash"` is named here for completeness: the gateway carries it as a correctly priced entry and serves it under its own name on a raw call. It is not selectable through the `gemini` agent, and nothing rejects it if you pass it anyway — the stable `gemini` CLI (0.55.1) rewrites the model client-side before the request ever leaves the sandbox, collapsing every name ending in `flash` onto its own current flash model. Ask for `"gemini-3.7-flash"` (or `"gemini-3.6-flash"`) today and you are silently served, and billed for, `gemini-3.5-flash`. Names that do not end in `flash` skip that rewrite, which is why `"gemini-3.5-flash-lite"` and `"gemini-3.1-pro-preview"` serve under their own names. A newer CLI release is not enough on its own, because the swap follows the CLI's own default flash, so a `-flash` name joins the selectable set only once a live probe shows the CLI actually serving it. On the hosted platform the wrong-model integrity guard refuses such a trial rather than scoring it; with your own provider key there is no backstop, so treat the three names above as the gemini lineup you can really run.
 
@@ -323,6 +324,7 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"droid"` | `"high"` — matches Droid’s own default for Opus 5, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
+| `"antigravity"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"low"` `"medium"` `"high"` `"max"` (the CLI's own vocabulary); `"xhigh"` is sent as `"max"`, and `"off"` / `"minimal"` as `"low"` — the CLI cannot disable thinking |
 
 When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
 
@@ -386,6 +388,7 @@ GEMINI_API_KEY=...         # gemini
 KIMI_API_KEY=...           # kimi
 OPENROUTER_API_KEY=sk-...  # opencode
 FACTORY_API_KEY=...        # droid
+GEMINI_API_KEY=...         # antigravity (the same variable gemini reads)
 E2B_API_KEY=e2b_...        # sandbox
 ```
 
@@ -481,6 +484,15 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "droid", model: "gpt-5.5" });
+```
+
+```ts
+// antigravity (auto-picks GEMINI_API_KEY + E2B_API_KEY)
+const evolve = new Evolve()
+    .withAgent({ type: "antigravity" });
+
+const evolve = new Evolve()
+    .withAgent({ type: "antigravity", model: "gemini-3.5-flash-lite", reasoningEffort: "low" });
 ```
 
 ---

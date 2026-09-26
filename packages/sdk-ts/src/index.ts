@@ -250,7 +250,7 @@ export type {
 // =============================================================================
 
 // Output event types
-export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, TokenUsage } from "./parsers";
+export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, TokenUsage, UnknownUpdate } from "./parsers";
 export { isAgentWorkUpdate } from "./parsers";
 
 // Parser functions
@@ -262,6 +262,7 @@ export {
 
 // Individual parser factory functions (for advanced use cases)
 export {
+  createAntigravityParser,
   createClaudeParser,
   createCodexParser,
   createDroidParser,

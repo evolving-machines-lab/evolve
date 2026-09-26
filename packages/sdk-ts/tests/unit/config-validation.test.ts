@@ -138,7 +138,7 @@ function testUnknownAgentType(): void {
   assert(error instanceof EvolveConfigError, "an unknown type throws EvolveConfigError");
   assertEqual((error as EvolveConfigError).field, "type", "the error names the type field");
   assert(
-    (error as Error).message.includes("claude, codex, gemini, qwen, kimi, opencode, droid"),
+    (error as Error).message.includes("claude, codex, gemini, qwen, kimi, opencode, droid, antigravity"),
     "the message lists every valid agent type",
   );
 }
