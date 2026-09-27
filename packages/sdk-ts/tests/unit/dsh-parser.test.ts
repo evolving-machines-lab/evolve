@@ -4,8 +4,7 @@
  *
  * Validates the DeepSeek Harness `--profile headless --json` parser against
  * the live captures of @deepseek-ai/dsh@0.1.7-rc.2 against the Evolve gateway
- * (team/dev-items/harness-recon-2026-09-25/06-live-tests/dsh, rounds 1 and 2,
- * 2026-09-25). Every fixture line below is a captured line verbatim except the
+ * (live captures of 2026-09-25, rounds 1 and 2). Every fixture line below is a captured line verbatim except the
  * working directory, shortened to /work, and the `<gateway-host>` placeholders
  * the captures already carry. Runs named: T1 (one-shot text), T2 (write +
  * bash tool use, resume seed), M1 (MCP), S1 (skill), U1 (sub-agent), E1
