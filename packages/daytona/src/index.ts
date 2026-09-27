@@ -2426,26 +2426,15 @@ function managedSessionCommandLogsUrl(
   );
 }
 
-/**
- * Read a finished command's whole log over the managed toolbox route.
- *
- * The Daytona SDK's own settled read (`getSessionCommandLogs` with no
- * callbacks) expects the JSON the daemon returns to a request carrying the
- * SDK's version header. The managed route forwards no such header, so the
- * daemon answers the legacy way — the raw log as `text/plain`, both streams
- * combined — and the SDK, reading three JSON fields off a string, hands back
- * three empty strings. MEASURED 2026-09-26 on production: every managed
- * spawn().wait() returned exit 0 with stdout "" while the follow had streamed
- * every byte. So managed mode reads the body itself and takes whichever shape
- * arrives: JSON as the daemon's split answer, anything else as log bytes for
- * the follow's own demuxer (unframed bytes are stdout, as readCommandStreams
- * already rules for a combined `output`).
- */
+// The endpoint answers JSON only to an identified SDK (vendor client doc, process-api.d.ts:287:
+// "JSON ... for SDK >= 0.167.0, plain text otherwise"); the managed route strips that identity,
+// and the SDK reads JSON fields off the plain text it gets back — so the body is read here.
 async function readManagedSettledLogs(
   context: ManagedStreamContext,
   sandboxId: string,
   sessionId: string,
   commandId: string,
+  token: string,
 ): Promise<{ output: string; stdout: string; stderr: string }> {
   const response = await fetch(
     managedSessionCommandLogsUrl(context, sandboxId, sessionId, commandId, false),
@@ -2481,6 +2470,14 @@ async function readManagedSettledLogs(
   );
   demuxer.push(new Uint8Array(await response.arrayBuffer()));
   demuxer.flush();
+  // The legacy combined log is per-stream GROUPS in an unpromised order; the sentinel ends the
+  // stdout group, so whatever follows it is stderr — split there, whichever group came first.
+  const sentinel = `${token}\n`;
+  const at = stdout.indexOf(sentinel);
+  if (at !== -1 && at + sentinel.length < stdout.length) {
+    stderr = stdout.slice(at + sentinel.length) + stderr;
+    stdout = stdout.slice(0, at + sentinel.length);
+  }
   return { output: "", stdout, stderr };
 }
 
@@ -2605,18 +2602,14 @@ export class DaytonaCommands implements SandboxCommands {
     ) as Promise<void>;
   }
 
-  /**
-   * A finished command's settled log — what spawn().wait() returns and what
-   * run() falls back on. Direct mode asks the SDK, whose request the daemon
-   * answers with JSON; managed mode reads the route itself, because the SDK
-   * cannot read the plain-text body that route yields (readManagedSettledLogs).
-   */
+  // Managed mode cannot use the SDK's settled read (see readManagedSettledLogs); direct mode can.
   private readSettledLogs(
     sessionId: string,
     commandId: string,
+    token: string,
   ): Promise<{ output?: string | null; stdout?: string | null; stderr?: string | null }> {
     if (this.managedStream) {
-      return readManagedSettledLogs(this.managedStream, this.sandbox.id, sessionId, commandId);
+      return readManagedSettledLogs(this.managedStream, this.sandbox.id, sessionId, commandId, token);
     }
     return this.sandbox.process.getSessionCommandLogs(sessionId, commandId);
   }
@@ -2757,7 +2750,7 @@ export class DaytonaCommands implements SandboxCommands {
           // beats silently returning truncated output as a success.
           let settled: { stdout: string; stderr: string };
           try {
-            const logs = await this.readSettledLogs(sessionId, cmdId);
+            const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
             settled = settledStreams(logs, eosToken);
           } catch {
             throw followFailure;
@@ -2780,7 +2773,7 @@ export class DaytonaCommands implements SandboxCommands {
           // must be empty to take it: a partial follow already reached the
           // callbacks and re-emitting would double the caller's output.
           try {
-            const logs = await this.readSettledLogs(sessionId, cmdId);
+            const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
             const settled = settledStreams(logs, eosToken);
             stdout = settled.stdout;
             stderr = settled.stderr;
@@ -2799,7 +2792,7 @@ export class DaytonaCommands implements SandboxCommands {
       let { stdout, stderr } = settledStreams(resp, eosToken);
       if (!stdout && !stderr && cmdId) {
         try {
-          const logs = await this.readSettledLogs(sessionId, cmdId);
+          const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
           const fromLogs = settledStreams(logs, eosToken);
           stdout = fromLogs.stdout;
           stderr = fromLogs.stderr || stderr;
@@ -2969,7 +2962,7 @@ export class DaytonaCommands implements SandboxCommands {
             const cmd = await sandbox.process.getSessionCommand(sessionId, cmdId);
             if (cmd.exitCode !== undefined) {
               try {
-                const logs = await this.readSettledLogs(sessionId, cmdId);
+                const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
                 return {
                   exitCode: cmd.exitCode,
                   ...settledStreams(logs, eosToken),

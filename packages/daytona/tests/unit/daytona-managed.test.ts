@@ -888,16 +888,8 @@ async function testFollowCutMidSentinelLeaksNothing(): Promise<void> {
 }
 
 /**
- * THE PROD FINDING THIS PINS (measured 2026-09-26, managed daytona): every
- * `evolve.run()` on managed Daytona came back exit 0 with `stdout: ""`, for
- * every harness, while e2b and modal returned the harness's whole stream and
- * the follow had delivered every byte to the session logger. run() rides
- * spawn().wait(), and wait()'s stdout is the SETTLED log, not the follow. The
- * managed route hands the daemon a request with no SDK version header, so the
- * daemon answers the legacy way — `text/plain`, both streams combined, the
- * sentinel last — and the Daytona SDK's settled read, expecting JSON, reads
- * `{output, stdout, stderr}` off that string: three empty strings. The
- * settled read must go to the route itself and take the shape that arrives.
+ * Pins the production finding: managed run() returned exit 0 and stdout "" because wait()'s settled
+ * read came back as text/plain and the Daytona SDK read JSON fields off it. wait() must read the route.
  */
 async function testSpawnWaitReturnsTheSettledLogInManagedMode(): Promise<void> {
   console.log("\n[2i] spawn().wait() - managed mode returns the log the toolbox route serves as text/plain");
@@ -945,6 +937,80 @@ async function testSpawnWaitReturnsTheSettledLogInManagedMode(): Promise<void> {
   );
   assert(result.stderr === "", `a combined log has nothing left for stderr (got ${JSON.stringify(result.stderr)})`);
   assert(sdkReads === 0, `the SDK's settled read, which cannot read this body, is not consulted (read ${sdkReads} times)`);
+}
+
+/** spawn().wait() over the managed route, with the settled read answering `body` for this run's token. */
+async function waitWithSettledBody(
+  body: (token: string) => Response,
+): Promise<{ result: { exitCode: number; stdout: string; stderr: string }; sdkReads: number }> {
+  const { sandbox, sent } = createStreamSandbox();
+  let sdkReads = 0;
+  sandbox.process.getSessionCommandLogs = async () => {
+    sdkReads++;
+    return { output: "", stdout: "", stderr: "" };
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = managedFetch(
+    async () => body(tokenOf(sent)!),
+    () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(logRecords(STDOUT_MARK, "", tokenOf(sent)));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200 });
+    },
+  );
+  try {
+    const handle = await createManagedCommands(sandbox).spawn("true", { onStdout: () => {} });
+    return { result: await handle.wait(), sdkReads };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+/**
+ * The shape decision and the group order, both load-bearing: a harness stream's first line is a
+ * JSON record, and the combined log's stdout/stderr groups arrive in an order nothing promises.
+ */
+async function testSettledReadTakesTheShapeThatArrives(): Promise<void> {
+  console.log("\n[2j] spawn().wait() - the settled read is decided by the answer's shape and split at the sentinel");
+  const text = (s: string) =>
+    new Response(s, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
+  const json = (o: object) =>
+    new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
+
+  // (a) text whose first line is a JSON record — claude's init line — is text, not the envelope
+  const init =
+    '{"type":"system","subtype":"init","cwd":"/home/user/workspace"}\n{"type":"result","is_error":false}\n';
+  const a = await waitWithSettledBody((token) => text(`${init}${token}\n`));
+  assert(a.result.stdout === init, `a JSON first line is still text (got ${JSON.stringify(a.result.stdout)})`);
+  assert(a.result.stderr === "", `and nothing is invented for stderr (got ${JSON.stringify(a.result.stderr)})`);
+
+  // (b) the daemon's JSON envelope is split into its fields
+  const b = await waitWithSettledBody((token) =>
+    json({ output: `out\n${token}\nerr\n`, stdout: `out\n${token}\n`, stderr: "err\n" }),
+  );
+  assert(b.result.stdout === "out\n", `the envelope's stdout is taken, sentinel shed (got ${JSON.stringify(b.result.stdout)})`);
+  assert(b.result.stderr === "err\n", `the envelope's stderr is taken (got ${JSON.stringify(b.result.stderr)})`);
+
+  // (c) stdout group first: the sentinel sits mid-body, and what follows it is stderr
+  const c = await waitWithSettledBody((token) => text(`out-1\nout-2\n${token}\nerr-1\n`));
+  assert(c.result.stdout === "out-1\nout-2\n", `stdout ends at the sentinel (got ${JSON.stringify(c.result.stdout)})`);
+  assert(c.result.stderr === "err-1\n", `the bytes after it are stderr (got ${JSON.stringify(c.result.stderr)})`);
+
+  // (d) stderr group first: the sentinel is last, nothing marks the boundary, and no token leaks
+  const d = await waitWithSettledBody((token) => text(`err-1\nout-1\nout-2\n${token}\n`));
+  assert(
+    d.result.stdout === "err-1\nout-1\nout-2\n",
+    `stderr stays merged in front, token shed (got ${JSON.stringify(d.result.stdout)})`,
+  );
+  assert(d.result.stderr === "", `nothing is guessed into stderr (got ${JSON.stringify(d.result.stderr)})`);
+  assert(
+    a.sdkReads + b.sdkReads + c.sdkReads + d.sdkReads === 0,
+    "the SDK's settled read is not consulted in any case",
+  );
 }
 
 // =============================================================================
@@ -1107,6 +1173,7 @@ const tests = [
   testDeadFollowReconcileShedsTheSentinel,
   testFollowCutMidSentinelLeaksNothing,
   testSpawnWaitReturnsTheSettledLogInManagedMode,
+  testSettledReadTakesTheShapeThatArrives,
   testManagedProviderAnswersDiscoveryLocally,
   testManagedProviderRewritesDtoToolboxUrls,
   testDirectProviderStillDiscoversUpstream,
