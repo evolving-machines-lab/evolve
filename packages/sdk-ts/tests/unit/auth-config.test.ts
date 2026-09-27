@@ -231,6 +231,8 @@ async function runTests(): Promise<void> {
       (model) => model.alias === "gpt-6-astra" || model.modelId === "gpt-6-astra",
     );
     assertEqual(droidAstra, undefined, "Droid roster carries no gpt-6-astra row");
+    assertEqual(droidAstra, undefined, "Droid roster carries no gpt-6-sol row");
+    assertEqual(droidAstra, undefined, "Droid roster carries no gpt-6-luna row");
   }
 
   // ─────────────────────────────────────────────────────────────────────────
