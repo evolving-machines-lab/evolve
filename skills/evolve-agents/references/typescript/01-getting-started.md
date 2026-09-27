@@ -355,10 +355,6 @@ These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve fo
 |-------|-------|-----|
 | `"kimi"` | `"kimi-k3-raptor"` | Kimi K3 fast route for latency-sensitive agent runs |
 
-#### Retired Harnesses
-
-`"gemini"` (Gemini CLI) is retired; use `"antigravity"` instead. Naming a retired harness throws `EvolveConfigError` at `.withAgent()`, naming the harness to use instead. Records it made before keep its name and stay readable: its sessions, traces and checkpoints still list and download.
-
 ### Agent Examples
 
 ```bash
