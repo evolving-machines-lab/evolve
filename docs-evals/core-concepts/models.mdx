@@ -49,7 +49,6 @@ If you enable your own provider key, supported model requests bill that provider
 | --- | --- |
 | Supports effort levels | Use a value from `limits.job.reasoning_efforts` |
 | Qwen thinking mode | Use `off` or `minimal` to disable thinking; `medium` or `thinking` to enable it |
-| Gemini | Do not pass effort; it is unsupported |
 | Custom agent | Configure reasoning in its run command |
 
 When omitted, Evolve resolves the harness's default and records it in `agent_info.reasoning_effort`. The same harness and model at different efforts are distinct arms.

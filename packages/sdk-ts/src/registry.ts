@@ -399,6 +399,11 @@ export interface AgentRegistryEntry {
     /** The request's `max_tokens`. */
     maxTokens: number;
   };
+  /**
+   * A retired harness: left out of every roster and refused for new runs,
+   * while the rest of the entry stays so its past records keep parsing.
+   */
+  retired?: { replacedBy: AgentType };
 }
 
 /**
@@ -757,6 +762,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
   },
 
   gemini: {
+    retired: { replacedBy: "antigravity" },
     image: "evolve-all",
     apiKeyEnv: "GEMINI_API_KEY",
     effortSupport: "none",
@@ -1437,6 +1443,11 @@ export function opencodeRoutedModel(model: string): string {
  */
 export function isValidAgentType(type: string): type is AgentType {
   return type in AGENT_REGISTRY;
+}
+
+/** The agent types a new run may name: every registry entry that is not retired. */
+export function liveAgentTypes(): AgentType[] {
+  return (Object.keys(AGENT_REGISTRY) as AgentType[]).filter((type) => !AGENT_REGISTRY[type].retired);
 }
 
 /**

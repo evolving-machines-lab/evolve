@@ -8,7 +8,6 @@
  * Required env vars (in .env):
  *   ANTHROPIC_API_KEY - For Claude direct mode
  *   OPENAI_API_KEY - For Codex direct mode
- *   GEMINI_API_KEY - For Gemini direct mode
  *   DASHSCOPE_API_KEY - For Qwen direct mode (Alibaba)
  *   E2B_API_KEY - For E2B sandbox direct mode
  *
@@ -39,7 +38,6 @@ const LOGS_DIR = resolve(__dirname, "../test-logs/14-byok-direct-mode");
 interface ProviderEnv {
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
-  GEMINI_API_KEY?: string;
   DASHSCOPE_API_KEY?: string;
   E2B_API_KEY?: string;
 }
@@ -48,7 +46,6 @@ function getProviderEnv(): ProviderEnv {
   return {
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY,
     E2B_API_KEY: process.env.E2B_API_KEY,
   };
@@ -87,14 +84,6 @@ function getBYOKAgentConfig(type: AgentType): BYOKAgentConfig | null {
         reasoningEffort: (process.env.CODEX_REASONING_EFFORT as "low" | "medium" | "high") || "medium",
       };
 
-    case "gemini":
-      if (!env.GEMINI_API_KEY) return null;
-      return {
-        type: "gemini",
-        providerApiKey: env.GEMINI_API_KEY,
-        model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
-      };
-
     case "qwen":
       // Qwen uses DASHSCOPE_API_KEY but SDK maps it to OPENAI_API_KEY format
       // The providerBaseUrl is auto-resolved from registry (Dashscope endpoint)
@@ -110,7 +99,7 @@ function getBYOKAgentConfig(type: AgentType): BYOKAgentConfig | null {
   }
 }
 
-const ALL_AGENTS: AgentType[] = ["claude", "codex", "gemini", "qwen"];
+const ALL_AGENTS: AgentType[] = ["claude", "codex", "qwen"];
 
 // =============================================================================
 // HELPERS
@@ -149,7 +138,6 @@ async function testAgent(type: AgentType): Promise<{ ok: boolean; error?: string
   if (!agentConfig) {
     const keyName = type === "claude" ? "ANTHROPIC_API_KEY"
       : type === "codex" ? "OPENAI_API_KEY"
-      : type === "gemini" ? "GEMINI_API_KEY"
       : "DASHSCOPE_API_KEY";
     return { ok: false, error: `${keyName} not set`, skipped: true, duration: 0 };
   }
@@ -221,7 +209,6 @@ async function main() {
   console.log("Provider keys status:");
   console.log(`  ANTHROPIC_API_KEY: ${env.ANTHROPIC_API_KEY ? "✓ set" : "✗ not set"}`);
   console.log(`  OPENAI_API_KEY: ${env.OPENAI_API_KEY ? "✓ set" : "✗ not set"}`);
-  console.log(`  GEMINI_API_KEY: ${env.GEMINI_API_KEY ? "✓ set" : "✗ not set"}`);
   console.log(`  DASHSCOPE_API_KEY: ${env.DASHSCOPE_API_KEY ? "✓ set" : "✗ not set"}`);
   console.log(`  E2B_API_KEY: ${env.E2B_API_KEY ? "✓ set" : "✗ not set"}`);
   console.log("");

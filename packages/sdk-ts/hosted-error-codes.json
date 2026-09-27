@@ -69,6 +69,7 @@
     "agent_config_unsupported",
     "agent_config_key_refused",
     "agent_preset_unsupported",
+    "agent_retired",
     "provider_unsupported",
     "job_not_found",
     "job_not_terminal",

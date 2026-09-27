@@ -247,6 +247,7 @@ HostedErrorCode = Literal[
     'agent_config_unsupported',
     'agent_config_key_refused',
     'agent_preset_unsupported',
+    'agent_retired',
     'provider_unsupported',
     'job_not_found',
     'job_not_terminal',
@@ -1021,6 +1022,13 @@ class AgentModelOption:
 
 
 @dataclass
+class RetiredAgent:
+    """One retired built-in agent and the agent to use instead — the row ``agent_retired`` details carry too."""
+    agent: str
+    replaced_by: str
+
+
+@dataclass
 class AgentCapability:
     """One built-in agent's declared capabilities."""
     name: str
@@ -1111,7 +1119,7 @@ class CapabilityDocument:
     coupling this document exists to remove.
     """
     schema_version: int
-    #: Built-in agents and their declared capabilities.
+    #: Built-in agents a new job may name, and their declared capabilities.
     agents: List[AgentCapability]
     #: Rules a bring-your-own agent registration must satisfy.
     agent_registration: Dict[str, Any]
@@ -1133,6 +1141,10 @@ class CapabilityDocument:
     #: agent with its own ``default_model``, the model an omitted ``model_name`` takes on it), so a client knows
     #: what "omitted" meant. None on servers predating the field.
     analyze: Optional[Dict[str, Any]] = None
+    #: Retired built-in agents, left out of ``agents``: a new job, resume,
+    #: retry, analysis or check naming one is refused ``agent_retired``, while
+    #: its records stay readable. Empty on servers predating the field.
+    retired_agents: List[RetiredAgent] = field(default_factory=list)
 
 
 @dataclass
@@ -1654,7 +1666,8 @@ class AnalyzeConfigInput(TypedDict, total=False):
     line, never blended into the trial's own bill.
     """
     #: Harbor's ``-a/--agent``, spelled as the arms spell it (claude, not claude-code) so one set of names
-    #: covers arms and reviewers; omitted: claude. The agents: ``meta().analyze['agents']``.
+    #: covers arms and reviewers; omitted: claude. The agents: ``meta().analyze['agents']``; a retired
+    #: one (``meta().retired_agents``) is refused ``agent_retired``.
     agent: str
     #: Model the analyzer agent runs — Harbor's ``--model``. Omitted, the
     #: agent's default: the platform's pick,
@@ -1848,8 +1861,11 @@ class AnalysisFailure(TypedDict):
     #: out with no valid analysis.json — the file missing, or a partial one
     #: that failed validation, its reasons in the message — never re-run: a
     #: timeout is deterministic; the message names the budget, the seconds
-    #: used and the exit code), or an infrastructure stage of the analyzer
-    #: run (``mint_key``, ``boot``, ``harness_install``, ``agent``,
+    #: used and the exit code), ``agent_retired`` (the job's stored analysis
+    #: agent was retired after the job was created: recorded when the trial
+    #: settles, nothing run or charged, never re-run; the message names the
+    #: replacement), or an infrastructure stage of the analyzer run
+    #: (``mint_key``, ``boot``, ``harness_install``, ``agent``,
     #: ``artifact_read``, ``lease_expired``, ...).
     phase: str
     message: str
@@ -1985,7 +2001,7 @@ class CheckConfigInput(TypedDict, total=False):
     """
     #: A name for the check (Harbor's ``--job-name``); omitted, the accept timestamp ``YYYY-MM-DD__HH-MM-SS``. 1-120 characters.
     name: str
-    #: The agent the checker runs on — the analyze door's ``agent``, same rule. Omitted: claude.
+    #: The agent the checker runs on — the analyze door's ``agent``, same rule: a retired one is refused ``agent_retired``. Omitted: claude.
     agent: str
     model_name: str
     rubric: Rubric
@@ -3962,6 +3978,13 @@ def _map_capability_document(raw: Dict[str, Any]) -> CapabilityDocument:
             if isinstance(raw.get('gpu_concurrency_cap'), int)
             else None
         ),
+        retired_agents=[
+            RetiredAgent(agent=item['agent'], replaced_by=item['replaced_by'])
+            for item in raw.get('retired_agents', [])
+            if isinstance(item, dict)
+            and isinstance(item.get('agent'), str)
+            and isinstance(item.get('replaced_by'), str)
+        ],
     )
 
 

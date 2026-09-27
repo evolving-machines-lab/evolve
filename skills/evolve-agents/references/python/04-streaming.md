@@ -226,9 +226,9 @@ class OutputEvent(TypedDict):
 
 Everything beyond `update` is optional and comes straight from the wire line the update was parsed
 from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode, droid and zcode stamp every line; pi and prime-agent stamp every message;
+clock (claude, opencode, droid and zcode stamp every line; pi and prime-agent stamp every message;
 qwen, kimi, dsh and antigravity stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini, droid and antigravity and on its first request line for zcode; `messageId` lets
+the model named on the line, or on the harness's init line for droid and antigravity and on its first request line for zcode; `messageId` lets
 you tell which lines belong to one LLM message (claude prints one line per content block, all with
 the same `message.id`; antigravity keys every line of one `agent_response` step by that step); `parentToolCallId` is set only on a subagent's lines and names the
 `toolCallId` of the `Task`/`agent`/`Agent` call that spawned it (a zcode sub-agent also names its own session under `extra.childSessionId`).
@@ -291,7 +291,7 @@ UI display. For replay after cleanup, use the `session_id` with
 |------|-----------------|-------------|
 | `AgentMessageChunk` | `"agent_message_chunk"` | Text/image streaming from agent |
 | `AgentThoughtChunk` | `"agent_thought_chunk"` | Reasoning (Codex) or thinking (Claude) |
-| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Gemini) |
+| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode, pi, Prime Agent, Z Code) |
 | `ToolCall` | `"tool_call"` | Tool execution started |
 | `ToolCallUpdate` | `"tool_call_update"` | Tool execution finished |
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
@@ -338,7 +338,7 @@ def handle_event(event: OutputEvent) -> None:
         ui.append_thought(thought["content"])
 
     elif event_type == "user_message_chunk":
-        # Gemini echo - typically ignored
+        # Prompt echo - typically ignored
         pass
 
     elif event_type == "tool_call":
@@ -442,7 +442,7 @@ opencode prints each step's tokens and cost, pi and prime-agent print each model
 its `message_end` line (prompt tokens are input plus cache reads plus cache writes, as Harbor counts
 them; a cost is reported only when the harness prices the call itself), dsh prints each step's tokens, zcode prints each model request's
 tokens (reasoning and cache counts under their own names in `extra`, never a cost), antigravity prints each model call's tokens
-on the step that made it, and codex, gemini, claude, qwen, droid, zcode and antigravity print a whole-run total on their terminal line
+on the step that made it, and codex, claude, qwen, droid, zcode and antigravity print a whole-run total on their terminal line
 (antigravity's total is the conversation's, cumulative across a resumed run's turns). Kimi's
 stream-json prints no usage at all, so a kimi run simply has no `usage` events.
 

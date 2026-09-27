@@ -31,7 +31,10 @@ import type {
   SandboxSpawnOptions,
   ProcessInfo,
 } from "../../dist/index.js";
-import { Agent, Evolve } from "../../dist/index.js";
+import { AGENT_REGISTRY, Agent, Evolve } from "../../dist/index.js";
+
+// gemini is retired but keeps its run path, so lifting the retirement is one field; this file tests that path lifted.
+delete AGENT_REGISTRY.gemini.retired;
 
 let passed = 0;
 let failed = 0;

@@ -30,7 +30,7 @@ await evolve.run({ prompt: "Hello world" });
 | Managed BYO provider keys | [Getting Started → Managed BYO Provider Keys](./01-getting-started.md#managed-byo-provider-keys) |
 | Managed secrets | [Configuration → Managed Secrets](./02-configuration.md#managed-secrets) |
 | Direct provider key mode (local BYOK) | [Getting Started → Direct Provider Key Mode](./01-getting-started.md#direct-provider-key-mode-local-byok) |
-| BYO Claude Max / Codex / Gemini subscription | [Getting Started → BYO Claude Max Subscription](./01-getting-started.md#byo-claude-max-subscription) |
+| BYO Claude Max / Codex subscription | [Getting Started → BYO Claude Max Subscription](./01-getting-started.md#byo-claude-max-subscription) |
 | Supported agents & models | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
 | Agent-specific options (reasoningEffort) | [Getting Started → Agent Reference](./01-getting-started.md#agent-reference) |
 

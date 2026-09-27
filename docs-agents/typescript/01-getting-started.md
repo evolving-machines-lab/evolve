@@ -1,6 +1,6 @@
 # Evolve TypeScript SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -160,7 +160,7 @@ Use this when you want supported provider usage billed to your provider account 
 2. Keep `EVOLVE_API_KEY` in your app.
 3. Run any supported agent normally.
 
-**You can save a key for Anthropic and OpenAI.** Those are the two providers this route serves today, so a Claude run or a Codex run can bill your own account. The gateway itself reaches seven providers — Anthropic, OpenAI, Gemini, DashScope, Kimi, OpenRouter, and Droid/Factory — but the other five have no bring-your-own path, and a run that routes through one of them is billed to Evolve whether or not you have a key saved. That is not a silent fallback so much as arithmetic: an Anthropic key cannot pay for a Moonshot call.
+**You can save a key for Anthropic and OpenAI.** Those are the two providers this route serves today, so a Claude run or a Codex run can bill your own account. The agents on this page route through seven providers — Anthropic, OpenAI, Google, DashScope, Kimi, OpenRouter, and Droid/Factory — but the other five have no bring-your-own path, and a run that routes through one of them is billed to Evolve whether or not you have a key saved. That is not a silent fallback so much as arithmetic: an Anthropic key cannot pay for a Moonshot call.
 
 When enabled, Evolve routes supported provider calls through a short-lived, sandbox-scoped credential. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
 
@@ -252,36 +252,6 @@ const evolve = new Evolve()
     .withSandbox(sandbox);
 ```
 
-### BYO Gemini Subscription
-
-```bash
-# Run in terminal, follow login steps:
-gemini auth login
-
-# Creates credentials file at ~/.gemini/oauth_creds.json
-```
-
-```bash
-# .env
-GEMINI_OAUTH_FILE_PATH=~/.gemini/oauth_creds.json
-E2B_API_KEY=e2b_...
-```
-
-```ts
-import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
-
-const sandbox = createE2BProvider({
-    apiKey: process.env.E2B_API_KEY,
-});
-
-const evolve = new Evolve()
-    .withAgent({
-        type: "gemini",
-        // SDK reads credentials file from GEMINI_OAUTH_FILE_PATH automatically
-    })
-    .withSandbox(sandbox);
-```
-
 ---
 
 ### Agent Reference
@@ -296,7 +266,6 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 |------|--------|---------|---------|------|
 | `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
 | `"codex"` | `"gpt-6-astra"` `"gpt-6-sol"` `"gpt-5.6-terra"` `"gpt-6-luna"` `"gpt-5.3-codex"` | `"gpt-6-sol"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
-| `"gemini"` | `"gemini-3.5-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` `"gemini-3.7-flash"` *(not selectable yet — see below)* | `"gemini-3.5-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
 | `"qwen"` | `"qwen3.8-max"` `"qwen3.7-plus"` `"qwen3.8-flash"` | `"qwen3.8-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
 | `"kimi"` | `"kimi-k3"` `"kimi-k2.7-code"` `"kimi-k3-raptor"` | `"kimi-k3"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
 | `"opencode"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5.5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-6-astra"` `"openrouter/openai/gpt-6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-6-luna"` `"openrouter/google/gemini-3.8-flash"` `"openrouter/qwen/qwen3.8-max-0902"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5.5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
@@ -306,8 +275,6 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | `"dsh"` | `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` `"openrouter/deepseek/deepseek-v4-pro-0813"` | `"openrouter/deepseek/deepseek-v4.1-flash"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"zcode"` | `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"fireworks/glm-5.3"` `"fireworks/glm-5.3-flash"` | `"openrouter/z-ai/glm-5.3"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"antigravity"` | `"gemini-3.8-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` | `"gemini-3.8-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` |
-
-`"gemini-3.7-flash"` is named here for completeness: the gateway carries it as a correctly priced entry and serves it under its own name on a raw call. It is not selectable through the `gemini` agent, and nothing rejects it if you pass it anyway — the stable `gemini` CLI (0.55.1) rewrites the model client-side before the request ever leaves the sandbox, collapsing every name ending in `flash` onto its own current flash model. Ask for `"gemini-3.7-flash"` (or `"gemini-3.6-flash"`) today and you are silently served, and billed for, `gemini-3.5-flash`. Names that do not end in `flash` skip that rewrite, which is why `"gemini-3.5-flash-lite"` and `"gemini-3.1-pro-preview"` serve under their own names. A newer CLI release is not enough on its own, because the swap follows the CLI's own default flash, so a `-flash` name joins the selectable set only once a live probe shows the CLI actually serving it. On the hosted platform the wrong-model integrity guard refuses such a trial rather than scoring it; with your own provider key there is no backstop, so treat the three names above as the gemini lineup you can really run.
 
 Model names route by themselves: pass just the name from the table and Evolve serves it on its default provider, or pass a provider-prefixed name (`openai/gpt-6-sol`, `openrouter/moonshotai/kimi-k3`) to pick the provider explicitly. The table's names are the supported, priced set — prefixed routing beyond it works for advanced use but is outside the supported lineup. One agent differs: on "opencode" a prefixed name outside its table is sent as an OpenRouter id (`openrouter/<name>`), so pick a provider there through OpenRouter's own ids; the other agents pass a prefixed name through as written. `"pi"` and `"prime-agent"` speak OpenRouter ids as well: through the gateway the name rides as written; with your own `OPENROUTER_API_KEY` the `openrouter/` prefix comes off and the rest is sent to OpenRouter as its model id.
 
@@ -327,7 +294,6 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 |-------|------------------------------------------|-----------------------------|
 | `"claude"` | `"high"` — Claude Code's documented default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"codex"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; sent to Codex verbatim as `model_reasoning_effort`, so exact values depend on the Codex model |
-| `"gemini"` | No effort control | Not supported |
 | `"qwen"` | `"thinking"` | `"thinking"` `"no-thinking"` |
 | `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
@@ -338,7 +304,7 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | `"zcode"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; Z Code's provider file has four levels, so `"off"` and `"minimal"` send no reasoning field (the model's own default), `"xhigh"` and `"max"` are sent as `high` |
 | `"antigravity"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"low"` `"medium"` `"high"` `"max"` (the CLI's own vocabulary); `"xhigh"` is sent as `"max"`, and `"off"` / `"minimal"` (and the legacy spellings `"none"` / `"no-thinking"`) as `"low"` — the CLI cannot disable thinking; the binary spelling `"thinking"` is sent as `"medium"` |
 
-When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness with an effort control, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it; `gemini` has no effort control, so nothing is stamped there.
+When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it.
 
 Note that thinking cannot be disabled on Kimi K3 at the API level — `"no-thinking"` applies to the K2-generation models.
 
@@ -379,7 +345,7 @@ A harness and its model are chosen together, and a few harnesses only accept mod
 
 `maxContextSize` is an SDK option, never an environment variable. Harnesses that do not send a ceiling ignore it.
 
-Two harness quirks the SDK handles automatically, with nothing for you to set: the `claude` harness runs with `IS_SANDBOX=1` so Claude Code's `--dangerously-skip-permissions` is allowed under root, and the `gemini` harness boots with workspace trust set so Gemini CLI runs headless instead of refusing an untrusted workspace.
+One harness quirk the SDK handles automatically, with nothing for you to set: the `claude` harness runs with `IS_SANDBOX=1` so Claude Code's `--dangerously-skip-permissions` is allowed under root.
 
 #### Evolve-Provided Gateway Models
 
@@ -389,13 +355,17 @@ These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve fo
 |-------|-------|-----|
 | `"kimi"` | `"kimi-k3-raptor"` | Kimi K3 fast route for latency-sensitive agent runs |
 
+#### Retired Harnesses
+
+`"gemini"` (Gemini CLI) is retired; use `"antigravity"` instead. Naming a retired harness throws `EvolveConfigError` at `.withAgent()`, naming the harness to use instead. Records it made before keep its name and stay readable: its sessions, traces and checkpoints still list and download.
+
 ### Agent Examples
 
 ```bash
 # .env - set env vars for auto-pickup
 ANTHROPIC_API_KEY=sk-...   # claude
 OPENAI_API_KEY=sk-...      # codex, qwen
-GEMINI_API_KEY=...         # gemini, antigravity
+GEMINI_API_KEY=...         # antigravity
 KIMI_API_KEY=...           # kimi
 OPENROUTER_API_KEY=sk-...  # opencode, pi, prime-agent, dsh, zcode
 FACTORY_API_KEY=...        # droid
@@ -427,15 +397,6 @@ const evolve = new Evolve()
 
 const evolve = new Evolve()
     .withAgent({ type: "codex", reasoningEffort: "high" });
-```
-
-```ts
-// gemini (auto-picks GEMINI_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "gemini" });
-
-const evolve = new Evolve()
-    .withAgent({ type: "gemini", model: "gemini-3.1-pro-preview" });
 ```
 
 ```ts

@@ -29,6 +29,7 @@ from evolve import (
     HostedClientConfig,
     HOSTED_ERROR_CODES,
     ManagedProviderCapability,
+    RetiredAgent,
     UpstreamStatus,
     agents as agents_factory,
     datasets as datasets_factory,
@@ -466,6 +467,7 @@ class TestFrontDoor:
             'limits': {'job': {'n_concurrent_trials': {'default': 4, 'max': 150}}},
             'import_warning_codes': ['no_solutions_archived'],
             'error_codes': ['invalid_input'],
+            'retired_agents': [{'agent': 'gemini', 'replaced_by': 'antigravity'}, {'agent': 'broken'}],
         }
         fake = FakeUrlopen([('/api/meta', document)])
 
@@ -505,6 +507,8 @@ class TestFrontDoor:
         ]
         # An import that can never activate must be recognizable from here.
         assert result.import_warning_codes == ['no_solutions_archived']
+        # A retired agent names its replacement; a malformed row is dropped, not guessed.
+        assert result.retired_agents == [RetiredAgent(agent='gemini', replaced_by='antigravity')]
         # No credentials went out.
         assert fake.requests[0].get_header('Authorization') is None
 
