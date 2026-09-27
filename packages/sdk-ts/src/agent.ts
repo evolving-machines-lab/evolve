@@ -751,7 +751,7 @@ export class Agent {
    *   2. A model the kimi registry entry itself declares keeps that model's
    *      own ceiling when the row declares one (K3: 1048576), else the
    *      harness default (262144).
-   *   3. Any other model — e.g. driving Kimi Code against `gpt-5.5` through an
+   *   3. Any other model — e.g. driving Kimi Code against `gpt-6-sol` through an
    *      OpenAI-compatible gateway — gets the conservative constant, because
    *      262144 is above that model's ceiling and the gateway answers 400.
    *
@@ -1839,7 +1839,7 @@ export class Agent {
    *                      wire id (swarm_dashboard harness-registry
    *                      resolveGatewayModelScope), and three of that table's
    *                      four rows name a route spelling such a key refuses —
-   *                      kimi-k3, glm-5.3 and qwen3.7-max are exact gateway
+   *                      kimi-k3, glm-5.3 and qwen3.8-max are exact gateway
    *                      entries under their bare names. A caller's own
    *                      gateway likewise knows the vendor id, not an Evolve
    *                      route spelling.

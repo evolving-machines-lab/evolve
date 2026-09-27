@@ -13,7 +13,7 @@
  *   CODEX_REASONING_EFFORT - Reasoning effort for codex (default: medium)
  *   ANTHROPIC_MODEL - Model for claude agent (default: opus)
  *   GEMINI_MODEL - Model for gemini agent (default: gemini-3.1-pro-preview)
- *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.7-max)
+ *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.8-max)
  */
 
 import type { AgentType, SandboxProvider } from "../../dist/index.js";
@@ -153,7 +153,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "codex",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.CODEX_MODEL || "gpt-5.5",
+        model: process.env.CODEX_MODEL || "gpt-6-sol",
         reasoningEffort: (process.env.CODEX_REASONING_EFFORT as "low" | "medium" | "high") || "medium",
       };
 
@@ -168,7 +168,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "qwen",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.QWEN_OPENAI_MODEL || "qwen3.7-max",
+        model: process.env.QWEN_OPENAI_MODEL || "qwen3.8-max",
       };
 
     case "kimi":
@@ -189,7 +189,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "droid",
         apiKey: env.EVOLVE_API_KEY || env.FACTORY_API_KEY || "",
-        model: process.env.DROID_MODEL || "gpt-5.5",
+        model: process.env.DROID_MODEL || "gpt-6-sol",
       };
 
     case "pi":

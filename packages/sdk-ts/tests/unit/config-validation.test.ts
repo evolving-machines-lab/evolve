@@ -93,7 +93,7 @@ function testMissingModelIsNamed(): void {
   assertEqual(
     (error as Error).message,
     'Evolve agent config: "model" is empty (""). ' +
-      'Pass a model id such as "claude-opus-5", ' +
+      'Pass a model id such as "claude-opus-5-5", ' +
       "or omit model entirely to use droid's default.",
     "the message states the field, the value, and a usable model id",
   );

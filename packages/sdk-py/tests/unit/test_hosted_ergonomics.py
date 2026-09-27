@@ -424,7 +424,7 @@ class TestFrontDoor:
                     'reason': None,
                     'default_model': 'opus',
                     'models': [
-                        {'alias': 'opus', 'model_id': 'claude-opus-5', 'description': None}
+                        {'alias': 'opus', 'model_id': 'claude-opus-5-5', 'description': None}
                     ],
                     'effort_support': 'level',
                     'default_effort': 'high',
@@ -481,7 +481,7 @@ class TestFrontDoor:
         assert result.agents[0].reason is None
         assert result.agents[0].default_model == 'opus'
         assert result.agents[0].models == [
-            AgentModelOption(alias='opus', model_id='claude-opus-5', description=None)
+            AgentModelOption(alias='opus', model_id='claude-opus-5-5', description=None)
         ]
         assert result.agents[0].default_effort == 'high'
         assert result.agents[0].latest_version == '1.2.3'

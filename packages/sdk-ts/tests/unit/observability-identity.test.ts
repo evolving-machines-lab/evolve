@@ -169,7 +169,7 @@ async function testLoggerKeepsItsIdentity(): Promise<void> {
     const logger = new SessionLogger({
       provider: "e2b",
       agent: "claude",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       sandboxId: "sbx-1",
       tag: "evolve-realtag",
       apiKey: "key",
@@ -180,7 +180,7 @@ async function testLoggerKeepsItsIdentity(): Promise<void> {
     await logger.flush();
 
     assertEqual(body.tag, "evolve-realtag", "the ingest payload keeps the session tag");
-    assertEqual(body.model, "claude-opus-5", "the ingest payload keeps the session model");
+    assertEqual(body.model, "claude-opus-5-5", "the ingest payload keeps the session model");
     assertEqual(body.reasoningEffort, null, "a logger given no effort sends null, never an absent key (B181)");
     assertEqual(body.swarmName, "batch", "an ordinary annotation still reaches the payload");
     assert(
@@ -190,7 +190,7 @@ async function testLoggerKeepsItsIdentity(): Promise<void> {
     const offShape = new SessionLogger({
       provider: "e2b",
       agent: "claude",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       sandboxId: "sbx-2",
       tag: "evolve-offshape",
       apiKey: "key",
@@ -235,7 +235,7 @@ async function testOrgRidesTheIngest(): Promise<void> {
     const named = new SessionLogger({
       provider: "e2b",
       agent: "claude",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       sandboxId: "sbx-org",
       tag: "evolve-org",
       apiKey: "key",
@@ -248,7 +248,7 @@ async function testOrgRidesTheIngest(): Promise<void> {
     const unnamed = new SessionLogger({
       provider: "e2b",
       agent: "claude",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       sandboxId: "sbx-personal",
       tag: "evolve-personal",
       apiKey: "key",
@@ -314,7 +314,7 @@ async function testRefusedBatchIsLoud(): Promise<void> {
     const logger = new SessionLogger({
       provider: "e2b",
       agent: "claude",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       sandboxId: "sbx-refused",
       tag: "evolve-refused",
       apiKey: "key",

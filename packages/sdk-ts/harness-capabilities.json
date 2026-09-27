@@ -62,7 +62,7 @@
         },
         {
           "alias": "opus",
-          "modelId": "claude-opus-5",
+          "modelId": "claude-opus-5-5",
           "description": "Complex reasoning, R&D, architecting"
         },
         {
@@ -115,17 +115,17 @@
       ]
     },
     "codex": {
-      "defaultModel": "gpt-5.6-sol",
+      "defaultModel": "gpt-6-sol",
       "models": [
         {
           "alias": "gpt-6-astra",
           "modelId": "gpt-6-astra",
-          "description": "Newest frontier flagship"
+          "description": "Most capable, for the hardest end-to-end work"
         },
         {
-          "alias": "gpt-5.6-sol",
-          "modelId": "gpt-5.6-sol",
-          "description": "GPT-5.6 flagship (previous generation)"
+          "alias": "gpt-6-sol",
+          "modelId": "gpt-6-sol",
+          "description": "Complex coding and agentic workflows"
         },
         {
           "alias": "gpt-5.6-terra",
@@ -133,14 +133,9 @@
           "description": "Balances intelligence and cost"
         },
         {
-          "alias": "gpt-5.6-luna",
-          "modelId": "gpt-5.6-luna",
-          "description": "High-volume, cost-sensitive tier"
-        },
-        {
-          "alias": "gpt-5.5",
-          "modelId": "gpt-5.5",
-          "description": "GPT-5.5 frontier model (two generations back)"
+          "alias": "gpt-6-luna",
+          "modelId": "gpt-6-luna",
+          "description": "Most efficient, for focused high-volume tasks"
         },
         {
           "alias": "gpt-5.3-codex",
@@ -167,7 +162,7 @@
       ]
     },
     "droid": {
-      "defaultModel": "claude-opus-5",
+      "defaultModel": "claude-opus-5-5",
       "models": [
         {
           "alias": "claude-fable-5.1",
@@ -175,9 +170,9 @@
           "description": "Factory-managed Claude Fable 5.1"
         },
         {
-          "alias": "claude-opus-5",
-          "modelId": "claude-opus-5",
-          "description": "Factory-managed Claude Opus 5"
+          "alias": "claude-opus-5-5",
+          "modelId": "claude-opus-5-5",
+          "description": "Factory-managed Claude Opus 5.5"
         },
         {
           "alias": "claude-sonnet-5",
@@ -195,9 +190,9 @@
           "description": "Factory-managed GPT-6 Astra"
         },
         {
-          "alias": "gpt-5.6-sol",
-          "modelId": "gpt-5.6-sol",
-          "description": "Factory-managed GPT-5.6 Sol"
+          "alias": "gpt-6-sol",
+          "modelId": "gpt-6-sol",
+          "description": "Factory-managed GPT-6 Sol"
         },
         {
           "alias": "gpt-5.6-terra",
@@ -205,19 +200,19 @@
           "description": "Factory-managed GPT-5.6 Terra"
         },
         {
-          "alias": "gpt-5.6-luna",
-          "modelId": "gpt-5.6-luna",
-          "description": "Factory-managed GPT-5.6 Luna"
+          "alias": "gpt-6-luna",
+          "modelId": "gpt-6-luna",
+          "description": "Factory-managed GPT-6 Luna"
         },
         {
-          "alias": "gemini-3.6-flash",
-          "modelId": "gemini-3.6-flash",
-          "description": "Factory-managed Gemini 3.6 Flash"
+          "alias": "gemini-3.8-flash",
+          "modelId": "gemini-3.8-flash",
+          "description": "Factory-managed Gemini 3.8 Flash"
         },
         {
-          "alias": "qwen3.7-max",
-          "modelId": "qwen3.7-max",
-          "description": "Qwen 3.7 Max via the Evolve gateway"
+          "alias": "qwen3.8-max",
+          "modelId": "qwen3.8-max",
+          "description": "Qwen 3.8 Max via the Evolve gateway"
         },
         {
           "alias": "kimi-k3",
@@ -351,7 +346,7 @@
       "presets": []
     },
     "opencode": {
-      "defaultModel": "openrouter/anthropic/claude-opus-5",
+      "defaultModel": "openrouter/anthropic/claude-opus-5.5",
       "models": [
         {
           "alias": "openrouter/anthropic/claude-fable-5.1",
@@ -359,9 +354,9 @@
           "description": "Anthropic Fable 5.1 via OpenRouter"
         },
         {
-          "alias": "openrouter/anthropic/claude-opus-5",
-          "modelId": "openrouter/anthropic/claude-opus-5",
-          "description": "Anthropic Opus 5 via OpenRouter"
+          "alias": "openrouter/anthropic/claude-opus-5.5",
+          "modelId": "openrouter/anthropic/claude-opus-5.5",
+          "description": "Anthropic Opus 5.5 via OpenRouter"
         },
         {
           "alias": "openrouter/anthropic/claude-sonnet-5",
@@ -379,9 +374,9 @@
           "description": "OpenAI GPT-6 Astra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-sol",
-          "modelId": "openrouter/openai/gpt-5.6-sol",
-          "description": "OpenAI GPT-5.6 Sol via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-sol",
+          "modelId": "openrouter/openai/gpt-6-sol",
+          "description": "OpenAI GPT-6 Sol via OpenRouter"
         },
         {
           "alias": "openrouter/openai/gpt-5.6-terra",
@@ -389,14 +384,14 @@
           "description": "OpenAI GPT-5.6 Terra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-luna",
-          "modelId": "openrouter/openai/gpt-5.6-luna",
-          "description": "OpenAI GPT-5.6 Luna via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-luna",
+          "modelId": "openrouter/openai/gpt-6-luna",
+          "description": "OpenAI GPT-6 Luna via OpenRouter"
         },
         {
-          "alias": "openrouter/google/gemini-3.6-flash",
-          "modelId": "openrouter/google/gemini-3.6-flash",
-          "description": "Gemini 3.6 Flash via OpenRouter"
+          "alias": "openrouter/google/gemini-3.8-flash",
+          "modelId": "openrouter/google/gemini-3.8-flash",
+          "description": "Gemini 3.8 Flash via OpenRouter"
         },
         {
           "alias": "openrouter/qwen/qwen3.7-max",
@@ -445,7 +440,7 @@
       "presets": []
     },
     "pi": {
-      "defaultModel": "openrouter/anthropic/claude-opus-5",
+      "defaultModel": "openrouter/anthropic/claude-opus-5.5",
       "models": [
         {
           "alias": "openrouter/anthropic/claude-fable-5.1",
@@ -453,9 +448,9 @@
           "description": "Anthropic Fable 5.1 via OpenRouter"
         },
         {
-          "alias": "openrouter/anthropic/claude-opus-5",
-          "modelId": "openrouter/anthropic/claude-opus-5",
-          "description": "Anthropic Opus 5 via OpenRouter"
+          "alias": "openrouter/anthropic/claude-opus-5.5",
+          "modelId": "openrouter/anthropic/claude-opus-5.5",
+          "description": "Anthropic Opus 5.5 via OpenRouter"
         },
         {
           "alias": "openrouter/anthropic/claude-sonnet-5",
@@ -473,9 +468,9 @@
           "description": "OpenAI GPT-6 Astra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-sol",
-          "modelId": "openrouter/openai/gpt-5.6-sol",
-          "description": "OpenAI GPT-5.6 Sol via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-sol",
+          "modelId": "openrouter/openai/gpt-6-sol",
+          "description": "OpenAI GPT-6 Sol via OpenRouter"
         },
         {
           "alias": "openrouter/openai/gpt-5.6-terra",
@@ -483,14 +478,14 @@
           "description": "OpenAI GPT-5.6 Terra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-luna",
-          "modelId": "openrouter/openai/gpt-5.6-luna",
-          "description": "OpenAI GPT-5.6 Luna via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-luna",
+          "modelId": "openrouter/openai/gpt-6-luna",
+          "description": "OpenAI GPT-6 Luna via OpenRouter"
         },
         {
-          "alias": "openrouter/google/gemini-3.6-flash",
-          "modelId": "openrouter/google/gemini-3.6-flash",
-          "description": "Gemini 3.6 Flash via OpenRouter"
+          "alias": "openrouter/google/gemini-3.8-flash",
+          "modelId": "openrouter/google/gemini-3.8-flash",
+          "description": "Gemini 3.8 Flash via OpenRouter"
         },
         {
           "alias": "openrouter/qwen/qwen3.7-max",
@@ -534,7 +529,7 @@
       "presets": []
     },
     "prime-agent": {
-      "defaultModel": "openrouter/anthropic/claude-opus-5",
+      "defaultModel": "openrouter/anthropic/claude-opus-5.5",
       "models": [
         {
           "alias": "openrouter/anthropic/claude-fable-5.1",
@@ -542,9 +537,9 @@
           "description": "Anthropic Fable 5.1 via OpenRouter"
         },
         {
-          "alias": "openrouter/anthropic/claude-opus-5",
-          "modelId": "openrouter/anthropic/claude-opus-5",
-          "description": "Anthropic Opus 5 via OpenRouter"
+          "alias": "openrouter/anthropic/claude-opus-5.5",
+          "modelId": "openrouter/anthropic/claude-opus-5.5",
+          "description": "Anthropic Opus 5.5 via OpenRouter"
         },
         {
           "alias": "openrouter/anthropic/claude-sonnet-5",
@@ -562,9 +557,9 @@
           "description": "OpenAI GPT-6 Astra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-sol",
-          "modelId": "openrouter/openai/gpt-5.6-sol",
-          "description": "OpenAI GPT-5.6 Sol via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-sol",
+          "modelId": "openrouter/openai/gpt-6-sol",
+          "description": "OpenAI GPT-6 Sol via OpenRouter"
         },
         {
           "alias": "openrouter/openai/gpt-5.6-terra",
@@ -572,14 +567,14 @@
           "description": "OpenAI GPT-5.6 Terra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-luna",
-          "modelId": "openrouter/openai/gpt-5.6-luna",
-          "description": "OpenAI GPT-5.6 Luna via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-luna",
+          "modelId": "openrouter/openai/gpt-6-luna",
+          "description": "OpenAI GPT-6 Luna via OpenRouter"
         },
         {
-          "alias": "openrouter/google/gemini-3.6-flash",
-          "modelId": "openrouter/google/gemini-3.6-flash",
-          "description": "Gemini 3.6 Flash via OpenRouter"
+          "alias": "openrouter/google/gemini-3.8-flash",
+          "modelId": "openrouter/google/gemini-3.8-flash",
+          "description": "Gemini 3.8 Flash via OpenRouter"
         },
         {
           "alias": "openrouter/qwen/qwen3.7-max",
@@ -623,11 +618,11 @@
       "presets": []
     },
     "qwen": {
-      "defaultModel": "qwen3.7-max",
+      "defaultModel": "qwen3.8-max",
       "models": [
         {
-          "alias": "qwen3.7-max",
-          "modelId": "qwen3.7-max",
+          "alias": "qwen3.8-max",
+          "modelId": "qwen3.8-max",
           "description": "Strongest reasoning and coding option"
         },
         {
@@ -636,8 +631,8 @@
           "description": "Latest balanced Qwen Cloud recommendation"
         },
         {
-          "alias": "qwen3.6-flash",
-          "modelId": "qwen3.6-flash",
+          "alias": "qwen3.8-flash",
+          "modelId": "qwen3.8-flash",
           "description": "Fast and cost-effective option"
         }
       ],

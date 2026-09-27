@@ -63,7 +63,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='qwen',
             api_key=evolve_api_key,
-            model=os.getenv('QWEN_MODEL', 'qwen3.7-max'),
+            model=os.getenv('QWEN_MODEL', 'qwen3.8-max'),
         )
 
     elif agent_type == 'kimi':
@@ -84,7 +84,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='droid',
             api_key=evolve_api_key,
-            model=os.getenv('DROID_MODEL', 'gpt-5.5'),
+            model=os.getenv('DROID_MODEL', 'gpt-6-sol'),
         )
 
     elif agent_type == 'pi':

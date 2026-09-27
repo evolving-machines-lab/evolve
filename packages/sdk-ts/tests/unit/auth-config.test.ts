@@ -199,7 +199,7 @@ async function runTests(): Promise<void> {
   {
     const codex = AGENT_REGISTRY.codex;
     const astra = codex.models.find((model) => model.alias === "gpt-6-astra");
-    assertEqual(codex.defaultModel, "gpt-5.6-sol", "Codex default stays gpt-5.6-sol");
+    assertEqual(codex.defaultModel, "gpt-6-sol", "Codex default is gpt-6-sol");
     assert(astra !== undefined, "Codex registry includes gpt-6-astra");
     assertEqual(astra?.modelId, "gpt-6-astra", "gpt-6-astra maps to itself");
 
@@ -446,10 +446,10 @@ async function runTests(): Promise<void> {
   {
     const result = resolveAgentConfig({
       type: "codex",
-      model: "gpt-5.5",
+      model: "gpt-6-sol",
       reasoningEffort: "high",
     });
-    assertEqual(result.model, "gpt-5.5", "preserves model in gateway mode");
+    assertEqual(result.model, "gpt-6-sol", "preserves model in gateway mode");
     assertEqual(result.reasoningEffort, "high", "preserves reasoningEffort in gateway mode");
   }
 
@@ -641,7 +641,7 @@ async function runTests(): Promise<void> {
     // opencodeRoutedModel) prepends openrouter/ to every name that is neither
     // the openrouter/ form nor a roster id, so the route, not the caller,
     // decides; a bare name likewise gets the harness's native prefix.
-    const beyond = resolveAgentConfig({ type: "opencode", model: "anthropic/claude-opus-5" });
+    const beyond = resolveAgentConfig({ type: "opencode", model: "anthropic/claude-opus-5.5" });
     assertEqual(beyond.isDirectMode, true, "an off-roster prefixed name still resolves to direct mode");
     const bare = resolveAgentConfig({ type: "opencode", model: "glm-5.3-flash" });
     assertEqual(bare.isDirectMode, true, "a bare name still resolves to direct mode");
