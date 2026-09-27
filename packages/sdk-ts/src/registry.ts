@@ -499,8 +499,8 @@ const OPENROUTER_ROSTER: readonly ModelInfo[] = [
   { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
   { alias: "openrouter/openai/gpt-6-luna", modelId: "openrouter/openai/gpt-6-luna", description: "OpenAI GPT-6 Luna via OpenRouter" },
   { alias: "openrouter/google/gemini-3.8-flash", modelId: "openrouter/google/gemini-3.8-flash", description: "Gemini 3.8 Flash via OpenRouter" },
-  // OpenRouter lists Qwen 3.8 Max only under dated ids (qwen3.8-max-0902), so 3.7 Max stays here.
-  { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
+  // OpenRouter serves Qwen 3.8 Max only under dated ids; the roster names the real upstream id (ruling 2026-09-26).
+  { alias: "openrouter/qwen/qwen3.8-max-0902", modelId: "openrouter/qwen/qwen3.8-max-0902", description: "Qwen 3.8 Max (0902) via OpenRouter" },
   { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
   { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
   // Through the Evolve gateway this id reaches the platform's one GLM-5.3-Flash, served from Fireworks (ruling 2026-09-08).

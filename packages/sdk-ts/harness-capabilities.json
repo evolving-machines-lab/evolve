@@ -394,9 +394,9 @@
           "description": "Gemini 3.8 Flash via OpenRouter"
         },
         {
-          "alias": "openrouter/qwen/qwen3.7-max",
-          "modelId": "openrouter/qwen/qwen3.7-max",
-          "description": "Qwen 3.7 Max via OpenRouter"
+          "alias": "openrouter/qwen/qwen3.8-max-0902",
+          "modelId": "openrouter/qwen/qwen3.8-max-0902",
+          "description": "Qwen 3.8 Max (0902) via OpenRouter"
         },
         {
           "alias": "openrouter/moonshotai/kimi-k3",
@@ -488,9 +488,9 @@
           "description": "Gemini 3.8 Flash via OpenRouter"
         },
         {
-          "alias": "openrouter/qwen/qwen3.7-max",
-          "modelId": "openrouter/qwen/qwen3.7-max",
-          "description": "Qwen 3.7 Max via OpenRouter"
+          "alias": "openrouter/qwen/qwen3.8-max-0902",
+          "modelId": "openrouter/qwen/qwen3.8-max-0902",
+          "description": "Qwen 3.8 Max (0902) via OpenRouter"
         },
         {
           "alias": "openrouter/moonshotai/kimi-k3",
@@ -577,9 +577,9 @@
           "description": "Gemini 3.8 Flash via OpenRouter"
         },
         {
-          "alias": "openrouter/qwen/qwen3.7-max",
-          "modelId": "openrouter/qwen/qwen3.7-max",
-          "description": "Qwen 3.7 Max via OpenRouter"
+          "alias": "openrouter/qwen/qwen3.8-max-0902",
+          "modelId": "openrouter/qwen/qwen3.8-max-0902",
+          "description": "Qwen 3.8 Max (0902) via OpenRouter"
         },
         {
           "alias": "openrouter/moonshotai/kimi-k3",
