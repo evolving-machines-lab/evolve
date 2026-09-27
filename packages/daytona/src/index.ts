@@ -2412,75 +2412,6 @@ function createLogDemuxer(
  * streaming through a plain response body, which is what the Dashboard route
  * pipes through unbuffered.
  */
-function managedSessionCommandLogsUrl(
-  context: ManagedStreamContext,
-  sandboxId: string,
-  sessionId: string,
-  commandId: string,
-  follow: boolean,
-): string {
-  return (
-    `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
-    `/process/session/${encodeURIComponent(sessionId)}` +
-    `/command/${encodeURIComponent(commandId)}/logs${follow ? "?follow=true" : ""}`
-  );
-}
-
-// The endpoint answers JSON only to an identified SDK (vendor client doc, process-api.d.ts:287:
-// "JSON ... for SDK >= 0.167.0, plain text otherwise"); the managed route strips that identity,
-// and the SDK reads JSON fields off the plain text it gets back — so the body is read here.
-async function readManagedSettledLogs(
-  context: ManagedStreamContext,
-  sandboxId: string,
-  sessionId: string,
-  commandId: string,
-  token: string,
-): Promise<{ output: string; stdout: string; stderr: string }> {
-  const response = await fetch(
-    managedSessionCommandLogsUrl(context, sandboxId, sessionId, commandId, false),
-    {
-      headers: {
-        Authorization: `Bearer ${context.apiKey}`,
-        accept: "application/json, text/plain, */*",
-      },
-    },
-  );
-  if (!response.ok) {
-    throw new Error(
-      `Daytona managed log read failed: ${response.status} ${await response.text()}`,
-    );
-  }
-  if ((response.headers.get("content-type") || "").includes("application/json")) {
-    const body = (await response.json()) as {
-      output?: string | null;
-      stdout?: string | null;
-      stderr?: string | null;
-    };
-    return { output: body.output ?? "", stdout: body.stdout ?? "", stderr: body.stderr ?? "" };
-  }
-  let stdout = "";
-  let stderr = "";
-  const demuxer = createLogDemuxer(
-    (chunk) => {
-      stdout += chunk;
-    },
-    (chunk) => {
-      stderr += chunk;
-    },
-  );
-  demuxer.push(new Uint8Array(await response.arrayBuffer()));
-  demuxer.flush();
-  // The legacy combined log is per-stream GROUPS in an unpromised order; the sentinel ends the
-  // stdout group, so whatever follows it is stderr — split there, whichever group came first.
-  const sentinel = `${token}\n`;
-  const at = stdout.indexOf(sentinel);
-  if (at !== -1 && at + sentinel.length < stdout.length) {
-    stderr = stdout.slice(at + sentinel.length) + stderr;
-    stdout = stdout.slice(0, at + sentinel.length);
-  }
-  return { output: "", stdout, stderr };
-}
-
 async function followManagedSessionLogs(
   context: ManagedStreamContext,
   sandboxId: string,
@@ -2522,6 +2453,80 @@ async function followManagedSessionLogs(
     demuxer.flush();
     await reader.cancel().catch(() => undefined);
   }
+}
+
+function managedSessionCommandLogsUrl(
+  context: ManagedStreamContext,
+  sandboxId: string,
+  sessionId: string,
+  commandId: string,
+  follow: boolean,
+): string {
+  return (
+    `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
+    `/process/session/${encodeURIComponent(sessionId)}` +
+    `/command/${encodeURIComponent(commandId)}/logs${follow ? "?follow=true" : ""}`
+  );
+}
+
+// The endpoint answers JSON only to an identified SDK (vendor client doc, process-api.d.ts:287:
+// "JSON ... for SDK >= 0.167.0, plain text otherwise"); the managed route strips that identity,
+// and the SDK reads JSON fields off the plain text it gets back — so the body is read here.
+async function readManagedSettledLogs(
+  context: ManagedStreamContext,
+  sandboxId: string,
+  sessionId: string,
+  commandId: string,
+  token: string,
+): Promise<{ output: string; stdout: string; stderr: string }> {
+  const response = await fetch(
+    managedSessionCommandLogsUrl(context, sandboxId, sessionId, commandId, false),
+    {
+      headers: {
+        Authorization: `Bearer ${context.apiKey}`,
+        accept: "application/json, text/plain, */*",
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Daytona managed log read failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  let streams: { stdout: string; stderr: string };
+  if ((response.headers.get("content-type") || "").includes("application/json")) {
+    streams = readCommandStreams(
+      (await response.json()) as { output?: string | null; stdout?: string | null; stderr?: string | null },
+    );
+  } else {
+    let stdout = "";
+    let stderr = "";
+    const demuxer = createLogDemuxer(
+      (chunk) => {
+        stdout += chunk;
+      },
+      (chunk) => {
+        stderr += chunk;
+      },
+    );
+    demuxer.push(new Uint8Array(await response.arrayBuffer()));
+    demuxer.flush();
+    streams = { stdout, stderr };
+  }
+  // A legacy combined log (either shape) is per-stream GROUPS in an unpromised order; the sentinel
+  // ends the stdout group, so whatever follows it is stderr — split there, whichever group came first.
+  // Residual: a `set -x` shell traces the wrapper's printf, so the token appears on stderr too, and in
+  // a stderr-first log that trace is the first match — self-referencing commands only, the class the
+  // sentinel design already accepts (stripEndOfOutputSentinel).
+  const sentinel = `${token}\n`;
+  const at = streams.stdout.indexOf(sentinel);
+  if (at !== -1 && at + sentinel.length < streams.stdout.length) {
+    streams = {
+      stdout: streams.stdout.slice(0, at + sentinel.length),
+      stderr: streams.stdout.slice(at + sentinel.length) + streams.stderr,
+    };
+  }
+  return { output: "", ...streams };
 }
 
 // ============================================================

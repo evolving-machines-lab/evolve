@@ -526,8 +526,16 @@ function managedFetch(
   settledFetch: () => Promise<Response>,
   follow: (init?: RequestInit) => Response,
 ): typeof fetch {
-  return (async (url: unknown, init?: RequestInit) =>
-    String(url).includes("follow=true") ? follow(init) : settledFetch()) as typeof fetch;
+  return (async (url: unknown, init?: RequestInit) => {
+    if (String(url).includes("follow=true")) return follow(init);
+    // The settled door: the bare logs URL, no follow of any spelling, the Evolve key as bearer.
+    assert(!/[?&]follow/.test(String(url)), `a settled read carries no follow (got ${String(url)})`);
+    assert(
+      new Headers(init?.headers as HeadersInit).get("authorization") === "Bearer sk-evolve",
+      "a settled read carries the Evolve key as its bearer credential",
+    );
+    return settledFetch();
+  }) as typeof fetch;
 }
 
 /** The end-of-output token this run told the box to print, if it told it anything. */
@@ -1007,8 +1015,13 @@ async function testSettledReadTakesTheShapeThatArrives(): Promise<void> {
     `stderr stays merged in front, token shed (got ${JSON.stringify(d.result.stdout)})`,
   );
   assert(d.result.stderr === "", `nothing is guessed into stderr (got ${JSON.stringify(d.result.stderr)})`);
+
+  // (e) a legacy-shaped JSON envelope — combined `output`, empty streams — with the token mid-body is split too
+  const e = await waitWithSettledBody((token) => json({ output: `out\n${token}\nerr\n`, stdout: "", stderr: "" }));
+  assert(e.result.stdout === "out\n", `the combined output's stdout group ends at the sentinel (got ${JSON.stringify(e.result.stdout)})`);
+  assert(e.result.stderr === "err\n", `and its tail is stderr (got ${JSON.stringify(e.result.stderr)})`);
   assert(
-    a.sdkReads + b.sdkReads + c.sdkReads + d.sdkReads === 0,
+    a.sdkReads + b.sdkReads + c.sdkReads + d.sdkReads + e.sdkReads === 0,
     "the SDK's settled read is not consulted in any case",
   );
 }
