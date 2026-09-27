@@ -12,7 +12,7 @@
  * ```
  * agent_message_chunk  → Text/image streaming from agent
  * agent_thought_chunk  → Reasoning (Codex) or thinking (Claude)
- * user_message_chunk   → User message echo (Qwen, OpenCode; Gemini in recorded traces)
+ * user_message_chunk   → User message echo (Qwen, OpenCode, pi, Prime Agent, Z Code; Gemini in recorded traces)
  * tool_call            → Tool started (status: pending/in_progress)
  * tool_call_update     → Tool finished (status: completed/failed)
  * plan                 → TodoWrite updates
@@ -351,7 +351,7 @@ export interface AgentThoughtChunk {
 }
 
 /**
- * User message echo (Qwen, OpenCode; Gemini in recorded traces).
+ * User message echo (Qwen, OpenCode, pi, Prime Agent, Z Code; Gemini in recorded traces).
  */
 export interface UserMessageChunk {
   sessionUpdate: "user_message_chunk";

@@ -471,7 +471,7 @@ Persist sandbox state beyond sandbox lifetime. Checkpoints archive specific dire
 
 **What gets checkpointed:**
 - `/home/user/workspace/` — your project files
-- `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.qwen/`, `.kimi-code/`, `.factory/`)
+- `/home/user/.<agent>/` — agent settings and session history (e.g. `.claude/`, `.codex/`, `.gemini/`, `.qwen/`, `.kimi-code/`, `.factory/`)
 - For OpenCode: XDG directories (`~/.local/share/opencode/`, `~/.config/opencode/`, `~/.local/state/opencode/`)
 - For Kimi Code: `.kimi-code/config.toml` is excluded because Evolve rewrites gateway credentials before each run; session history and MCP config are still included.
 

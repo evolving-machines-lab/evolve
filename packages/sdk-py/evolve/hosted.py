@@ -2001,7 +2001,7 @@ class CheckConfigInput(TypedDict, total=False):
     """
     #: A name for the check (Harbor's ``--job-name``); omitted, the accept timestamp ``YYYY-MM-DD__HH-MM-SS``. 1-120 characters.
     name: str
-    #: The agent the checker runs on — the analyze door's ``agent``, same rule. Omitted: claude.
+    #: The agent the checker runs on — the analyze door's ``agent``, same rule: a retired one is refused ``agent_retired``. Omitted: claude.
     agent: str
     model_name: str
     rubric: Rubric

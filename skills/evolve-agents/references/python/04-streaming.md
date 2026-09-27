@@ -291,7 +291,7 @@ UI display. For replay after cleanup, use the `session_id` with
 |------|-----------------|-------------|
 | `AgentMessageChunk` | `"agent_message_chunk"` | Text/image streaming from agent |
 | `AgentThoughtChunk` | `"agent_thought_chunk"` | Reasoning (Codex) or thinking (Claude) |
-| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode) |
+| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode, pi, Prime Agent, Z Code) |
 | `ToolCall` | `"tool_call"` | Tool execution started |
 | `ToolCallUpdate` | `"tool_call_update"` | Tool execution finished |
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |

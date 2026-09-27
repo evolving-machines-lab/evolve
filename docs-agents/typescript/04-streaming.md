@@ -142,7 +142,7 @@ type SessionUpdate =
 |------|-----------------|-------------|
 | `AgentMessageChunk` | `"agent_message_chunk"` | Text/image streaming from agent |
 | `AgentThoughtChunk` | `"agent_thought_chunk"` | Reasoning (Codex) or thinking (Claude) |
-| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode) |
+| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode, pi, Prime Agent, Z Code) |
 
 ```typescript
 interface AgentMessageChunk {

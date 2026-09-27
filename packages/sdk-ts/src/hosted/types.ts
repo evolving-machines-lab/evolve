@@ -5001,7 +5001,7 @@ export interface AnalysesClient {
 export interface CheckConfigInput {
   /** A name for the check (Harbor's `--job-name`); omitted, the accept timestamp `YYYY-MM-DD__HH-MM-SS`. 1-120 characters. */
   name?: string;
-  /** The agent the checker runs on (Harbor's `-a/--agent`) — the analyze door's `agent`, same rule. Omitted: claude. */
+  /** The agent the checker runs on (Harbor's `-a/--agent`) — the analyze door's `agent`, same rule: a retired one is refused `agent_retired`. Omitted: claude. */
   agent?: string;
   /** Model the checker agent runs (Harbor's `-m/--model`) — the analyze door's `model_name`, same rule: omitted, the agent's default (`GET /api/meta` `analyze.agents[].default_model`); named, on the agent's roster. */
   model_name?: string;
