@@ -91,7 +91,7 @@ jobs:
             fi
             echo "contract ref '${ref}': absent (404)"
           done
-          echo "::error::no contract branch found — every candidate answered 404 ($BRANCH, berth/day-one, project-sable, main). The server repo has no branch this ref can pair with."
+          echo "::error::no contract branch found — every candidate answered 404 ($BRANCH, $BASE when set, berth/day-one, project-sable, main). The server repo has no branch this ref can pair with."
           exit 1
 
       - name: Checkout the contract (private server repo, spec/ only)

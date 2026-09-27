@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, project-sable, 'berth/**', 'train/**']
 
+permissions:
+  contents: read
+
 jobs:
   typescript:
     runs-on: ubuntu-latest
