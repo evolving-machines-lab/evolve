@@ -219,7 +219,7 @@ class AgentConfig:
         max_context_size: Context/completion ceiling for CLIs that must be told one
             (Kimi Code reads it as max_context_size and sends it as the request's
             max_tokens). Set it to the model's real ceiling when driving a harness
-            against a model from another family - e.g. Kimi Code against 'gpt-5.5'
+            against a model from another family - e.g. Kimi Code against 'gpt-6-sol'
             through an OpenAI-compatible gateway, where an oversized max_tokens is
             rejected with a 400. When set it is used verbatim. When omitted, the
             harness's own models keep their registry value and any other model falls

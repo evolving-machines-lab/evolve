@@ -295,21 +295,21 @@ The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider 
 | type | models | default | Gateway | Direct key |
 |------|--------|---------|---------|------|
 | `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
-| `"codex"` | `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gpt-5.5"` `"gpt-5.3-codex"` | `"gpt-5.6-sol"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
+| `"codex"` | `"gpt-6-astra"` `"gpt-6-sol"` `"gpt-5.6-terra"` `"gpt-6-luna"` `"gpt-5.3-codex"` | `"gpt-6-sol"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
 | `"gemini"` | `"gemini-3.5-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` `"gemini-3.7-flash"` *(not selectable yet — see below)* | `"gemini-3.5-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` or `GEMINI_OAUTH_FILE_PATH` |
-| `"qwen"` | `"qwen3.7-max"` `"qwen3.7-plus"` `"qwen3.6-flash"` | `"qwen3.7-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
+| `"qwen"` | `"qwen3.8-max"` `"qwen3.7-plus"` `"qwen3.8-flash"` | `"qwen3.8-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
 | `"kimi"` | `"kimi-k3"` `"kimi-k2.7-code"` `"kimi-k3-raptor"` | `"kimi-k3"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
-| `"opencode"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-5.6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-5.6-luna"` `"openrouter/google/gemini-3.6-flash"` `"openrouter/qwen/qwen3.7-max"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"droid"` | `"claude-fable-5.1"` `"claude-opus-5"` `"claude-sonnet-5"` `"claude-haiku-4-5"` `"gpt-5.6-sol"` `"gpt-5.6-terra"` `"gpt-5.6-luna"` `"gemini-3.6-flash"` `"qwen3.7-max"` `"kimi-k3"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"claude-opus-5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
-| `"pi"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-6-astra"` `"openrouter/openai/gpt-5.6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-5.6-luna"` `"openrouter/google/gemini-3.6-flash"` `"openrouter/qwen/qwen3.7-max"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"prime-agent"` | the same fourteen OpenRouter ids as `"pi"` | `"openrouter/anthropic/claude-opus-5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"opencode"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5.5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-6-astra"` `"openrouter/openai/gpt-6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-6-luna"` `"openrouter/google/gemini-3.8-flash"` `"openrouter/qwen/qwen3.8-max-0902"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5.5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"droid"` | `"claude-fable-5.1"` `"claude-opus-5-5"` `"claude-sonnet-5"` `"claude-haiku-4-5"` `"gpt-6-sol"` `"gpt-5.6-terra"` `"gpt-6-luna"` `"gemini-3.8-flash"` `"qwen3.8-max"` `"kimi-k3"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"claude-opus-5-5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
+| `"pi"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5.5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-6-astra"` `"openrouter/openai/gpt-6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-6-luna"` `"openrouter/google/gemini-3.8-flash"` `"openrouter/qwen/qwen3.8-max-0902"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5.5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
+| `"prime-agent"` | the same fourteen OpenRouter ids as `"pi"` | `"openrouter/anthropic/claude-opus-5.5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"dsh"` | `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` `"openrouter/deepseek/deepseek-v4-pro-0813"` | `"openrouter/deepseek/deepseek-v4.1-flash"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"zcode"` | `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"fireworks/glm-5.3"` `"fireworks/glm-5.3-flash"` | `"openrouter/z-ai/glm-5.3"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
 | `"antigravity"` | `"gemini-3.8-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` | `"gemini-3.8-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` |
 
 `"gemini-3.7-flash"` is named here for completeness: the gateway carries it as a correctly priced entry and serves it under its own name on a raw call. It is not selectable through the `gemini` agent, and nothing rejects it if you pass it anyway — the stable `gemini` CLI (0.55.1) rewrites the model client-side before the request ever leaves the sandbox, collapsing every name ending in `flash` onto its own current flash model. Ask for `"gemini-3.7-flash"` (or `"gemini-3.6-flash"`) today and you are silently served, and billed for, `gemini-3.5-flash`. Names that do not end in `flash` skip that rewrite, which is why `"gemini-3.5-flash-lite"` and `"gemini-3.1-pro-preview"` serve under their own names. A newer CLI release is not enough on its own, because the swap follows the CLI's own default flash, so a `-flash` name joins the selectable set only once a live probe shows the CLI actually serving it. On the hosted platform the wrong-model integrity guard refuses such a trial rather than scoring it; with your own provider key there is no backstop, so treat the three names above as the gemini lineup you can really run.
 
-Model names route by themselves: pass just the name from the table and Evolve serves it on its default provider, or pass a provider-prefixed name (`openai/gpt-5.5`, `openrouter/moonshotai/kimi-k3`) to pick the provider explicitly. The table's names are the supported, priced set — prefixed routing beyond it works for advanced use but is outside the supported lineup. One agent differs: on "opencode" a prefixed name outside its table is sent as an OpenRouter id (`openrouter/<name>`), so pick a provider there through OpenRouter's own ids; the other agents pass a prefixed name through as written. `"pi"` and `"prime-agent"` speak OpenRouter ids as well: through the gateway the name rides as written; with your own `OPENROUTER_API_KEY` the `openrouter/` prefix comes off and the rest is sent to OpenRouter as its model id.
+Model names route by themselves: pass just the name from the table and Evolve serves it on its default provider, or pass a provider-prefixed name (`openai/gpt-6-sol`, `openrouter/moonshotai/kimi-k3`) to pick the provider explicitly. The table's names are the supported, priced set — prefixed routing beyond it works for advanced use but is outside the supported lineup. One agent differs: on "opencode" a prefixed name outside its table is sent as an OpenRouter id (`openrouter/<name>`), so pick a provider there through OpenRouter's own ids; the other agents pass a prefixed name through as written. `"pi"` and `"prime-agent"` speak OpenRouter ids as well: through the gateway the name rides as written; with your own `OPENROUTER_API_KEY` the `openrouter/` prefix comes off and the rest is sent to OpenRouter as its model id.
 
 `"glm-5.3-flash"` is GLM-5.3 Flash served from one pinned Fireworks host through the gateway: $0.15/M input and $0.50/M output ($0.03/M cached input); `"glm-5.3"` is the full model on OpenRouter.
 
@@ -326,12 +326,12 @@ Agent-specific option: `reasoningEffort` controls how much reasoning/thinking th
 | Agent | Default when omitted (pinned by Evolve) | Supported `reasoningEffort` |
 |-------|------------------------------------------|-----------------------------|
 | `"claude"` | `"high"` — Claude Code's documented default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"codex"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"none"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` (`"none"` and `"max"` are GPT-5.6 values) |
+| `"codex"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; sent to Codex verbatim as `model_reasoning_effort`, so exact values depend on the Codex model |
 | `"gemini"` | No effort control | Not supported |
 | `"qwen"` | `"thinking"` | `"thinking"` `"no-thinking"` |
 | `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
 | `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"droid"` | `"high"` — matches Droid’s own default for Opus 5, pinned by Evolve | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
+| `"droid"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high; Droid’s own default for Opus 5.5 is `medium`) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
 | `"pi"` | `"high"` — pinned by Evolve (pi's own default is `"medium"`) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`, clamped to what the model supports; `"thinking"` reads as `"medium"`, `"no-thinking"` as `"off"` |
 | `"prime-agent"` | `"high"` — pinned by Evolve (Prime Agent's own default is `"medium"`) | the same scale as `"pi"` |
 | `"dsh"` | `"high"` — DeepSeek's documented default, pinned by Evolve | `"low"` `"medium"` `"high"` only; `"off"` (and its spellings) is refused at configuration — dsh sends the effort on every request, so it cannot be switched off |
@@ -367,12 +367,12 @@ A harness and its model are chosen together, and a few harnesses only accept mod
 
 - **`qwen`** must run a Qwen-native model (the `qwen3.x` aliases, routed via DashScope). Qwen Code injects the DashScope-only `enable_thinking` request parameter on every call, which OpenAI-family models reject with a `400` — so pointing the `qwen` harness at a non-Qwen model fails.
 - **`opencode`** routes every model through OpenRouter, so its models are the `openrouter/…` ids in the table above (a bare id is prefixed with `openrouter/` for you).
-- **`kimi`** must be told a context ceiling, which Kimi Code sends as the request's `max_tokens`. Its own models get Kimi's 262144; any other model (say `gpt-5.5` behind an OpenAI-compatible gateway) gets a conservative 128000 instead, because an oversized `max_tokens` is rejected outright — LiteLLM answers `400 max_tokens is too large`. Pass the model's real ceiling to skip the guess:
+- **`kimi`** must be told a context ceiling, which Kimi Code sends as the request's `max_tokens`. Its own models get Kimi's 262144; any other model (say `gpt-6-sol` behind an OpenAI-compatible gateway) gets a conservative 128000 instead, because an oversized `max_tokens` is rejected outright — LiteLLM answers `400 max_tokens is too large`. Pass the model's real ceiling to skip the guess:
 
 ```ts
 .withAgent({
     type: "kimi",
-    model: "gpt-5.5",
+    model: "gpt-6-sol",
     maxContextSize: 128000,   // (optional) the model's real completion ceiling, used verbatim
 })
 ```
@@ -444,7 +444,7 @@ const evolve = new Evolve()
     .withAgent({ type: "qwen" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "qwen", model: "qwen3.7-max" });
+    .withAgent({ type: "qwen", model: "qwen3.8-max" });
 
 const evolve = new Evolve()
     .withAgent({ type: "qwen", reasoningEffort: "no-thinking" });
@@ -472,7 +472,7 @@ const evolve = new Evolve()
     .withAgent({ type: "opencode" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "opencode", model: "openrouter/openai/gpt-5.6-sol" });
+    .withAgent({ type: "opencode", model: "openrouter/openai/gpt-6-sol" });
 
 const evolve = new Evolve()
     .withAgent({ type: "opencode", model: "openrouter/anthropic/claude-fable-5.1" });
@@ -487,7 +487,7 @@ const evolve = new Evolve()
     .withAgent({ type: "droid" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "droid", model: "gpt-5.5" });
+    .withAgent({ type: "droid", model: "gpt-6-sol" });
 ```
 
 ```ts
@@ -496,7 +496,7 @@ const evolve = new Evolve()
     .withAgent({ type: "pi" });
 
 const evolve = new Evolve()
-    .withAgent({ type: "pi", model: "openrouter/openai/gpt-5.6-sol", reasoningEffort: "xhigh" });
+    .withAgent({ type: "pi", model: "openrouter/openai/gpt-6-sol", reasoningEffort: "xhigh" });
 
 // prime-agent (the same key and the same model ids)
 const evolve = new Evolve()

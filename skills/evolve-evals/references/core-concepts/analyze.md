@@ -41,7 +41,7 @@ Repeat `-t` with full trial IDs to select specific trials; selection happens bef
 ```bash
 evolve run \
   -d harbor-examples@1.0 -i hello-world \
-  -a codex -m gpt-5.6-luna \
+  -a codex -m gpt-6-luna \
   --max-trial-spend 1 -r 0 --analyze --watch
 ```
 

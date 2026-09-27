@@ -130,8 +130,8 @@ async function main(): Promise<void> {
   const tests: TestCase[] = [
     { name: "Sonnet 5 gateway",   model: "openrouter/anthropic/claude-sonnet-5",   mode: "gateway" },
     { name: "Sonnet 5 BYOK",      model: "openrouter/anthropic/claude-sonnet-5",   mode: "byok" },
-    { name: "GPT 5.6 Luna gateway", model: "openrouter/openai/gpt-5.6-luna",       mode: "gateway" },
-    { name: "GPT 5.6 Luna BYOK",  model: "openrouter/openai/gpt-5.6-luna",         mode: "byok" },
+    { name: "GPT 6 Luna gateway", model: "openrouter/openai/gpt-6-luna",       mode: "gateway" },
+    { name: "GPT 6 Luna BYOK",  model: "openrouter/openai/gpt-6-luna",         mode: "byok" },
   ];
 
   const results: { name: string; pass: boolean; error?: string }[] = [];

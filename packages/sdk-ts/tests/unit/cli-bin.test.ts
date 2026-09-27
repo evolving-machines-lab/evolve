@@ -148,7 +148,7 @@ try {
     const configPath = join(workDir, "job.yaml");
     writeFileSync(
       configPath,
-      ["datasets:", "  - name: deep-swe", "agents:", "  - name: codex", "    model_name: gpt-5.5", ""].join("\n"),
+      ["datasets:", "  - name: deep-swe", "agents:", "  - name: codex", "    model_name: gpt-6-sol", ""].join("\n"),
     );
     const printConfig = runNode(BIN_PATH, ["run", "-c", configPath, "--print-config"]);
     assert(printConfig.code === 0, `--print-config through the built bin exits 0 (stderr: ${printConfig.stderr.trim()})`);

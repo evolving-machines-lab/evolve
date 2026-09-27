@@ -490,16 +490,17 @@ export function piFamilyWireModel(
 const OPENROUTER_ROSTER: readonly ModelInfo[] = [
   // OpenRouter spells Fable 5.1 with a dot (openrouter.ai/api/v1/models, read 2026-09-15).
   { alias: "openrouter/anthropic/claude-fable-5.1", modelId: "openrouter/anthropic/claude-fable-5.1", description: "Anthropic Fable 5.1 via OpenRouter" },
-  { alias: "openrouter/anthropic/claude-opus-5", modelId: "openrouter/anthropic/claude-opus-5", description: "Anthropic Opus 5 via OpenRouter" },
+  { alias: "openrouter/anthropic/claude-opus-5.5", modelId: "openrouter/anthropic/claude-opus-5.5", description: "Anthropic Opus 5.5 via OpenRouter" },
   { alias: "openrouter/anthropic/claude-sonnet-5", modelId: "openrouter/anthropic/claude-sonnet-5", description: "Anthropic Sonnet 5 via OpenRouter" },
   { alias: "openrouter/anthropic/claude-haiku-4.5", modelId: "openrouter/anthropic/claude-haiku-4.5", description: "Anthropic Haiku via OpenRouter" },
-  // GPT-6 Astra under OpenRouter's id (read 2026-09-15, listed at OpenAI's own rate).
+  // The GPT-6 ids OpenRouter lists (read 2026-09-26); OpenAI ships no GPT-6 Terra, so Terra stays 5.6.
   { alias: "openrouter/openai/gpt-6-astra", modelId: "openrouter/openai/gpt-6-astra", description: "OpenAI GPT-6 Astra via OpenRouter" },
-  { alias: "openrouter/openai/gpt-5.6-sol", modelId: "openrouter/openai/gpt-5.6-sol", description: "OpenAI GPT-5.6 Sol via OpenRouter" },
+  { alias: "openrouter/openai/gpt-6-sol", modelId: "openrouter/openai/gpt-6-sol", description: "OpenAI GPT-6 Sol via OpenRouter" },
   { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
-  { alias: "openrouter/openai/gpt-5.6-luna", modelId: "openrouter/openai/gpt-5.6-luna", description: "OpenAI GPT-5.6 Luna via OpenRouter" },
-  { alias: "openrouter/google/gemini-3.6-flash", modelId: "openrouter/google/gemini-3.6-flash", description: "Gemini 3.6 Flash via OpenRouter" },
-  { alias: "openrouter/qwen/qwen3.7-max", modelId: "openrouter/qwen/qwen3.7-max", description: "Qwen 3.7 Max via OpenRouter" },
+  { alias: "openrouter/openai/gpt-6-luna", modelId: "openrouter/openai/gpt-6-luna", description: "OpenAI GPT-6 Luna via OpenRouter" },
+  { alias: "openrouter/google/gemini-3.8-flash", modelId: "openrouter/google/gemini-3.8-flash", description: "Gemini 3.8 Flash via OpenRouter" },
+  // OpenRouter serves Qwen 3.8 Max only under dated ids; the roster names the real upstream id.
+  { alias: "openrouter/qwen/qwen3.8-max-0902", modelId: "openrouter/qwen/qwen3.8-max-0902", description: "Qwen 3.8 Max (0902) via OpenRouter" },
   { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
   { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
   // Through the Evolve gateway this id reaches the platform's one GLM-5.3-Flash, served from Fireworks (ruling 2026-09-08).
@@ -601,10 +602,10 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // default for all of them — stamped explicitly via --effort.
     defaultReasoningEffort: "high",
     models: [
-      // buildCommand sends this modelId, never the alias: Claude Code resolves a bare alias to its own
-      // current id (`opus` = Opus 5.5), which a run key scoped to the roster refuses. These ids carry 1M natively.
+      // buildCommand sends this modelId, never the alias: Claude Code resolves a bare alias to whatever its
+      // own current id is, which a run key scoped to the roster refuses once the two differ. These ids carry 1M natively.
       { alias: "fable", modelId: "claude-fable-5-1", description: "Highest capability, long-horizon agentic work" },
-      { alias: "opus", modelId: "claude-opus-5", description: "Complex reasoning, R&D, architecting" },
+      { alias: "opus", modelId: "claude-opus-5-5", description: "Complex reasoning, R&D, architecting" },
       { alias: "sonnet", modelId: "claude-sonnet-5", description: "Daily coding, features, tests" },
       { alias: "haiku", modelId: "claude-haiku-4-5-20251001", description: "Quick tasks, syntax correction" },
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
@@ -696,28 +697,18 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // depend on this field, and anything that starts depending on it is broken
     // before it ships.
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "gpt-5.6-sol",
+    defaultModel: "gpt-6-sol",
     // Owner policy: graded-effort harnesses pin "high" (kimi alone pins max).
     // Stamped explicitly via -c model_reasoning_effort on every run, so a
     // vendor-side default change cannot move results.
     defaultReasoningEffort: "high",
     models: [
-      // GPT-6 Astra (released 2026-09-03). Vendor doc, read 2026-09-15
-      // (platform.openai.com/docs/models/gpt-6-astra): "Model ID: gpt-6-astra
-      // ... our most capable model, built for the hardest end-to-end work";
-      // reasoning.effort low/medium/high/xhigh/max; 1,050,000 context. Codex
-      // CLI: configurable from 0.153.1 (2026-09-03, "Added support for
-      // configuring GPT-6-Astra through the API without changing the default
-      // model or showing it in the model picker"), Codex's own bundled default
-      // from 0.153.4 (2026-09-04), in its model picker from 0.154.0 —
-      // learn.chatgpt.com/docs/changelog (developers.openai.com/codex/changelog
-      // redirects there), read 2026-09-15. The Evolve default stays gpt-5.6-sol
-      // (owner's word 2026-09-15).
-      { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Newest frontier flagship" },
-      { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "GPT-5.6 flagship (previous generation)" },
+      // GPT-6 Astra, Sol and Luna (developers.openai.com/api/docs/models, read 2026-09-26); OpenAI ships
+      // no GPT-6 Terra, so 5.6 Terra stays. Default gpt-6-sol: the latest generation only.
+      { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Most capable, for the hardest end-to-end work" },
+      { alias: "gpt-6-sol", modelId: "gpt-6-sol", description: "Complex coding and agentic workflows" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Balances intelligence and cost" },
-      { alias: "gpt-5.6-luna", modelId: "gpt-5.6-luna", description: "High-volume, cost-sensitive tier" },
-      { alias: "gpt-5.5", modelId: "gpt-5.5", description: "GPT-5.5 frontier model (two generations back)" },
+      { alias: "gpt-6-luna", modelId: "gpt-6-luna", description: "Most efficient, for focused high-volume tasks" },
       { alias: "gpt-5.3-codex", modelId: "gpt-5.3-codex", description: "Industry-leading code-optimized" },
     ],
     systemPromptFile: "AGENTS.md",
@@ -843,14 +834,16 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "OPENAI_API_KEY",
     baseUrlEnv: "OPENAI_BASE_URL",
     effortSupport: "binary",
-    defaultModel: "qwen3.7-max",
+    defaultModel: "qwen3.8-max",
     // Qwen models default to thinking on; pinned so the enable_thinking config
     // write is always an explicit choice, never the CLI's silent default.
     defaultReasoningEffort: "thinking",
     models: [
-      { alias: "qwen3.7-max", modelId: "qwen3.7-max", description: "Strongest reasoning and coding option" },
+      // Model Studio's lineup (alibabacloud.com/help/en/model-studio/models, read 2026-09-26) lists no
+      // qwen3.8-plus, so Plus stays 3.7.
+      { alias: "qwen3.8-max", modelId: "qwen3.8-max", description: "Strongest reasoning and coding option" },
       { alias: "qwen3.7-plus", modelId: "qwen3.7-plus", description: "Latest balanced Qwen Cloud recommendation" },
-      { alias: "qwen3.6-flash", modelId: "qwen3.6-flash", description: "Fast and cost-effective option" },
+      { alias: "qwen3.8-flash", modelId: "qwen3.8-flash", description: "Fast and cost-effective option" },
     ],
     systemPromptFile: "QWEN.md",
     mcpConfig: {
@@ -867,9 +860,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       headersPath: "model.generationConfig.customHeaders",
     },
     gatewayModelAliases: {
-      "qwen3.7-max": "dashscope/qwen3.7-max",
+      "qwen3.8-max": "dashscope/qwen3.8-max",
       "qwen3.7-plus": "dashscope/qwen3.7-plus",
-      "qwen3.6-flash": "dashscope/qwen3.6-flash",
+      "qwen3.8-flash": "dashscope/qwen3.8-flash",
     },
     defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     buildCommand: ({ prompt, model, isResume, isDirectMode }) => {
@@ -945,7 +938,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "OPENROUTER_API_KEY",
     effortSupport: "level",
     baseUrlEnv: "OPENAI_BASE_URL",
-    defaultModel: "openrouter/anthropic/claude-opus-5",
+    defaultModel: "openrouter/anthropic/claude-opus-5.5",
     // OpenCode runs thinking at the "medium" variant when effort is omitted
     // (see getOpenCodeReasoningVariant); pinned so that choice is registry
     // data, stamped via --variant/--thinking and the litellm variants config.
@@ -1004,36 +997,34 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     image: "evolve-all",
     apiKeyEnv: "FACTORY_API_KEY",
     effortSupport: "level",
-    defaultModel: "claude-opus-5",
-    // Droid 0.182.0 documents per-model defaults (Opus 5, Fable 5 and Kimi K3
-    // default to high). Evolve pins "high" — the default model's own
-    // ceiling-of-record — and stamps it via --reasoning-effort on every run,
-    // so results cannot drift on a vendor-side change.
+    defaultModel: "claude-opus-5-5",
+    // Evolve policy: graded-effort harnesses pin "high", stamped via --reasoning-effort on every run so a
+    // vendor-side change cannot move results. Droid's own default for claude-opus-5-5 is medium (docs.factory.ai/models.md).
     defaultReasoningEffort: "high",
     models: [
-      // Droid's version is not pinned anywhere in the platform: hosted
-      // bundles resolve @factory/cli@latest at job creation (swarm_dashboard
-      // lib/evaluations/worker/harness-bundles.ts resolveLatestSourceVersion)
-      // and the evolve-all image installs Droid at image build. Measured
-      // 2026-09-15 on npm latest 0.219.0: `npx @factory/cli@0.219.0 exec -m
-      // claude-fable-5.1 --list-tools` answers "Available tools for Fable
-      // 5.1", `-m gpt-6-astra` "Available tools for GPT-6 Astra", and the
-      // dashed `claude-fable-5-1` "Invalid model" (docs.factory.ai/models.md
-      // lists both accepted ids). Factory spells Fable 5.1 with a dot, so the
-      // alias is Factory's id (direct mode passes it to Droid verbatim) and
-      // gatewayModelAliases below rewrites it to the gateway's dashed entry
-      // for the settings-file route — the kimi-k3 pattern. Full record:
-      // team/dev-items/fable-astra-lane-report-2026-09-15.md.
+      // Droid's version is not pinned anywhere in the platform: hosted runs
+      // resolve @factory/cli@latest at job creation and the evolve-all image
+      // installs Droid at image build. Measured 2026-09-15 on npm latest
+      // 0.219.0: `npx @factory/cli@0.219.0 exec -m claude-fable-5.1
+      // --list-tools` answers "Available tools for Fable 5.1", `-m gpt-6-astra`
+      // "Available tools for GPT-6 Astra", and the dashed `claude-fable-5-1`
+      // "Invalid model" (docs.factory.ai/models.md lists both accepted ids).
+      // Factory spells Fable 5.1 with a dot, so the alias is Factory's id
+      // (direct mode passes it to Droid verbatim) and gatewayModelAliases below
+      // rewrites it to the gateway's dashed entry for the settings-file route —
+      // the kimi-k3 pattern.
       { alias: "claude-fable-5.1", modelId: "claude-fable-5-1", description: "Factory-managed Claude Fable 5.1" },
-      { alias: "claude-opus-5", modelId: "claude-opus-5", description: "Factory-managed Claude Opus 5" },
+      // Factory spells Opus 5.5 dashed, like Anthropic (docs.factory.ai/models.md, read 2026-09-26): alias == wire id.
+      { alias: "claude-opus-5-5", modelId: "claude-opus-5-5", description: "Factory-managed Claude Opus 5.5" },
       { alias: "claude-sonnet-5", modelId: "claude-sonnet-5", description: "Factory-managed Claude Sonnet 5" },
       { alias: "claude-haiku-4-5", modelId: "claude-haiku-4-5-20251001", description: "Factory-managed Claude Haiku 4.5" },
-      { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Factory-managed GPT-6 Astra" },
-      { alias: "gpt-5.6-sol", modelId: "gpt-5.6-sol", description: "Factory-managed GPT-5.6 Sol" },
+      // No gpt-6-astra here: through the gateway Droid speaks Chat Completions with tools, and
+      // OpenAI's Chat Completions does not support function calling with GPT-6 Astra.
+      { alias: "gpt-6-sol", modelId: "gpt-6-sol", description: "Factory-managed GPT-6 Sol" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Factory-managed GPT-5.6 Terra" },
-      { alias: "gpt-5.6-luna", modelId: "gpt-5.6-luna", description: "Factory-managed GPT-5.6 Luna" },
-      { alias: "gemini-3.6-flash", modelId: "gemini-3.6-flash", description: "Factory-managed Gemini 3.6 Flash" },
-      { alias: "qwen3.7-max", modelId: "qwen3.7-max", description: "Qwen 3.7 Max via the Evolve gateway" },
+      { alias: "gpt-6-luna", modelId: "gpt-6-luna", description: "Factory-managed GPT-6 Luna" },
+      { alias: "gemini-3.8-flash", modelId: "gemini-3.8-flash", description: "Factory-managed Gemini 3.8 Flash" },
+      { alias: "qwen3.8-max", modelId: "qwen3.8-max", description: "Qwen 3.8 Max via the Evolve gateway" },
       { alias: "kimi-k3", modelId: "kimi-k3", description: "Factory-managed Droid Core Kimi K3" },
       { alias: "glm-5.3", modelId: "glm-5.3", description: "Zhipu GLM-5.3 via the Evolve gateway" },
       { alias: "glm-5.3-flash", modelId: "glm-5.3-flash", description: "Zhipu GLM-5.3 Flash via the Evolve gateway" },
@@ -1067,7 +1058,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       "glm-5.3": "openrouter/z-ai/glm-5.3",
       // glm-5.3-flash rides bare: the gateway's plain name is the platform's
       // one GLM-5.3-Flash (served from Fireworks; the ruling 2026-09-08).
-      "qwen3.7-max": "dashscope/qwen3.7-max",
+      "qwen3.8-max": "dashscope/qwen3.8-max",
     },
     droidGatewaySettings: {
       settingsPath: "~/.factory/evolve-settings.json",
@@ -1101,7 +1092,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // OpenRouter-only, like opencode (owner 2026-09-25); models.json names this var.
     apiKeyEnv: "OPENROUTER_API_KEY",
     effortSupport: "level",
-    defaultModel: "openrouter/anthropic/claude-opus-5",
+    defaultModel: "openrouter/anthropic/claude-opus-5.5",
     // pi's own default is medium; owner policy pins graded harnesses at high.
     defaultReasoningEffort: "high",
     providerEnvMap: {
@@ -1146,7 +1137,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     // OpenRouter-only (owner 2026-09-25); models.json names this var, bare (Prime's spelling).
     apiKeyEnv: "OPENROUTER_API_KEY",
     effortSupport: "level",
-    defaultModel: "openrouter/anthropic/claude-opus-5",
+    defaultModel: "openrouter/anthropic/claude-opus-5.5",
     // Prime's own default is medium; owner policy pins graded harnesses at high.
     defaultReasoningEffort: "high",
     providerEnvMap: {

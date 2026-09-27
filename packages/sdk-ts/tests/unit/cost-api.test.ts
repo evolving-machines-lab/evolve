@@ -140,7 +140,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.qwen.defaultReasoningEffort, "thinking", "qwen pin is thinking");
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
   assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "high", "opencode pin is high variant");
-  assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
+  assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (Evolve policy; Droid's own Opus 5.5 default is medium)");
   assertEqual(AGENT_REGISTRY.pi.defaultReasoningEffort, "high", "pi pin is high (owner policy; pi's own default is medium)");
   assertEqual(AGENT_REGISTRY["prime-agent"].defaultReasoningEffort, "high", "prime-agent pin is high (owner policy; Prime's own default is medium)");
   assertEqual(AGENT_REGISTRY.dsh.defaultReasoningEffort, "high", "dsh pin is high (DeepSeek's documented default)");
@@ -926,26 +926,27 @@ async function testQwenBuildCommandUsesModelAliases(): Promise<void> {
   console.log("\n[23] Qwen command model aliases route gateway only");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const qwen = AGENT_REGISTRY.qwen;
-  assertEqual(qwen.gatewayModelAliases?.["qwen3.7-max"], "dashscope/qwen3.7-max", "Qwen gateway maps to DashScope route");
+  assertEqual(qwen.defaultModel, "qwen3.8-max", "Qwen defaults to qwen3.8-max");
+  assertEqual(qwen.gatewayModelAliases?.["qwen3.8-max"], "dashscope/qwen3.8-max", "Qwen gateway maps to DashScope route");
 
   const gatewayAgent = new Agent({
     type: "qwen",
     apiKey: "test-gateway-key",
     isDirectMode: false,
-    model: "qwen3.7-max",
+    model: "qwen3.8-max",
   } as any, {});
   const gatewayCmd = (gatewayAgent as any).buildCommand("hello") as string;
-  assert(gatewayCmd.includes("--model dashscope/qwen3.7-max"), "gateway mode passes DashScope-routed model");
+  assert(gatewayCmd.includes("--model dashscope/qwen3.8-max"), "gateway mode passes DashScope-routed model");
 
   const directAgent = new Agent({
     type: "qwen",
     apiKey: "direct-api-key",
     isDirectMode: true,
-    model: "qwen3.7-max",
+    model: "qwen3.8-max",
   } as any, {});
   const directCmd = (directAgent as any).buildCommand("hello") as string;
-  assert(directCmd.includes("--model qwen3.7-max"), "direct mode keeps user-facing model");
-  assert(!directCmd.includes("dashscope/qwen3.7-max"), "direct mode does not add gateway route");
+  assert(directCmd.includes("--model qwen3.8-max"), "direct mode keeps user-facing model");
+  assert(!directCmd.includes("dashscope/qwen3.8-max"), "direct mode does not add gateway route");
 }
 
 async function testQwenWriteJsonOverwritesPreviousHeaders(): Promise<void> {
@@ -1190,7 +1191,7 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
     apiKey: "external-key",
     baseUrl: "https://gateway.test/v1",
     isDirectMode: true,
-    model: "gpt-5.5",
+    model: "gpt-6-sol",
     maxContextSize: 96000,
   } as any, {});
   assertEqual(
@@ -1256,7 +1257,7 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
     apiKey: "external-key",
     baseUrl: "https://gateway.test/v1",
     isDirectMode: true,
-    model: "gpt-5.5",
+    model: "gpt-6-sol",
   } as any, {});
   assertEqual(
     (foreignModelAgent as any).resolveKimiMaxContextSize(),
@@ -1267,7 +1268,7 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
   assertEqual(
     foreignEnvs.KIMI_MODEL_MAX_CONTEXT_SIZE,
     "128000",
-    "gpt-5.5 never inherits Kimi's 262144 (LiteLLM rejects max_tokens 262144)",
+    "gpt-6-sol never inherits Kimi's 262144 (LiteLLM rejects max_tokens 262144)",
   );
 
   // The same resolved value is what the config.toml writer emits, so both kimi
@@ -1284,7 +1285,7 @@ async function testKimiMaxContextSizePerModel(): Promise<void> {
     sandbox as any,
     { ...kimiConfig, maxContextSize: (foreignModelAgent as any).resolveKimiMaxContextSize() },
     { "x-litellm-customer-id": "session-abc", "x-litellm-tags": "run:run-001" },
-    { ...kimiConnection, model: "gpt-5.5" },
+    { ...kimiConnection, model: "gpt-6-sol" },
   );
   assert(
     written[0].content.includes("max_context_size = 128000"),
@@ -1612,8 +1613,8 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   // User's existing model header preserved alongside spend headers
   const model = parsed.provider.litellm.models["openrouter/anthropic/claude-sonnet-5"];
   assertEqual(model.headers["x-user-header"], "keep-me", "user model header preserved");
-  // Injected spend plumbing lands on the DEFAULT model's entry (Opus 5).
-  const activeModel = parsed.provider.litellm.models["openrouter/anthropic/claude-opus-5"];
+  // Injected spend plumbing lands on the DEFAULT model's entry (Opus 5.5).
+  const activeModel = parsed.provider.litellm.models["openrouter/anthropic/claude-opus-5.5"];
   assertEqual(activeModel.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
   assert(activeModel.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
   assertEqual(activeModel.headers["x-evolve-provider-runtime-binding"], "evrb_openrouter_binding_secret", "provider runtime binding injected");
@@ -1738,7 +1739,7 @@ async function testDroidBuildCommand(): Promise<void> {
   console.log("\n[37] Droid buildCommand() uses custom model in gateway mode");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const droid = AGENT_REGISTRY.droid;
-  assertEqual(droid.defaultModel, "claude-opus-5", "Droid defaults to Claude Opus 5");
+  assertEqual(droid.defaultModel, "claude-opus-5-5", "Droid defaults to Claude Opus 5.5");
   assertEqual(
     droid.droidGatewaySettings?.provider,
     "generic-chat-completion-api",
@@ -1748,7 +1749,7 @@ async function testDroidBuildCommand(): Promise<void> {
   assertEqual(droid.gatewayModelAliases?.["glm-5.3"], "openrouter/z-ai/glm-5.3", "Droid gateway maps GLM alias");
   assertEqual(droid.gatewayModelAliases?.["glm-5.3-flash"], undefined, "Droid gateway carries GLM Flash bare — the plain name is the platform's one GLM-5.3-Flash");
   assertEqual(droid.gatewayModelAliases?.["glm-5.3-flash-fireworks"], undefined, "the temporary -fireworks name is gone (one name per model)");
-  assertEqual(droid.gatewayModelAliases?.["qwen3.7-max"], "dashscope/qwen3.7-max", "Droid gateway maps Qwen alias");
+  assertEqual(droid.gatewayModelAliases?.["qwen3.8-max"], "dashscope/qwen3.8-max", "Droid gateway maps Qwen alias");
 
   const gatewayCmd = droid.buildCommand({
     prompt: "hello",
@@ -1766,18 +1767,18 @@ async function testDroidBuildCommand(): Promise<void> {
 
   const directCmd = droid.buildCommand({
     prompt: "hello",
-    model: "claude-opus-5",
+    model: "claude-opus-5-5",
     isResume: false,
     isDirectMode: true,
     reasoningEffort: "max",
   });
   assert(!directCmd.includes("--settings"), "direct mode does not pass Evolve settings file");
-  assert(directCmd.includes("--model 'claude-opus-5'"), "direct mode uses Factory model directly");
+  assert(directCmd.includes("--model 'claude-opus-5-5'"), "direct mode uses Factory model directly");
   assert(directCmd.includes("--reasoning-effort max"), "direct mode forwards reasoning effort");
 
   const resumedCmd = droid.buildCommand({
     prompt: "hello again",
-    model: "claude-opus-5",
+    model: "claude-opus-5-5",
     isResume: true,
     sessionId: "droid-session-123",
     isDirectMode: true,
@@ -1796,15 +1797,14 @@ async function testDroidGatewayModelAliases(): Promise<void> {
   assertEqual(gatewayModel("kimi-k3"), "moonshot/kimi-k3", "gateway maps Kimi to Moonshot route");
   assertEqual(gatewayModel("glm-5.3"), "openrouter/z-ai/glm-5.3", "gateway maps GLM to OpenRouter route");
   assertEqual(gatewayModel("glm-5.3-flash"), "glm-5.3-flash", "gateway sends GLM Flash as the bare route name (Fireworks behind it)");
-  assertEqual(gatewayModel("qwen3.7-max"), "dashscope/qwen3.7-max", "gateway maps Qwen to DashScope route");
+  assertEqual(gatewayModel("qwen3.8-max"), "dashscope/qwen3.8-max", "gateway maps Qwen to DashScope route");
   assertEqual(gatewayModel("claude-sonnet-5"), "claude-sonnet-5", "gateway leaves Claude model unchanged");
   assertEqual(gatewayModel("claude-fable-5.1"), "claude-fable-5-1", "gateway maps Factory's dot-form Fable 5.1 to the dashed Anthropic id");
 
   // External gateway (the hosted worker's route): the roster's wire id for a
   // roster alias, never the gatewayModelAliases route spelling — the hosted
-  // key admits exactly the alias and its wire id (swarm_dashboard
-  // resolveGatewayModelScope), and kimi-k3 / glm-5.3 / qwen3.7-max are exact
-  // gateway entries under their bare names.
+  // key is scoped to exactly the alias and its wire id, and kimi-k3 / glm-5.3 /
+  // qwen3.8-max are exact gateway entries under their bare names.
   const externalModel = (model: string): string =>
     (new Agent({
       type: "droid",
@@ -1818,7 +1818,7 @@ async function testDroidGatewayModelAliases(): Promise<void> {
   assertEqual(externalModel("claude-haiku-4-5"), "claude-haiku-4-5-20251001", "external gateway sends the roster's dated Haiku wire id");
   assertEqual(externalModel("kimi-k3"), "kimi-k3", "external gateway sends Kimi bare — never moonshot/kimi-k3, which the hosted key would refuse");
   assertEqual(externalModel("glm-5.3"), "glm-5.3", "external gateway sends GLM bare — never the OpenRouter route spelling");
-  assertEqual(externalModel("qwen3.7-max"), "qwen3.7-max", "external gateway sends Qwen bare — never the DashScope route spelling");
+  assertEqual(externalModel("qwen3.8-max"), "qwen3.8-max", "external gateway sends Qwen bare — never the DashScope route spelling");
   assertEqual(externalModel("gw-droid-model"), "gw-droid-model", "external gateway sends a non-roster name verbatim");
 
   // Plain direct mode never writes the settings file; the command model is

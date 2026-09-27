@@ -595,7 +595,7 @@ async function testJobBuildExclusionsMapping() {
         max_trial_spend_usd: 2.5,
         worst_case_spend_usd: 25,
         sandbox_provider: "e2b",
-        agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null }],
         counts: { agents: 1, tasks: 10 },
         build_exclusions: [
           // Capped run: n_tasks_selected is the pre-cap matched-READY count,
@@ -2628,7 +2628,7 @@ const JOB_SUMMARY = {
   job_name: "deep-swe sweep",
   status: "QUEUED",
   datasets: [{ name: "deep-swe", version: "1.1" }],
-  agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
+  agents: [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null }],
   n_attempts: 1,
   n_concurrent_trials: 4,
   max_trial_spend_usd: 25,
@@ -2659,7 +2659,7 @@ async function testStartPostsInputContract() {
         { name: "deep-swe", version: "1.1", task_names: ["abs-module-cache-flags"] },
       ],
       agents: [
-        { name: "codex", model_name: "gpt-5.5" },
+        { name: "codex", model_name: "gpt-6-sol" },
         { name: "claude", model_name: "sonnet", version: "2.1.0" },
       ],
       n_attempts: 1,
@@ -2725,7 +2725,7 @@ async function testStartPostsInputContract() {
     // version and the response echoes the resolved ref.
     const bare = await e.start({
       datasets: [{ name: "deep-swe" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       max_trial_spend_usd: 25,
     });
     assertEqual(
@@ -2753,7 +2753,7 @@ async function testStartOmitsAbsentSpendCap() {
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.start({
       datasets: [{ name: "deep-swe", version: "1.1" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
     });
 
     const body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
@@ -2762,7 +2762,7 @@ async function testStartOmitsAbsentSpendCap() {
     assert(!("max_trial_spend_usd" in body), "no cap key on the wire when omitted");
     assertEqual(
       body,
-      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] },
+      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] },
       "body carries only what was given"
     );
     assertEqual(job.max_trial_spend_usd, 200, "response echoes the RESOLVED per-trial cap");
@@ -2775,7 +2775,7 @@ async function testStartOmitsAbsentSpendCap() {
     // A stated cap is still forwarded unchanged.
     await e.start({
       datasets: [{ name: "deep-swe", version: "1.1" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       max_trial_spend_usd: 25,
     });
     assertEqual(
@@ -2798,7 +2798,7 @@ async function testStartIdempotentReplay() {
     });
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.start(
-      { datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }], max_trial_spend_usd: 25 },
+      { datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }], max_trial_spend_usd: 25 },
       { idempotencyKey: "idem-abc" }
     );
     assertEqual(job.idempotent_replay, true, "idempotent_replay passed through");
@@ -2825,7 +2825,7 @@ async function testStartUnknownAgentVersionIsTypedError() {
     try {
       await e.start({
         datasets: [{ name: "deep-swe" }],
-        agents: [{ name: "codex", model_name: "gpt-5.5", version: "9.9.9" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", version: "9.9.9" }],
         max_trial_spend_usd: 25,
       });
     } catch (err: any) {
@@ -2858,7 +2858,7 @@ async function testStartInsufficientCreditsIsTypedError() {
     try {
       await e.start({
         datasets: [{ name: "deep-swe" }],
-        agents: [{ name: "codex", model_name: "gpt-5.5" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       });
     } catch (err: any) {
       threw = true;
@@ -2891,7 +2891,7 @@ async function testStartNonExactVersionIsTypedError() {
       await e.start({
         datasets: [{ name: "deep-swe" }],
         // A range cannot hold a comparison still, so it is refused, not resolved.
-        agents: [{ name: "codex", model_name: "gpt-5.5", version: "^0.29.0" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", version: "^0.29.0" }],
         max_trial_spend_usd: 25,
       });
     } catch (err: any) {
@@ -2924,7 +2924,7 @@ async function testGetJobDetail() {
         worst_case_spend_usd: 25,
         sandbox_provider: "modal",
         agents: [
-          { name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null },
+          { name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null },
         ],
         counts: { agents: 1, tasks: 10 },
         n_total_trials: 10,
@@ -2937,7 +2937,7 @@ async function testGetJobDetail() {
           n_cancelled_trials: 0,
           n_retries: 0,
           evals: {
-            "codex__gpt-5.5__deep-swe": { n_trials: 10, n_errors: 0, metrics: [{ name: "mean", value: 0.75 }] },
+            "codex__gpt-6-sol__deep-swe": { n_trials: 10, n_errors: 0, metrics: [{ name: "mean", value: 0.75 }] },
           },
           n_input_tokens: 120000,
           n_cache_tokens: 40000,
@@ -2969,7 +2969,7 @@ async function testGetJobDetail() {
     assertEqual(job.stats.cost_usd, 3.5, "maps stats.cost_usd — measured spend, never a gate");
     assertEqual(job.stats.n_input_tokens, 120000, "maps token totals");
     assertEqual(
-      job.stats.evals?.["codex__gpt-5.5__deep-swe"]?.n_trials,
+      job.stats.evals?.["codex__gpt-6-sol__deep-swe"]?.n_trials,
       10,
       "maps per-arm evals keyed agent__model__dataset"
     );
@@ -2985,7 +2985,7 @@ async function testGetJobDetail() {
     );
     assertEqual(
       job.agents,
-      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
+      [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
       "agents is the public arm shape (wire sends nothing internal)"
     );
     const system = job.agents?.[0] as Record<string, unknown>;
@@ -3120,7 +3120,7 @@ function wireTrial(overrides: Record<string, unknown> = {}): Record<string, unkn
     agent_info: {
       name: "codex",
       version: "codex-cli 0.145.0",
-      model_info: { name: "gpt-5.5", provider: "openai" },
+      model_info: { name: "gpt-6-sol", provider: "openai" },
       reasoning_effort: null,
     },
     attempt: 1,
@@ -5629,7 +5629,7 @@ async function testTrialGet() {
       {
         name: "codex",
         version: "codex-cli 0.145.0",
-        model_info: { name: "gpt-5.5", provider: "openai" },
+        model_info: { name: "gpt-6-sol", provider: "openai" },
         reasoning_effort: null,
       },
       "agent_info reduced to the public shape"
@@ -5972,7 +5972,7 @@ async function testSystemLogSwitch() {
     setMockResponse("/api/jobs", { status: 202, body: { ...JOB_SUMMARY, system_log: true } });
     const job = await jobs({ apiKey: "test-key", baseUrl: BASE }).start({
       datasets: [{ name: "deep-swe" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       system_log: true,
     });
     assertEqual(JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).system_log, true, "system_log rides the create body");
@@ -6596,7 +6596,7 @@ async function testCompare() {
             coverage: { scored: 4, total: 5 },
             cost_usd: 12.5,
             agents: [
-              { name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null },
+              { name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null },
             ],
             started_at: "2026-07-22T00:00:00.000Z",
           },
@@ -6648,7 +6648,7 @@ async function testCompare() {
     assertEqual(comparison.jobs[1].mean_reward, 0, "zero mean_reward preserved (never nulled)");
     assertEqual(
       comparison.jobs[0].agents,
-      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
+      [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
       "agents is the public arm shape (wire sends nothing internal)"
     );
     const system = comparison.jobs[0].agents[0] as Record<string, unknown>;
@@ -7434,17 +7434,17 @@ async function testOrgsTeamVerbs() {
     assertEqual(members.map((m) => [m.email, m.role]), [["vaibhav@example.com", "owner"], ["tanay@example.com", "member"]], "members map email + role");
 
     // The client-level org default on start: fills an absent org, never overrides a named one.
-    const job = await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    const job = await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     let body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assertEqual(body.org, "acme", "start: the config org rides the body when the call names none");
     assertEqual(job.org, "acme", "Job.org maps the owning org's slug");
-    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: "other", datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: "other", datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assertEqual(body.org, "other", "start: the call's own org wins over the config default");
-    await jobs({ apiKey: "k", baseUrl: BASE }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    await jobs({ apiKey: "k", baseUrl: BASE }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assert(!("org" in body), "start: no org anywhere = no org key (the server's personal default)");
-    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: undefined, datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: undefined, datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assertEqual(body.org, "acme", "start: an explicit `org: undefined` on the call is absent, so the config default still rides");
     const plain = await jobs({ apiKey: "k", baseUrl: BASE }).get("job-1").catch(() => null);
