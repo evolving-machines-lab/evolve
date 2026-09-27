@@ -49,8 +49,9 @@ The field names are the same in both languages. TypeScript passes an object; Pyt
 
 | Field | Purpose |
 | --- | --- |
-| `model_name` | Analyzer model |
-| `reasoning_effort` | Effort supported by the analyzer |
+| `agent` | Agent the analyzer runs on; default `claude` |
+| `model_name` | Analyzer model, one of that agent's models |
+| `reasoning_effort` | Effort that agent accepts |
 | `sandbox_provider` | Analyzer's sandbox provider |
 | `rubric` | `{criteria: [{name, description, guidance}, ...]}` |
 | `prompt` | Replacement prompt template text |
@@ -77,14 +78,20 @@ Polling slows to at most 30 seconds while the tally stays unchanged. Call the wa
 ```ts TypeScript
 const defaults = await analyses().defaults();
 console.log(defaults.model_name, defaults.rubric, defaults.prompt);
+
+const codex = await analyses().defaults({ agent: "codex" });
+console.log(codex.model_name, codex.reasoning_effort);
 ```
 
 ```python Python
 defaults = await analyses().defaults()
 print(defaults["model_name"], defaults["rubric"], defaults["prompt"])
+
+codex = await analyses().defaults(agent="codex")
+print(codex["model_name"], codex["reasoning_effort"])
 ```
 
-The response includes `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
+The response includes `agent`, `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text. Pass an agent to read what that agent runs under when you name no model: its default model and the effort that model takes.
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
@@ -110,7 +117,7 @@ The latest analysis also appears on `trial.analysis`. Each criterion reports `pa
 | Method | TypeScript | Python |
 | --- | --- | --- |
 | List runs | `list(options)` | `list(...)` |
-| Read defaults | `defaults()` | `defaults()` |
+| Read defaults | `defaults({ agent })` | `defaults(agent=...)` |
 | Download run | `download(analysisId, { to })` | `download(analysis_id, to=...)` |
 | Browse sandbox files | `filesystem(analysisId)` | `filesystem(analysis_id)` |
 | Read one analysis directly | `get(analysisId)` | Use list results or `trial.analysis` |

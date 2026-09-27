@@ -168,6 +168,7 @@ from .hosted import (
     ProviderCapability,
     ReportedAgentResult,
     ReportedTotals,
+    RetiredAgent,
     SkillLock,
     SkillUpload,
     SkillUploadPage,
@@ -547,7 +548,7 @@ async def list_checkpoints(
         await store.close()
 
 
-__version__ = '0.0.66'
+__version__ = '0.0.67'
 
 __all__ = [
     # Main classes
@@ -814,6 +815,7 @@ __all__ = [
     'CapabilityDocument',
     'AgentCapability',
     'AgentModelOption',
+    'RetiredAgent',
     'EFFORT_SUPPORT_VALUES',
     'ManagedProviderCapability',
     'ProviderCapability',

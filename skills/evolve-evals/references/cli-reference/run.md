@@ -9,7 +9,7 @@ Start a hosted job. `evolve job start` accepts exactly the same options.
 evolve run \
   -d harbor-examples@1.0 \
   -i hello-world \
-  -a codex -m gpt-5.6-luna \
+  -a codex -m gpt-6-luna \
   --max-trial-spend 0.30 \
   --max-retries 0 \
   --watch
@@ -51,7 +51,7 @@ datasets:
     task_names: [hello-world]
 agents:
   - name: codex
-    model_name: gpt-5.6-luna
+    model_name: gpt-6-luna
 n_attempts: 1
 n_concurrent_trials: 4
 max_trial_spend_usd: 0.30
@@ -148,7 +148,8 @@ See [Jobs](/core-concepts/jobs) for the retry and spend rules.
 | Option | Meaning |
 | --- | --- |
 | `--analyze` | Enable analysis with the platform defaults. |
-| `--analyze-model <name>` | Analyzer model. |
+| `--analyze-agent <name>` | Agent the analyzer runs on. Default `claude`. |
+| `--analyze-model <name>` | Analyzer model, from that agent's models. |
 | `--analyze-rubric <path>` | TOML, YAML, or JSON rubric. |
 | `--analyze-prompt <path>` | Replacement prompt file. |
 | `--analyze-provider <provider>` | Analyzer sandbox provider. |

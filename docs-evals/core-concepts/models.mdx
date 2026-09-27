@@ -8,7 +8,7 @@ description: "Select models, compare them, and control metered spend."
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \
   -a codex \
-  -m gpt-5.6-luna -m gpt-5.6-terra \
+  -m gpt-6-luna -m gpt-5.6-terra \
   --max-trial-spend 1 --max-retries 0 --watch
 ```
 
@@ -49,7 +49,6 @@ If you enable your own provider key, supported model requests bill that provider
 | --- | --- |
 | Supports effort levels | Use a value from `limits.job.reasoning_efforts` |
 | Qwen thinking mode | Use `off` or `minimal` to disable thinking; `medium` or `thinking` to enable it |
-| Gemini | Do not pass effort; it is unsupported |
 | Custom agent | Configure reasoning in its run command |
 
 When omitted, Evolve resolves the harness's default and records it in `agent_info.reasoning_effort`. The same harness and model at different efforts are distinct arms.
@@ -58,15 +57,15 @@ In `/api/meta`, `agents[].effort_support` identifies the mode: `level`, `binary`
 
 ## Analysis and check models
 
-Trace analysis and task checks use the Claude Code harness. Select their model separately:
+Trace analysis and task checks run on Claude Code unless you choose another agent. Select their agent and model separately from the evaluation arms:
 
-| Operation | Model option |
-| --- | --- |
-| `evolve analyze` | `-m` |
-| `evolve check` | `-m` |
-| Analysis attached to `evolve run` | `--analyze-model` |
+| Operation | Agent option | Model option |
+| --- | --- | --- |
+| `evolve analyze` | `-a` | `-m` |
+| `evolve check` | `-a` | `-m` |
+| Analysis attached to `evolve run` | `--analyze-agent` | `--analyze-model` |
 
-Their default is `openrouter/deepseek/deepseek-v4.1-flash`. Choose from the supported Claude Code roster.
+Omit the model and the agent runs its default: `openrouter/deepseek/deepseek-v4.1-flash` on every agent whose models include it, otherwise that agent's own default model. A model you name must be one of the chosen agent's models. In `/api/meta`, `analyze.agents` lists the agents these commands accept, each agent's default model and models, and the effort each model runs at when you pass none. `evolve analyze --show-defaults -a <agent>` prints what that agent runs under.
 
 <Card title="Configure a run" icon="terminal" href="/cli-reference/run">
   All model, effort, concurrency, and budget options.

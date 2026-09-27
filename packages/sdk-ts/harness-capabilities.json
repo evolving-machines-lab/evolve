@@ -1,5 +1,5 @@
 {
-  "$comment": "Per-harness models and reasoning efforts, checked in so two repos that share no test runner can be held to one table. The evolve SDK owns it: AGENT_REGISTRY in packages/sdk-ts/src/registry.ts is the only place models, efforts, or defaults may change, and scripts/generate-harness-capabilities.ts regenerates this file from it (npm run generate:capabilities; the build fails when it is stale). The hosted-evals dashboard consumes this file for its capability document and its parity test diffs the served document against it, the TypeScript SDK test regenerates these exact bytes from the registry, and the Python SDK test asserts its own Literals cover them. Changing a model or an effort therefore means: registry.ts, regenerate this file, and nothing else.",
+  "$comment": "Per-harness models, reasoning efforts and retirements, checked in so two repos that share no test runner can be held to one table. The evolve SDK owns it: AGENT_REGISTRY in packages/sdk-ts/src/registry.ts is the only place models, efforts, or defaults may change, and scripts/generate-harness-capabilities.ts regenerates this file from it (npm run generate:capabilities; the build fails when it is stale). The hosted-evals dashboard consumes this file for its capability document and its parity test diffs the served document against it, the TypeScript SDK test regenerates these exact bytes from the registry, and the Python SDK test asserts its own Literals cover them. Changing a model or an effort therefore means: registry.ts, regenerate this file, and nothing else.",
   "reasoningEfforts": [
     "off",
     "minimal",
@@ -18,6 +18,40 @@
   ],
   "defaultReasoningEffort": "medium",
   "harnesses": {
+    "antigravity": {
+      "defaultModel": "gemini-3.8-flash",
+      "models": [
+        {
+          "alias": "gemini-3.8-flash",
+          "modelId": "vertex_ai/gemini-3.8-flash",
+          "description": "Latest Flash on Vertex AI: coding + agentic planning"
+        },
+        {
+          "alias": "gemini-3.5-flash-lite",
+          "modelId": "vertex_ai/gemini-3.5-flash-lite",
+          "description": "Latest Flash-Lite on Vertex AI: most cost-effective"
+        },
+        {
+          "alias": "gemini-3.1-pro-preview",
+          "modelId": "vertex_ai/gemini-3.1-pro-preview",
+          "description": "Latest Pro on Vertex AI: complex agentic + coding"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
     "claude": {
       "defaultModel": "opus",
       "models": [
@@ -28,7 +62,7 @@
         },
         {
           "alias": "opus",
-          "modelId": "claude-opus-5",
+          "modelId": "claude-opus-5-5",
           "description": "Complex reasoning, R&D, architecting"
         },
         {
@@ -40,16 +74,6 @@
           "alias": "haiku",
           "modelId": "claude-haiku-4-5-20251001",
           "description": "Quick tasks, syntax correction"
-        },
-        {
-          "alias": "opus[1m]",
-          "modelId": "opus[1m]",
-          "description": "Complex reasoning with 1M context window"
-        },
-        {
-          "alias": "sonnet[1m]",
-          "modelId": "sonnet[1m]",
-          "description": "Daily coding with 1M context window"
         },
         {
           "alias": "glm-5.3",
@@ -91,17 +115,17 @@
       ]
     },
     "codex": {
-      "defaultModel": "gpt-5.6-sol",
+      "defaultModel": "gpt-6-sol",
       "models": [
         {
           "alias": "gpt-6-astra",
           "modelId": "gpt-6-astra",
-          "description": "Newest frontier flagship"
+          "description": "Most capable, for the hardest end-to-end work"
         },
         {
-          "alias": "gpt-5.6-sol",
-          "modelId": "gpt-5.6-sol",
-          "description": "GPT-5.6 flagship (previous generation)"
+          "alias": "gpt-6-sol",
+          "modelId": "gpt-6-sol",
+          "description": "Complex coding and agentic workflows"
         },
         {
           "alias": "gpt-5.6-terra",
@@ -109,14 +133,9 @@
           "description": "Balances intelligence and cost"
         },
         {
-          "alias": "gpt-5.6-luna",
-          "modelId": "gpt-5.6-luna",
-          "description": "High-volume, cost-sensitive tier"
-        },
-        {
-          "alias": "gpt-5.5",
-          "modelId": "gpt-5.5",
-          "description": "GPT-5.5 frontier model (two generations back)"
+          "alias": "gpt-6-luna",
+          "modelId": "gpt-6-luna",
+          "description": "Most efficient, for focused high-volume tasks"
         },
         {
           "alias": "gpt-5.3-codex",
@@ -143,7 +162,7 @@
       ]
     },
     "droid": {
-      "defaultModel": "claude-opus-5",
+      "defaultModel": "claude-opus-5-5",
       "models": [
         {
           "alias": "claude-fable-5.1",
@@ -151,9 +170,9 @@
           "description": "Factory-managed Claude Fable 5.1"
         },
         {
-          "alias": "claude-opus-5",
-          "modelId": "claude-opus-5",
-          "description": "Factory-managed Claude Opus 5"
+          "alias": "claude-opus-5-5",
+          "modelId": "claude-opus-5-5",
+          "description": "Factory-managed Claude Opus 5.5"
         },
         {
           "alias": "claude-sonnet-5",
@@ -166,34 +185,19 @@
           "description": "Factory-managed Claude Haiku 4.5"
         },
         {
-          "alias": "gpt-6-astra",
-          "modelId": "gpt-6-astra",
-          "description": "Factory-managed GPT-6 Astra"
-        },
-        {
-          "alias": "gpt-5.6-sol",
-          "modelId": "gpt-5.6-sol",
-          "description": "Factory-managed GPT-5.6 Sol"
-        },
-        {
           "alias": "gpt-5.6-terra",
           "modelId": "gpt-5.6-terra",
           "description": "Factory-managed GPT-5.6 Terra"
         },
         {
-          "alias": "gpt-5.6-luna",
-          "modelId": "gpt-5.6-luna",
-          "description": "Factory-managed GPT-5.6 Luna"
+          "alias": "gemini-3.8-flash",
+          "modelId": "gemini-3.8-flash",
+          "description": "Factory-managed Gemini 3.8 Flash"
         },
         {
-          "alias": "gemini-3.6-flash",
-          "modelId": "gemini-3.6-flash",
-          "description": "Factory-managed Gemini 3.6 Flash"
-        },
-        {
-          "alias": "qwen3.7-max",
-          "modelId": "qwen3.7-max",
-          "description": "Qwen 3.7 Max via the Evolve gateway"
+          "alias": "qwen3.8-max",
+          "modelId": "qwen3.8-max",
+          "description": "Qwen 3.8 Max via the Evolve gateway"
         },
         {
           "alias": "kimi-k3",
@@ -236,6 +240,35 @@
       "supportsConfig": false,
       "presets": []
     },
+    "dsh": {
+      "defaultModel": "openrouter/deepseek/deepseek-v4.1-flash",
+      "models": [
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/deepseek-v4.1-flash",
+          "modelId": "fireworks/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via Fireworks"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4-pro-0813",
+          "modelId": "openrouter/deepseek/deepseek-v4-pro-0813",
+          "description": "DeepSeek V4 Pro via OpenRouter"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
     "gemini": {
       "defaultModel": "gemini-3.5-flash",
       "models": [
@@ -259,7 +292,10 @@
       "efforts": [],
       "defaultEffort": null,
       "supportsConfig": false,
-      "presets": []
+      "presets": [],
+      "retired": {
+        "replacedBy": "antigravity"
+      }
     },
     "kimi": {
       "defaultModel": "kimi-k3",
@@ -280,11 +316,6 @@
           "modelId": "kimi-k3-raptor",
           "description": "Evolve-managed Kimi K3 Raptor route for latency-sensitive agent runs",
           "maxContextSize": 1048576
-        },
-        {
-          "alias": "kimi-k2p7-code-raptor",
-          "modelId": "kimi-k2p7-code-raptor",
-          "description": "Evolve-managed Kimi K2.7 Code Raptor route for latency-sensitive agent runs"
         }
       ],
       "effortSupport": "level",
@@ -303,7 +334,7 @@
       "presets": []
     },
     "opencode": {
-      "defaultModel": "openrouter/anthropic/claude-opus-5",
+      "defaultModel": "openrouter/anthropic/claude-opus-5.5",
       "models": [
         {
           "alias": "openrouter/anthropic/claude-fable-5.1",
@@ -311,9 +342,9 @@
           "description": "Anthropic Fable 5.1 via OpenRouter"
         },
         {
-          "alias": "openrouter/anthropic/claude-opus-5",
-          "modelId": "openrouter/anthropic/claude-opus-5",
-          "description": "Anthropic Opus 5 via OpenRouter"
+          "alias": "openrouter/anthropic/claude-opus-5.5",
+          "modelId": "openrouter/anthropic/claude-opus-5.5",
+          "description": "Anthropic Opus 5.5 via OpenRouter"
         },
         {
           "alias": "openrouter/anthropic/claude-sonnet-5",
@@ -331,9 +362,9 @@
           "description": "OpenAI GPT-6 Astra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-sol",
-          "modelId": "openrouter/openai/gpt-5.6-sol",
-          "description": "OpenAI GPT-5.6 Sol via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-sol",
+          "modelId": "openrouter/openai/gpt-6-sol",
+          "description": "OpenAI GPT-6 Sol via OpenRouter"
         },
         {
           "alias": "openrouter/openai/gpt-5.6-terra",
@@ -341,19 +372,19 @@
           "description": "OpenAI GPT-5.6 Terra via OpenRouter"
         },
         {
-          "alias": "openrouter/openai/gpt-5.6-luna",
-          "modelId": "openrouter/openai/gpt-5.6-luna",
-          "description": "OpenAI GPT-5.6 Luna via OpenRouter"
+          "alias": "openrouter/openai/gpt-6-luna",
+          "modelId": "openrouter/openai/gpt-6-luna",
+          "description": "OpenAI GPT-6 Luna via OpenRouter"
         },
         {
-          "alias": "openrouter/google/gemini-3.6-flash",
-          "modelId": "openrouter/google/gemini-3.6-flash",
-          "description": "Gemini 3.6 Flash via OpenRouter"
+          "alias": "openrouter/google/gemini-3.8-flash",
+          "modelId": "openrouter/google/gemini-3.8-flash",
+          "description": "Gemini 3.8 Flash via OpenRouter"
         },
         {
-          "alias": "openrouter/qwen/qwen3.7-max",
-          "modelId": "openrouter/qwen/qwen3.7-max",
-          "description": "Qwen 3.7 Max via OpenRouter"
+          "alias": "openrouter/qwen/qwen3.8-max-0902",
+          "modelId": "openrouter/qwen/qwen3.8-max-0902",
+          "description": "Qwen 3.8 Max (0902) via OpenRouter"
         },
         {
           "alias": "openrouter/moonshotai/kimi-k3",
@@ -396,12 +427,190 @@
       "supportsConfig": false,
       "presets": []
     },
-    "qwen": {
-      "defaultModel": "qwen3.7-max",
+    "pi": {
+      "defaultModel": "openrouter/anthropic/claude-opus-5.5",
       "models": [
         {
-          "alias": "qwen3.7-max",
-          "modelId": "qwen3.7-max",
+          "alias": "openrouter/anthropic/claude-fable-5.1",
+          "modelId": "openrouter/anthropic/claude-fable-5.1",
+          "description": "Anthropic Fable 5.1 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-opus-5.5",
+          "modelId": "openrouter/anthropic/claude-opus-5.5",
+          "description": "Anthropic Opus 5.5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-sonnet-5",
+          "modelId": "openrouter/anthropic/claude-sonnet-5",
+          "description": "Anthropic Sonnet 5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-haiku-4.5",
+          "modelId": "openrouter/anthropic/claude-haiku-4.5",
+          "description": "Anthropic Haiku via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-astra",
+          "modelId": "openrouter/openai/gpt-6-astra",
+          "description": "OpenAI GPT-6 Astra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-sol",
+          "modelId": "openrouter/openai/gpt-6-sol",
+          "description": "OpenAI GPT-6 Sol via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-terra",
+          "modelId": "openrouter/openai/gpt-5.6-terra",
+          "description": "OpenAI GPT-5.6 Terra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-luna",
+          "modelId": "openrouter/openai/gpt-6-luna",
+          "description": "OpenAI GPT-6 Luna via OpenRouter"
+        },
+        {
+          "alias": "openrouter/google/gemini-3.8-flash",
+          "modelId": "openrouter/google/gemini-3.8-flash",
+          "description": "Gemini 3.8 Flash via OpenRouter"
+        },
+        {
+          "alias": "openrouter/qwen/qwen3.8-max-0902",
+          "modelId": "openrouter/qwen/qwen3.8-max-0902",
+          "description": "Qwen 3.8 Max (0902) via OpenRouter"
+        },
+        {
+          "alias": "openrouter/moonshotai/kimi-k3",
+          "modelId": "openrouter/moonshotai/kimi-k3",
+          "description": "Kimi K3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
+    "prime-agent": {
+      "defaultModel": "openrouter/anthropic/claude-opus-5.5",
+      "models": [
+        {
+          "alias": "openrouter/anthropic/claude-fable-5.1",
+          "modelId": "openrouter/anthropic/claude-fable-5.1",
+          "description": "Anthropic Fable 5.1 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-opus-5.5",
+          "modelId": "openrouter/anthropic/claude-opus-5.5",
+          "description": "Anthropic Opus 5.5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-sonnet-5",
+          "modelId": "openrouter/anthropic/claude-sonnet-5",
+          "description": "Anthropic Sonnet 5 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/anthropic/claude-haiku-4.5",
+          "modelId": "openrouter/anthropic/claude-haiku-4.5",
+          "description": "Anthropic Haiku via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-astra",
+          "modelId": "openrouter/openai/gpt-6-astra",
+          "description": "OpenAI GPT-6 Astra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-sol",
+          "modelId": "openrouter/openai/gpt-6-sol",
+          "description": "OpenAI GPT-6 Sol via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-5.6-terra",
+          "modelId": "openrouter/openai/gpt-5.6-terra",
+          "description": "OpenAI GPT-5.6 Terra via OpenRouter"
+        },
+        {
+          "alias": "openrouter/openai/gpt-6-luna",
+          "modelId": "openrouter/openai/gpt-6-luna",
+          "description": "OpenAI GPT-6 Luna via OpenRouter"
+        },
+        {
+          "alias": "openrouter/google/gemini-3.8-flash",
+          "modelId": "openrouter/google/gemini-3.8-flash",
+          "description": "Gemini 3.8 Flash via OpenRouter"
+        },
+        {
+          "alias": "openrouter/qwen/qwen3.8-max-0902",
+          "modelId": "openrouter/qwen/qwen3.8-max-0902",
+          "description": "Qwen 3.8 Max (0902) via OpenRouter"
+        },
+        {
+          "alias": "openrouter/moonshotai/kimi-k3",
+          "modelId": "openrouter/moonshotai/kimi-k3",
+          "description": "Kimi K3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash (OpenRouter id; the Evolve gateway serves it from Fireworks)"
+        },
+        {
+          "alias": "openrouter/deepseek/deepseek-v4.1-flash",
+          "modelId": "openrouter/deepseek/deepseek-v4.1-flash",
+          "description": "DeepSeek V4.1 Flash via OpenRouter"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
+      "supportsConfig": false,
+      "presets": []
+    },
+    "qwen": {
+      "defaultModel": "qwen3.8-max",
+      "models": [
+        {
+          "alias": "qwen3.8-max",
+          "modelId": "qwen3.8-max",
           "description": "Strongest reasoning and coding option"
         },
         {
@@ -410,8 +619,8 @@
           "description": "Latest balanced Qwen Cloud recommendation"
         },
         {
-          "alias": "qwen3.6-flash",
-          "modelId": "qwen3.6-flash",
+          "alias": "qwen3.8-flash",
+          "modelId": "qwen3.8-flash",
           "description": "Fast and cost-effective option"
         }
       ],
@@ -423,6 +632,45 @@
         "thinking"
       ],
       "defaultEffort": "thinking",
+      "supportsConfig": false,
+      "presets": []
+    },
+    "zcode": {
+      "defaultModel": "openrouter/z-ai/glm-5.3",
+      "models": [
+        {
+          "alias": "openrouter/z-ai/glm-5.3",
+          "modelId": "openrouter/z-ai/glm-5.3",
+          "description": "Zhipu GLM-5.3 via OpenRouter"
+        },
+        {
+          "alias": "openrouter/z-ai/glm-5.3-flash",
+          "modelId": "openrouter/z-ai/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via OpenRouter"
+        },
+        {
+          "alias": "fireworks/glm-5.3",
+          "modelId": "fireworks/glm-5.3",
+          "description": "Zhipu GLM-5.3 via Fireworks"
+        },
+        {
+          "alias": "fireworks/glm-5.3-flash",
+          "modelId": "fireworks/glm-5.3-flash",
+          "description": "Zhipu GLM-5.3 Flash via Fireworks"
+        }
+      ],
+      "effortSupport": "level",
+      "efforts": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking"
+      ],
+      "defaultEffort": "high",
       "supportsConfig": false,
       "presets": []
     }

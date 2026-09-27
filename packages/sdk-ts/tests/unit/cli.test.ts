@@ -216,8 +216,8 @@ function testGrammarResolution() {
   assertEqual(parseArgs(["job", "ls"]).command, "job list", "`ls` is a hidden alias of list");
   assertEqual(parseArgs(["run"]).command, "run", "`run` is a command in its own right, not rewritten to job start");
   assertEqual(
-    parseArgs(["run", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5"]).flags,
-    { dataset: ["deep-swe"], agent: "codex", model: ["gpt-5.5"] },
+    parseArgs(["run", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol"]).flags,
+    { dataset: ["deep-swe"], agent: "codex", model: ["gpt-6-sol"] },
     "`run` parses job start's flags"
   );
   assertEqual(
@@ -269,7 +269,7 @@ function testShortFlags() {
     "job", "start",
     "-d", "deep-swe@1.1",
     "-a", "codex",
-    "-m", "gpt-5.5",
+    "-m", "gpt-6-sol",
     "-k", "2",
     "-n", "8",
     "-e", "daytona",
@@ -282,7 +282,7 @@ function testShortFlags() {
   assertEqual(inv.command, "job start", "command resolved");
   assertEqual(inv.flags.dataset, ["deep-swe@1.1"], "-d is --dataset (repeatable)");
   assertEqual(inv.flags.agent, "codex", "-a is --agent");
-  assertEqual(inv.flags.model, ["gpt-5.5"], "-m is --model (repeatable)");
+  assertEqual(inv.flags.model, ["gpt-6-sol"], "-m is --model (repeatable)");
   assertEqual(inv.flags["n-attempts"], 2, "-k is --n-attempts");
   assertEqual(inv.flags["n-concurrent"], 8, "-n is --n-concurrent");
   assertEqual(inv.flags.env, "daytona", "-e is --env, the sandbox provider");
@@ -365,7 +365,7 @@ function testBuildJobInputFlags() {
     "-x", "flaky-*",
     "-l", "5",
     "-a", "codex@2.0",
-    "-m", "gpt-5.5",
+    "-m", "gpt-6-sol",
     "-m", "gpt-5.5-mini",
     "--effort", "low",
     "-k", "2",
@@ -387,7 +387,7 @@ function testBuildJobInputFlags() {
       agents: [
         // --effort is stamped on EVERY arm: the server owns the per-agent
         // refusal, and the CLI never edits the list to dodge one.
-        { name: "codex", model_name: "gpt-5.5", version: "2.0", reasoning_effort: "low" },
+        { name: "codex", model_name: "gpt-6-sol", version: "2.0", reasoning_effort: "low" },
         { name: "codex", model_name: "gpt-5.5-mini", version: "2.0", reasoning_effort: "low" },
       ],
       n_attempts: 2,
@@ -685,7 +685,7 @@ function testBuildJobInputSkills() {
     "job", "start",
     "-d", "deep-swe",
     "-a", "codex",
-    "-m", "gpt-5.5",
+    "-m", "gpt-6-sol",
     "-m", "gpt-5.5-mini",
     "--skill", "skills.sh/o/r/frontend-design",
     "--skill", "./my-skill",
@@ -697,7 +697,7 @@ function testBuildJobInputSkills() {
       // one sweep. The local folder stays verbatim in the built body —
       // cmdJobStart uploads it and swaps the upload:<id> handle at send
       // time, so --print-config shows the path the caller typed.
-      { name: "codex", model_name: "gpt-5.5", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
+      { name: "codex", model_name: "gpt-6-sol", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
       { name: "codex", model_name: "gpt-5.5-mini", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
     ],
     "--skill repeatable, stamped on every arm in caller order"
@@ -758,9 +758,9 @@ async function testConfigFileMerge() {
     );
 
     const merged = buildJobInput(
-      parseArgs(["job", "start", "-c", jsonPath, "-a", "codex", "-m", "gpt-5.5", "-i", "new-*", "-k", "1"])
+      parseArgs(["job", "start", "-c", jsonPath, "-a", "codex", "-m", "gpt-6-sol", "-i", "new-*", "-k", "1"])
     );
-    assertEqual(merged.agents, [{ name: "codex", model_name: "gpt-5.5" }], "-a/-m replace the file's agents");
+    assertEqual(merged.agents, [{ name: "codex", model_name: "gpt-6-sol" }], "-a/-m replace the file's agents");
     assertEqual(
       merged.datasets,
       [{ name: "deep-swe", version: "1.0", task_names: ["new-*"] }],
@@ -782,7 +782,7 @@ async function testConfigFileMerge() {
         "  - name: frontier-swe",
         "agents:",
         "  - name: codex",
-        "    model_name: gpt-5.5",
+        "    model_name: gpt-6-sol",
         "    reasoning_effort: low",
         "n_attempts: 2",
         "n_concurrent_trials: 8",
@@ -799,7 +799,7 @@ async function testConfigFileMerge() {
           { name: "deep-swe", version: "1.1", task_names: ["cache-*", "abs-*"] },
           { name: "frontier-swe" },
         ],
-        agents: [{ name: "codex", model_name: "gpt-5.5", reasoning_effort: "low" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", reasoning_effort: "low" }],
         n_attempts: 2,
         n_concurrent_trials: 8,
         max_trial_spend_usd: 25.5,
@@ -1413,10 +1413,10 @@ function testYamlConfig() {
   );
   assertEqual(
     parseYamlConfig(
-      ["agents:", "  - {name: claude, model_name: opus}", "  - name: codex", "    model_name: gpt-5.5"].join("\n"),
+      ["agents:", "  - {name: claude, model_name: opus}", "  - name: codex", "    model_name: gpt-6-sol"].join("\n"),
       "t.yaml"
     ),
-    { agents: [{ name: "claude", model_name: "opus" }, { name: "codex", model_name: "gpt-5.5" }] },
+    { agents: [{ name: "claude", model_name: "opus" }, { name: "codex", model_name: "gpt-6-sol" }] },
     "a flow item and a block item sit side by side in one sequence"
   );
   assertEqual(
@@ -1647,14 +1647,14 @@ async function testPrintConfig() {
   try {
     const { io, out } = captureIO();
     const code = await runCli(
-      ["job", "start", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--print-config", ...AUTH],
+      ["job", "start", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--print-config", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0");
     assertEqual(fetchCalls.length, 0, "nothing was sent");
     assertEqual(
       JSON.parse(out.join("\n")),
-      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] },
+      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] },
       "prints the resolved JobCreate body"
     );
 
@@ -2303,7 +2303,7 @@ function wireJob(overrides: Record<string, unknown> = {}): Record<string, unknow
     job_name: "deep-swe sweep",
     status: "QUEUED",
     datasets: [{ name: "deep-swe", version: "1.1" }],
-    agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
+    agents: [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null }],
     n_attempts: 1,
     n_concurrent_trials: 4,
     max_trial_spend_usd: 25,
@@ -2367,7 +2367,7 @@ async function testRunWatchEndToEnd() {
         "run",
         "-d", "deep-swe@1.1",
         "-a", "codex",
-        "-m", "gpt-5.5",
+        "-m", "gpt-6-sol",
         "-k", "1",
         "-n", "4",
         "--max-trial-spend", "25",
@@ -2388,7 +2388,7 @@ async function testRunWatchEndToEnd() {
       JSON.parse(createCall?.init?.body as string),
       {
         datasets: [{ name: "deep-swe", version: "1.1" }],
-        agents: [{ name: "codex", model_name: "gpt-5.5" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol" }],
         n_attempts: 1,
         n_concurrent_trials: 4,
         max_trial_spend_usd: 25,
@@ -2438,7 +2438,7 @@ async function testRunWatchJsonAndQuiet() {
 
     const ndjson = captureIO();
     const code = await runCli(
-      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", "--json", ...AUTH],
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--watch", "--json", ...AUTH],
       ndjson.io
     );
     assertEqual(code, 0, "exit code 0");
@@ -2451,7 +2451,7 @@ async function testRunWatchJsonAndQuiet() {
 
     const quiet = captureIO();
     await runCli(
-      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", "-q", ...AUTH],
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--watch", "-q", ...AUTH],
       quiet.io
     );
     assert(!quiet.out.some((l) => l.includes("trial.settled")), "-q suppresses per-event lines");
@@ -2477,7 +2477,7 @@ async function testWatchFailedExitCode() {
     setMockResponse("/api/jobs", { status: 202, body: wireJob() });
     const { io } = captureIO();
     const code = await runCli(
-      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", ...AUTH],
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--watch", ...AUTH],
       io
     );
     assertEqual(code, 1, "FAILED job exits 1");
@@ -2500,7 +2500,7 @@ async function testUsageErrorExitCode() {
     // A typo'd provider is caught at the keyboard like --stream, never sent.
     const badEnv = captureIO();
     const codeEnv = await runCli(
-      ["job", "start", "-d", "b", "-a", "codex", "-m", "gpt-5.5", "-e", "modall"],
+      ["job", "start", "-d", "b", "-a", "codex", "-m", "gpt-6-sol", "-e", "modall"],
       badEnv.io
     );
     assertEqual(codeEnv, 2, "an unknown -e/--env provider is a usage error");
@@ -2534,7 +2534,7 @@ async function testJsonErrorObject() {
       headers: { "x-request-id": "req_0123456789abcdef0123456789abcdef" },
       body: { error: { code: "version_not_ready", message: sentence, param: "datasets[0]" } },
     });
-    const startArgs = ["job", "start", "-d", "rq-init", "-a", "codex", "-m", "gpt-5.5"];
+    const startArgs = ["job", "start", "-d", "rq-init", "-a", "codex", "-m", "gpt-6-sol"];
 
     // Human mode: unchanged — the sentence on stderr, nothing on stdout.
     const human = captureIO();
@@ -2881,7 +2881,7 @@ async function testJobShowPassAtK() {
         stats: {
           cost_usd: null,
           evals: {
-            "codex__gpt-5.5__deep-swe@1.1": {
+            "codex__gpt-6-sol__deep-swe@1.1": {
               n_trials: 8,
               n_errors: 0,
               metrics: [{ mean: 0.5 }],
@@ -2911,7 +2911,7 @@ async function testJobShowPassAtK() {
       "each k is printed to three decimals, ascending",
     );
     assert(
-      text.includes("codex__gpt-5.5__deep-swe@1.1"),
+      text.includes("codex__gpt-6-sol__deep-swe@1.1"),
       "the numbers are labelled with the evals key they belong to",
     );
     assert(
@@ -2930,7 +2930,7 @@ async function testJobShowPassAtK() {
     await runCli(["job", "show", "eval-1", "--json", ...AUTH], json.io);
     const body = JSON.parse(json.out[0]);
     assertEqual(
-      body.stats.evals["codex__gpt-5.5__deep-swe@1.1"].pass_at_k["4"],
+      body.stats.evals["codex__gpt-6-sol__deep-swe@1.1"].pass_at_k["4"],
       1,
       "--json carries stats.evals[].pass_at_k verbatim",
     );
@@ -3767,7 +3767,7 @@ function wireAnalyzedTrial(
     job_id: "eval-1",
     task_name: "demo-task",
     source: "deep-swe",
-    agent_info: { name: "codex", version: null, model_info: { name: "gpt-5.5" } },
+    agent_info: { name: "codex", version: null, model_info: { name: "gpt-6-sol" } },
     attempt: 1,
     status: "SCORED",
     reward: 1,
@@ -3879,6 +3879,7 @@ function testBuildJobInputAnalyze() {
       "-d", "deep-swe",
       "-a", "codex",
       "-m", "m",
+      "--analyze-agent", "claude",
       "--analyze-model", "claude-haiku-4-5-20251001",
       "--analyze-rubric", "rubric.json",
       "--analyze-provider", "modal",
@@ -3889,12 +3890,19 @@ function testBuildJobInputAnalyze() {
   assertEqual(
     withFields.analyze,
     {
+      agent: "claude",
       model_name: "claude-haiku-4-5-20251001",
       rubric: CLI_RUBRIC,
       sandbox_provider: "modal",
       reasoning_effort: "low",
     },
-    "--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
+    "--analyze-agent/--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
+  );
+  // The agent alone arms the trigger too, verbatim: the agent list is the server's.
+  assertEqual(
+    buildJobInput(parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m", "--analyze-agent", "opencode"])).analyze,
+    { agent: "opencode" },
+    "--analyze-agent alone implies --analyze and rides verbatim"
   );
 
   // The provider VALUE is the server's to rule (the lineup lives on GET
@@ -4123,7 +4131,7 @@ async function testAnalyzeVerbWatchFollows() {
     let code: number;
     try {
       code = await runCli(
-        ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", "-p", promptPath, "--watch", ...AUTH],
+        ["analyze", "eval-1", "-a", "claude", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", "-p", promptPath, "--watch", ...AUTH],
         io
       );
     } finally {
@@ -4134,8 +4142,8 @@ async function testAnalyzeVerbWatchFollows() {
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
-      "-m/-e/-p/--effort ride the body as model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
+      { agent: "claude", model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
+      "-a/-m/-e/-p/--effort ride the body as agent/model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
     );
     assert(jobReads >= 3, "follows the wave by polling the job (past the pre-flight read)");
     assert(
@@ -4447,7 +4455,7 @@ async function testCompareCancelDownload() {
             job_id: "eval-1",
             task_name: "task",
             source: "deep-swe",
-            agent_info: { name: "codex", version: null, model_info: { name: "gpt-5.5", provider: null }, reasoning_effort: null },
+            agent_info: { name: "codex", version: null, model_info: { name: "gpt-6-sol", provider: null }, reasoning_effort: null },
             status: "SCORED",
             reward: 1,
             spend_source: "measured",
@@ -5604,6 +5612,7 @@ function analysisResultFixture(overrides: Record<string, unknown> = {}): Record<
     job_id: "job-1",
     task_name: "roy-polymorph-cn",
     status: "failed",
+    agent: "claude",
     model_name: "glm-5.3-flash",
     rubric: CLI_RUBRIC,
     summary: null,
@@ -7472,7 +7481,7 @@ async function testPartialPublishCliSurfaces() {
         },
       },
     });
-    const startArgs = ["job", "start", "-d", "part-swe@2.0", "-i", "broken-dockerfile", "-a", "codex", "-m", "gpt-5.5"];
+    const startArgs = ["job", "start", "-d", "part-swe@2.0", "-i", "broken-dockerfile", "-a", "codex", "-m", "gpt-6-sol"];
 
     const human = captureIO();
     assertEqual(await runCli([...startArgs, ...AUTH], human.io), 1, "the typed refusal exits 1");
@@ -7833,7 +7842,7 @@ async function testSkillNamePassThroughOnStart() {
     setMockResponse("/api/jobs", { status: 202, body: wireJob() });
     const { io } = captureIO();
     const code = await runCli(
-      ["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--skill", "name:frontend-design", ...AUTH],
+      ["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--skill", "name:frontend-design", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0");
@@ -7870,7 +7879,7 @@ async function testJobShowSkillLocks() {
         agents: [
           {
             name: "codex",
-            model_name: "gpt-5.5",
+            model_name: "gpt-6-sol",
             version: null,
             reasoning_effort: null,
             skills: ["skills.sh/o/r/frontend-design", CLI_SKILL.ref],
@@ -7899,7 +7908,7 @@ async function testJobShowSkillLocks() {
     assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], shown.io), 0, "exit 0");
     const text = shown.out.join("\n");
     assert(
-      text.includes(`codex:gpt-5.5: skills.sh/o/r/frontend-design, ${CLI_SKILL.ref}`),
+      text.includes(`codex:gpt-6-sol: skills.sh/o/r/frontend-design, ${CLI_SKILL.ref}`),
       "the skills row lists the arm's requested references"
     );
     assert(
@@ -7946,7 +7955,7 @@ async function testLocalSkillUploadNoticeOnStart() {
     const { io, err } = captureIO();
     const code = await runCli(
       [
-        "job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--skill", skillDir,
+        "job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--skill", skillDir,
         "--api-key", "test-key", "--base-url", server.base,
       ],
       io
@@ -8747,7 +8756,7 @@ async function testAuthOrgTeamVerbs() {
     assertEqual(fetchCalls.length, before, "use makes no request");
 
     console.log("  [run: flag > config file > personal, and the first line]");
-    const RUN = ["-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", ...AUTH];
+    const RUN = ["-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", ...AUTH];
     const viaConfig = captureIO();
     assertEqual(await runCli(["run", ...RUN], viaConfig.io), 0, "run exits 0");
     let body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
@@ -9387,15 +9396,15 @@ function testAgentKwargs() {
   // --preset: the plain-words door, stamped on EVERY arm, verbatim — the
   // server owns the vocabulary and the per-agent guarantee refusal.
   const presetInv = parseArgs([
-    "job", "start", "-d", "d", "-a", "codex", "-m", "gpt-5.6-sol", "-m", "gpt-5.5",
+    "job", "start", "-d", "d", "-a", "codex", "-m", "gpt-6-sol", "-m", "gpt-6-luna",
     "--preset", "no-internet",
   ]);
   const presetInput = buildJobInput(presetInv, read);
   assertEqual(
     presetInput.agents,
     [
-      { name: "codex", model_name: "gpt-5.6-sol", preset: "no-internet" },
-      { name: "codex", model_name: "gpt-5.5", preset: "no-internet" },
+      { name: "codex", model_name: "gpt-6-sol", preset: "no-internet" },
+      { name: "codex", model_name: "gpt-6-luna", preset: "no-internet" },
     ],
     "--preset stamped on every arm"
   );
@@ -9403,7 +9412,7 @@ function testAgentKwargs() {
   // Verbatim pass-through: an unknown name is the SERVER's typed refusal
   // (invalid_input naming the vocabulary), never a second client-side table.
   const verbatim = buildJobInput(
-    parseArgs(["job", "start", "-d", "d", "-a", "codex", "-m", "gpt-5.5", "--preset", "sealed"]),
+    parseArgs(["job", "start", "-d", "d", "-a", "codex", "-m", "gpt-6-sol", "--preset", "sealed"]),
     read
   );
   assertEqual(verbatim.agents[0].preset, "sealed", "--preset value rides verbatim; the server rules");
@@ -9456,6 +9465,7 @@ function wireCheckRow(overrides: Record<string, unknown> = {}): Record<string, u
     name: "nightly check",
     status: "running",
     source: { type: "dataset", sha256: "ab".repeat(32), bytes: null, dataset: "deep-swe@1.1" },
+    agent: "claude",
     model_name: "claude-opus-4-6",
     reasoning_effort: "high",
     sandbox_provider: "e2b",
@@ -9500,7 +9510,14 @@ async function testJobListKind() {
 
     const cols = captureIO(false);
     await runCli(["job", "list", "--kind", "check", "--columns", "kind,name,agents,trials", ...AUTH], cols.io);
-    assertEqual(cols.out[1], "check\tnightly check\tclaude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+    assertEqual(cols.out[1], "check\tnightly check\tclaude:claude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireCheckRow({ agent: "gemini", model_name: "gemini-3.5-flash", reasoning_effort: null })], nextCursor: null, hasMore: false },
+    });
+    const noEffort = captureIO(false);
+    await runCli(["job", "list", "--kind", "check", "--columns", "agents", ...AUTH], noEffort.io);
+    assertEqual(noEffort.out[1], "gemini:gemini-3.5-flash", "an agent that takes no effort shows none — never the word null");
 
     // One spelling for one answer: the Jobs page asks kind=all and says "No jobs".
     setMockResponse("/api/jobs", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
@@ -9562,8 +9579,8 @@ async function testAnalysisList() {
 
     const piped = captureIO(false);
     assertEqual(await runCli(["analysis", "list", ...AUTH], piped.io), 0, "list exits 0");
-    assertEqual(piped.out[0], "ID\tSTATUS\tTASK\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
-    assert(piped.out[1].startsWith("an-1\tfailed\tabs-module-cache-flags\tglm-5.3-flash\t"), "rows are tab-separated");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASK\tAGENT\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("an-1\tfailed\tabs-module-cache-flags\tclaude\tglm-5.3-flash\t"), "rows are tab-separated");
     assert(piped.out[2].startsWith("an-2\tcompleted\ttricky-task\t"), "every row of the page renders");
 
     const tty = captureIO(true);
@@ -9868,6 +9885,7 @@ function wireCheck(overrides: Record<string, unknown> = {}): Record<string, unkn
     id: "chk-1",
     status: "queued",
     source: { type: "archive", sha256: "ab".repeat(32), bytes: 1234 },
+    agent: "claude",
     model_name: "glm-5.3-flash",
     reasoning_effort: "max",
     rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
@@ -9931,7 +9949,7 @@ async function testCheckVerb() {
     server.setReply(202, wireCheck());
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["check", taskDir, "--name", "nightly tb4", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
+      ["check", taskDir, "--name", "nightly tb4", "-a", "droid", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
       io
     );
     assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
@@ -9944,8 +9962,8 @@ async function testCheckVerb() {
     const configJson = /name="config"\r\n\r\n([^\r]+)\r\n/.exec(body)?.[1] ?? "";
     assertEqual(
       JSON.parse(configJson),
-      { name: "nightly tb4", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
-      "--name/-m/-n/-i/-l ride the config part as name/model_name/n_concurrent/include_task_names/n_tasks"
+      { name: "nightly tb4", agent: "droid", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
+      "--name/-a/-m/-n/-i/-l ride the config part as name/agent/model_name/n_concurrent/include_task_names/n_tasks"
     );
     assert(body.includes('filename="hello-world.tar.gz"'), "the archive is named by the directory");
     assert(out.some((l) => l.startsWith("check id") && l.includes("chk-1")), "prints the accepted check");
@@ -10109,10 +10127,10 @@ async function testFilesVerbs() {
 
     // The job switch and the download selector.
     const cfg = captureIO();
-    assertEqual(await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--system-log", "--print-config"], cfg.io), 0, "--system-log parses");
+    assertEqual(await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--system-log", "--print-config"], cfg.io), 0, "--system-log parses");
     assertEqual(JSON.parse(cfg.out.join("\n")).system_log, true, "--system-log rides the body as system_log: true");
     const bare = captureIO();
-    await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--print-config"], bare.io);
+    await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--print-config"], bare.io);
     assertEqual("system_log" in JSON.parse(bare.out.join("\n")), false, "omitted, no system_log key rides");
     const fsDownload = captureIO();
     const tar: Buffer[] = [];
@@ -10162,8 +10180,8 @@ async function testCheckReadVerbs() {
     assertEqual(url.pathname, "/api/checks", "one GET on the checks list");
     assertEqual(url.searchParams.get("status"), "completed", "--status rides the query");
     assertEqual(url.searchParams.get("scope"), "shared", "--scope rides the query");
-    assertEqual(piped.out[0], "ID\tSTATUS\tTASKS\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
-    assert(piped.out[1].startsWith("chk-1\tcompleted\t1\tglm-5.3-flash\t$0.0123"), "the row renders");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASKS\tAGENT\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("chk-1\tcompleted\t1\tclaude\tglm-5.3-flash\t$0.0123"), "the row renders");
     const badStatus = captureIO();
     assertEqual(await runCli(["check", "list", "--status", "failed", ...AUTH], badStatus.io), 2, "the check ladder has no failed word — a usage error (exit 2) at the keyboard");
     assert(badStatus.err.some((l) => l.includes("queued, running, completed")), "the refusal names the ladder");
@@ -10186,6 +10204,7 @@ async function testAnalyzeShowDefaults() {
   installMockFetch();
   try {
     const defaults = {
+      agent: "claude",
       model_name: "openrouter/deepseek/deepseek-v4.1-flash",
       rubric: { criteria: [{ name: "score_is_earned", description: "d", guidance: "g" }, { name: "reward_hacking", description: "d", guidance: "g" }] },
       prompt: "Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}",
@@ -10201,6 +10220,7 @@ async function testAnalyzeShowDefaults() {
     assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
     const human = captureIO();
     assertEqual(await runCli(["analyze", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("agent") && l.includes("claude")), "the agent row");
     assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
     assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
     assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
@@ -10208,6 +10228,10 @@ async function testAnalyzeShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Read the trial at {trial_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("reward_hacking")), "every criterion is named under RUBRIC");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).search, "", "no -a: the default agent's policy, no query");
+    const named = captureIO();
+    assertEqual(await runCli(["analyze", "--show-defaults", "-a", "kimi", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "kimi", "-a rides the defaults door's ?agent=; the server resolves it, the CLI holds no roster");
     assertEqual(await runCli(["analyze", "eval-1", "--show-defaults", ...AUTH], captureIO().io), 2, "--show-defaults with a <job-id> is a usage error");
     assertEqual(await runCli(["analyze", "--show-defaults", "--model", "x", "--watch", ...AUTH], captureIO().io), 2, "--show-defaults with an analyzer or output flag is a usage error, never silently ignored");
     assertEqual(await runCli(["analyze", ...AUTH], captureIO().io), 2, "a bare analyze without a job id and without --show-defaults is a usage error");
@@ -10223,6 +10247,7 @@ async function testCheckShowDefaults() {
   installMockFetch();
   try {
     const defaults = {
+      agent: "claude",
       model_name: "openrouter/deepseek/deepseek-v4.1-flash",
       rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
       prompt: "Check the task at {task_path}\n{file_tree}\n{criteria_guidance}",
@@ -10240,6 +10265,7 @@ async function testCheckShowDefaults() {
     assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
     const human = captureIO();
     assertEqual(await runCli(["check", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("agent") && l.includes("claude")), "the agent row");
     assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
     assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
     assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
@@ -10247,6 +10273,9 @@ async function testCheckShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Check the task at {task_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("pinned_dependencies")), "every criterion is named under RUBRIC");
+    const named = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", "-a", "codex", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "codex", "-a rides the defaults door's ?agent=");
     const withPath = captureIO();
     assertEqual(await runCli(["check", "./tasks", "--show-defaults", ...AUTH], withPath.io), 2, "--show-defaults with a <path> is a usage error");
     assertEqual(await runCli(["check", "--show-defaults", "-d", "tb4", ...AUTH], captureIO().io), 2, "--show-defaults with -d is a usage error");

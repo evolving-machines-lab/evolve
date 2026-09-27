@@ -2051,6 +2051,8 @@ export interface SandboxCreateOptions {
   user?: string;
   /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
   homeDir?: string;
+  /** Account the SDK hands its agent config files to; not consumed by the provider. */
+  homeOwner?: string;
 }
 
 /** Options for listing sandboxes */
@@ -2149,6 +2151,9 @@ export interface SandboxProvider {
 // CONFIGURATION
 // ============================================================
 
+/** Wraps the one request that creates a box, for the SDK to retry a door's 429/503 before any box exists. */
+export type CreateRequestRetry = <T>(send: () => Promise<T>) => Promise<T>;
+
 export interface DaytonaConfig {
   /** Daytona API key. Default: reads from DAYTONA_API_KEY env var */
   apiKey?: string;
@@ -2174,6 +2179,8 @@ export interface DaytonaConfig {
    * @internal
    */
   managedToolboxUrl?: string;
+  /** @internal Resolved by the Evolve SDK with managedToolboxUrl; unset means the create request is sent once. */
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 interface ResolvedDaytonaConfig {
@@ -2183,6 +2190,7 @@ interface ResolvedDaytonaConfig {
   defaultTimeoutMs?: number;
   snapshotName?: string;
   managedToolboxUrl?: string;
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 // ============================================================
@@ -2238,7 +2246,11 @@ function rewriteToolboxProxyUrls(payload: unknown, managedToolboxUrl: string): v
  * the DATA (any DTO carrying toolboxProxyUrl), not about which call returned
  * it.
  */
-function wrapManagedSandboxApi<T extends object>(api: T, managedToolboxUrl: string): T {
+function wrapManagedSandboxApi<T extends object>(
+  api: T,
+  managedToolboxUrl: string,
+  retryCreateRequest?: CreateRequestRetry,
+): T {
   return new Proxy(api, {
     get(target, prop, receiver) {
       if (prop === "getToolboxProxyUrl") {
@@ -2249,7 +2261,13 @@ function wrapManagedSandboxApi<T extends object>(api: T, managedToolboxUrl: stri
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== "function") return value;
       return function (this: unknown, ...args: unknown[]) {
-        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+        const send = () => (value as (...a: unknown[]) => unknown).apply(target, args);
+        // createSandbox is the one call the door may refuse before a box exists; a start poll or a
+        // toolbox call fails loudly instead, or a second box would be made while the first still bills.
+        const result =
+          prop === "createSandbox" && retryCreateRequest
+            ? retryCreateRequest(() => send() as Promise<unknown>)
+            : send();
         if (result instanceof Promise) {
           return result.then((response) => {
             rewriteToolboxProxyUrls((response as { data?: unknown } | undefined)?.data, managedToolboxUrl);
@@ -2266,13 +2284,14 @@ class ManagedDaytona extends Daytona {
   constructor(
     config: ConstructorParameters<typeof Daytona>[0],
     managedToolboxUrl: string,
+    retryCreateRequest?: CreateRequestRetry,
   ) {
     super(config);
     // `sandboxApi` is TypeScript-private but a plain runtime property, and it
     // is the single instance shared with every Sandbox the client hands out —
     // so wrapping it here covers create, get, list, refreshData and fork alike.
     const self = this as unknown as { sandboxApi: object };
-    self.sandboxApi = wrapManagedSandboxApi(self.sandboxApi, managedToolboxUrl);
+    self.sandboxApi = wrapManagedSandboxApi(self.sandboxApi, managedToolboxUrl, retryCreateRequest);
   }
 }
 
@@ -2402,10 +2421,7 @@ async function followManagedSessionLogs(
   onStderr: (chunk: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const url =
-    `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
-    `/process/session/${encodeURIComponent(sessionId)}` +
-    `/command/${encodeURIComponent(commandId)}/logs?follow=true`;
+  const url = managedSessionCommandLogsUrl(context, sandboxId, sessionId, commandId, true);
 
   // The signal is what lets a caller stop reading a body nothing will ever
   // end: a chunked follow has no close from this side, and a pending
@@ -2437,6 +2453,80 @@ async function followManagedSessionLogs(
     demuxer.flush();
     await reader.cancel().catch(() => undefined);
   }
+}
+
+function managedSessionCommandLogsUrl(
+  context: ManagedStreamContext,
+  sandboxId: string,
+  sessionId: string,
+  commandId: string,
+  follow: boolean,
+): string {
+  return (
+    `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
+    `/process/session/${encodeURIComponent(sessionId)}` +
+    `/command/${encodeURIComponent(commandId)}/logs${follow ? "?follow=true" : ""}`
+  );
+}
+
+// The endpoint answers JSON only to an identified SDK (vendor client doc, process-api.d.ts:287:
+// "JSON ... for SDK >= 0.167.0, plain text otherwise"); the managed route strips that identity,
+// and the SDK reads JSON fields off the plain text it gets back — so the body is read here.
+async function readManagedSettledLogs(
+  context: ManagedStreamContext,
+  sandboxId: string,
+  sessionId: string,
+  commandId: string,
+  token: string,
+): Promise<{ output: string; stdout: string; stderr: string }> {
+  const response = await fetch(
+    managedSessionCommandLogsUrl(context, sandboxId, sessionId, commandId, false),
+    {
+      headers: {
+        Authorization: `Bearer ${context.apiKey}`,
+        accept: "application/json, text/plain, */*",
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Daytona managed log read failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  let streams: { stdout: string; stderr: string };
+  if ((response.headers.get("content-type") || "").includes("application/json")) {
+    streams = readCommandStreams(
+      (await response.json()) as { output?: string | null; stdout?: string | null; stderr?: string | null },
+    );
+  } else {
+    let stdout = "";
+    let stderr = "";
+    const demuxer = createLogDemuxer(
+      (chunk) => {
+        stdout += chunk;
+      },
+      (chunk) => {
+        stderr += chunk;
+      },
+    );
+    demuxer.push(new Uint8Array(await response.arrayBuffer()));
+    demuxer.flush();
+    streams = { stdout, stderr };
+  }
+  // A legacy combined log (either shape) is per-stream GROUPS in an unpromised order; the sentinel
+  // ends the stdout group, so whatever follows it is stderr — split there, whichever group came first.
+  // Residual: a `set -x` shell traces the wrapper's printf, so the token appears on stderr too, and in
+  // a stderr-first log that trace is the first match — self-referencing commands only, the class the
+  // sentinel design already accepts (stripEndOfOutputSentinel).
+  const sentinel = `${token}\n`;
+  const at = streams.stdout.indexOf(sentinel);
+  if (at !== -1 && at + sentinel.length < streams.stdout.length) {
+    streams = {
+      stdout: streams.stdout.slice(0, at + sentinel.length),
+      stderr: streams.stdout.slice(at + sentinel.length) + streams.stderr,
+    };
+  }
+  return { output: "", ...streams };
 }
 
 // ============================================================
@@ -2515,6 +2605,18 @@ export class DaytonaCommands implements SandboxCommands {
       onStdout,
       onStderr,
     ) as Promise<void>;
+  }
+
+  // Managed mode cannot use the SDK's settled read (see readManagedSettledLogs); direct mode can.
+  private readSettledLogs(
+    sessionId: string,
+    commandId: string,
+    token: string,
+  ): Promise<{ output?: string | null; stdout?: string | null; stderr?: string | null }> {
+    if (this.managedStream) {
+      return readManagedSettledLogs(this.managedStream, this.sandbox.id, sessionId, commandId, token);
+    }
+    return this.sandbox.process.getSessionCommandLogs(sessionId, commandId);
   }
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
@@ -2653,7 +2755,7 @@ export class DaytonaCommands implements SandboxCommands {
           // beats silently returning truncated output as a success.
           let settled: { stdout: string; stderr: string };
           try {
-            const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+            const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
             settled = settledStreams(logs, eosToken);
           } catch {
             throw followFailure;
@@ -2676,7 +2778,7 @@ export class DaytonaCommands implements SandboxCommands {
           // must be empty to take it: a partial follow already reached the
           // callbacks and re-emitting would double the caller's output.
           try {
-            const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+            const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
             const settled = settledStreams(logs, eosToken);
             stdout = settled.stdout;
             stderr = settled.stderr;
@@ -2695,7 +2797,7 @@ export class DaytonaCommands implements SandboxCommands {
       let { stdout, stderr } = settledStreams(resp, eosToken);
       if (!stdout && !stderr && cmdId) {
         try {
-          const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+          const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
           const fromLogs = settledStreams(logs, eosToken);
           stdout = fromLogs.stdout;
           stderr = fromLogs.stderr || stderr;
@@ -2865,7 +2967,7 @@ export class DaytonaCommands implements SandboxCommands {
             const cmd = await sandbox.process.getSessionCommand(sessionId, cmdId);
             if (cmd.exitCode !== undefined) {
               try {
-                const logs = await sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+                const logs = await this.readSettledLogs(sessionId, cmdId, eosToken);
                 return {
                   exitCode: cmd.exitCode,
                   ...settledStreams(logs, eosToken),
@@ -3347,8 +3449,12 @@ export class DaytonaProvider implements SandboxProvider {
       // is a Dashboard route handler, which can never terminate that socket.
       useDeprecatedPolling: true,
     };
+    if (config.retryCreateRequest && !config.managedToolboxUrl) {
+      // Provider law: the seam lives in the managed wrap, so without the door it would be silently ignored.
+      throw new Error("retryCreateRequest rides the managed door: set managedToolboxUrl with it.");
+    }
     this.client = config.managedToolboxUrl
-      ? new ManagedDaytona(clientConfig, config.managedToolboxUrl)
+      ? new ManagedDaytona(clientConfig, config.managedToolboxUrl, config.retryCreateRequest)
       : new Daytona(clientConfig);
     if (config.managedToolboxUrl) {
       this.managedStream = { toolboxUrl: config.managedToolboxUrl, apiKey: config.apiKey };
