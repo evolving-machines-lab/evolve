@@ -66,6 +66,8 @@ jobs:
         id: contractref
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
+          # A lane PR into a train pairs with the TRAIN's contract, not project-sable's.
+          BASE: ${{ github.base_ref }}
           TOKEN: ${{ secrets.SPEC_READ_TOKEN }}
         run: |
           # REST probe, not git ls-remote: fine-grained PATs authenticate
@@ -79,7 +81,7 @@ jobs:
           # "absent" would walk the whole candidate list and gate against the
           # WRONG contract while the job looked healthy. So anything that is
           # neither 200 nor 404 stops the job here and prints the code.
-          for ref in "$BRANCH" berth/day-one project-sable main; do
+          for ref in "$BRANCH" ${BASE:+"$BASE"} berth/day-one project-sable main; do
             code=$(curl -s -o /dev/null -w "%{http_code}" \
               -H "Authorization: Bearer ${TOKEN}" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -95,7 +97,7 @@ jobs:
             fi
             echo "contract ref '${ref}': absent (404)"
           done
-          echo "::error::no contract branch found — every candidate answered 404 ($BRANCH, berth/day-one, project-sable, main). The server repo has no branch this ref can pair with."
+          echo "::error::no contract branch found — every candidate answered 404 ($BRANCH, $BASE when set, berth/day-one, project-sable, main). The server repo has no branch this ref can pair with."
           exit 1
 
       - name: Checkout the contract (private server repo, spec/ only)
