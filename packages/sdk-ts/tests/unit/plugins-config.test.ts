@@ -6,7 +6,10 @@
  *   npx tsx tests/unit/plugins-config.test.ts
  */
 
-import { Evolve, type SandboxCommandHandle, type SandboxInstance, type SandboxProvider } from "../../dist/index.js";
+import { AGENT_REGISTRY, Evolve, type SandboxCommandHandle, type SandboxInstance, type SandboxProvider } from "../../dist/index.js";
+
+// gemini is retired but keeps its run path, so lifting the retirement is one field; this file tests that path lifted.
+delete AGENT_REGISTRY.gemini.retired;
 
 let passed = 0;
 let failed = 0;

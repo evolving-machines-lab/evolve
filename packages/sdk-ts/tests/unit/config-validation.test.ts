@@ -24,7 +24,7 @@
 
 import { Agent, Evolve, EvolveConfigError } from "../../dist/index.js";
 import type { AgentConfig, ResolvedAgentConfig, RunOptions } from "../../src/types.js";
-import { AGENT_REGISTRY } from "../../src/registry.js";
+import { AGENT_REGISTRY, isValidAgentType, liveAgentTypes } from "../../src/registry.js";
 import { loadNativeAgentConfig, nativeConfigAgentTypes } from "../../src/utils/config.js";
 
 // =============================================================================
@@ -138,8 +138,8 @@ function testUnknownAgentType(): void {
   assert(error instanceof EvolveConfigError, "an unknown type throws EvolveConfigError");
   assertEqual((error as EvolveConfigError).field, "type", "the error names the type field");
   assert(
-    (error as Error).message.includes("claude, codex, gemini, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity"),
-    "the message lists every valid agent type",
+    (error as Error).message.includes("claude, codex, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity"),
+    "the message lists every live agent type, and no retired one",
   );
 }
 
@@ -173,6 +173,33 @@ function testEffortOutsideRoster(): void {
     undefined,
     "a harness with no narrowed roster keeps the whole vocabulary",
   );
+}
+
+/** A retired harness is still a known type, refused by name with its replacement. */
+function testRetiredAgentType(): void {
+  console.log("\n[3c] A retired agent type is refused at both doors, naming its replacement");
+
+  const viaEvolve = thrownBy(() => new Evolve().withAgent({ type: "gemini", providerApiKey: "key" }));
+  assert(viaEvolve instanceof EvolveConfigError, "withAgent({ type: gemini }) throws EvolveConfigError");
+  assertEqual((viaEvolve as EvolveConfigError).field, "type", "the error names the type field");
+  assertEqual(
+    (viaEvolve as Error).message,
+    'Evolve agent config: agent type "gemini" is retired; use "antigravity" instead. ' +
+      "Records of past gemini runs stay readable.",
+    "the message names the retired type and its replacement",
+  );
+
+  const viaAgent = thrownBy(() => new Agent({ type: "gemini", apiKey: "key", isDirectMode: true }));
+  assertEqual((viaAgent as EvolveConfigError)?.field, "type", "a hand-built Agent is refused at construction too");
+
+  assertEqual(AGENT_REGISTRY.gemini.retired?.replacedBy, "antigravity", "gemini names antigravity as its replacement");
+  assert(!liveAgentTypes().includes("gemini"), "liveAgentTypes() leaves the retired type out");
+  assertEqual(
+    liveAgentTypes().length,
+    Object.keys(AGENT_REGISTRY).length - 1,
+    "liveAgentTypes() keeps every other registry type",
+  );
+  assert(isValidAgentType("gemini"), "the retired type stays a valid AgentType for past records");
 }
 
 /** run() without a prompt: the case that produced the raw TypeError. */
@@ -232,9 +259,9 @@ function testNativeAgentConfig(): void {
   console.log("\n[6] Native agent config: claude/codex only, validated at the door");
 
   const unsupported = thrownBy(() =>
-    new Evolve().withAgent({ type: "gemini", providerApiKey: "key", config: { a: 1 } }),
+    new Evolve().withAgent({ type: "qwen", providerApiKey: "key", config: { a: 1 } }),
   );
-  assert(unsupported instanceof EvolveConfigError, "config on gemini throws EvolveConfigError");
+  assert(unsupported instanceof EvolveConfigError, "config on qwen throws EvolveConfigError");
   assertEqual((unsupported as EvolveConfigError).field, "config", "the error names the config field");
   assert(
     (unsupported as Error).message.includes("claude, codex"),
@@ -325,6 +352,7 @@ async function main(): Promise<void> {
   testOmittedModelIsFine();
   testUnknownAgentType();
   testEffortOutsideRoster();
+  testRetiredAgentType();
   await testMissingPrompt();
   testAgentConstructorGuards();
   testNativeAgentConfig();

@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Generates harness-capabilities.json — the cross-repo parity artifact for
- * per-harness models and reasoning efforts — from src/registry.ts.
+ * per-harness models, reasoning efforts and retirements — from src/registry.ts.
  *
  * OWNER RULING BEHIND THIS FILE: managed EVALS and managed AGENTS must
  * advertise and support the SAME models and efforts. The AGENT_REGISTRY table
@@ -40,7 +40,7 @@ import {
 } from "../src/registry";
 
 const ARTIFACT_COMMENT =
-  "Per-harness models and reasoning efforts, checked in so two repos that share no test runner can be held to one table. " +
+  "Per-harness models, reasoning efforts and retirements, checked in so two repos that share no test runner can be held to one table. " +
   "The evolve SDK owns it: AGENT_REGISTRY in packages/sdk-ts/src/registry.ts is the only place models, efforts, or defaults may change, " +
   "and scripts/generate-harness-capabilities.ts regenerates this file from it (npm run generate:capabilities; the build fails when it is stale). " +
   "The hosted-evals dashboard consumes this file for its capability document and its parity test diffs the served document against it, " +
@@ -84,6 +84,11 @@ export type HarnessCapabilitiesArtifact = {
        * listed here — a preset is a guarantee or a refusal, never a default.
        */
       presets: string[];
+      /**
+       * Present only for a retired harness: left out of every roster and
+       * refused for new runs, while its past records stay readable.
+       */
+      retired?: { replacedBy: string };
     }
   >;
 };
@@ -112,6 +117,7 @@ export function buildHarnessCapabilitiesArtifact(): HarnessCapabilitiesArtifact 
       // Sorted like the harness names: the artifact's bytes must not depend
       // on registry object-literal key order.
       presets: Object.keys(entry.presets ?? {}).sort(),
+      retired: entry.retired,
     };
   }
   return {

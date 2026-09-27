@@ -27,7 +27,7 @@ const env = getTestEnv();
 const LOGS_DIR = resolve(__dirname, "../test-logs/16-image-output-test");
 const FIXTURES_DIR = resolve(__dirname, "../fixtures");
 
-const ALL_AGENTS: AgentType[] = ["claude", "codex", "gemini", "qwen"];
+const ALL_AGENTS: AgentType[] = ["claude", "codex", "qwen"];
 
 const PROMPTS = [
   {

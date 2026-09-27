@@ -391,6 +391,7 @@ export type {
   PublishDatasetOptions,
   RegradeRequest,
   ResumeRequest,
+  RetiredAgent,
   RetryConfig,
   RetryConfigInput,
   RetryRequest,

@@ -11,9 +11,10 @@ name: Sync docs to skills
 
 on:
   push:
+    # Never on train/**: the sync job pushes regenerated skills, and a train moves only by the lead's merges.
     branches: [main, project-sable]
   pull_request:
-    branches: [main, project-sable]
+    branches: [main, project-sable, 'train/**']
   workflow_dispatch:
 
 permissions:

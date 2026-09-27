@@ -2,9 +2,12 @@ name: Tests
 
 on:
   push:
-    branches: [main, project-sable, 'berth/**']
+    branches: [main, project-sable, 'berth/**', 'train/**']
   pull_request:
-    branches: [main, project-sable, 'berth/**']
+    branches: [main, project-sable, 'berth/**', 'train/**']
+
+permissions:
+  contents: read
 
 jobs:
   typescript:

@@ -35,7 +35,7 @@ const FILES = {
   withFiles: "hackernews.png",
 };
 
-const ALL_AGENTS: AgentType[] = ["claude", "codex", "gemini", "qwen"];
+const ALL_AGENTS: AgentType[] = ["claude", "codex", "qwen"];
 
 // =============================================================================
 // HELPERS

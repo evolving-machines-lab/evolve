@@ -555,7 +555,7 @@ export interface Rubric {
  * records each with its reason.
  */
 export interface AnalyzeConfigInput {
-  /** Harbor's `-a/--agent`, spelled as the arms spell it (claude, not claude-code) so one set of names covers arms and reviewers; omitted: claude. The agents: `GET /api/meta` `analyze.agents`. */
+  /** Harbor's `-a/--agent`, spelled as the arms spell it (claude, not claude-code) so one set of names covers arms and reviewers; omitted: claude. The agents: `GET /api/meta` `analyze.agents`; a retired one (`retired_agents`) is refused `agent_retired`. */
   agent?: string;
   /**
    * Model the analyzer agent runs — Harbor's `--model`. Omitted, the agent's
@@ -1667,9 +1667,12 @@ export interface AnalysisFailure {
    * `timeout` (the analyzer's run budget ran out with no valid analysis.json
    * — the file missing, or a partial one that failed validation, its reasons
    * in the message — never re-run: a timeout is deterministic; the message
-   * names the budget, the seconds used and the exit code), or an
-   * infrastructure stage of the analyzer run (`mint_key`, `boot`,
-   * `harness_install`, `agent`, `artifact_read`, `lease_expired`, ...).
+   * names the budget, the seconds used and the exit code), `agent_retired`
+   * (the job's stored analysis agent was retired after the job was created:
+   * recorded when the trial settles, nothing run or charged, never re-run; the
+   * message names the replacement), or an infrastructure stage of the analyzer
+   * run (`mint_key`, `boot`, `harness_install`, `agent`, `artifact_read`,
+   * `lease_expired`, ...).
    */
   phase: string;
   message: string;
@@ -4998,7 +5001,7 @@ export interface AnalysesClient {
 export interface CheckConfigInput {
   /** A name for the check (Harbor's `--job-name`); omitted, the accept timestamp `YYYY-MM-DD__HH-MM-SS`. 1-120 characters. */
   name?: string;
-  /** The agent the checker runs on (Harbor's `-a/--agent`) — the analyze door's `agent`, same rule. Omitted: claude. */
+  /** The agent the checker runs on (Harbor's `-a/--agent`) — the analyze door's `agent`, same rule: a retired one is refused `agent_retired`. Omitted: claude. */
   agent?: string;
   /** Model the checker agent runs (Harbor's `-m/--model`) — the analyze door's `model_name`, same rule: omitted, the agent's default (`GET /api/meta` `analyze.agents[].default_model`); named, on the agent's roster. */
   model_name?: string;
@@ -5586,6 +5589,7 @@ export const HOSTED_ERROR_CODES = [
   "agent_config_unsupported",
   "agent_config_key_refused",
   "agent_preset_unsupported",
+  "agent_retired",
   "provider_unsupported",
   "job_not_found",
   "job_not_terminal",
@@ -5751,6 +5755,12 @@ export interface AgentModelOption {
   description: string | null;
 }
 
+/** One retired built-in agent and the agent to use instead — the row `agent_retired` details carry too. */
+export interface RetiredAgent {
+  agent: string;
+  replaced_by: string;
+}
+
 /** One built-in agent's declared capabilities. */
 export interface AgentCapability {
   name: string;
@@ -5862,8 +5872,15 @@ export interface ManagedProviderCapability {
  */
 export interface CapabilityDocument {
   schema_version: number;
-  /** Built-in agents and their declared capabilities. */
+  /** Built-in agents a new job may name, and their declared capabilities. */
   agents: AgentCapability[];
+  /**
+   * Retired built-in agents, left out of `agents`: a new job, resume, retry,
+   * analysis or check naming one is refused `agent_retired`, while its records
+   * stay readable.
+   * Absent on servers predating the field.
+   */
+  retired_agents?: RetiredAgent[];
   /** Rules a bring-your-own agent registration must satisfy. */
   agent_registration: {
     name_pattern: string;

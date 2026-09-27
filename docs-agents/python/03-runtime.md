@@ -218,13 +218,13 @@ Calling `run` or `execute_command` for the first time provisions a sandbox with 
 ├── scripts/     # Your code goes here
 ├── temp/        # Scratch space
 ├── output/      # Final deliverables
-└── CLAUDE.md    # System prompt (or AGENTS.md, GEMINI.md, QWEN.md depending on agent)
+└── CLAUDE.md    # System prompt (or AGENTS.md, QWEN.md depending on agent)
 ```
 
 Files passed to `context` are uploaded to `context/`. Files passed to `files` are uploaded relative to the working directory.
 
 ## Filesystem Instructions
-Evolve writes a default filesystem instructions to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`):
+Evolve writes a default filesystem instructions to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, or `QWEN.md`):
 
 ```
 ## FILESYSTEM INSTRUCTIONS
@@ -243,7 +243,7 @@ IMPORTANT - Directory structure:
 ## OUTPUT RESULTS (DELIVERABLES) MUST BE SAVED to `output/` as files.
 ```
 
-Any string passed to `system_prompt` is automatically appended to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`) after this default.
+Any string passed to `system_prompt` is automatically appended to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, or `QWEN.md`) after this default.
 
 ## Structured Output
 
@@ -282,7 +282,7 @@ else:
     print(output.raw_data)            # Raw JSON for debugging
 ```
 
-The SDK automatically appends the following to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or `QWEN.md`):
+The SDK automatically appends the following to the agent's config file in the workspace (`CLAUDE.md`, `AGENTS.md`, or `QWEN.md`):
 
 ~~~
 ## STRUCTURED OUTPUT
@@ -649,7 +649,7 @@ class CheckpointInfo:
     tag: str                      # Session tag at checkpoint time
     timestamp: str                # ISO 8601
     size_bytes: int | None        # Archive size in bytes
-    agent_type: str | None        # 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'pi' | 'prime-agent' | 'dsh' | 'zcode' | 'antigravity'
+    agent_type: str | None        # 'claude' | 'codex' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'pi' | 'prime-agent' | 'dsh' | 'zcode' | 'antigravity'
     model: str | None             # Model used
     workspace_mode: str | None    # 'knowledge' | 'swe'
     parent_id: str | None         # Parent checkpoint ID (lineage)
@@ -730,7 +730,7 @@ Additionally, every run and command is logged locally to structured JSON lines u
 - `{tag}` – `my-prefix-` + 16 random hex characters (e.g. `my-prefix-a1b2c3d4e5f6g7h8`)
 - `{provider}` – the sandbox provider (e.g. `e2b`)
 - `{sandboxId}` – the active sandbox ID
-- `{agent}` – the agent type (`codex`, `claude`, `gemini`, `qwen`, `kimi`, `opencode`, `droid`, `pi`, `prime-agent`, `dsh`, `zcode`, `antigravity`)
+- `{agent}` – the agent type (`codex`, `claude`, `qwen`, `kimi`, `opencode`, `droid`, `pi`, `prime-agent`, `dsh`, `zcode`, `antigravity`)
 - `{timestamp}` – ISO timestamp with `:` and `.` replaced by `-`
 
 Each file contains three entry types:

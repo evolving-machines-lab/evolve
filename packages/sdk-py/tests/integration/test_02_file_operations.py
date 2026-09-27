@@ -2,7 +2,7 @@
 """File Operations Tests
 
 Tests: upload_context(), upload_files(), get_output_files(), read_local_dir()
-Agent Support: All (codex, claude, gemini, qwen)
+Agent Support: All (codex, claude, qwen)
 """
 
 import sys
