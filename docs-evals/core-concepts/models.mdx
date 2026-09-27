@@ -8,7 +8,7 @@ description: "Select models, compare them, and control metered spend."
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \
   -a codex \
-  -m gpt-5.6-luna -m gpt-5.6-terra \
+  -m gpt-6-luna -m gpt-5.6-terra \
   --max-trial-spend 1 --max-retries 0 --watch
 ```
 

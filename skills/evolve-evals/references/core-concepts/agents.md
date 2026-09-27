@@ -8,7 +8,7 @@ An evaluation arm pairs an **agent harness** with a **model**. The harness reads
 ```text
 One arm
 ├── Harness: -a codex
-└── Model: -m gpt-5.6-luna
+└── Model: -m gpt-6-luna
 ```
 
 ## Built-in harnesses
@@ -30,7 +30,7 @@ One arm
 
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \
-  -a codex -m gpt-5.6-luna \
+  -a codex -m gpt-6-luna \
   --max-trial-spend 1 --max-retries 0 --watch
 ```
 

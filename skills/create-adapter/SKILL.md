@@ -288,7 +288,7 @@ workflow; `evolve skills get evals cli-reference/dataset` lists the options):
 ```bash
 evolve dataset check "<output-dir>"
 evolve dataset publish --dir "<output-dir>" --name "<adapter-name>" --version 1.0 --watch
-evolve run -d "<adapter-name>@1.0" -a codex -m gpt-5.5 --watch
+evolve run -d "<adapter-name>@1.0" -a codex -m gpt-6-sol --watch
 ```
 
 To see how faithful the conversion is, run a job with the same agent and model the

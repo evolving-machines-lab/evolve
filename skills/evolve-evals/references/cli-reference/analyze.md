@@ -52,7 +52,7 @@ Cancelled trials are excluded. `--passing` and `--failing` cannot be combined. T
 
 ```bash
 evolve analyze "$JOB_ID" \
-  --agent codex --model gpt-5.5 \
+  --agent codex --model gpt-6-sol \
   --rubric rubric.toml \
   --prompt prompt.txt \
   --watch

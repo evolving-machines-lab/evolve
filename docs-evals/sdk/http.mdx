@@ -29,7 +29,7 @@ Save the request as `job.json`:
   }],
   "agents": [{
     "name": "codex",
-    "model_name": "gpt-5.6-luna"
+    "model_name": "gpt-6-luna"
   }],
   "max_trial_spend_usd": 1,
   "retry": {"max_retries": 0}

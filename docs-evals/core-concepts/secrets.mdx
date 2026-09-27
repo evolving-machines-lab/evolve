@@ -29,7 +29,7 @@ Eval jobs support **direct** delivery: the value enters the agent sandbox. Broke
 ## Attach it to a job
 
 ```bash
-evolve run -d my-dataset@1.0 -a codex -m gpt-5.6-luna \
+evolve run -d my-dataset@1.0 -a codex -m gpt-6-luna \
   --secret GITHUB_TOKEN@staging \
   --max-trial-spend 1 --max-retries 0 --watch
 ```
