@@ -2412,6 +2412,78 @@ function createLogDemuxer(
  * streaming through a plain response body, which is what the Dashboard route
  * pipes through unbuffered.
  */
+function managedSessionCommandLogsUrl(
+  context: ManagedStreamContext,
+  sandboxId: string,
+  sessionId: string,
+  commandId: string,
+  follow: boolean,
+): string {
+  return (
+    `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
+    `/process/session/${encodeURIComponent(sessionId)}` +
+    `/command/${encodeURIComponent(commandId)}/logs${follow ? "?follow=true" : ""}`
+  );
+}
+
+/**
+ * Read a finished command's whole log over the managed toolbox route.
+ *
+ * The Daytona SDK's own settled read (`getSessionCommandLogs` with no
+ * callbacks) expects the JSON the daemon returns to a request carrying the
+ * SDK's version header. The managed route forwards no such header, so the
+ * daemon answers the legacy way — the raw log as `text/plain`, both streams
+ * combined — and the SDK, reading three JSON fields off a string, hands back
+ * three empty strings. MEASURED 2026-09-26 on production: every managed
+ * spawn().wait() returned exit 0 with stdout "" while the follow had streamed
+ * every byte. So managed mode reads the body itself and takes whichever shape
+ * arrives: JSON as the daemon's split answer, anything else as log bytes for
+ * the follow's own demuxer (unframed bytes are stdout, as readCommandStreams
+ * already rules for a combined `output`).
+ */
+async function readManagedSettledLogs(
+  context: ManagedStreamContext,
+  sandboxId: string,
+  sessionId: string,
+  commandId: string,
+): Promise<{ output: string; stdout: string; stderr: string }> {
+  const response = await fetch(
+    managedSessionCommandLogsUrl(context, sandboxId, sessionId, commandId, false),
+    {
+      headers: {
+        Authorization: `Bearer ${context.apiKey}`,
+        accept: "application/json, text/plain, */*",
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Daytona managed log read failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  if ((response.headers.get("content-type") || "").includes("application/json")) {
+    const body = (await response.json()) as {
+      output?: string | null;
+      stdout?: string | null;
+      stderr?: string | null;
+    };
+    return { output: body.output ?? "", stdout: body.stdout ?? "", stderr: body.stderr ?? "" };
+  }
+  let stdout = "";
+  let stderr = "";
+  const demuxer = createLogDemuxer(
+    (chunk) => {
+      stdout += chunk;
+    },
+    (chunk) => {
+      stderr += chunk;
+    },
+  );
+  demuxer.push(new Uint8Array(await response.arrayBuffer()));
+  demuxer.flush();
+  return { output: "", stdout, stderr };
+}
+
 async function followManagedSessionLogs(
   context: ManagedStreamContext,
   sandboxId: string,
@@ -2421,10 +2493,7 @@ async function followManagedSessionLogs(
   onStderr: (chunk: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const url =
-    `${context.toolboxUrl.replace(/\/+$/, "")}/${encodeURIComponent(sandboxId)}` +
-    `/process/session/${encodeURIComponent(sessionId)}` +
-    `/command/${encodeURIComponent(commandId)}/logs?follow=true`;
+  const url = managedSessionCommandLogsUrl(context, sandboxId, sessionId, commandId, true);
 
   // The signal is what lets a caller stop reading a body nothing will ever
   // end: a chunked follow has no close from this side, and a pending
@@ -2534,6 +2603,22 @@ export class DaytonaCommands implements SandboxCommands {
       onStdout,
       onStderr,
     ) as Promise<void>;
+  }
+
+  /**
+   * A finished command's settled log — what spawn().wait() returns and what
+   * run() falls back on. Direct mode asks the SDK, whose request the daemon
+   * answers with JSON; managed mode reads the route itself, because the SDK
+   * cannot read the plain-text body that route yields (readManagedSettledLogs).
+   */
+  private readSettledLogs(
+    sessionId: string,
+    commandId: string,
+  ): Promise<{ output?: string | null; stdout?: string | null; stderr?: string | null }> {
+    if (this.managedStream) {
+      return readManagedSettledLogs(this.managedStream, this.sandbox.id, sessionId, commandId);
+    }
+    return this.sandbox.process.getSessionCommandLogs(sessionId, commandId);
   }
 
   async run(command: string, options?: SandboxRunOptions): Promise<SandboxCommandResult> {
@@ -2672,7 +2757,7 @@ export class DaytonaCommands implements SandboxCommands {
           // beats silently returning truncated output as a success.
           let settled: { stdout: string; stderr: string };
           try {
-            const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+            const logs = await this.readSettledLogs(sessionId, cmdId);
             settled = settledStreams(logs, eosToken);
           } catch {
             throw followFailure;
@@ -2695,7 +2780,7 @@ export class DaytonaCommands implements SandboxCommands {
           // must be empty to take it: a partial follow already reached the
           // callbacks and re-emitting would double the caller's output.
           try {
-            const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+            const logs = await this.readSettledLogs(sessionId, cmdId);
             const settled = settledStreams(logs, eosToken);
             stdout = settled.stdout;
             stderr = settled.stderr;
@@ -2714,7 +2799,7 @@ export class DaytonaCommands implements SandboxCommands {
       let { stdout, stderr } = settledStreams(resp, eosToken);
       if (!stdout && !stderr && cmdId) {
         try {
-          const logs = await this.sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+          const logs = await this.readSettledLogs(sessionId, cmdId);
           const fromLogs = settledStreams(logs, eosToken);
           stdout = fromLogs.stdout;
           stderr = fromLogs.stderr || stderr;
@@ -2884,7 +2969,7 @@ export class DaytonaCommands implements SandboxCommands {
             const cmd = await sandbox.process.getSessionCommand(sessionId, cmdId);
             if (cmd.exitCode !== undefined) {
               try {
-                const logs = await sandbox.process.getSessionCommandLogs(sessionId, cmdId);
+                const logs = await this.readSettledLogs(sessionId, cmdId);
                 return {
                   exitCode: cmd.exitCode,
                   ...settledStreams(logs, eosToken),

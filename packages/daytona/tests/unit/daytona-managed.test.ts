@@ -483,6 +483,10 @@ function createStreamSandbox(overrides?: {
   const logReads: number[] = [];
   /** What the box was told to run — the per-run sentinel token comes from here. */
   const sent: string[] = [];
+  const settledBody = () => {
+    const settled = overrides?.settledLogs ?? { stdout: "", stderr: "" };
+    return typeof settled === "function" ? settled(tokenOf(sent)) : settled;
+  };
   const sandbox = {
     id: "dtn_1",
     process: {
@@ -495,13 +499,35 @@ function createStreamSandbox(overrides?: {
       getSessionCommandLogs: async () => {
         logReads.push(Date.now());
         if (overrides?.failSettledLogs) throw new Error("logs unavailable");
-        const settled = overrides?.settledLogs ?? { stdout: "", stderr: "" };
-        return typeof settled === "function" ? settled(tokenOf(sent)) : settled;
+        return settledBody();
       },
       deleteSession: async () => {},
     },
   };
-  return { sandbox, logReads, sent };
+  /**
+   * The managed settled read: the toolbox route's bare logs URL. Answered as
+   * the JSON the daemon returns to a versioned request; the text/plain shape
+   * the route really produces is pinned by [2i].
+   */
+  const settledFetch = async (): Promise<Response> => {
+    logReads.push(Date.now());
+    if (overrides?.failSettledLogs) return new Response("logs unavailable", { status: 500 });
+    const settled = settledBody();
+    return new Response(
+      JSON.stringify({ output: settled.stdout + settled.stderr, ...settled }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+  return { sandbox, logReads, sent, settledFetch };
+}
+
+/** Managed fetch split by door: `follow=true` is the live stream, the bare URL the settled read. */
+function managedFetch(
+  settledFetch: () => Promise<Response>,
+  follow: (init?: RequestInit) => Response,
+): typeof fetch {
+  return (async (url: unknown, init?: RequestInit) =>
+    String(url).includes("follow=true") ? follow(init) : settledFetch()) as typeof fetch;
 }
 
 /** The end-of-output token this run told the box to print, if it told it anything. */
@@ -540,13 +566,16 @@ function loggedStream(output: string, token: string | null): string {
  * still in the demuxer and the sentinel filter when the command's record says
  * the run is over.
  */
-function stubFollowOnce(sent: string[], record: (token: string | null) => Uint8Array): () => void {
+function stubFollowOnce(
+  fixture: { sent: string[]; settledFetch: () => Promise<Response> },
+  record: (token: string | null) => Uint8Array,
+): () => void {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+  globalThis.fetch = managedFetch(fixture.settledFetch, (init) => {
     const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(record(tokenOf(sent)));
+        controller.enqueue(record(tokenOf(fixture.sent)));
         signal?.addEventListener("abort", () => {
           try {
             controller.error(new DOMException("aborted", "AbortError"));
@@ -557,7 +586,7 @@ function stubFollowOnce(sent: string[], record: (token: string | null) => Uint8A
       },
     });
     return new Response(stream, { status: 200 });
-  }) as typeof fetch;
+  });
   return () => {
     globalThis.fetch = realFetch;
   };
@@ -643,7 +672,7 @@ async function testStreamedRunIsByteExactWhenFollowOutlivesCommand(): Promise<vo
 async function testDeadFollowFallsBackToSettledLog(): Promise<void> {
   console.log("\n[2d] run() - a follow socket that dies falls back to the settled log");
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => {
+  const dyingFollow = () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(bytes(STDOUT_MARK, "partial-"));
@@ -651,11 +680,12 @@ async function testDeadFollowFallsBackToSettledLog(): Promise<void> {
       },
     });
     return new Response(stream, { status: 200 });
-  }) as typeof fetch;
+  };
 
-  const { sandbox, logReads } = createStreamSandbox({
+  const { sandbox, logReads, settledFetch } = createStreamSandbox({
     settledLogs: { stdout: "partial-then-tail", stderr: "warned" },
   });
+  globalThis.fetch = managedFetch(settledFetch, dyingFollow);
   const seenOut: string[] = [];
   const seenErr: string[] = [];
   let result: { exitCode: number; stdout: string; stderr: string };
@@ -683,16 +713,8 @@ async function testDeadFollowFallsBackToSettledLog(): Promise<void> {
 
   // When the settled log cannot be read either, the broken stream is the
   // story: truncated output must never come back as a clean success.
-  globalThis.fetch = (async () => {
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(bytes(STDOUT_MARK, "partial-"));
-        controller.error(new Error("socket died"));
-      },
-    });
-    return new Response(stream, { status: 200 });
-  }) as typeof fetch;
   const broken = createStreamSandbox({ failSettledLogs: true });
+  globalThis.fetch = managedFetch(broken.settledFetch, dyingFollow);
   let threw = false;
   try {
     await createManagedCommands(broken.sandbox).run("echo hi", { onStdout: () => {} });
@@ -713,8 +735,8 @@ async function testDeadFollowFallsBackToSettledLog(): Promise<void> {
  */
 async function testStreamedRunKeepsAnUnterminatedLineUnterminated(): Promise<void> {
   console.log("\n[2e] run() - a command that printed no trailing newline gets none back");
-  const { sandbox, logReads, sent } = createStreamSandbox();
-  const restoreFetch = stubFollowOnce(sent, (token) =>
+  const { sandbox, logReads, sent, settledFetch } = createStreamSandbox();
+  const restoreFetch = stubFollowOnce({ sent, settledFetch }, (token) =>
     bytes(
       logRecords(STDOUT_MARK, BYTE_MARKER, token),
       logRecords(STDERR_MARK, "", null),
@@ -755,8 +777,8 @@ async function testStreamedRunKeepsAnUnterminatedLineUnterminated(): Promise<voi
  */
 async function testStreamedRunKeepsARealTrailingNewline(): Promise<void> {
   console.log("\n[2f] run() - a command that printed a trailing newline keeps exactly one");
-  const { sandbox, sent } = createStreamSandbox();
-  const restoreFetch = stubFollowOnce(sent, (token) =>
+  const { sandbox, sent, settledFetch } = createStreamSandbox();
+  const restoreFetch = stubFollowOnce({ sent, settledFetch }, (token) =>
     bytes(
       logRecords(STDOUT_MARK, `${BYTE_MARKER}\n`, token),
       logRecords(STDERR_MARK, "", null),
@@ -787,7 +809,13 @@ async function testStreamedRunKeepsARealTrailingNewline(): Promise<void> {
 async function testDeadFollowReconcileShedsTheSentinel(): Promise<void> {
   console.log("\n[2g] run() - the settled log used to repair a dead follow sheds its sentinel too");
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => {
+  const { sandbox, settledFetch } = createStreamSandbox({
+    settledLogs: (token) => ({
+      stdout: loggedStream("partial-then-tail", token),
+      stderr: loggedStream("warned\n", null),
+    }),
+  });
+  globalThis.fetch = managedFetch(settledFetch, () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(bytes(STDOUT_MARK, "partial-"));
@@ -795,13 +823,6 @@ async function testDeadFollowReconcileShedsTheSentinel(): Promise<void> {
       },
     });
     return new Response(stream, { status: 200 });
-  }) as typeof fetch;
-
-  const { sandbox } = createStreamSandbox({
-    settledLogs: (token) => ({
-      stdout: loggedStream("partial-then-tail", token),
-      stderr: loggedStream("warned\n", null),
-    }),
   });
   const seenOut: string[] = [];
   const seenErr: string[] = [];
@@ -832,11 +853,11 @@ async function testDeadFollowReconcileShedsTheSentinel(): Promise<void> {
 
 async function testFollowCutMidSentinelLeaksNothing(): Promise<void> {
   console.log("\n[2h] run() - a follow cut in the MIDDLE of the sentinel leaks no fragment");
-  const { sandbox, sent } = createStreamSandbox({
+  const { sandbox, sent, settledFetch } = createStreamSandbox({
     settledLogs: (token) => ({ stdout: loggedStream("abc", token), stderr: loggedStream("", null) }),
   });
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = managedFetch(settledFetch, () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         // Four bytes into the token, the socket dies. Those bytes could be the
@@ -847,7 +868,7 @@ async function testFollowCutMidSentinelLeaksNothing(): Promise<void> {
       },
     });
     return new Response(stream, { status: 200 });
-  }) as typeof fetch;
+  });
 
   const seen: string[] = [];
   let result: { exitCode: number; stdout: string; stderr: string };
@@ -864,6 +885,66 @@ async function testFollowCutMidSentinelLeaksNothing(): Promise<void> {
     seen.join("") === "abc",
     `and the callback saw no token fragment (got ${JSON.stringify(seen.join(""))})`,
   );
+}
+
+/**
+ * THE PROD FINDING THIS PINS (measured 2026-09-26, managed daytona): every
+ * `evolve.run()` on managed Daytona came back exit 0 with `stdout: ""`, for
+ * every harness, while e2b and modal returned the harness's whole stream and
+ * the follow had delivered every byte to the session logger. run() rides
+ * spawn().wait(), and wait()'s stdout is the SETTLED log, not the follow. The
+ * managed route hands the daemon a request with no SDK version header, so the
+ * daemon answers the legacy way — `text/plain`, both streams combined, the
+ * sentinel last — and the Daytona SDK's settled read, expecting JSON, reads
+ * `{output, stdout, stderr}` off that string: three empty strings. The
+ * settled read must go to the route itself and take the shape that arrives.
+ */
+async function testSpawnWaitReturnsTheSettledLogInManagedMode(): Promise<void> {
+  console.log("\n[2i] spawn().wait() - managed mode returns the log the toolbox route serves as text/plain");
+  const { sandbox, sent } = createStreamSandbox();
+  // What the Daytona SDK really hands back for a text/plain body: three empties.
+  let sdkReads = 0;
+  sandbox.process.getSessionCommandLogs = async () => {
+    sdkReads++;
+    return { output: "", stdout: "", stderr: "" };
+  };
+  const printed = "out-1\nerr-1\nout-2\n";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = managedFetch(
+    async () =>
+      new Response(`${printed}${tokenOf(sent)}\n`, {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      }),
+    () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(logRecords(STDOUT_MARK, printed, tokenOf(sent)));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200 });
+    },
+  );
+
+  let result: { exitCode: number; stdout: string; stderr: string };
+  try {
+    const handle = await createManagedCommands(sandbox).spawn(
+      'printf "out-1\\n"; printf "err-1\\n" >&2; printf "out-2\\n"',
+      { onStdout: () => {}, onStderr: () => {} },
+    );
+    result = await handle.wait();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert(result.exitCode === 0, "the command's record supplies exit 0");
+  assert(
+    result.stdout === printed,
+    `wait() returns the log the route served, sentinel shed (got ${JSON.stringify(result.stdout)})`,
+  );
+  assert(result.stderr === "", `a combined log has nothing left for stderr (got ${JSON.stringify(result.stderr)})`);
+  assert(sdkReads === 0, `the SDK's settled read, which cannot read this body, is not consulted (read ${sdkReads} times)`);
 }
 
 // =============================================================================
@@ -1025,6 +1106,7 @@ const tests = [
   testStreamedRunKeepsARealTrailingNewline,
   testDeadFollowReconcileShedsTheSentinel,
   testFollowCutMidSentinelLeaksNothing,
+  testSpawnWaitReturnsTheSettledLogInManagedMode,
   testManagedProviderAnswersDiscoveryLocally,
   testManagedProviderRewritesDtoToolboxUrls,
   testDirectProviderStillDiscoversUpstream,
