@@ -140,7 +140,7 @@ async function testPinnedReasoningEffortDefaults(): Promise<void> {
   assertEqual(AGENT_REGISTRY.qwen.defaultReasoningEffort, "thinking", "qwen pin is thinking");
   assertEqual(AGENT_REGISTRY.kimi.defaultReasoningEffort, "max", "kimi pin is max (K3 API default)");
   assertEqual(AGENT_REGISTRY.opencode.defaultReasoningEffort, "high", "opencode pin is high variant");
-  assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (matches Droid's own Opus 5 default)");
+  assertEqual(AGENT_REGISTRY.droid.defaultReasoningEffort, "high", "droid pin is high (Evolve policy; Droid's own Opus 5.5 default is medium)");
   assertEqual(AGENT_REGISTRY.pi.defaultReasoningEffort, "high", "pi pin is high (owner policy; pi's own default is medium)");
   assertEqual(AGENT_REGISTRY["prime-agent"].defaultReasoningEffort, "high", "prime-agent pin is high (owner policy; Prime's own default is medium)");
   assertEqual(AGENT_REGISTRY.dsh.defaultReasoningEffort, "high", "dsh pin is high (DeepSeek's documented default)");
@@ -926,6 +926,7 @@ async function testQwenBuildCommandUsesModelAliases(): Promise<void> {
   console.log("\n[23] Qwen command model aliases route gateway only");
   const { AGENT_REGISTRY } = await import("../../src/registry.js");
   const qwen = AGENT_REGISTRY.qwen;
+  assertEqual(qwen.defaultModel, "qwen3.8-max", "Qwen defaults to qwen3.8-max");
   assertEqual(qwen.gatewayModelAliases?.["qwen3.8-max"], "dashscope/qwen3.8-max", "Qwen gateway maps to DashScope route");
 
   const gatewayAgent = new Agent({
@@ -1612,7 +1613,7 @@ async function testOpenCodeMergesUserSecrets(): Promise<void> {
   // User's existing model header preserved alongside spend headers
   const model = parsed.provider.litellm.models["openrouter/anthropic/claude-sonnet-5"];
   assertEqual(model.headers["x-user-header"], "keep-me", "user model header preserved");
-  // Injected spend plumbing lands on the DEFAULT model's entry (Opus 5).
+  // Injected spend plumbing lands on the DEFAULT model's entry (Opus 5.5).
   const activeModel = parsed.provider.litellm.models["openrouter/anthropic/claude-opus-5.5"];
   assertEqual(activeModel.headers["x-litellm-customer-id"], "evolve-oc-merge", "spend session header injected");
   assert(activeModel.headers["x-litellm-tags"]?.includes("run:run-merge-001"), "spend run tag injected");
@@ -1802,9 +1803,8 @@ async function testDroidGatewayModelAliases(): Promise<void> {
 
   // External gateway (the hosted worker's route): the roster's wire id for a
   // roster alias, never the gatewayModelAliases route spelling — the hosted
-  // key admits exactly the alias and its wire id (swarm_dashboard
-  // resolveGatewayModelScope), and kimi-k3 / glm-5.3 / qwen3.8-max are exact
-  // gateway entries under their bare names.
+  // key is scoped to exactly the alias and its wire id, and kimi-k3 / glm-5.3 /
+  // qwen3.8-max are exact gateway entries under their bare names.
   const externalModel = (model: string): string =>
     (new Agent({
       type: "droid",

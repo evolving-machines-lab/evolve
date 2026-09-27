@@ -998,31 +998,28 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     apiKeyEnv: "FACTORY_API_KEY",
     effortSupport: "level",
     defaultModel: "claude-opus-5-5",
-    // Droid 0.182.0 documents per-model defaults (Opus 5, Fable 5 and Kimi K3
-    // default to high). Evolve pins "high" — the default model's own
-    // ceiling-of-record — and stamps it via --reasoning-effort on every run,
-    // so results cannot drift on a vendor-side change.
+    // Evolve policy: graded-effort harnesses pin "high", stamped via --reasoning-effort on every run so a
+    // vendor-side change cannot move results. Droid's own default for claude-opus-5-5 is medium (docs.factory.ai/models.md).
     defaultReasoningEffort: "high",
     models: [
-      // Droid's version is not pinned anywhere in the platform: hosted
-      // bundles resolve @factory/cli@latest at job creation (swarm_dashboard
-      // lib/evaluations/worker/harness-bundles.ts resolveLatestSourceVersion)
-      // and the evolve-all image installs Droid at image build. Measured
-      // 2026-09-15 on npm latest 0.219.0: `npx @factory/cli@0.219.0 exec -m
-      // claude-fable-5.1 --list-tools` answers "Available tools for Fable
-      // 5.1", `-m gpt-6-astra` "Available tools for GPT-6 Astra", and the
-      // dashed `claude-fable-5-1` "Invalid model" (docs.factory.ai/models.md
-      // lists both accepted ids). Factory spells Fable 5.1 with a dot, so the
-      // alias is Factory's id (direct mode passes it to Droid verbatim) and
-      // gatewayModelAliases below rewrites it to the gateway's dashed entry
-      // for the settings-file route — the kimi-k3 pattern. Full record:
-      // team/dev-items/fable-astra-lane-report-2026-09-15.md.
+      // Droid's version is not pinned anywhere in the platform: hosted runs
+      // resolve @factory/cli@latest at job creation and the evolve-all image
+      // installs Droid at image build. Measured 2026-09-15 on npm latest
+      // 0.219.0: `npx @factory/cli@0.219.0 exec -m claude-fable-5.1
+      // --list-tools` answers "Available tools for Fable 5.1", `-m gpt-6-astra`
+      // "Available tools for GPT-6 Astra", and the dashed `claude-fable-5-1`
+      // "Invalid model" (docs.factory.ai/models.md lists both accepted ids).
+      // Factory spells Fable 5.1 with a dot, so the alias is Factory's id
+      // (direct mode passes it to Droid verbatim) and gatewayModelAliases below
+      // rewrites it to the gateway's dashed entry for the settings-file route —
+      // the kimi-k3 pattern.
       { alias: "claude-fable-5.1", modelId: "claude-fable-5-1", description: "Factory-managed Claude Fable 5.1" },
       // Factory spells Opus 5.5 dashed, like Anthropic (docs.factory.ai/models.md, read 2026-09-26): alias == wire id.
       { alias: "claude-opus-5-5", modelId: "claude-opus-5-5", description: "Factory-managed Claude Opus 5.5" },
       { alias: "claude-sonnet-5", modelId: "claude-sonnet-5", description: "Factory-managed Claude Sonnet 5" },
       { alias: "claude-haiku-4-5", modelId: "claude-haiku-4-5-20251001", description: "Factory-managed Claude Haiku 4.5" },
-      { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Factory-managed GPT-6 Astra" },
+      // No gpt-6-astra here: through the gateway Droid speaks Chat Completions with tools, and
+      // OpenAI's Chat Completions does not support function calling with GPT-6 Astra.
       { alias: "gpt-6-sol", modelId: "gpt-6-sol", description: "Factory-managed GPT-6 Sol" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Factory-managed GPT-5.6 Terra" },
       { alias: "gpt-6-luna", modelId: "gpt-6-luna", description: "Factory-managed GPT-6 Luna" },

@@ -185,11 +185,6 @@
           "description": "Factory-managed Claude Haiku 4.5"
         },
         {
-          "alias": "gpt-6-astra",
-          "modelId": "gpt-6-astra",
-          "description": "Factory-managed GPT-6 Astra"
-        },
-        {
           "alias": "gpt-6-sol",
           "modelId": "gpt-6-sol",
           "description": "Factory-managed GPT-6 Sol"

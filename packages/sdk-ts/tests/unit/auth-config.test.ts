@@ -147,7 +147,9 @@ async function runTests(): Promise<void> {
   {
     const claude = AGENT_REGISTRY.claude;
     const fable = claude.models.find((model) => model.alias === "fable");
+    const opus = claude.models.find((model) => model.alias === "opus");
     assertEqual(claude.defaultModel, "opus", "Claude default stays opus");
+    assertEqual(opus?.modelId, "claude-opus-5-5", "opus maps to claude-opus-5-5 (Opus 5.5, the latest Opus)");
     assert(fable !== undefined, "Claude registry includes fable alias");
     assertEqual(fable?.modelId, "claude-fable-5-1", "fable maps to claude-fable-5-1");
 
@@ -194,6 +196,16 @@ async function runTests(): Promise<void> {
     );
   }
 
+  console.log("Registry: OpenRouter roster defaults");
+
+  {
+    // The three OpenRouter-only harnesses share one roster and one default.
+    const OPUS_55 = "openrouter/anthropic/claude-opus-5.5";
+    assertEqual(AGENT_REGISTRY.opencode.defaultModel, OPUS_55, "opencode defaults to Opus 5.5 via OpenRouter");
+    assertEqual(AGENT_REGISTRY.pi.defaultModel, OPUS_55, "pi defaults to Opus 5.5 via OpenRouter");
+    assertEqual(AGENT_REGISTRY["prime-agent"].defaultModel, OPUS_55, "prime-agent defaults to Opus 5.5 via OpenRouter");
+  }
+
   console.log("Registry: GPT-6 Astra");
 
   {
@@ -213,9 +225,12 @@ async function runTests(): Promise<void> {
       "OpenCode Astra alias keeps provider-prefixed OpenRouter model"
     );
 
-    // Droid npm latest 0.219.0 accepts gpt-6-astra (2026-09-15).
-    const droidAstra = AGENT_REGISTRY.droid.models.find((model) => model.alias === "gpt-6-astra");
-    assertEqual(droidAstra?.modelId, "gpt-6-astra", "Droid roster includes gpt-6-astra");
+    // Not on droid: the hosted route drives Droid over Chat Completions with tools,
+    // and OpenAI's Chat Completions does not support function calling with GPT-6 Astra.
+    const droidAstra = AGENT_REGISTRY.droid.models.find(
+      (model) => model.alias === "gpt-6-astra" || model.modelId === "gpt-6-astra",
+    );
+    assertEqual(droidAstra, undefined, "Droid roster carries no gpt-6-astra row");
   }
 
   // ─────────────────────────────────────────────────────────────────────────
