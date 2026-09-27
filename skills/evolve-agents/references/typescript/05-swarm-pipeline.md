@@ -46,7 +46,7 @@ const swarm = new Swarm({
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'opus'` (claude), `'gpt-5.6-sol'` (codex), etc. |
+| `agent.model` | per type | `'opus'` (claude), `'gpt-6-sol'` (codex), etc. |
 | `sandbox` | auto-resolved | Provider for every worker; falls back to env (`E2B_API_KEY`, `DAYTONA_API_KEY`, `MODAL_TOKEN_*`, `EVOLVE_API_KEY`) |
 | `skills` | `undefined` | Set here or per-operation |
 | `integrations` | `undefined` | Set here or per-operation |
@@ -721,7 +721,7 @@ Override the default agent for any operation (apiKey inherited from Swarm config
 
 ```ts
 interface AgentOverride {
-    type: "claude" | "codex" | "qwen" | "kimi" | "opencode" | "droid";
+    type: "claude" | "codex" | "qwen" | "kimi" | "opencode" | "droid" | "pi" | "prime-agent" | "dsh" | "zcode" | "antigravity";
     model?: string;
     reasoningEffort?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "thinking" | "no-thinking";
 }

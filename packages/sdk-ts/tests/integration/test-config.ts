@@ -12,7 +12,7 @@
  *   CODEX_MODEL - Model for codex agent (default: gpt-5.1-codex)
  *   CODEX_REASONING_EFFORT - Reasoning effort for codex (default: medium)
  *   ANTHROPIC_MODEL - Model for claude agent (default: opus)
- *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.7-max)
+ *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.8-max)
  */
 
 import type { AgentType, SandboxProvider } from "../../dist/index.js";
@@ -125,8 +125,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "qwen", "kimi", "opencode", "droid"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, qwen, kimi, opencode, droid`);
+  if (!["claude", "codex", "qwen", "kimi", "opencode", "droid", "pi", "prime-agent", "dsh", "zcode", "antigravity"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity`);
   }
   return type as AgentType;
 }
@@ -150,7 +150,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "codex",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.CODEX_MODEL || "gpt-5.5",
+        model: process.env.CODEX_MODEL || "gpt-6-sol",
         reasoningEffort: (process.env.CODEX_REASONING_EFFORT as "low" | "medium" | "high") || "medium",
       };
 
@@ -158,7 +158,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "qwen",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.QWEN_OPENAI_MODEL || "qwen3.7-max",
+        model: process.env.QWEN_OPENAI_MODEL || "qwen3.8-max",
       };
 
     case "kimi":
@@ -179,7 +179,42 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "droid",
         apiKey: env.EVOLVE_API_KEY || env.FACTORY_API_KEY || "",
-        model: process.env.DROID_MODEL || "gpt-5.5",
+        model: process.env.DROID_MODEL || "gpt-6-sol",
+      };
+
+    case "pi":
+      return {
+        type: "pi",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.PI_MODEL || "openrouter/anthropic/claude-sonnet-5",
+      };
+
+    case "prime-agent":
+      return {
+        type: "prime-agent",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.PRIME_AGENT_MODEL || "openrouter/anthropic/claude-sonnet-5",
+      };
+
+    case "dsh":
+      return {
+        type: "dsh",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.DSH_MODEL || "openrouter/deepseek/deepseek-v4.1-flash",
+      };
+
+    case "zcode":
+      return {
+        type: "zcode",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.ZCODE_MODEL || "openrouter/z-ai/glm-5.3-flash",
+      };
+
+    case "antigravity":
+      return {
+        type: "antigravity",
+        apiKey: env.EVOLVE_API_KEY || env.GEMINI_API_KEY || "",
+        model: process.env.ANTIGRAVITY_MODEL || "gemini-3.8-flash",
       };
 
     default:

@@ -78,6 +78,7 @@ import type {
   SandboxRunOptions,
   SandboxSpawnOptions,
 } from "../types";
+import { readRetryAfterSec } from "../hosted/retry-after";
 
 /** The door's request-body cap: 1 MiB of wire bytes, JSON included. */
 const MANAGED_MODAL_MAX_BODY_BYTES = 1024 * 1024;
@@ -102,6 +103,19 @@ export class ManagedModalWriteLimitError extends Error {
   }
 }
 
+/** A refusal from the door: its HTTP `status`, the body's sentence, and the delay a 429/503 asked for. */
+export class ManagedModalDoorError extends Error {
+  readonly status: number;
+  readonly retryAfterSec?: number;
+
+  constructor(operation: string, status: number, detail: string, retryAfterSec?: number) {
+    super(`Managed Modal ${operation} failed (${status})${detail ? `: ${detail}` : ""}`);
+    this.name = "ManagedModalDoorError";
+    this.status = status;
+    if (retryAfterSec !== undefined) this.retryAfterSec = retryAfterSec;
+  }
+}
+
 function toUint8(content: string | Buffer | ArrayBuffer | Uint8Array): Uint8Array {
   if (typeof content === "string") return new TextEncoder().encode(content);
   if (content instanceof Uint8Array) return new Uint8Array(content);
@@ -109,11 +123,16 @@ function toUint8(content: string | Buffer | ArrayBuffer | Uint8Array): Uint8Arra
   throw new Error(`Unsupported data type: ${typeof content}`);
 }
 
+/** Wraps the one request that creates a box, for the SDK to retry a door's 429/503 before any box exists. */
+export type CreateRequestRetry = <T>(send: () => Promise<T>) => Promise<T>;
+
 interface ManagedModalConfig {
   /** The Evolve API key; the door authenticates it, never Modal. */
   apiKey: string;
   /** The door's base URL (getManagedProviderUrl("modal")). */
   baseUrl: string;
+  /** @internal Resolved by the Evolve SDK; unset means the create request is sent once. */
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 /** One fetch seam for the whole transport, with the door's error body surfaced. */
@@ -129,15 +148,19 @@ class ManagedModalDoor {
       },
     });
     if (!response.ok) {
+      const text = await response.text().catch(() => "");
       let detail = "";
       try {
-        const payload = (await response.json()) as { error?: string };
-        detail = payload?.error ?? "";
+        const payload = JSON.parse(text) as { error?: unknown };
+        if (typeof payload?.error === "string") detail = payload.error;
       } catch {
-        // A non-JSON error body still yields the status line below.
+        // A non-JSON error body still yields the status line.
       }
-      throw new Error(
-        `Managed Modal ${operation} failed (${response.status})${detail ? `: ${detail}` : ""}`,
+      throw new ManagedModalDoorError(
+        operation,
+        response.status,
+        detail,
+        readRetryAfterSec(text, response),
       );
     }
     return response;
@@ -387,7 +410,7 @@ class ManagedModalSandbox implements SandboxInstance {
       );
     } catch (err) {
       // A box already gone IS the outcome kill asks for.
-      if (err instanceof Error && err.message.includes("(404)")) return;
+      if (err instanceof ManagedModalDoorError && err.status === 404) return;
       throw err;
     }
   }
@@ -404,7 +427,7 @@ class ManagedModalSandbox implements SandboxInstance {
       await this.getInfo();
       return true;
     } catch (err) {
-      if (err instanceof Error && err.message.includes("(404)")) return false;
+      if (err instanceof ManagedModalDoorError && err.status === 404) return false;
       throw err;
     }
   }
@@ -423,9 +446,11 @@ export class ManagedModalProvider implements SandboxProvider {
   readonly providerType = "modal" as const;
   readonly name = "Managed Modal";
   private readonly door: ManagedModalDoor;
+  private readonly retryCreateRequest?: CreateRequestRetry;
 
   constructor(config: ManagedModalConfig) {
     this.door = new ManagedModalDoor(config);
+    this.retryCreateRequest = config.retryCreateRequest;
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
@@ -458,17 +483,16 @@ export class ManagedModalProvider implements SandboxProvider {
       );
     }
 
-    const response = await this.door.request(
-      "create",
-      "/sandboxes",
-      this.door.json({
-        ...(options.image ? { image: options.image } : {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-        ...(options.workingDirectory ? { workingDirectory: options.workingDirectory } : {}),
-        ...(options.envs ? { envs: options.envs } : {}),
-        ...(options.metadata ? { metadata: options.metadata } : {}),
-      }),
-    );
+    const body = this.door.json({
+      ...(options.image ? { image: options.image } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.workingDirectory ? { workingDirectory: options.workingDirectory } : {}),
+      ...(options.envs ? { envs: options.envs } : {}),
+      ...(options.metadata ? { metadata: options.metadata } : {}),
+    });
+    // The one request the door may refuse before a box exists; everything after it acts on the box.
+    const send = () => this.door.request("create", "/sandboxes", body);
+    const response = await (this.retryCreateRequest ? this.retryCreateRequest(send) : send());
     const payload = (await response.json()) as ManagedModalSandboxPayload;
     return new ManagedModalSandbox(this.door, payload.sandboxId);
   }

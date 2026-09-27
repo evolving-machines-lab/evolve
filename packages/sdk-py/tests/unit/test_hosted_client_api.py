@@ -287,7 +287,7 @@ JOB_SUMMARY = {
     'job_name': 'deep-swe sweep',
     'status': 'QUEUED',
     'datasets': [{'name': 'deep-swe', 'version': '1.1'}],
-    'agents': [{'name': 'codex', 'model_name': 'gpt-5.5', 'version': None, 'reasoning_effort': None}],
+    'agents': [{'name': 'codex', 'model_name': 'gpt-6-sol', 'version': None, 'reasoning_effort': None}],
     'n_attempts': 1,
     'n_concurrent_trials': 4,
     'max_trial_spend_usd': 25,
@@ -355,7 +355,7 @@ def wire_trial(**overrides):
         'agent_info': {
             'name': 'codex',
             'version': 'codex-cli 0.145.0',
-            'model_info': {'name': 'gpt-5.5', 'provider': 'openai'},
+            'model_info': {'name': 'gpt-6-sol', 'provider': 'openai'},
             'reasoning_effort': None,
         },
         'attempt': 1,
@@ -2177,7 +2177,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe', version='1.1', task_names=['abs-module-cache-flags'])],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 n_attempts=1,
                 n_concurrent_trials=4,
                 max_trial_spend_usd=25,
@@ -2189,7 +2189,7 @@ class TestJobs:
         body = json.loads(request.data.decode('utf-8'))
         assert body == {
             'datasets': [{'name': 'deep-swe', 'version': '1.1', 'task_names': ['abs-module-cache-flags']}],
-            'agents': [{'name': 'codex', 'model_name': 'gpt-5.5'}],
+            'agents': [{'name': 'codex', 'model_name': 'gpt-6-sol'}],
             'n_attempts': 1,
             'n_concurrent_trials': 4,
             'max_trial_spend_usd': 25,
@@ -2220,7 +2220,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe')],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 analyze={'model_name': 'claude-haiku-4-5-20251001'},
             )
         body = json.loads(fake.requests[0].data.decode('utf-8'))
@@ -2239,7 +2239,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake2):
             bare = await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe')],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
             )
         assert 'analyze' not in json.loads(fake2.requests[0].data.decode('utf-8'))
         assert bare.analyze is None
@@ -2281,22 +2281,22 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe')],
-                agents=[AgentArm(name='codex', model_name='gpt-5.6-sol', preset='no-internet')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol', preset='no-internet')],
             )
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['agents'] == [
-            {'name': 'codex', 'model_name': 'gpt-5.6-sol', 'preset': 'no-internet'}
+            {'name': 'codex', 'model_name': 'gpt-6-sol', 'preset': 'no-internet'}
         ]
 
         from evolve.hosted import _map_agent_arm
         echoed = _map_agent_arm({
-            'name': 'codex', 'model_name': 'gpt-5.6-sol', 'version': None,
+            'name': 'codex', 'model_name': 'gpt-6-sol', 'version': None,
             'reasoning_effort': None, 'kwargs': None, 'preset': 'no-internet',
         })
         assert echoed.preset == 'no-internet'
-        legacy = _map_agent_arm({'name': 'codex', 'model_name': 'gpt-5.6-sol'})
+        legacy = _map_agent_arm({'name': 'codex', 'model_name': 'gpt-6-sol'})
         assert legacy.preset is None
-        garbage = _map_agent_arm({'name': 'codex', 'model_name': 'gpt-5.6-sol', 'preset': 7})
+        garbage = _map_agent_arm({'name': 'codex', 'model_name': 'gpt-6-sol', 'preset': 7})
         assert garbage.preset is None
 
     @pytest.mark.asyncio
@@ -2310,7 +2310,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe')],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 timeout_multiplier=2,
                 verifier_timeout_multiplier=3,
             )
@@ -2343,20 +2343,20 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
-                agents=[{'name': 'codex', 'model_name': 'gpt-5.5', 'version': '0.29.0'}],
+                agents=[{'name': 'codex', 'model_name': 'gpt-6-sol', 'version': '0.29.0'}],
                 max_trial_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['datasets'] == [{'name': 'deep-swe'}]
         assert body['agents'] == [
-            {'name': 'codex', 'model_name': 'gpt-5.5', 'version': '0.29.0'},
+            {'name': 'codex', 'model_name': 'gpt-6-sol', 'version': '0.29.0'},
         ]
         # camelCase keys are not part of the Python surface
         with pytest.raises(TypeError):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
-                agents=[{'name': 'codex', 'modelName': 'gpt-5.5'}],
+                agents=[{'name': 'codex', 'modelName': 'gpt-6-sol'}],
                 max_trial_spend_usd=25,
             )
 
@@ -2379,7 +2379,7 @@ class TestJobs:
                 await jobs_factory(CONFIG).start(
                     datasets=[{'name': 'deep-swe'}],
                     agents=[
-                        AgentArm(name='codex', model_name='gpt-5.5', version='9.9.9'),
+                        AgentArm(name='codex', model_name='gpt-6-sol', version='9.9.9'),
                     ],
                     max_trial_spend_usd=25,
                 )
@@ -2404,7 +2404,7 @@ class TestJobs:
             with pytest.raises(EvolveAPIError) as exc:
                 await jobs_factory(CONFIG).start(
                     datasets=[{'name': 'deep-swe'}],
-                    agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                    agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 )
         assert exc.value.status == 402
         assert exc.value.code == 'insufficient_credits'
@@ -2429,7 +2429,7 @@ class TestJobs:
                     datasets=[{'name': 'deep-swe'}],
                     # A range cannot hold a comparison still, so it is refused.
                     agents=[
-                        AgentArm(name='codex', model_name='gpt-5.5', version='^0.29.0'),
+                        AgentArm(name='codex', model_name='gpt-6-sol', version='^0.29.0'),
                     ],
                     max_trial_spend_usd=25,
                 )
@@ -2444,13 +2444,13 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 max_trial_spend_usd=25,
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         # Omitted = resolve latest at dispatch; the key is absent, never null.
-        assert body['agents'] == [{'name': 'codex', 'model_name': 'gpt-5.5'}]
+        assert body['agents'] == [{'name': 'codex', 'model_name': 'gpt-6-sol'}]
 
     @pytest.mark.asyncio
     async def test_get_maps_detail(self):
@@ -2480,7 +2480,7 @@ class TestJobs:
         assert not hasattr(job, 'error')
         assert not hasattr(job, 'trial_counts')
         arm = job.agents[0]
-        assert (arm.name, arm.model_name, arm.version) == ('codex', 'gpt-5.5', None)
+        assert (arm.name, arm.model_name, arm.version) == ('codex', 'gpt-6-sol', None)
         assert not hasattr(arm, 'id')
         assert not hasattr(arm, 'system_digest')
 
@@ -2758,7 +2758,7 @@ class TestJobs:
         assert trial.sandbox_provider_degrade is None
         assert trial.verifier_environment_mode == 'separate'
         assert trial.agent_info.version == 'codex-cli 0.145.0'
-        assert trial.agent_info.model_info.name == 'gpt-5.5'
+        assert trial.agent_info.model_info.name == 'gpt-6-sol'
         # Where the trial ran: the agent's box and the verifier's box
         assert trial.sandbox_id == 'im8f0wgqwehvng70evvro'
         assert trial.verifier_sandbox_id == 'iv2k1xbqwehvng70evvrp'
@@ -3229,6 +3229,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).analyze(
                 'job-1',
+                agent='claude',
                 model_name='claude-haiku-4-5-20251001',
                 rubric=ANALYZE_RUBRIC,
                 prompt='Only reward hacking matters. {criteria_guidance}',
@@ -3247,6 +3248,7 @@ class TestJobs:
         # and so do Harbor's selection knobs (cli/analyze.py:278-290) — the
         # domains and the both-filters refusal are the server's.
         assert sent == {
+            'agent': 'claude',
             'model_name': 'claude-haiku-4-5-20251001',
             'rubric': ANALYZE_RUBRIC,
             'prompt': 'Only reward hacking matters. {criteria_guidance}',
@@ -3911,7 +3913,7 @@ class TestJobs:
                         'mean_reward': 0.0,  # zero is a reward, never nulled
                         'coverage': {'scored': 100, 'total': 113},
                         'cost_usd': 21.4,
-                        'agents': [{'name': 'codex', 'model_name': 'gpt-5.5'}],
+                        'agents': [{'name': 'codex', 'model_name': 'gpt-6-sol'}],
                         'started_at': '2026-07-22T00:00:00.000Z',
                     },
                     {
@@ -4216,7 +4218,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 max_trial_spend_usd=2,
             )
 
@@ -4238,7 +4240,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
@@ -4247,7 +4249,7 @@ class TestJobs:
         assert 'max_trial_spend_usd' not in body
         assert body == {
             'datasets': [{'name': 'deep-swe', 'version': '1.1'}],
-            'agents': [{'name': 'codex', 'model_name': 'gpt-5.5'}],
+            'agents': [{'name': 'codex', 'model_name': 'gpt-6-sol'}],
         }
         assert job.max_trial_spend_usd == 200
         assert job.worst_case_spend_usd == 1000
@@ -4270,7 +4272,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 retry={'max_retries': 3, 'exclude_exceptions': ['AgentAuthenticationError'],
                        'wait_multiplier': 2.0},
             )
@@ -4294,7 +4296,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 retry={'max_retries': 3, 'exclude_exceptions': None},
             )
 
@@ -4308,7 +4310,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
             )
 
         body = json.loads(fake.requests[0].data.decode('utf-8'))
@@ -4360,7 +4362,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 max_trial_spend_usd=25,
                 sandbox_provider='daytona',
             )
@@ -4375,7 +4377,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 job_name='deep-swe sweep',
                 max_trial_spend_usd=25,
             )
@@ -4433,7 +4435,7 @@ class TestJobs:
         with patch('evolve._http.urlopen', fake):
             await jobs_factory(CONFIG).start(
                 datasets=[{'name': 'deep-swe'}],
-                agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}],
+                agents=[{'name': 'codex', 'model_name': 'gpt-6-sol'}],
                 agent_env={'ACME_PROFILE': 'bench'},
                 verifier_env={'STRICT': '1'},
             )
@@ -4495,8 +4497,9 @@ class TestJobs:
             'name': 'nightly check',
             'status': 'running',
             'source': {'type': 'dataset', 'sha256': 'ab' * 32, 'bytes': None, 'dataset': 'deep-swe@1.1'},
-            'model_name': 'claude-opus-4-6',
-            'reasoning_effort': 'high',
+            'agent': 'gemini',
+            'model_name': 'gemini-3.5-flash',
+            'reasoning_effort': None,
             'sandbox_provider': 'e2b',
             'org': 'acme',
             'visibility': 'PRIVATE',
@@ -4515,6 +4518,8 @@ class TestJobs:
         # One access style for every row of one list: a CheckRow is a dataclass like Job.
         assert isinstance(row, CheckRow) and row.kind == 'check'
         assert row.name == 'nightly check'
+        # The checker's agent rides the row; an agent that takes no effort reads None, never ''.
+        assert (row.agent, row.model_name, row.reasoning_effort) == ('gemini', 'gemini-3.5-flash', None)
         assert row.source['dataset'] == 'deep-swe@1.1'
         assert row.tasks == check_row['tasks']
         assert row.cost_usd == 0.03
@@ -4651,6 +4656,11 @@ class TestAnalyses:
         assert fake.requests[0].full_url.endswith('/api/analyses/defaults')
         assert fake.requests[0].get_method() == 'GET'
         assert got == defaults
+        # A named agent rides ?agent=: the server answers that agent's own default model and effort.
+        fake = FakeUrlopen([('/api/analyses/defaults', defaults), ('/api/analyses', {})])
+        with patch('evolve._http.urlopen', fake):
+            await analyses_factory(CONFIG).defaults(agent='kimi')
+        assert fake.requests[0].full_url.endswith('/api/analyses/defaults?agent=kimi')
 
     @pytest.mark.asyncio
     async def test_download_rides_the_contract_door_and_verifies_the_bytes(self, tmp_path):
@@ -5645,7 +5655,7 @@ class TestRunFilesystem:
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe')],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 system_log=True,
             )
         assert json.loads(fake.requests[0].data.decode('utf-8'))['system_log'] is True
@@ -5654,7 +5664,7 @@ class TestRunFilesystem:
         with patch('evolve._http.urlopen', fake2):
             bare = await jobs_factory(CONFIG).start(
                 datasets=[DatasetSelector(name='deep-swe')],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
             )
         assert 'system_log' not in json.loads(fake2.requests[0].data.decode('utf-8'))
         assert bare.system_log is False
@@ -5720,7 +5730,7 @@ class TestOrgsTeamVerbs:
     @pytest.mark.asyncio
     async def test_start_org_flag_then_config_default_then_nothing(self):
         fake = FakeUrlopen([('/api/jobs', {**JOB_SUMMARY, 'org': 'acme'})])
-        arms = dict(datasets=[{'name': 'deep-swe'}], agents=[{'name': 'codex', 'model_name': 'gpt-5.5'}])
+        arms = dict(datasets=[{'name': 'deep-swe'}], agents=[{'name': 'codex', 'model_name': 'gpt-6-sol'}])
         with patch('evolve._http.urlopen', fake):
             job = await jobs_factory(HostedClientConfig(api_key='k', base_url='http://localhost:3000', org='acme')).start(**arms)
             await jobs_factory(HostedClientConfig(api_key='k', base_url='http://localhost:3000', org='acme')).start(org='other', **arms)

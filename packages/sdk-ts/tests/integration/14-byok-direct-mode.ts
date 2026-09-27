@@ -80,7 +80,7 @@ function getBYOKAgentConfig(type: AgentType): BYOKAgentConfig | null {
       return {
         type: "codex",
         providerApiKey: env.OPENAI_API_KEY,
-        model: process.env.CODEX_MODEL || "gpt-5.5",
+        model: process.env.CODEX_MODEL || "gpt-6-sol",
         reasoningEffort: (process.env.CODEX_REASONING_EFFORT as "low" | "medium" | "high") || "medium",
       };
 
@@ -91,7 +91,7 @@ function getBYOKAgentConfig(type: AgentType): BYOKAgentConfig | null {
       return {
         type: "qwen",
         providerApiKey: env.DASHSCOPE_API_KEY,
-        model: process.env.QWEN_OPENAI_MODEL || "qwen3.7-max",
+        model: process.env.QWEN_OPENAI_MODEL || "qwen3.8-max",
       };
 
     default:

@@ -2,7 +2,7 @@
 
 Creates agent configs based on TEST_AGENT_TYPE environment variable.
 If TEST_AGENT_TYPE is empty, returns None to let Evolve resolve from env.
-Supports: codex, claude, qwen, kimi, opencode, droid
+Supports: codex, claude, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity
 """
 
 import os
@@ -56,7 +56,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='qwen',
             api_key=evolve_api_key,
-            model=os.getenv('QWEN_MODEL', 'qwen3.7-max'),
+            model=os.getenv('QWEN_MODEL', 'qwen3.8-max'),
         )
 
     elif agent_type == 'kimi':
@@ -77,7 +77,42 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='droid',
             api_key=evolve_api_key,
-            model=os.getenv('DROID_MODEL', 'gpt-5.5'),
+            model=os.getenv('DROID_MODEL', 'gpt-6-sol'),
+        )
+
+    elif agent_type == 'pi':
+        return AgentConfig(
+            type='pi',
+            api_key=evolve_api_key,
+            model=os.getenv('PI_MODEL', 'openrouter/anthropic/claude-sonnet-5'),
+        )
+
+    elif agent_type == 'prime-agent':
+        return AgentConfig(
+            type='prime-agent',
+            api_key=evolve_api_key,
+            model=os.getenv('PRIME_AGENT_MODEL', 'openrouter/anthropic/claude-sonnet-5'),
+        )
+
+    elif agent_type == 'dsh':
+        return AgentConfig(
+            type='dsh',
+            api_key=evolve_api_key,
+            model=os.getenv('DSH_MODEL', 'openrouter/deepseek/deepseek-v4.1-flash'),
+        )
+
+    elif agent_type == 'zcode':
+        return AgentConfig(
+            type='zcode',
+            api_key=evolve_api_key,
+            model=os.getenv('ZCODE_MODEL', 'openrouter/z-ai/glm-5.3-flash'),
+        )
+
+    elif agent_type == 'antigravity':
+        return AgentConfig(
+            type='antigravity',
+            api_key=evolve_api_key,
+            model=os.getenv('ANTIGRAVITY_MODEL', 'gemini-3.8-flash'),
         )
 
     else:
@@ -100,6 +135,11 @@ def get_agent_display_name(agent_type: AgentType) -> str:
         'kimi': 'Kimi',
         'opencode': 'OpenCode',
         'droid': 'Droid',
+        'pi': 'pi',
+        'prime-agent': 'Prime Agent',
+        'dsh': 'DeepSeek Harness',
+        'zcode': 'Z Code',
+        'antigravity': 'Antigravity',
     }
     return names.get(agent_type, agent_type)
 

@@ -102,7 +102,7 @@ Configuration validation cannot prove that images build or tests are correct. Ru
 
 ```bash
 # Run an exact version.
-evolve run -d my-dataset@1.0 -a codex -m gpt-5.6-luna
+evolve run -d my-dataset@1.0 -a codex -m gpt-6-luna
 
 # Change what the bare name resolves to.
 evolve dataset activate my-dataset 1.0

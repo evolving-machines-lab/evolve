@@ -54,27 +54,29 @@ Python analysis rows are dictionaries: `row["id"]`, `row["checks"]`. [Analysis r
 
 ## defaults
 
-Read the current analysis defaults. Returns `AnalyzeDefaults`: model, effort, sandbox provider, rubric, and unrendered prompt template.
+Read the current analysis defaults. Returns `AnalyzeDefaults`: agent, model, effort, sandbox provider, rubric, and unrendered prompt template. Pass an agent to read what that agent runs under when you name no model.
 
 ### Signature
 
 ```ts TypeScript signature
-defaults(): Promise<AnalyzeDefaults>;
+defaults(options?: { agent?: string }): Promise<AnalyzeDefaults>;
 ```
 
 ```python Python signature
-async def defaults() -> AnalyzeDefaults: ...
+async def defaults(*, agent: Optional[str] = None) -> AnalyzeDefaults: ...
 ```
 
 ```ts TypeScript
 const defaults = await client.defaults();
+const codex = await client.defaults({ agent: "codex" });
 ```
 
 ```python Python
 defaults = await client.defaults()
+codex = await client.defaults(agent="codex")
 ```
 
-Python returns a dictionary. These are current defaults; an existing analysis records the policy it actually ran under.
+Python returns a dictionary. These are current defaults; an existing analysis records the policy it actually ran under. An agent the platform does not offer is refused with `invalid_input`.
 
 ## get
 

@@ -20,7 +20,7 @@ flowchart TD
 | --- | --- | --- |
 | [Task](/core-concepts/tasks) | An instruction, environment, and grading logic. | Fix a bug and pass the tests. |
 | [Dataset](/core-concepts/datasets) | A named, versioned collection of tasks. | `harbor-examples@1.0`. |
-| [Agent](/core-concepts/agents) | A harness running a selected model. | Codex with `gpt-5.6-luna`. |
+| [Agent](/core-concepts/agents) | A harness running a selected model. | Codex with `gpt-6-luna`. |
 | [Sandbox](/core-concepts/sandboxes) | The isolated environment where a trial runs. | A task image on Daytona, E2B, or Modal. |
 | [Job](/core-concepts/jobs) | A group of trials with shared run settings. | 10 tasks × 2 configurations × 3 attempts = 60 trials. |
 | [Trial](/core-concepts/trials) | One attempt at one task. | One score and its supporting evidence. |

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, Unio
 
 
 #: 'gemini' is retired (new runs are refused) and stays here for the records of its past runs.
-AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid']
+AgentType = Literal['codex', 'claude', 'gemini', 'qwen', 'kimi', 'opencode', 'droid', 'pi', 'prime-agent', 'dsh', 'zcode', 'antigravity']
 WorkspaceMode = Literal['knowledge', 'swe', 'task']
 BrowserProvider = Literal['browser-use', 'actionbook', 'agent-browser']
 BrowserConfig = Union[BrowserProvider, Dict[str, Any]]
@@ -36,6 +36,9 @@ class SandboxCreateOptions(TypedDict, total=False):
     # Home directory for agent config paths. Default: "/root" when user is
     # "root", "/home/<user>" otherwise, "/home/user" when no user is given.
     homeDir: str
+    # The account the agent config files are written for (a user name, a uid,
+    # or uid:gid) when it is not the owner of homeDir. Default: homeDir's owner.
+    homeOwner: str
 
 
 @dataclass
@@ -207,17 +210,17 @@ class AgentConfig:
     All fields are optional - TS SDK auto-detects from environment variables.
 
     Args:
-        type: Agent type (codex, claude, qwen, kimi, opencode, droid) - defaults to 'claude'
+        type: Agent type (codex, claude, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity) - defaults to 'claude'
         api_key: Evolve API key for gateway mode (defaults to EVOLVE_API_KEY env var)
         provider_api_key: Provider API key for direct mode / BYOK (defaults to provider env var)
         oauth_token: OAuth token for Claude Max subscription (defaults to CLAUDE_CODE_OAUTH_TOKEN env var)
         provider_base_url: Provider base URL for direct mode (auto-detected for Qwen)
-        model: Model name (optional - uses agent's default if not specified). Use 'fable' for Claude Fable 5.1 or 'sonnet[1m]' / 'opus[1m]' for 1M context window (Claude only).
+        model: Model name (optional - uses agent's default if not specified). Use 'fable' for Claude Fable 5.1.
         reasoning_effort: Reasoning effort for models that support it (optional)
         max_context_size: Context/completion ceiling for CLIs that must be told one
             (Kimi Code reads it as max_context_size and sends it as the request's
             max_tokens). Set it to the model's real ceiling when driving a harness
-            against a model from another family - e.g. Kimi Code against 'gpt-5.5'
+            against a model from another family - e.g. Kimi Code against 'gpt-6-sol'
             through an OpenAI-compatible gateway, where an oversized max_tokens is
             rejected with a 400. When set it is used verbatim. When omitted, the
             harness's own models keep their registry value and any other model falls

@@ -18,6 +18,12 @@ import {
   MANAGED_SANDBOX_PROVIDERS,
   type ManagedSandboxProviderName,
 } from "../constants";
+import {
+  retryAfterSecFromHeader,
+  retryTransient,
+  type TransientRefusal,
+  type TransientRetryPolicy,
+} from "../hosted/retry-after";
 
 /**
  * Encode an Evolve gateway key as an e2b-shaped key for the managed E2B route.
@@ -96,6 +102,47 @@ function withCreateDefaults(
   return provider;
 }
 
+/** Three tries paced like the hosted watch (1 s doubling, 30 s cap), bounded because a create has no deadline. */
+export const MANAGED_CREATE_RETRY: TransientRetryPolicy = {
+  attempts: 3,
+  baseDelayMs: 1_000,
+  maxDelayMs: 30_000,
+};
+
+/**
+ * A door's 429/503 read off the backing client's error: the Modal door's `status`, Daytona's
+ * `statusCode` + `headers` (@daytonaio/sdk 0.203), e2b's class name or "503: …" text (e2b 2.39 keeps neither).
+ */
+export function readManagedCreateRefusal(error: unknown): TransientRefusal | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const e = error as Error & {
+    status?: unknown;
+    statusCode?: unknown;
+    retryAfterSec?: unknown;
+    headers?: unknown;
+  };
+  const status = typeof e.status === "number" ? e.status : e.statusCode;
+  if (typeof status === "number") {
+    if (status !== 429 && status !== 503) return undefined;
+    if (typeof e.retryAfterSec === "number") return { retryAfterSec: e.retryAfterSec };
+    const headers = e.headers as (Record<string, unknown> & { get?: unknown }) | undefined;
+    const raw =
+      typeof headers?.get === "function" ? headers.get("retry-after") : headers?.["retry-after"];
+    return { retryAfterSec: retryAfterSecFromHeader(raw) };
+  }
+  if (e.name === "RateLimitError") return {};
+  if (e.name === "SandboxError" && e.message.startsWith("503:")) return {};
+  return undefined;
+}
+
+/**
+ * What every managed provider wraps around the ONE request that creates a box: the door's 429/503 is
+ * tried again under MANAGED_CREATE_RETRY, then thrown unchanged; a refusal after the box exists is never retried.
+ */
+export function retryManagedCreateRequest<T>(send: () => Promise<T>): Promise<T> {
+  return retryTransient(send, readManagedCreateRefusal, MANAGED_CREATE_RETRY);
+}
+
 /**
  * Resolve a sandbox provider that runs on the platform's credentials.
  *
@@ -135,6 +182,7 @@ export async function resolveManagedSandbox(
             apiKey,
             apiUrl: getManagedProviderUrl("daytona"),
             managedToolboxUrl: getManagedDaytonaToolboxUrl(),
+            retryCreateRequest: retryManagedCreateRequest,
           }),
         ),
         defaults,
@@ -162,7 +210,11 @@ export async function resolveManagedSandbox(
     const { ManagedModalProvider } = await import("./managed-modal");
     return withCreateDefaults(
       markEvolveManagedSandbox(
-        new ManagedModalProvider({ apiKey, baseUrl: getManagedProviderUrl("modal") }),
+        new ManagedModalProvider({
+          apiKey,
+          baseUrl: getManagedProviderUrl("modal"),
+          retryCreateRequest: retryManagedCreateRequest,
+        }),
       ),
       defaults,
     );
@@ -172,7 +224,11 @@ export async function resolveManagedSandbox(
     const { createE2BProvider } = await import("@evolvingmachines/e2b");
     return withCreateDefaults(
       markEvolveManagedSandbox(
-        createE2BProvider({ apiKey: toManagedE2BKey(apiKey), apiUrl: getE2BGatewayUrl() }),
+        createE2BProvider({
+          apiKey: toManagedE2BKey(apiKey),
+          apiUrl: getE2BGatewayUrl(),
+          retryCreateRequest: retryManagedCreateRequest,
+        }),
       ),
       defaults,
     );

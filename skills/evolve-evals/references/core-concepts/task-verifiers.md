@@ -197,7 +197,7 @@ Evolve supplies a gateway credential and the matching base URL. Recognized crede
 For a Reward Kit judge, override its agent and model for one job with:
 
 ```bash
-evolve run -d my-dataset@1.0 -a codex -m gpt-5.6-luna \
+evolve run -d my-dataset@1.0 -a codex -m gpt-6-luna \
   --ve REWARDKIT_JUDGE=claude \
   --ve REWARDKIT_MODEL=sonnet
 ```

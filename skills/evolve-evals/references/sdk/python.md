@@ -27,7 +27,7 @@ async def main():
                 "version": "1.0",
                 "task_names": ["hello-world"],
             }],
-            agents=[{"name": "codex", "model_name": "gpt-5.6-luna"}],
+            agents=[{"name": "codex", "model_name": "gpt-6-luna"}],
             max_trial_spend_usd=0.50,
             retry={"max_retries": 0},
         )

@@ -47,6 +47,7 @@ function createFakeSandbox(seed?: Record<string, string>) {
   const writes: string[] = [];
 
   const sandbox = {
+    commands: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
     files: {
       makeDir: async () => {},
       read: async (path: string) => {
@@ -329,7 +330,7 @@ async function testKimiConfigWithoutThinking(): Promise<void> {
     {
       baseUrl: "https://gateway.test/v1",
       apiKey: "test-gateway-key",
-      model: "gpt-5.5",
+      model: "gpt-6-sol",
       defaultThinking: false,
       thinkingEffort: "high",
     },

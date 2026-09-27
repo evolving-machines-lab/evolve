@@ -100,7 +100,7 @@ def get_byok_agent_config(agent_type: str) -> Optional[AgentConfig]:
         return AgentConfig(
             type='codex',
             provider_api_key=env['OPENAI_API_KEY'],
-            model=os.getenv('CODEX_MODEL', 'gpt-5.5'),
+            model=os.getenv('CODEX_MODEL', 'gpt-6-sol'),
             reasoning_effort=os.getenv('CODEX_REASONING_EFFORT', 'medium'),
         )
 
@@ -112,7 +112,7 @@ def get_byok_agent_config(agent_type: str) -> Optional[AgentConfig]:
         return AgentConfig(
             type='qwen',
             provider_api_key=env['DASHSCOPE_API_KEY'],
-            model=os.getenv('QWEN_OPENAI_MODEL', 'qwen3.7-max'),
+            model=os.getenv('QWEN_OPENAI_MODEL', 'qwen3.8-max'),
         )
 
     return None

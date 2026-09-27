@@ -18,7 +18,7 @@ my-skill/
 
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \
-  -a codex -m gpt-5.6-luna \
+  -a codex -m gpt-6-luna \
   --skills ./my-skill \
   --max-trial-spend 1 --max-retries 0 --watch
 ```

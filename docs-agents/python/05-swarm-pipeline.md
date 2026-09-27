@@ -48,7 +48,7 @@ SwarmConfig(
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'opus'` (claude), `'gpt-5.6-sol'` (codex), etc. |
+| `agent.model` | per type | `'opus'` (claude), `'gpt-6-sol'` (codex), etc. |
 | `sandbox` | auto-resolved | Provider for every worker; falls back to env (`E2B_API_KEY`, `DAYTONA_API_KEY`, `MODAL_TOKEN_*`, `EVOLVE_API_KEY`) |
 | `skills` | `None` | Set here or per-operation |
 | `integrations` | `None` | Set here or per-operation |
@@ -722,7 +722,7 @@ Override the default agent for any operation. There is no separate override type
 ```python
 @dataclass
 class AgentConfig:
-    type: Literal['claude', 'codex', 'qwen', 'kimi', 'opencode', 'droid']
+    type: Literal['claude', 'codex', 'qwen', 'kimi', 'opencode', 'droid', 'pi', 'prime-agent', 'dsh', 'zcode', 'antigravity']
     api_key: str | None = None
     model: str | None = None
     reasoning_effort: Literal['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking', 'no-thinking'] | None = None
