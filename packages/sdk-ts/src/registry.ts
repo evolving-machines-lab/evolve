@@ -499,7 +499,7 @@ const OPENROUTER_ROSTER: readonly ModelInfo[] = [
   { alias: "openrouter/openai/gpt-5.6-terra", modelId: "openrouter/openai/gpt-5.6-terra", description: "OpenAI GPT-5.6 Terra via OpenRouter" },
   { alias: "openrouter/openai/gpt-6-luna", modelId: "openrouter/openai/gpt-6-luna", description: "OpenAI GPT-6 Luna via OpenRouter" },
   { alias: "openrouter/google/gemini-3.8-flash", modelId: "openrouter/google/gemini-3.8-flash", description: "Gemini 3.8 Flash via OpenRouter" },
-  // OpenRouter serves Qwen 3.8 Max only under dated ids; the roster names the real upstream id (ruling 2026-09-26).
+  // OpenRouter serves Qwen 3.8 Max only under dated ids; the roster names the real upstream id.
   { alias: "openrouter/qwen/qwen3.8-max-0902", modelId: "openrouter/qwen/qwen3.8-max-0902", description: "Qwen 3.8 Max (0902) via OpenRouter" },
   { alias: "openrouter/moonshotai/kimi-k3", modelId: "openrouter/moonshotai/kimi-k3", description: "Kimi K3 via OpenRouter" },
   { alias: "openrouter/z-ai/glm-5.3", modelId: "openrouter/z-ai/glm-5.3", description: "Zhipu GLM-5.3 via OpenRouter" },
@@ -704,7 +704,7 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
     defaultReasoningEffort: "high",
     models: [
       // GPT-6 Astra, Sol and Luna (developers.openai.com/api/docs/models, read 2026-09-26); OpenAI ships
-      // no GPT-6 Terra, so 5.6 Terra stays. Default gpt-6-sol: owner 2026-09-26, latest generation only.
+      // no GPT-6 Terra, so 5.6 Terra stays. Default gpt-6-sol: the latest generation only.
       { alias: "gpt-6-astra", modelId: "gpt-6-astra", description: "Most capable, for the hardest end-to-end work" },
       { alias: "gpt-6-sol", modelId: "gpt-6-sol", description: "Complex coding and agentic workflows" },
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Balances intelligence and cost" },
