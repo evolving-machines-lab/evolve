@@ -555,7 +555,7 @@ export interface Rubric {
  * records each with its reason.
  */
 export interface AnalyzeConfigInput {
-  /** Harbor's `-a/--agent`, spelled as the arms spell it (claude, not claude-code) so one set of names covers arms and reviewers; omitted: claude. The agents: `GET /api/meta` `analyze.agents`. */
+  /** Harbor's `-a/--agent`, spelled as the arms spell it (claude, not claude-code) so one set of names covers arms and reviewers; omitted: claude. The agents: `GET /api/meta` `analyze.agents`; a retired one (`retired_agents`) is refused `agent_retired`. */
   agent?: string;
   /**
    * Model the analyzer agent runs — Harbor's `--model`. Omitted, the agent's
@@ -1667,9 +1667,12 @@ export interface AnalysisFailure {
    * `timeout` (the analyzer's run budget ran out with no valid analysis.json
    * — the file missing, or a partial one that failed validation, its reasons
    * in the message — never re-run: a timeout is deterministic; the message
-   * names the budget, the seconds used and the exit code), or an
-   * infrastructure stage of the analyzer run (`mint_key`, `boot`,
-   * `harness_install`, `agent`, `artifact_read`, `lease_expired`, ...).
+   * names the budget, the seconds used and the exit code), `agent_retired`
+   * (the job's stored analysis agent was retired after the job was created:
+   * recorded when the trial settles, nothing run or charged, never re-run; the
+   * message names the replacement), or an infrastructure stage of the analyzer
+   * run (`mint_key`, `boot`, `harness_install`, `agent`, `artifact_read`,
+   * `lease_expired`, ...).
    */
   phase: string;
   message: string;
@@ -5872,8 +5875,9 @@ export interface CapabilityDocument {
   /** Built-in agents a new job may name, and their declared capabilities. */
   agents: AgentCapability[];
   /**
-   * Retired built-in agents, left out of `agents`: a new job, resume or retry
-   * naming one is refused `agent_retired`, while its records stay readable.
+   * Retired built-in agents, left out of `agents`: a new job, resume, retry,
+   * analysis or check naming one is refused `agent_retired`, while its records
+   * stay readable.
    * Absent on servers predating the field.
    */
   retired_agents?: RetiredAgent[];

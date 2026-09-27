@@ -130,8 +130,7 @@ for (const label of ["gemini", "gemini-cli"]) {
 }
 
 // --- 4. The replacement is a harness a new run may name ----------------------
-// RED on a branch cut before the replacement lands (antigravity is not yet an
-// AgentType); the rebase onto that trunk turns it green and types replacedBy as AgentType.
+// `replacedBy` is typed AgentType; at run time it must also be registered and not retired itself.
 
 for (const [name, entry] of Object.entries(AGENT_REGISTRY)) {
   const replacedBy = entry.retired?.replacedBy;

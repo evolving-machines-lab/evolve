@@ -1141,9 +1141,9 @@ class CapabilityDocument:
     #: agent with its own ``default_model``, the model an omitted ``model_name`` takes on it), so a client knows
     #: what "omitted" meant. None on servers predating the field.
     analyze: Optional[Dict[str, Any]] = None
-    #: Retired built-in agents, left out of ``agents``: a new job, resume or
-    #: retry naming one is refused ``agent_retired``, while its records stay
-    #: readable. Empty on servers predating the field.
+    #: Retired built-in agents, left out of ``agents``: a new job, resume,
+    #: retry, analysis or check naming one is refused ``agent_retired``, while
+    #: its records stay readable. Empty on servers predating the field.
     retired_agents: List[RetiredAgent] = field(default_factory=list)
 
 
@@ -1666,7 +1666,8 @@ class AnalyzeConfigInput(TypedDict, total=False):
     line, never blended into the trial's own bill.
     """
     #: Harbor's ``-a/--agent``, spelled as the arms spell it (claude, not claude-code) so one set of names
-    #: covers arms and reviewers; omitted: claude. The agents: ``meta().analyze['agents']``.
+    #: covers arms and reviewers; omitted: claude. The agents: ``meta().analyze['agents']``; a retired
+    #: one (``meta().retired_agents``) is refused ``agent_retired``.
     agent: str
     #: Model the analyzer agent runs — Harbor's ``--model``. Omitted, the
     #: agent's default: the platform's pick,
@@ -1860,8 +1861,11 @@ class AnalysisFailure(TypedDict):
     #: out with no valid analysis.json — the file missing, or a partial one
     #: that failed validation, its reasons in the message — never re-run: a
     #: timeout is deterministic; the message names the budget, the seconds
-    #: used and the exit code), or an infrastructure stage of the analyzer
-    #: run (``mint_key``, ``boot``, ``harness_install``, ``agent``,
+    #: used and the exit code), ``agent_retired`` (the job's stored analysis
+    #: agent was retired after the job was created: recorded when the trial
+    #: settles, nothing run or charged, never re-run; the message names the
+    #: replacement), or an infrastructure stage of the analyzer run
+    #: (``mint_key``, ``boot``, ``harness_install``, ``agent``,
     #: ``artifact_read``, ``lease_expired``, ...).
     phase: str
     message: str
