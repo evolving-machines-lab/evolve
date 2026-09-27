@@ -3036,7 +3036,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
  *
  * await jobs().start({
  *   datasets: [{ name: "deep-swe" }],
- *   agents: [{ name: "acme-cli", model_name: "gpt-5.5" }],
+ *   agents: [{ name: "acme-cli", model_name: "gpt-6-sol" }],
  *   max_trial_spend_usd: 25,
  * });
  * ```
@@ -3245,7 +3245,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
  * // datasets: bare name = active version; { name, version } pins one
  * const job = await client.start({
  *   datasets: [{ name: "deep-swe" }],
- *   agents: [{ name: "codex", model_name: "gpt-5.5" }],
+ *   agents: [{ name: "codex", model_name: "gpt-6-sol" }],
  *   n_attempts: 1,
  *   n_concurrent_trials: 4,
  *   max_trial_spend_usd: 25,

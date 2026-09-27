@@ -7225,7 +7225,7 @@ class AgentsClient:
         async with jobs() as jobs_client:
             await jobs_client.start(
                 datasets=[{'name': 'deep-swe'}],
-                agents=[AgentArm(name='acme-cli', model_name='gpt-5.5')],
+                agents=[AgentArm(name='acme-cli', model_name='gpt-6-sol')],
                 max_trial_spend_usd=25,
             )
     """
@@ -7590,7 +7590,7 @@ class JobsClient:
         async with jobs() as j:
             job = await j.start(
                 datasets=[{'name': 'deep-swe', 'version': '1.1'}],
-                agents=[AgentArm(name='codex', model_name='gpt-5.5')],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
                 max_trial_spend_usd=25,
             )
             final = await j.watch(job.id)

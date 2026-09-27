@@ -109,7 +109,7 @@ A trial prefix may require reading the trials of every job in scope. On large ac
 Repeat a repeatable flag once per value. Do not combine short flags.
 
 ```bash
-evolve run -d harbor-examples@1.0 -a codex -m gpt-5.6-luna \
+evolve run -d harbor-examples@1.0 -a codex -m gpt-6-luna \
   -i 'hello-*' -x '*-slow' --max-trial-spend 0.30 --max-retries 0
 ```
 

@@ -103,7 +103,7 @@ class TestAgentConfigDataclass:
             type='kimi',
             provider_api_key='gateway-key',
             provider_base_url='https://gateway.test/v1',
-            model='gpt-5.5',
+            model='gpt-6-sol',
             max_context_size=128000,
         )
 
@@ -351,7 +351,7 @@ class TestAgentBridgeConfig:
         config = AgentConfig(
             type='kimi',
             provider_api_key='gateway-key',
-            model='gpt-5.5',
+            model='gpt-6-sol',
             max_context_size=128000,
         )
 

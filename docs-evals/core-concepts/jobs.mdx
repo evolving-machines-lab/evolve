@@ -19,7 +19,7 @@ Each of the three tasks runs twice in Arm A and twice in Arm B.
 ```bash
 evolve run \
   -d harbor-examples@1.0 -i hello-world \
-  -a codex -m gpt-5.6-luna \
+  -a codex -m gpt-6-luna \
   --max-trial-spend 1 -r 0 \
   --watch
 ```
@@ -50,7 +50,7 @@ Use a [config file](#config-files) to compare different harnesses in one job.
 `-i` and `-x` accept task-name globs. Quote them so your shell does not expand them.
 
 ```bash
-evolve run -d my-dataset@1.0 -a codex -m gpt-5.6-luna \
+evolve run -d my-dataset@1.0 -a codex -m gpt-6-luna \
   -i 'auth-*' -x 'auth-legacy' -l 20 \
   --max-trial-spend 2 -r 0 --watch
 ```
@@ -198,7 +198,7 @@ datasets:
     task_names: [hello-world]
 agents:
   - name: codex
-    model_name: gpt-5.6-luna
+    model_name: gpt-6-luna
   - name: claude
     model_name: fable
 n_attempts: 2

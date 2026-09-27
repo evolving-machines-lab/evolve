@@ -67,7 +67,7 @@ const job = await client.start({
   agents: [
     {
       name: "codex",
-      model_name: "gpt-5.6-luna"
+      model_name: "gpt-6-luna"
     }
   ],
   max_trial_spend_usd: 1,
@@ -89,7 +89,7 @@ job = await client.start(
     agents=[
         {
             'name': 'codex',
-            'model_name': 'gpt-5.6-luna',
+            'model_name': 'gpt-6-luna',
         },
     ],
     max_trial_spend_usd=1,

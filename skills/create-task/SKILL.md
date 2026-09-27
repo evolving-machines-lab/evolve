@@ -374,7 +374,7 @@ Publish a folder holding the task directory as a dataset, then run a job on it:
 ```bash
 evolve dataset check ./tasks
 evolve dataset publish --dir ./tasks --name "<dataset>" --version 1.0 --watch
-evolve run -d "<dataset>@1.0" -a codex -m gpt-5.5 --watch
+evolve run -d "<dataset>@1.0" -a codex -m gpt-6-sol --watch
 ```
 
 If the task is too easy (every model 1.0) or impossible (every model 0.0), consider 

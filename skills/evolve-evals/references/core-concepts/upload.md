@@ -70,7 +70,7 @@ This is a minimal illustrative trial record with a reward. Replace the task, age
   "agent_info": {
     "name": "codex",
     "version": "",
-    "model_info": { "name": "gpt-5.6-luna" }
+    "model_info": { "name": "gpt-6-luna" }
   },
   "verifier_result": { "rewards": { "reward": 1.0 } }
 }
