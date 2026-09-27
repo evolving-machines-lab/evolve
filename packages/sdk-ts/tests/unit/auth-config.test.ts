@@ -231,6 +231,10 @@ async function runTests(): Promise<void> {
       (model) => model.alias === "gpt-6-astra" || model.modelId === "gpt-6-astra",
     );
     assertEqual(droidAstra, undefined, "Droid roster carries no gpt-6-astra row");
+    const droidSol = AGENT_REGISTRY.droid.models.find((model) => model.alias === "gpt-6-sol");
+    assertEqual(droidSol, undefined, "Droid roster carries no gpt-6-sol row");
+    const droidLuna = AGENT_REGISTRY.droid.models.find((model) => model.alias === "gpt-6-luna");
+    assertEqual(droidLuna, undefined, "Droid roster carries no gpt-6-luna row");
   }
 
   // ─────────────────────────────────────────────────────────────────────────

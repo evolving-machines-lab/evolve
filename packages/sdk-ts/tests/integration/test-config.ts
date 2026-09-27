@@ -179,7 +179,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "droid",
         apiKey: env.EVOLVE_API_KEY || env.FACTORY_API_KEY || "",
-        model: process.env.DROID_MODEL || "gpt-6-sol",
+        model: process.env.DROID_MODEL || "claude-opus-5-5",
       };
 
     case "pi":

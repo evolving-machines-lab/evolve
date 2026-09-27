@@ -77,7 +77,7 @@ def get_agent_config() -> Optional[AgentConfig]:
         return AgentConfig(
             type='droid',
             api_key=evolve_api_key,
-            model=os.getenv('DROID_MODEL', 'gpt-6-sol'),
+            model=os.getenv('DROID_MODEL', 'claude-opus-5-5'),
         )
 
     elif agent_type == 'pi':

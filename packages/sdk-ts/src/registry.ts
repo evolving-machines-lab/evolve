@@ -1024,11 +1024,9 @@ export const AGENT_REGISTRY: Record<AgentType, AgentRegistryEntry> = {
       { alias: "claude-opus-5-5", modelId: "claude-opus-5-5", description: "Factory-managed Claude Opus 5.5" },
       { alias: "claude-sonnet-5", modelId: "claude-sonnet-5", description: "Factory-managed Claude Sonnet 5" },
       { alias: "claude-haiku-4-5", modelId: "claude-haiku-4-5-20251001", description: "Factory-managed Claude Haiku 4.5" },
-      // No gpt-6-astra here: through the gateway Droid speaks Chat Completions with tools, and
-      // OpenAI's Chat Completions does not support function calling with GPT-6 Astra.
-      { alias: "gpt-6-sol", modelId: "gpt-6-sol", description: "Factory-managed GPT-6 Sol" },
+      // No GPT-6 here: through the gateway Droid speaks Chat Completions with tools, and OpenAI serves
+      // function calling there only at reasoning_effort none (Astra never); measured live 2026-09-26.
       { alias: "gpt-5.6-terra", modelId: "gpt-5.6-terra", description: "Factory-managed GPT-5.6 Terra" },
-      { alias: "gpt-6-luna", modelId: "gpt-6-luna", description: "Factory-managed GPT-6 Luna" },
       { alias: "gemini-3.8-flash", modelId: "gemini-3.8-flash", description: "Factory-managed Gemini 3.8 Flash" },
       { alias: "qwen3.8-max", modelId: "qwen3.8-max", description: "Qwen 3.8 Max via the Evolve gateway" },
       { alias: "kimi-k3", modelId: "kimi-k3", description: "Factory-managed Droid Core Kimi K3" },
