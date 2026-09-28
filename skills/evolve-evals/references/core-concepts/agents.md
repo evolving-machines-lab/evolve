@@ -50,6 +50,8 @@ Use `-a name@version` to pin a harness release. Without a version, Evolve resolv
 | `--preset pinned-context` | Set the supported context window to 200,000 tokens |
 | `--ak config=<path-or-JSON>` | Supply a native harness configuration |
 
+An effort or configuration the harness cannot honor is refused when the job is created.
+
 Presets and native config are supported on Claude Code and Codex. The platform applies routing settings over your config, and preset settings take precedence where they overlap. Routing, billing, credential, and environment overrides are rejected.
 
 The [model table](/core-concepts/models#model-and-effort-reference) shows defaults and reasoning options for each model. Every arm needs an explicit model.

@@ -140,7 +140,7 @@ test("model tabs cover every model with per-model effort guidance and defaults",
           const model = codeValues(cells[1]);
           assert.equal(model.length, 1, `${name}: each model row needs one runtime string`);
           models.push(model[0]);
-          assert.equal(columns[2], "Supported reasoning efforts", `${name}: effort belongs beside each model`);
+          assert.equal(columns[2], "Native reasoning efforts", `${name}: effort belongs beside each model`);
           assert.ok(cells[2]?.trim(), `${name}/${model[0]}: missing effort guidance`);
           // Model support comes from independent harness/provider evidence;
           // Evolve's broad input enum is not a model capability specification.

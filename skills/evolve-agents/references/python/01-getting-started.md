@@ -481,7 +481,7 @@ evolve = Evolve(
 
 | Agent | Tools and configuration |
 | --- | --- |
-| `pi` | Built-in tools are `read`, `bash`, `edit`, and `write`. MCP tools are available through the `mcp` proxy tool. `grep`, `find`, and `ls` are not enabled by default. |
+| `pi` | Built-in tools are `read`, `bash`, `edit`, and `write`. MCP tools are available through the `mcp` proxy tool. `grep`, `find`, and `ls` appear when enabled. |
 | `prime-agent` | Actions run through `ipython` in a persistent Python kernel. For stdio MCP servers, use `envVars` to name sandbox variables; literal `env` values are rejected. |
 | `dsh` | Supports stdio and streamable HTTP MCP servers. SSE servers are rejected. |
 

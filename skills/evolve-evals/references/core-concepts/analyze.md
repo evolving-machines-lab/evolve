@@ -80,7 +80,7 @@ evolve analyze --show-defaults -a codex
 evolve analyze "$JOB_ID" -a codex --watch
 ```
 
-The default analyzer is `claude`. Use `-a` to choose another built-in harness. Omit `-m` to use its default model for analyses, or choose one of its [supported models](/core-concepts/models#analysis-and-check-models).
+The default analyzer is `claude`. Use `-a` to choose another built-in harness. Omit `-m` to use its default model for analyses, or choose one of its [models](/core-concepts/models#analysis-and-check-models).
 
 The default rubric covers these questions:
 

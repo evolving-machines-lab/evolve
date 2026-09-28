@@ -87,7 +87,7 @@ codex = await client.defaults(agent="codex")
 print(codex["model_name"], codex["reasoning_effort"])
 ```
 
-Defaults include agent, model, rubric, prompt, effort, and provider. Omit `agent` for `claude` defaults. Pass it to read another harness's check model default and that model's default effort. Effort can be `null` when the harness accepts none. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
+Defaults include agent, model, rubric, prompt, effort, and provider. Omit `agent` for `claude` defaults. Pass it to read another harness's check model default and that model's default effort. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
 
 Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
 

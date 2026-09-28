@@ -17,11 +17,11 @@ Every evaluation arm **requires a model**. The default model below is the Agent 
 
 Reasoning options are checked against the exact model’s provider documentation and the harness’s native controls. Models with a thinking toggle or a token budget are labeled in the table.
 
-For custom models, options may require native harness configuration. `off` and `none` mean thinking disabled; `thinking` means enabled.
+`off` disables thinking and `thinking` enables it. `none` is a native spelling shown in some tables; the CLI and SDK take `off`. A model outside a harness's roster runs only through the Agent SDK; managed evaluations refuse it.
 
 **Note:**
 
-This draft records native support. Some Evolve effort mappings still need correction before all of these options work through the CLI and SDK.
+This page records native support. Some Evolve effort mappings still need correction before all of these options work through the CLI and SDK.
 
 ### Claude Code
 
@@ -31,7 +31,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Claude Fable 5.1 | `fable` | `low`, `medium`, `high`, `xhigh`, `max` |
 | Claude Opus 5.5 | `opus` | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -63,7 +63,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | GPT-6 Astra | `gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` |
 | GPT-6 Sol | `gpt-6-sol` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
@@ -83,7 +83,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `thinking`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Qwen 3.8 Max | `qwen3.8-max` | `off`, `low`, `medium`, `xhigh` |
 | Qwen 3.7 Plus | `qwen3.7-plus` | `off`, `thinking` |
@@ -101,7 +101,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `max`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Kimi K3 | `kimi-k3` | `low`, `high`, `max` |
 | Kimi K2.7 Code | `kimi-k2.7-code` | Always thinking; no effort levels |
@@ -126,7 +126,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
 | Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -156,7 +156,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Claude Fable 5.1 | `claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
 | Claude Opus 5.5 | `claude-opus-5-5` | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -190,7 +190,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
 | Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -219,7 +219,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
 | Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` | `low`, `medium`, `high`, `xhigh`, `max` |
@@ -248,7 +248,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
 | DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
@@ -266,7 +266,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | GLM 5.3 | `openrouter/z-ai/glm-5.3` | `low`, `high`, `max` |
 | GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` | `low`, `high`, `max` |
@@ -285,7 +285,7 @@ This draft records native support. Some Evolve effort mappings still need correc
 
 **Default effort:** `high`
 
-| Model | Model string | Supported reasoning efforts |
+| Model | Model string | Native reasoning efforts |
 | --- | --- | --- |
 | Gemini 3.8 Flash | `gemini-3.8-flash` | `low`, `medium`, `high` |
 | Gemini 3.5 Flash-Lite | `gemini-3.5-flash-lite` | `low`, `medium`, `high` |
@@ -374,7 +374,7 @@ Repeat `-m` to compare models on one harness. `--effort` applies to every arm. T
 
 The Agent SDK uses `model` and TypeScript `reasoningEffort` / Python `reasoning_effort` in its agent configuration. It can omit the model; managed evaluation arms cannot.
 
-The tables above describe Evolve model access. Direct provider credentials have their own available models. In particular, the `fireworks/` options on OpenCode, DeepSeek Harness, and Z Code require Evolve model access.
+The tables above describe Evolve model access. Direct provider credentials have their own available models. On Claude Code and Droid, the `glm-5.3`, `glm-5.3-flash`, `openrouter/…` and `fireworks/…` rows are gateway routes, and the `fireworks/` options on OpenCode, DeepSeek Harness, and Z Code require Evolve model access.
 
 See the [Agent SDK manual](https://github.com/evolving-machines-lab/evolve/blob/main/docs-agents/index.md).
 

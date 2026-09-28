@@ -93,7 +93,7 @@ print(codex["model_name"], codex["reasoning_effort"])
 
 The response includes `agent`, `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
 
-Omit `agent` for `claude` defaults. Pass it to read another harness's analysis model default and that model's default effort. Effort can be `null` when the harness accepts none. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
+Omit `agent` for `claude` defaults. Pass it to read another harness's analysis model default and that model's default effort. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 

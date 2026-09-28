@@ -114,7 +114,7 @@ evolve run -c job.yaml --skill ./my-skill
 
 Skills accept `skills.sh/owner/repo[/skill]`, `org/repo[@ref]`, a Git URL, `upload:<id>`, or `name:<skill-name>`. Local directories upload before the job starts.
 
-Unsupported presets and native configuration settings are refused. See [Agents](/core-concepts/agents) and [Skills](/core-concepts/skills).
+Unsupported effort, presets, or native configuration settings are refused. See [Agents](/core-concepts/agents) and [Skills](/core-concepts/skills).
 
 ### Secrets and verifier environment
 

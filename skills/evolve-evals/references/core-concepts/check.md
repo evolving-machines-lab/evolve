@@ -63,7 +63,7 @@ evolve check --show-defaults -a codex
 evolve check ./tasks -a codex --watch
 ```
 
-The default checker is `claude`. Use `-a` to choose another built-in harness. Omit `-m` to use its default model for checks, or choose one of its [supported models](/core-concepts/models#analysis-and-check-models).
+The default checker is `claude`. Use `-a` to choose another built-in harness. Omit `-m` to use its default model for checks, or choose one of its [models](/core-concepts/models#analysis-and-check-models).
 
 ### Use your own rubric or prompt
 
