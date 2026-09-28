@@ -1,72 +1,421 @@
 ---
 title: "Models"
-description: "Select models, compare them, and control metered spend."
+description: "Exact model names, reasoning inputs, and defaults for every harness."
 ---
 
-`-m` selects the model for an evaluation arm. Every arm must name a model; there is no default.
+Choose a harness, then copy a model name from its tab. Use the same model string in the CLI, TypeScript, and Python.
 
-```bash
-evolve run -d harbor-examples@1.0 -i hello-world \
+| Setting | CLI → managed SDK |
+| --- | --- |
+| Harness | `-a` → `agents[].name` |
+| Model | `-m` → `agents[].model_name` |
+| Reasoning effort | `--effort` → `agents[].reasoning_effort` |
+
+Every evaluation arm **requires a model**. Omit effort to use the harness default below.
+
+## Model and effort reference
+
+These are the inputs managed evaluations accept. Effort behavior depends on the harness and model; accepted words do not always represent distinct reasoning levels.
+
+### Claude Code
+
+**Harness:** `claude` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| Claude Fable 5.1 | `fable` |
+| Claude Opus 5.5 | `opus` |
+| Claude Sonnet 5 | `sonnet` |
+| Claude Haiku 4.5 | `haiku` |
+| GLM 5.3 | `glm-5.3` |
+| GLM 5.3 Flash | `glm-5.3-flash` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
+
+**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+
+Evolve forwards the selected effort. The model determines which levels it supports.
+
+### Other accepted model spellings
+
+| Model string | Also accepted |
+| --- | --- |
+| `fable` | `claude-fable-5-1` |
+| `opus` | `claude-opus-5-5` |
+| `sonnet` | `claude-sonnet-5` |
+| `haiku` | `claude-haiku-4-5-20251001` |
+
+### Codex
+
+**Harness:** `codex` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| GPT-6 Astra | `gpt-6-astra` |
+| GPT-6 Sol | `gpt-6-sol` |
+| GPT-5.6 Terra | `gpt-5.6-terra` |
+| GPT-6 Luna | `gpt-6-luna` |
+| GPT-5.3 Codex | `gpt-5.3-codex` |
+
+**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+
+Evolve forwards the selected effort. The model determines which levels it supports.
+
+### Qwen Code
+
+**Harness:** `qwen` · **Default effort:** `thinking`
+
+| Model | Model string |
+| --- | --- |
+| Qwen 3.8 Max | `qwen3.8-max` |
+| Qwen 3.7 Plus | `qwen3.7-plus` |
+| Qwen 3.8 Flash | `qwen3.8-flash` |
+
+**Reasoning effort**
+
+| Effort input | Behavior |
+| --- | --- |
+| `thinking` or `medium` | Enable thinking |
+| `off` or `minimal` | Disable thinking |
+
+Qwen has an on/off control. `low`, `high`, `xhigh`, and `max` are rejected.
+
+### Kimi Code
+
+**Harness:** `kimi` · **Default effort:** `max`
+
+| Model | Model string |
+| --- | --- |
+| Kimi K3 | `kimi-k3` |
+| Kimi K2.7 Code | `kimi-k2.7-code` |
+| Kimi K3 Raptor | `kimi-k3-raptor` |
+
+For **Kimi K3**, use `low`, `high`, or `max`. K3 keeps thinking enabled. Omit effort to use `max`.
+
+### All accepted effort inputs
+
+Evolve accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `thinking` for the Kimi harness.
+
+`off` and `minimal` request thinking off. `thinking` requests thinking without an explicit level. Other values request the named level. Model support still applies; the broader input list does not add levels to K3.
+
+### Other accepted model spellings
+
+| Model string | Also accepted |
+| --- | --- |
+| `kimi-k3` | `moonshot/kimi-k3` |
+| `kimi-k2.7-code` | `moonshot/kimi-k2.7-code` |
+
+### OpenCode
+
+**Harness:** `opencode` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` |
+| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` |
+| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` |
+| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` |
+| GPT-6 Astra | `openrouter/openai/gpt-6-astra` |
+| GPT-6 Sol | `openrouter/openai/gpt-6-sol` |
+| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` |
+| GPT-6 Luna | `openrouter/openai/gpt-6-luna` |
+| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` |
+| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` |
+| Kimi K3 | `openrouter/moonshotai/kimi-k3` |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
+
+**Reasoning effort**
+
+| Effort input | Requested behavior |
+| --- | --- |
+| `minimal` or `low` | Minimal reasoning |
+| `medium` or `thinking` | Medium reasoning |
+| `high` | High reasoning |
+| `max` or `xhigh` | Maximum reasoning |
+| `off` | No explicit reasoning level |
+
+`off` leaves reasoning to the model; it does not guarantee that thinking is disabled.
+
+### Droid
+
+**Harness:** `droid` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| Claude Fable 5.1 | `claude-fable-5.1` |
+| Claude Opus 5.5 | `claude-opus-5-5` |
+| Claude Sonnet 5 | `claude-sonnet-5` |
+| Claude Haiku 4.5 | `claude-haiku-4-5` |
+| GPT-5.6 Terra | `gpt-5.6-terra` |
+| Gemini 3.8 Flash | `gemini-3.8-flash` |
+| Qwen 3.8 Max | `qwen3.8-max` |
+| Kimi K3 | `kimi-k3` |
+| GLM 5.3 | `glm-5.3` |
+| GLM 5.3 Flash | `glm-5.3-flash` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
+
+**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+
+Evolve forwards the selected effort. The model determines which levels it supports. GPT-6 models are not available on this harness.
+
+### Other accepted model spellings
+
+| Model string | Also accepted |
+| --- | --- |
+| `claude-fable-5.1` | `claude-fable-5-1` |
+| `claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
+
+### pi
+
+**Harness:** `pi` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` |
+| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` |
+| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` |
+| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` |
+| GPT-6 Astra | `openrouter/openai/gpt-6-astra` |
+| GPT-6 Sol | `openrouter/openai/gpt-6-sol` |
+| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` |
+| GPT-6 Luna | `openrouter/openai/gpt-6-luna` |
+| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` |
+| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` |
+| Kimi K3 | `openrouter/moonshotai/kimi-k3` |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+
+**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+
+`thinking` requests `medium`. Other values are forwarded as named; the model determines the available reasoning behavior.
+
+### Prime Agent
+
+**Harness:** `prime-agent` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` |
+| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` |
+| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` |
+| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` |
+| GPT-6 Astra | `openrouter/openai/gpt-6-astra` |
+| GPT-6 Sol | `openrouter/openai/gpt-6-sol` |
+| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` |
+| GPT-6 Luna | `openrouter/openai/gpt-6-luna` |
+| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` |
+| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` |
+| Kimi K3 | `openrouter/moonshotai/kimi-k3` |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+
+**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+
+`thinking` requests `medium`. Other values are forwarded as named; the model determines the available reasoning behavior.
+
+### DeepSeek Harness
+
+**Harness:** `dsh` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
+| DeepSeek V4 Pro | `openrouter/deepseek/deepseek-v4-pro-0813` |
+
+**Effort inputs:** `low`, `medium`, `high`.
+
+Every other effort value is rejected. DeepSeek V4 Pro has no `fireworks/` model option.
+
+### Z Code
+
+**Harness:** `zcode` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
+| GLM 5.3 | `fireworks/glm-5.3` |
+| GLM 5.3 Flash | `fireworks/glm-5.3-flash` |
+
+**Reasoning effort**
+
+| Effort input | Requested behavior |
+| --- | --- |
+| `low` | Low reasoning |
+| `medium` or `thinking` | Medium reasoning |
+| `high`, `xhigh`, or `max` | High reasoning |
+| `off` or `minimal` | No explicit reasoning level |
+
+`off` and `minimal` omit the reasoning setting. They do not guarantee that the model disables thinking.
+
+### Antigravity
+
+**Harness:** `antigravity` · **Default effort:** `high`
+
+| Model | Model string |
+| --- | --- |
+| Gemini 3.8 Flash | `gemini-3.8-flash` |
+| Gemini 3.5 Flash-Lite | `gemini-3.5-flash-lite` |
+| Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` |
+
+**Effort levels:** `low`, `medium`, `high`, `max`.
+
+Thinking cannot be disabled through this harness.
+
+### Other accepted effort inputs
+
+| Input | Applied level |
+| --- | --- |
+| `off` or `minimal` | `low` |
+| `thinking` | `medium` |
+| `xhigh` | `max` |
+
+### Other accepted model spellings
+
+| Model string | Also accepted |
+| --- | --- |
+| `gemini-3.8-flash` | `vertex_ai/gemini-3.8-flash` |
+| `gemini-3.5-flash-lite` | `vertex_ai/gemini-3.5-flash-lite` |
+| `gemini-3.1-pro-preview` | `vertex_ai/gemini-3.1-pro-preview` |
+
+**Note:**
+
+`gemini` is retired. Use `antigravity` for new runs. Records of earlier Gemini CLI runs remain readable.
+
+## Use your selection
+
+This example runs Codex with GPT-6 Luna at `high` effort.
+
+```bash CLI
+evolve run \
+  -d harbor-examples@1.0 \
+  -i hello-world \
   -a codex \
-  -m gpt-6-luna -m gpt-5.6-terra \
-  --max-trial-spend 1 --max-retries 0 --watch
+  -m gpt-6-luna \
+  --effort high \
+  --max-trial-spend 1 \
+  --max-retries 0 \
+  --watch
 ```
 
-Repeating `-m` creates one arm per model. This command runs the selected task once with each model.
+```ts TypeScript
+import { jobs } from "@evolvingmachines/evolve";
 
-## Find a supported model
+const job = await jobs().start({
+  datasets: [{
+    name: "harbor-examples",
+    version: "1.0",
+    task_names: ["hello-world"],
+  }],
+  agents: [{
+    name: "codex",
+    model_name: "gpt-6-luna",
+    reasoning_effort: "high",
+  }],
+  max_trial_spend_usd: 1,
+  retry: { max_retries: 0 },
+});
+```
 
-Each harness has its own model names. Read the live roster instead of assuming a name works with every harness:
+```python Python
+import asyncio
+from evolve import jobs
+
+
+async def main():
+    job = await jobs().start(
+        datasets=[{
+            "name": "harbor-examples",
+            "version": "1.0",
+            "task_names": ["hello-world"],
+        }],
+        agents=[{
+            "name": "codex",
+            "model_name": "gpt-6-luna",
+            "reasoning_effort": "high",
+        }],
+        max_trial_spend_usd=1,
+        retry={"max_retries": 0},
+    )
+    print(job.id)
+
+
+asyncio.run(main())
+```
+
+Repeat `-m` to compare models on one harness. `--effort` applies to every arm. To compare different efforts, set `reasoning_effort` separately on each arm in a [job config](/cli-reference/run) or the [SDK](/sdk-reference/jobs).
+
+### Using the Agent SDK instead of managed evaluations
+
+The Agent SDK uses `model` and TypeScript `reasoningEffort` / Python `reasoning_effort` in its agent configuration. It can omit the model; managed evaluation arms cannot.
+
+The effort acceptance rules above apply to managed evaluations. The Agent SDK validates inputs differently; see its manual for direct configuration.
+
+| Harness | Agent SDK default model |
+| --- | --- |
+| `claude` | `opus` |
+| `codex` | `gpt-6-sol` |
+| `qwen` | `qwen3.8-max` |
+| `kimi` | `kimi-k3` |
+| `opencode`, `pi`, `prime-agent` | `openrouter/anthropic/claude-opus-5.5` |
+| `droid` | `claude-opus-5-5` |
+| `dsh` | `openrouter/deepseek/deepseek-v4.1-flash` |
+| `zcode` | `openrouter/z-ai/glm-5.3` |
+| `antigravity` | `gemini-3.8-flash` |
+
+The tables above describe Evolve model access. Direct provider credentials have their own available models. In particular, the `fireworks/` options on OpenCode, DeepSeek Harness, and Z Code require Evolve model access.
+
+See the [Agent SDK manual](https://github.com/evolving-machines-lab/evolve/blob/main/docs-agents/index.md).
+
+### Read the current model list
 
 ```bash
 curl -sS https://dashboard.evolvingmachines.ai/api/meta
 ```
 
-The `agents` list includes each harness's models, effort support, and configuration capabilities. The same document is available through [`meta()` in both SDKs](/sdk-reference/meta), without authentication.
+No authentication is required. `agents[].models` lists accepted model aliases and IDs; `agents[].default_effort` gives the harness default. `analyze.agents[].reasoning_efforts` lists each built-in harness's accepted efforts, including DSH's smaller set.
+
+The same document is available through [`meta()` in both SDKs](/sdk-reference/meta).
 
 ## Model access and spend
 
-```text
-1. Agent harness
-         ↓
-2. Evolve gateway
-   Meter usage against the cap
-         ↓
-3. Model provider
-```
+An `EVOLVE_API_KEY` supplies platform model access. `--max-trial-spend` caps agent model spend **per trial attempt**. Verifier judges and trace analysis have separate budgets. See [job costs](/core-concepts/jobs#spend-and-retries).
 
-An `EVOLVE_API_KEY` supplies platform model access. `--max-trial-spend` limits the agent’s metered spend per trial attempt. Verifier judges and trace analysis have separate budgets. See [job costs](/core-concepts/jobs#spend-and-retries).
+### Provider keys and metering
 
-Requests that bypass the gateway with separately supplied credentials are not metered by Evolve. A task's `no-network` agent policy restricts model access to the platform gateway.
+With your own supported provider key, model requests bill that provider account. Evolve gateway metering and the trial cap still apply. Job creation still requires a positive platform credit balance.
 
-If you enable your own provider key, supported model requests bill that provider account. Gateway metering and the cap still apply. Job creation still rejects accounts with an exhausted platform credit balance.
-
-## Reasoning effort
-
-`--effort` applies to every arm in the CLI run. Accepted values depend on the harness:
-
-| Harness behavior | How to configure it |
-| --- | --- |
-| Supports effort levels | Use a value from `limits.job.reasoning_efforts` |
-| Qwen thinking mode | Use `off` or `minimal` to disable thinking; `medium` or `thinking` to enable it |
-| Custom agent | Configure reasoning in its run command |
-
-When omitted, Evolve resolves the harness's default and records it in `agent_info.reasoning_effort`. The same harness and model at different efforts are distinct arms.
-
-In `/api/meta`, `agents[].effort_support` identifies the mode: `level`, `binary`, or `none`. Qwen's accepted values are listed in `limits.job.binary_effort_values`.
+Requests that bypass the gateway with separate credentials are not metered by Evolve. A task's `no-network` agent policy restricts model access to the platform gateway.
 
 ## Analysis and check models
 
-Trace analysis and task checks run on Claude Code unless you choose another agent. Select their agent and model separately from the evaluation arms:
+Analysis and task checks choose their agent and model separately from the evaluation arms.
 
-| Operation | Agent option | Model option |
-| --- | --- | --- |
-| `evolve analyze` | `-a` | `-m` |
-| `evolve check` | `-a` | `-m` |
-| Analysis attached to `evolve run` | `--analyze-agent` | `--analyze-model` |
+| Operation | Agent / model options |
+| --- | --- |
+| `evolve analyze` | `-a` / `-m` |
+| `evolve check` | `-a` / `-m` |
+| Analysis during `evolve run` | `--analyze-agent` / `--analyze-model` |
 
-Omit the model and the agent runs its default: `openrouter/deepseek/deepseek-v4.1-flash` on every agent whose models include it, otherwise that agent's own default model. A model you name must be one of the chosen agent's models. In `/api/meta`, `analyze.agents` lists the agents these commands accept, each agent's default model and models, and the effort each model runs at when you pass none. `evolve analyze --show-defaults -a <agent>` prints what that agent runs under.
+The default harness is `claude`. An omitted model uses `openrouter/deepseek/deepseek-v4.1-flash` when the selected harness offers it; otherwise it uses that harness's default model. A named model must belong to the selected harness's table above.
+
+```bash Analysis defaults
+evolve analyze --show-defaults -a codex
+```
+
+```bash Check defaults
+evolve check --show-defaults -a codex
+```
+
+Their effort default can differ from evaluation arms: the exact model string `glm-5.3-flash` defaults to `max` for analysis and checks. Read `analyze.agents[].models[].default_reasoning_effort` in [metadata](/sdk-reference/meta) for each model's default.
 
 **[Configure a run](/cli-reference/run)**
 
-All model, effort, concurrency, and budget options.
+Model comparisons, effort, concurrency, and spend controls.

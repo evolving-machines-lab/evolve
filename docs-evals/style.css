@@ -28,11 +28,43 @@ samp {
   margin-block: 1.25rem;
 }
 
+/* Keep every harness visible in the model selector. */
+.model-reference [role="tablist"] {
+  flex-wrap: wrap;
+  column-gap: 1rem;
+  overflow: visible;
+}
+
 /* On a phone a long chip wraps at its spaces rather than widening the page. */
 @media (max-width: 640px) {
   :not(pre) > code {
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  /* Give copyable model IDs the full width of the screen. */
+  .model-reference table,
+  .model-reference tbody,
+  .model-reference tr,
+  .model-reference td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .model-reference thead {
+    display: none;
+  }
+
+  .model-reference td:first-child {
+    padding-top: 0.75rem;
+    padding-bottom: 0.25rem;
+    font-weight: 500;
+  }
+
+  .model-reference td:last-child {
+    padding-top: 0;
+    padding-bottom: 0.75rem;
   }
 
   /* Error identifiers need their full width; put their explanation below. */

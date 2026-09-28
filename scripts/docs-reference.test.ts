@@ -100,6 +100,60 @@ test("every known error has exactly one explanation in the error catalog", () =>
   }
 });
 
+test("model tabs match the supported models, efforts, and defaults", () => {
+  const { harnesses } = JSON.parse(read("packages/sdk-ts/harness-capabilities.json")) as {
+    harnesses: Record<string, {
+      retired?: boolean;
+      models: { alias: string; modelId: string }[];
+      efforts: string[];
+      defaultEffort: string;
+    }>;
+  };
+  const page = read("docs-evals/core-concepts/models.mdx");
+  const tabEntries = [...page.matchAll(/<Tab title="[^"]+">([\s\S]*?)<\/Tab>/g)]
+    .map((match) => {
+      const body = match[1];
+      const name = body.match(/\*\*Harness:\*\* `([^`]+)`/)?.[1];
+      assert.ok(name, "Each harness tab must name its CLI/SDK identifier");
+      return [name, body] as const;
+    });
+  const tabs = new Map(tabEntries);
+  assert.equal(tabEntries.length, tabs.size, "Each harness must have exactly one tab");
+  const active = Object.entries(harnesses).filter(([, spec]) => !spec.retired);
+  assert.deepEqual([...tabs.keys()].sort(), active.map(([name]) => name).sort());
+  const codeValues = (text: string) => [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+  const sorted = (values: string[]) => [...new Set(values)].sort();
+
+  for (const [name, spec] of active) {
+    const body = tabs.get(name)!;
+    const models: string[] = [];
+    const alternatives: [string, string][] = [];
+    const efforts = [...body.matchAll(/(?:\*\*Effort (?:inputs|levels):\*\*|Evolve accepts) ([^\n]+)/g)]
+      .flatMap((match) => codeValues(match[1]));
+    for (const table of body.matchAll(/^[ \t]*\|([^\n]+)\|[ \t]*\n[ \t]*\|[ :|\-]+\|[ \t]*\n((?:[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)/gm)) {
+      const columns = table[1].split("|").map((column) => column.trim());
+      for (const row of table[2].trim().split("\n").filter((line) => line.trim().startsWith("|"))) {
+        const cells = row.trim().slice(1, -1).split("|");
+        if (columns[0] === "Model") models.push(...codeValues(cells[1]));
+        if (columns[1] === "Also accepted") {
+          const aliases = codeValues(cells[0]);
+          const modelIds = codeValues(cells[1]);
+          assert.equal(aliases.length, 1, `${name}: alternate spelling needs one alias`);
+          assert.equal(modelIds.length, 1, `${name}: alternate spelling needs one model ID`);
+          alternatives.push([aliases[0], modelIds[0]]);
+        }
+        if (columns[0] === "Effort input" || columns[0] === "Input") efforts.push(...codeValues(cells[0]));
+      }
+    }
+    assert.deepEqual(models.sort(), spec.models.map((model) => model.alias).sort(), `${name}: model strings, each listed once`);
+    assert.deepEqual(alternatives.sort(), spec.models
+      .filter((model) => model.alias !== model.modelId)
+      .map((model) => [model.alias, model.modelId]).sort(), `${name}: alternate spellings, each paired with its alias once`);
+    assert.deepEqual(sorted(efforts), sorted(spec.efforts), `${name}: accepted effort inputs`);
+    assert.equal(body.match(/\*\*Default effort:\*\* `([^`]+)`/)?.[1], spec.defaultEffort, `${name}: default effort`);
+  }
+});
+
 const claimedHeadings = new Map<string, Set<string>>();
 for (const [client, page] of Object.entries(clients)) {
   test(`${client} has a reference section for every TypeScript and Python method`, () => {

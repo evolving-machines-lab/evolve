@@ -27,6 +27,12 @@ One arm
 | `zcode` | Z Code |
 | `antigravity` | Antigravity CLI |
 
+Use the [model and effort reference](/core-concepts/models#model-and-effort-reference) to copy the exact strings for each harness. Model names are not interchangeable across harnesses.
+
+<Note>
+  `gemini` is retired. Select `antigravity` for new runs; historical Gemini CLI records remain readable.
+</Note>
+
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \
   -a codex -m gpt-6-luna \
@@ -39,14 +45,16 @@ Use `-a name@version` to pin a harness release. Without a version, Evolve resolv
 
 | Option | Purpose |
 | --- | --- |
-| `--effort <value>` | Set supported reasoning effort |
+| `--effort <value>` | Set the [harness's accepted effort](/core-concepts/models#model-and-effort-reference) on every arm |
 | `--preset no-internet` | Disable vendor server-side web tools |
 | `--preset pinned-context` | Set the supported context window to 200,000 tokens |
 | `--ak config=<path-or-JSON>` | Supply a native harness configuration |
 
 Presets and native config are supported on Claude Code and Codex. The platform applies routing settings over your config, and preset settings take precedence where they overlap. Routing, billing, credential, and environment overrides are rejected.
 
-The live [capability document](/sdk-reference/meta) lists each harness's supported options. Unsupported effort or configuration is rejected when the job is created.
+Omit effort to use the harness default: `high`, except Kimi Code uses `max` and Qwen Code uses `thinking`. Every arm still needs an explicit model.
+
+The live [capability document](/sdk-reference/meta) lists each harness's supported options. An effort outside the harness's accepted input list or an unsupported configuration is rejected when the job is created.
 
 <Note>
   `no-internet` disables the harness's server-side web tools. The task's [network policy](/core-concepts/task-config#network-access) controls network access from the sandbox.

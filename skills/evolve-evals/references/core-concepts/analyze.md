@@ -69,11 +69,18 @@ reviewed = await jobs().watch_analysis(finished.id)
 
 ## Rubrics and prompts
 
-Read the current defaults before customizing:
+Read the current rubric, prompt, model, effort, and provider before customizing:
 
-```bash
+```bash Default analyzer
 evolve analyze --show-defaults
 ```
+
+```bash Choose an analyzer
+evolve analyze --show-defaults -a codex
+evolve analyze "$JOB_ID" -a codex --watch
+```
+
+The default analyzer is `claude`. Use `-a` to choose another built-in harness. Omit `-m` to use its default model for analyses, or choose one of its [supported models](/core-concepts/models#analysis-and-check-models).
 
 The default rubric covers these questions:
 
@@ -104,7 +111,7 @@ evolve analyze "$JOB_ID" -r rubric.toml -p prompt.txt --watch
 
 An analyzer prompt can use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. Evolve appends the required output format.
 
-Use `-a`, `-m`, `--effort`, `-e`, and `-n` for agent, model, effort, provider, and concurrency. The analyzer runs on `claude` unless `-a` names another agent; the model must be one of that agent's [models](/core-concepts/models#analysis-and-check-models). On job creation, use the corresponding `--analyze-*` flags. See the [full reference](/cli-reference/analyze).
+Use `--effort`, `-e`, and `-n` to set reasoning effort, sandbox provider, and concurrency. On job creation, use the corresponding `--analyze-*` flags. See the [full reference](/cli-reference/analyze).
 
 ## The result
 
@@ -117,7 +124,34 @@ Each criterion has an outcome, explanation, and evidence.
 | `not_applicable` | The criterion has no subject in this trial. |
 | `unknown` | The available record cannot decide it. |
 
-The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes. Under a custom rubric the chip is `flagged` when any criterion fails, `unclear` when none fails but at least one is unknown, and `clean` otherwise. Under a rubric with the default criterion names the chip reads only `score_is_earned`, `score_is_correct`, `task_was_fair`, `report_is_truthful` and `environment_worked`: a fail on the first four is `flagged`, else a failed `environment_worked` is `env_fault`, else an unknown on any of the five or a not applicable score criterion is `unclear`, else `clean`; the other two criteria are facts about the trial and never move the chip. Read the criteria and compute what you need from them. A missing or extra criterion makes the analysis result invalid. A run without a valid result can retry once.
+The API returns the findings without an overall verdict. Use the criterion outcomes and evidence to decide what to do next.
+
+The dashboard computes a short summary label from those outcomes. Its rules depend on whether the result has exactly the default criterion names.
+
+### Default rubric: read the dashboard summary
+
+The two score criteria are `score_is_earned` and `score_is_correct`. Apply the first matching rule:
+
+| Rule | Summary label |
+| --- | --- |
+| A score criterion, `task_was_fair`, or `report_is_truthful` fails. | **Flagged** |
+| `environment_worked` fails. | **Env fault** |
+| Any of these five criteria is unknown, or a score criterion is not applicable. | **Unclear** |
+| None of the above. | **Clean** |
+
+`ended_by_its_own_decision` and `worked_as_for_a_real_user` describe the trial but do not change this label. Read their findings even when the summary is **Clean**.
+
+### Other rubrics: read the dashboard summary
+
+Apply the first matching rule across all criteria:
+
+| Rule | Summary label |
+| --- | --- |
+| Any criterion fails. | **Flagged** |
+| Any criterion is unknown. | **Unclear** |
+| Neither of the above. | **Clean** |
+
+A missing or extra criterion makes the analysis result invalid. A run without a valid result can retry once.
 
 The analysis's `estimated_cost_usd` and the job's `stats.analysis.cost_usd` are separate from evaluation spend.
 
