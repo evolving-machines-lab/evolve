@@ -87,7 +87,9 @@ codex = await client.defaults(agent="codex")
 print(codex["model_name"], codex["reasoning_effort"])
 ```
 
-Defaults include agent, model, rubric, prompt, effort, and provider. Pass an agent to read what that agent runs under when you name no model: its default model and the effort that model takes. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
+Defaults include agent, model, rubric, prompt, effort, and provider. Omit `agent` for `claude` defaults. Pass it to read another harness's check model default and that model's default effort. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
+
+Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
 
 ## Understand the result
 
@@ -114,7 +116,7 @@ Each task can be `queued`, `running`, `completed`, or `failed`. The check become
 
 **Note:**
 
-Evolve derives no verdict from a result. Read the criterion outcomes and evidence; the default rubric's execution criteria say whether the checker ran the task.
+The API returns no overall verdict or separate execution flag. Read `checks` for outcomes and evidence. An unknown execution criterion leaves that part of the task's runtime behavior unresolved; see [how to read a check result](/core-concepts/check#the-result).
 
 ## Read and follow checks
 
@@ -123,7 +125,7 @@ Evolve derives no verdict from a result. Read the criterion outcomes and evidenc
 | `get(id)` | Full check and its task results |
 | `list(...)` | `scope`, `status` list, `dataset`, `limit`, `cursor`; paginated handle |
 | `watch(id, ...)` | Wait until completed; callback on changes |
-| `defaults({ agent })` | Current policy and editable prompt; with an agent, what that agent runs under |
+| `defaults({ agent })` | Rubric, editable prompt, and settings for the selected harness |
 
 Watch options are `onProgress`, `pollIntervalMs`, `signal` in TypeScript; `on_progress`, `poll_interval_s`, `timeout_s` in Python. Polling starts at 2 seconds and slows to 30 seconds while unchanged.
 

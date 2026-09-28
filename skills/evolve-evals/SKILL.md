@@ -39,7 +39,7 @@ Hosted requests use `EVOLVE_API_KEY`. Start with Installation if authentication 
 | [Datasets](references/core-concepts/datasets.md) | Browse ready-to-run tasks or publish your own versioned collection. |
 | [Jobs](references/core-concepts/jobs.md) | Run a task set across agents and models. Follow each attempt to its result. |
 | [Agents](references/core-concepts/agents.md) | Choose a built-in coding-agent harness or register your own. |
-| [Models](references/core-concepts/models.md) | Select models, compare them, and control metered spend. |
+| [Models](references/core-concepts/models.md) | Exact model names, per-model reasoning options, and Evolve defaults. |
 | [Sandboxes](references/core-concepts/sandboxes.md) | Choose a cloud provider and understand how task requirements affect placement. |
 | [Agent skills](references/core-concepts/skills.md) | Give evaluated agents reusable instructions and supporting files. |
 | [Secrets](references/core-concepts/secrets.md) | Store a credential once and attach it to evaluation jobs by name. |

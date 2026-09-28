@@ -100,6 +100,72 @@ test("every known error has exactly one explanation in the error catalog", () =>
   }
 });
 
+test("model tabs cover every model with per-model effort guidance and defaults", () => {
+  const { harnesses } = JSON.parse(read("packages/sdk-ts/harness-capabilities.json")) as {
+    harnesses: Record<string, {
+      retired?: boolean;
+      models: { alias: string; modelId: string }[];
+      defaultEffort: string;
+      defaultModel: string;
+    }>;
+  };
+  const page = read("docs-evals/core-concepts/models.mdx");
+  const tabEntries = [...page.matchAll(/<Tab title="[^"]+">([\s\S]*?)<\/Tab>/g)]
+    .map((match) => {
+      const body = match[1];
+      const name = body.match(/\*\*Harness:\*\* `([^`]+)`/)?.[1];
+      assert.ok(name, "Each harness tab must name its CLI/SDK identifier");
+      return [name, body] as const;
+    });
+  const tabs = new Map(tabEntries);
+  assert.equal(tabEntries.length, tabs.size, "Each harness must have exactly one tab");
+  const active = Object.entries(harnesses).filter(([, spec]) => !spec.retired);
+  assert.deepEqual([...tabs.keys()].sort(), active.map(([name]) => name).sort());
+  const codeValues = (text: string) => [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+
+  for (const [name, spec] of active) {
+    const body = tabs.get(name)!;
+    const models: string[] = [];
+    const alternatives: [string, string][] = [];
+    const beforeTable = body.slice(0, body.indexOf("| Model |"));
+    assert.equal(beforeTable.match(/\*\*Default model:\*\* `([^`]+)`/)?.[1], spec.defaultModel,
+      `${name}: show the Agent SDK default model above the table`);
+    assert.equal(beforeTable.match(/\*\*Default effort:\*\* `([^`]+)`/)?.[1], spec.defaultEffort,
+      `${name}: show the configured default effort above the table`);
+    for (const table of body.matchAll(/^[ \t]*\|([^\n]+)\|[ \t]*\n[ \t]*\|[ :|\-]+\|[ \t]*\n((?:[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)/gm)) {
+      const columns = table[1].split("|").map((column) => column.trim());
+      for (const row of table[2].trim().split("\n").filter((line) => line.trim().startsWith("|"))) {
+        const cells = row.trim().slice(1, -1).split("|");
+        if (columns[0] === "Model") {
+          const model = codeValues(cells[1]);
+          assert.equal(model.length, 1, `${name}: each model row needs one runtime string`);
+          models.push(model[0]);
+          assert.equal(columns[2], "Native reasoning efforts", `${name}: effort belongs beside each model`);
+          assert.ok(cells[2]?.trim(), `${name}/${model[0]}: missing effort guidance`);
+          // Model support comes from independent harness/provider evidence;
+          // Evolve's broad input enum is not a model capability specification.
+          assert.doesNotMatch(cells[2], /not verified|not applied|configured|default ignored/i,
+            `${name}/${model[0]}: resolve the model contract before documenting it`);
+          assert.doesNotMatch(row, /SDK default|\(default\)|model-default/,
+            `${name}/${model[0]}: defaults belong above the table`);
+        }
+        if (columns[1] === "Also accepted") {
+          const aliases = codeValues(cells[0]);
+          const modelIds = codeValues(cells[1]);
+          assert.equal(aliases.length, 1, `${name}: alternate spelling needs one alias`);
+          assert.equal(modelIds.length, 1, `${name}: alternate spelling needs one model ID`);
+          alternatives.push([aliases[0], modelIds[0]]);
+        }
+      }
+    }
+    assert.deepEqual(models.sort(), spec.models.map((model) => model.alias).sort(), `${name}: model strings, each listed once`);
+    assert.deepEqual(alternatives.sort(), spec.models
+      .filter((model) => model.alias !== model.modelId)
+      .map((model) => [model.alias, model.modelId]).sort(), `${name}: alternate spellings, each paired with its alias once`);
+    assert.doesNotMatch(body, /\*\*Effort (?:inputs|levels):\*\*/, `${name}: do not replace per-model guidance with a harness-wide enum`);
+  }
+});
+
 const claimedHeadings = new Map<string, Set<string>>();
 for (const [client, page] of Object.entries(clients)) {
   test(`${client} has a reference section for every TypeScript and Python method`, () => {

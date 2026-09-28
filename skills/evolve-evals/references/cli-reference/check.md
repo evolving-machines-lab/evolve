@@ -46,7 +46,7 @@ evolve check --show-defaults
 | `--name <name>` | Check label. Defaults to the acceptance timestamp. |
 | `-a`, `--agent <name>` | Agent the checker runs on. Default `claude`. |
 | `-m`, `--model <name>` | Checker model, from that agent's models. Default: the agent's default model. |
-| `--effort <value>` | Reasoning effort. |
+| `--effort <value>` | Reasoning effort for the selected model. See the [model reference](/core-concepts/models#model-and-effort-reference). |
 | `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
 | `-p`, `--prompt <path>` | Replacement prompt text file. |
 | `-e`, `--env <provider>` | Checker sandbox provider. |

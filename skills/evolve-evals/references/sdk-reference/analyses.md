@@ -91,7 +91,9 @@ codex = await analyses().defaults(agent="codex")
 print(codex["model_name"], codex["reasoning_effort"])
 ```
 
-The response includes `agent`, `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text. Pass an agent to read what that agent runs under when you name no model: its default model and the effort that model takes.
+The response includes `agent`, `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
+
+Omit `agent` for `claude` defaults. Pass it to read another harness's analysis model default and that model's default effort. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
@@ -110,7 +112,9 @@ async for result in analyses().list(job=job_id):
 
 List options: `scope`, `job`, `status` list, `limit`, `cursor`. Status values are `queued`, `running`, `completed`, `failed`.
 
-The latest analysis also appears on `trial.analysis`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence. Evolve derives no verdict from them; compute what you need from the criteria.
+The latest analysis also appears on `trial.analysis`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence.
+
+The API returns no overall verdict. Use `checks` for your own result handling; the dashboard's [summary label](/core-concepts/analyze#the-result) is computed from those outcomes.
 
 ## Inspect the analyzer run
 

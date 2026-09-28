@@ -1,6 +1,6 @@
 # Evolve TypeScript SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [Pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -41,14 +41,14 @@ Evolve auto-resolves API keys and sandbox providers from environment variables �
 import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
-    .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
-    .withBrowser()  // optional; defaults to remote managed agent-browser automation in Gateway mode
-    .withSkills(["anthropics/skills", "./my-skill"])  // skills.sh / git / local references
-    .withIntegrations({ userId: "root", apps: ["gmail", "notion"] });  // optional; managed integrations in Gateway mode
+  .withSystemPrompt("You are Manus Evolve, a powerful AI agent. You can execute code, browse the web, manage files, and solve complex tasks.")
+  .withBrowser()  // optional; defaults to remote managed agent-browser automation in Gateway mode
+  .withSkills(["anthropics/skills", "./my-skill"])  // skills.sh / git / local references
+  .withIntegrations({ userId: "root", apps: ["gmail", "notion"] });  // optional; managed integrations in Gateway mode
 
 // Run agent
 const result = await evolve.run({
-    prompt: "Go to Hacker News top posts. Spawn 5 parallel sub-agents to screenshot each of the top 5 posts."
+  prompt: "Go to Hacker News top posts. Spawn 5 parallel sub-agents to screenshot each of the top 5 posts."
 });
 
 console.log(result.stdout);
@@ -56,7 +56,7 @@ console.log(result.stdout);
 // Get output files
 const output = await evolve.getOutputFiles();
 for (const [name, content] of Object.entries(output.files)) {
-    console.log(name);
+  console.log(name);
 }
 
 // Once done, destroy sandbox
@@ -72,17 +72,17 @@ new Evolve()  →  .run()  →  .getOutputFiles()  →  .kill()
    setup         execute      retrieve results     ALWAYS cleanup
 ```
 
-> **IMPORTANT: Always call `kill()` when done.** Each `run()` creates a cloud sandbox that bills until destroyed. Forgetting `kill()` leaves sandboxes running indefinitely. Use try/finally to guarantee cleanup:
+> **Always call `kill()` when done.** The first run creates a sandbox; later runs reuse it. Use `try/finally` to clean up even when a run fails:
 
 ```ts
 const evolve = new Evolve().withAgent({ type: "claude" });
 try {
-    await evolve.run({ prompt: "Analyze the dataset" });
-    const output = await evolve.getOutputFiles();
-    console.log(output.files);           // All files from output/
-    console.log(output.data);            // Parsed result.json (if schema set)
+  await evolve.run({ prompt: "Analyze the dataset" });
+  const output = await evolve.getOutputFiles();
+  console.log(output.files);           // All files from output/
+  console.log(output.data);            // Parsed result.json (if schema set)
 } finally {
-    await evolve.kill();                 // Always destroy sandbox
+  await evolve.kill();                 // Always destroy sandbox
 }
 ```
 
@@ -96,13 +96,13 @@ Subscribe to real-time agent output:
 
 ```ts
 evolve.on("content", (event) => {
-    // event.update.sessionUpdate: "agent_message_chunk" | "tool_call" | "plan" | ...
-    console.log(event.update);
+  // event.update.sessionUpdate: "agent_message_chunk" | "tool_call" | "plan" | ...
+  console.log(event.update);
 });
 
 evolve.on("lifecycle", (event) => {
-    // event.reason: "sandbox_ready" | "run_complete" | "run_failed" | ...
-    console.log(event.reason, event.sandbox, event.agent);
+  // event.reason: "sandbox_ready" | "run_complete" | "run_failed" | ...
+  console.log(event.reason, event.sandbox, event.agent);
 });
 ```
 
@@ -123,9 +123,9 @@ When using `EVOLVE_API_KEY`:
 
 | | Gateway Mode | Managed BYO Provider Keys | Direct Provider Key Mode |
 |---|---------|---------------------------|--------------------------|
-| Setup | `EVOLVE_API_KEY` | `EVOLVE_API_KEY` + provider key saved in Dashboard → Secrets → BYO Provider Keys | [Model provider keys](#agent-reference) + [`E2B_API_KEY`](https://e2b.dev) |
+| Setup | `EVOLVE_API_KEY` | `EVOLVE_API_KEY` + provider key saved in Dashboard → Secrets → BYO Provider Keys | [Model provider credentials](#direct-provider-credentials) + [sandbox provider credentials](./02-configuration.md#sandbox-providers) |
 | Provider key location | Evolve-managed | Encrypted Dashboard secret | Your local environment or app config |
-| Sandbox receives | Evolve gateway runtime config | A short-lived, sandbox-scoped credential — never your raw provider key or `EVOLVE_API_KEY` for that route | Raw provider key environment variable |
+| Sandbox receives | Evolve gateway runtime config | A short-lived, sandbox-scoped credential — never your raw provider key or `EVOLVE_API_KEY` for that route | Your provider credentials |
 | Observability | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | [dashboard.evolvingmachines.ai](https://dashboard.evolvingmachines.ai) | `~/.evolve-sdk/observability/` |
 | Browser | `.withBrowser()` is the default and recommended managed browser path with live view and replay. | Same as Gateway Mode | Self-managed browser runtime; no managed live/replay |
 | Model billing | Evolving Machines | Your provider account for enabled providers | Your provider accounts |
@@ -145,7 +145,7 @@ EVOLVE_API_KEY=sk-...
 import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
-    .withAgent({ type: "claude" });
+  .withAgent({ type: "claude" });
 
 await evolve.run({ prompt: "Hello" });
 ```
@@ -160,15 +160,15 @@ Use this when you want supported provider usage billed to your provider account 
 2. Keep `EVOLVE_API_KEY` in your app.
 3. Run any supported agent normally.
 
-**You can save a key for Anthropic and OpenAI.** Those are the two providers this route serves today, so a Claude run or a Codex run can bill your own account. The agents on this page route through seven providers — Anthropic, OpenAI, Google, DashScope, Kimi, OpenRouter, and Droid/Factory — but the other five have no bring-your-own path, and a run that routes through one of them is billed to Evolve whether or not you have a key saved. That is not a silent fallback so much as arithmetic: an Anthropic key cannot pay for a Moonshot call.
+Managed BYO Provider Keys currently supports **Anthropic and OpenAI**. Enable the matching key to bill supported requests to your provider account. Other providers use Evolve-managed model access.
 
-When enabled, Evolve routes supported provider calls through a short-lived, sandbox-scoped credential. The SDK does not receive the raw provider key, and the sandbox does not receive `EVOLVE_API_KEY` for that provider route. If no managed key is enabled for that provider, gateway mode falls back to Evolve-managed model routing.
+The sandbox receives a short-lived credential scoped to that sandbox, not your saved provider key. If no managed key is enabled for the provider, Evolve uses its own model access.
 
 ---
 
 ### Direct Provider Key Mode (Local BYOK)
 
-Use this when you want to pass provider keys from your own local environment or app config. Requires [E2B API key](https://e2b.dev) for sandbox.
+Use provider keys from your environment or app config together with your own [sandbox provider credentials](./02-configuration.md#sandbox-providers). E2B, Daytona, and Modal are supported; the example below uses E2B.
 
 ```bash
 # .env
@@ -180,15 +180,15 @@ E2B_API_KEY=e2b_...
 import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
-    apiKey: process.env.E2B_API_KEY,
+  apiKey: process.env.E2B_API_KEY,
 });
 
 const evolve = new Evolve()
-    .withAgent({
-        type: "claude",
-        providerApiKey: process.env.ANTHROPIC_API_KEY,
-    })
-    .withSandbox(sandbox);
+  .withAgent({
+    type: "claude",
+    providerApiKey: process.env.ANTHROPIC_API_KEY,
+  })
+  .withSandbox(sandbox);
 ```
 
 ### BYO Claude Max Subscription
@@ -211,15 +211,15 @@ E2B_API_KEY=e2b_...
 import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
-    apiKey: process.env.E2B_API_KEY,
+  apiKey: process.env.E2B_API_KEY,
 });
 
 const evolve = new Evolve()
-    .withAgent({
-        type: "claude",
-        // SDK reads token from CLAUDE_CODE_OAUTH_TOKEN automatically
-    })
-    .withSandbox(sandbox);
+  .withAgent({
+    type: "claude",
+    // SDK reads token from CLAUDE_CODE_OAUTH_TOKEN automatically
+  })
+  .withSandbox(sandbox);
 ```
 
 ### BYO Codex Subscription
@@ -241,119 +241,109 @@ E2B_API_KEY=e2b_...
 import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
-    apiKey: process.env.E2B_API_KEY,
+  apiKey: process.env.E2B_API_KEY,
 });
 
 const evolve = new Evolve()
-    .withAgent({
-        type: "codex",
-        // SDK reads auth file from CODEX_OAUTH_FILE_PATH automatically
-    })
-    .withSandbox(sandbox);
+  .withAgent({
+    type: "codex",
+    // SDK reads auth file from CODEX_OAUTH_FILE_PATH automatically
+  })
+  .withSandbox(sandbox);
 ```
 
 ---
 
 ### Agent Reference
 
-Set env vars and the SDK picks them up automatically — no need to pass explicitly.
+Choose an agent with `withAgent({ type })` and a model with `model`. The [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) lists exact model names, SDK model defaults, and verified reasoning choices for Evolve model access with `EVOLVE_API_KEY`. Direct Provider Key Mode can have different model and reasoning support.
 
-> **IMPORTANT: Only use the exact model names listed below.** The SDK will error on unrecognized model names. Do not invent or guess model identifiers.
+The agent SDK can accept other nonempty model IDs for a configured provider or external gateway. Configuration acceptance does not establish that the provider supports that model. Managed evaluation jobs instead require an explicit model from the selected agent's published roster.
 
-The Direct key column applies to Direct Provider Key Mode. Managed BYO Provider Keys use Gateway Mode plus Dashboard-stored provider keys.
+`gemini` is retired for new runs; use `antigravity`. Historical Gemini runs remain readable.
 
-| type | models | default | Gateway | Direct key |
-|------|--------|---------|---------|------|
-| `"claude"` | `"fable"` `"opus"` `"sonnet"` `"haiku"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"opus"` | `EVOLVE_API_KEY` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
-| `"codex"` | `"gpt-6-astra"` `"gpt-6-sol"` `"gpt-5.6-terra"` `"gpt-6-luna"` `"gpt-5.3-codex"` | `"gpt-6-sol"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
-| `"qwen"` | `"qwen3.8-max"` `"qwen3.7-plus"` `"qwen3.8-flash"` | `"qwen3.8-max"` | `EVOLVE_API_KEY` | `OPENAI_API_KEY` |
-| `"kimi"` | `"kimi-k3"` `"kimi-k2.7-code"` `"kimi-k3-raptor"` | `"kimi-k3"` | `EVOLVE_API_KEY` | `KIMI_API_KEY` |
-| `"opencode"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5.5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-6-astra"` `"openrouter/openai/gpt-6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-6-luna"` `"openrouter/google/gemini-3.8-flash"` `"openrouter/qwen/qwen3.8-max-0902"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5.5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"droid"` | `"claude-fable-5.1"` `"claude-opus-5-5"` `"claude-sonnet-5"` `"claude-haiku-4-5"` `"gpt-5.6-terra"` `"gemini-3.8-flash"` `"qwen3.8-max"` `"kimi-k3"` `"glm-5.3"` `"glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` | `"claude-opus-5-5"` | `EVOLVE_API_KEY` | `FACTORY_API_KEY` |
-| `"pi"` | `"openrouter/anthropic/claude-fable-5.1"` `"openrouter/anthropic/claude-opus-5.5"` `"openrouter/anthropic/claude-sonnet-5"` `"openrouter/anthropic/claude-haiku-4.5"` `"openrouter/openai/gpt-6-astra"` `"openrouter/openai/gpt-6-sol"` `"openrouter/openai/gpt-5.6-terra"` `"openrouter/openai/gpt-6-luna"` `"openrouter/google/gemini-3.8-flash"` `"openrouter/qwen/qwen3.8-max-0902"` `"openrouter/moonshotai/kimi-k3"` `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"openrouter/deepseek/deepseek-v4.1-flash"` | `"openrouter/anthropic/claude-opus-5.5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"prime-agent"` | the same fourteen OpenRouter ids as `"pi"` | `"openrouter/anthropic/claude-opus-5.5"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"dsh"` | `"openrouter/deepseek/deepseek-v4.1-flash"` `"fireworks/deepseek-v4.1-flash"` `"openrouter/deepseek/deepseek-v4-pro-0813"` | `"openrouter/deepseek/deepseek-v4.1-flash"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"zcode"` | `"openrouter/z-ai/glm-5.3"` `"openrouter/z-ai/glm-5.3-flash"` `"fireworks/glm-5.3"` `"fireworks/glm-5.3-flash"` | `"openrouter/z-ai/glm-5.3"` | `EVOLVE_API_KEY` | `OPENROUTER_API_KEY` |
-| `"antigravity"` | `"gemini-3.8-flash"` `"gemini-3.5-flash-lite"` `"gemini-3.1-pro-preview"` | `"gemini-3.8-flash"` | `EVOLVE_API_KEY` | `GEMINI_API_KEY` |
+#### Direct Provider Credentials
 
-Model names route by themselves: pass just the name from the table and Evolve serves it on its default provider, or pass a provider-prefixed name (`openai/gpt-6-sol`, `openrouter/moonshotai/kimi-k3`) to pick the provider explicitly. The table's names are the supported, priced set — prefixed routing beyond it works for advanced use but is outside the supported lineup. One agent differs: on "opencode" a prefixed name outside its table is sent as an OpenRouter id (`openrouter/<name>`), so pick a provider there through OpenRouter's own ids; the other agents pass a prefixed name through as written. `"pi"` and `"prime-agent"` speak OpenRouter ids as well: through the gateway the name rides as written; with your own `OPENROUTER_API_KEY` the `openrouter/` prefix comes off and the rest is sent to OpenRouter as its model id.
+The SDK reads these environment variables automatically in Direct Provider Key Mode. Managed BYO Provider Keys use `EVOLVE_API_KEY` and a key saved in the dashboard instead.
 
-`"glm-5.3-flash"` is GLM-5.3 Flash served from one pinned Fireworks host through the gateway: $0.15/M input and $0.50/M output ($0.03/M cached input); `"glm-5.3"` is the full model on OpenRouter.
+| Agent | Direct credential |
+| --- | --- |
+| `claude` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` |
+| `codex` | `OPENAI_API_KEY` or `CODEX_OAUTH_FILE_PATH` |
+| `qwen` | `OPENAI_API_KEY` |
+| `kimi` | `KIMI_API_KEY` |
+| `opencode`, `pi`, `prime-agent`, `dsh`, `zcode` | `OPENROUTER_API_KEY` |
+| `droid` | `FACTORY_API_KEY` |
+| `antigravity` | `GEMINI_API_KEY` |
 
-`"openrouter/deepseek/deepseek-v4.1-flash"` is DeepSeek V4.1 Flash served through OpenRouter, under the same spelling on `"claude"`, `"droid"`, `"opencode"`, `"pi"`, `"prime-agent"` and `"dsh"`. The `openrouter/<vendor>/<model>` form is OpenRouter's own model id: the gateway routes any id in that form to OpenRouter and bills the call at OpenRouter's price for it, so other OpenRouter models work the same way — the table lists the supported ones. It is also the default model of the hosted evals analyzer (its default reasoning effort is `"high"`).
+Use a model available from your provider account. An OpenRouter credential does not grant access to a `fireworks/` model. See the [gateway-only models](#evolve-provided-gateway-models) below.
 
-`"fireworks/deepseek-v4.1-flash"` is the same DeepSeek V4.1 Flash on a second route, served from Fireworks through the gateway, on the same four agents: $0.22/M input and $0.66/M output ($0.007/M cached input). Pick it when you want the Fireworks host; `"openrouter/deepseek/deepseek-v4.1-flash"` remains the default model of the hosted evals analyzer and task checker. It is served through the Evolve gateway; direct mode has no Fireworks key, so `"opencode"` with your own `OPENROUTER_API_KEY` refuses the name at configuration (`EvolveConfigError`, naming the model) instead of sending it.
+#### Reasoning Effort
 
-`"dsh"` is DeepSeek Harness, DeepSeek's own coding agent (`@deepseek-ai/dsh`, a developer preview; Evolve runs a fixed version). Its roster is DeepSeek V4.1 Flash on the two routes above, under the same spellings, and DeepSeek V4 Pro through OpenRouter as `"openrouter/deepseek/deepseek-v4-pro-0813"` (Fireworks serves V4 Pro on dedicated deployments only, so it has no `fireworks/…` route here). Direct mode uses your `OPENROUTER_API_KEY` and reaches OpenRouter only, so the `fireworks/…` name is gateway-only there and refused at configuration, like `"opencode"`. dsh speaks stdio and streamable-http MCP servers; an `sse` server is refused by name. It reads `AGENTS.md`.
+Set `reasoningEffort` for an exact harness and model. Check the [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) for supported values, defaults, and settings that are ignored or not yet verified. For Direct Provider Key Mode, check the provider and harness documentation too.
 
-`"zcode"` runs GLM 5.3 and GLM 5.3 Flash under names that show their route: `"openrouter/z-ai/glm-5.3"` and `"openrouter/z-ai/glm-5.3-flash"` are served through OpenRouter, `"fireworks/glm-5.3"` and `"fireworks/glm-5.3-flash"` from Fireworks, all through the Evolve gateway. Z Code has no model flag: Evolve sets the model and the reasoning level for every run through the CLI's own provider file. With your own `OPENROUTER_API_KEY` (direct mode) the two OpenRouter names are sent to OpenRouter as `z-ai/glm-5.3` and `z-ai/glm-5.3-flash`; the two Fireworks names are gateway-only and are refused at configuration in direct mode, the same way `"fireworks/deepseek-v4.1-flash"` is on `"opencode"`. Z Code exits 0 even when its turn failed, so Evolve does not take its exit code as the verdict: a failed or cancelled turn ends the run `run_failed` (the `lifecycle` event; `status()` then reports the agent as `error`) and the failure arrives as an `error` update on the stream (see Streaming). The `exitCode` on the response stays the CLI's own 0.
+`no-thinking` is a legacy Agent SDK option. It does not reliably disable thinking across models and is not accepted by managed evaluation jobs.
 
-Agent-specific option: `reasoningEffort` controls how much reasoning/thinking the selected agent uses when that agent supports it.
+#### Native Configuration and Presets
 
-| Agent | Default when omitted (pinned by Evolve) | Supported `reasoningEffort` |
-|-------|------------------------------------------|-----------------------------|
-| `"claude"` | `"high"` — Claude Code's documented default | `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"codex"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; sent to Codex verbatim as `model_reasoning_effort`, so exact values depend on the Codex model |
-| `"qwen"` | `"thinking"` | `"thinking"` `"no-thinking"` |
-| `"kimi"` | `"thinking"` at `"max"` effort — the Kimi K3 API default | `"thinking"` `"no-thinking"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"opencode"` | `"thinking"` + `"high"` | `"thinking"` `"no-thinking"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"` |
-| `"droid"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high; Droid’s own default for Opus 5.5 is `medium`) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; exact values depend on the Droid model |
-| `"pi"` | `"high"` — pinned by Evolve (pi's own default is `"medium"`) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`, clamped to what the model supports; `"thinking"` reads as `"medium"`, `"no-thinking"` as `"off"` |
-| `"prime-agent"` | `"high"` — pinned by Evolve (Prime Agent's own default is `"medium"`) | the same scale as `"pi"` |
-| `"dsh"` | `"high"` — DeepSeek's documented default, pinned by Evolve | `"low"` `"medium"` `"high"` only; `"off"` (and its spellings) is refused at configuration — dsh sends the effort on every request, so it cannot be switched off |
-| `"zcode"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"off"` `"minimal"` `"low"` `"medium"` `"high"` `"xhigh"` `"max"`; Z Code's provider file has four levels, so `"off"` and `"minimal"` send no reasoning field (the model's own default), `"xhigh"` and `"max"` are sent as `high` |
-| `"antigravity"` | `"high"` — pinned by Evolve (owner policy: graded harnesses run high) | `"low"` `"medium"` `"high"` `"max"` (the CLI's own vocabulary); `"xhigh"` is sent as `"max"`, and `"off"` / `"minimal"` (and the legacy spellings `"none"` / `"no-thinking"`) as `"low"` — the CLI cannot disable thinking; the binary spelling `"thinking"` is sent as `"medium"` |
+For `claude` and `codex`, `config` accepts a local file path or an inline object. Use it for permissions, sandbox settings, and tool behavior. Codex configuration must be representable as TOML, so it cannot contain `null`.
 
-When you omit `reasoningEffort`, Evolve does not leave the choice to the CLI. For every harness, the SDK stamps the pinned default from the table explicitly on the run — as a flag, an environment variable, or a config-file entry, whatever that CLI reads. This keeps runs reproducible: the effort a run used is always recorded in the run itself, never implied by a vendor default that could change under you. Where the vendor documents a default, the pin matches it.
+Model, reasoning, gateway, and MCP settings take precedence over your configuration. Other agents reject `config`.
 
-Note that thinking cannot be disabled on Kimi K3 at the API level — `"no-thinking"` applies to the K2-generation models.
-
-Agent-specific option: `config` supplies the harness's own native settings — a local file path or an inline object. Claude receives it as a settings JSON passed through `--settings`; Codex receives it as the base `~/.codex/config.toml` (an inline object must be losslessly representable as TOML — no `null` values). Your document is the base layer: Evolve's own inputs — gateway routing, MCP servers, the model and effort stamps — always land on top of it, so a config can tune permissions, sandbox settings, or tool behavior but never re-route where the model traffic goes. Only `claude` and `codex` support a native config; naming one on any other agent type throws at `.withAgent()` rather than being silently ignored.
-
-```typescript
+```ts
 const evolve = new Evolve()
-    .withAgent({
-        type: "claude",
-        config: { permissions: { deny: ["WebSearch", "WebFetch"] } },
-    });
+  .withAgent({
+    type: "claude",
+    config: { permissions: { deny: ["WebSearch", "WebFetch"] } },
+  });
 ```
 
-Instead of hand-writing such a config, `preset` names a bundle Evolve ships and guarantees. `preset: "no-internet"` turns off the vendor's server-side web tools — Claude gets that exact `permissions.deny` stamp, Codex gets `-c web_search=disabled` on its command line (Codex's default is `"cached"`, an OpenAI-maintained web index, so only the explicit flag removes the tool). `preset: "pinned-context"` pins one fixed effective context window (200000 tokens) — Claude via `autoCompactWindow`, Codex via `-c model_context_window` — so vendor-side window tuning never changes what a run had to work with. A preset is stamped **on top** of any `config` you also pass, and a preset stamp always wins where the two disagree: your document cannot undo the guarantee. Only `claude` and `codex` can guarantee the presets today; naming one on any other agent type throws at `.withAgent()` rather than running without its guarantee.
+Presets are available on `claude` and `codex`:
 
-```typescript
+| Preset | Effect |
+| --- | --- |
+| `no-internet` | Disables the harness's server-side web tools. It does not block all sandbox networking. |
+| `pinned-context` | Sets a 200,000-token effective context window. |
+
+A preset takes precedence over conflicting `config` settings. Other agents reject `preset`. Use [sandbox network options](./02-configuration.md#sandbox-create-options) to restrict network access from the sandbox.
+
+```ts
 const evolve = new Evolve()
-    .withAgent({ type: "codex", preset: "no-internet" });
+  .withAgent({ type: "codex", preset: "no-internet" });
 ```
-
-For Claude Fable 5.1, use `model: "fable"`. For OpenCode via OpenRouter, use `model: "openrouter/anthropic/claude-fable-5.1"`.
 
 #### Harness and Model Pairing
 
-A harness and its model are chosen together, and a few harnesses only accept models from their own family:
+- **Qwen:** choose a Qwen model from its tab in the model reference. Other model families can reject Qwen Code's thinking parameters.
 
-- **`qwen`** must run a Qwen-native model (the `qwen3.x` aliases, routed via DashScope). Qwen Code injects the DashScope-only `enable_thinking` request parameter on every call, which OpenAI-family models reject with a `400` — so pointing the `qwen` harness at a non-Qwen model fails.
-- **`opencode`** routes every model through OpenRouter, so its models are the `openrouter/…` ids in the table above (a bare id is prefixed with `openrouter/` for you).
-- **`kimi`** must be told a context ceiling, which Kimi Code sends as the request's `max_tokens`. Its own models get Kimi's 262144; any other model (say `gpt-6-sol` behind an OpenAI-compatible gateway) gets a conservative 128000 instead, because an oversized `max_tokens` is rejected outright — LiteLLM answers `400 max_tokens is too large`. Pass the model's real ceiling to skip the guess:
+- **OpenCode:** use the complete model ID from its tab. Additional OpenRouter IDs use `openrouter/<vendor>/<model>`; arbitrary provider prefixes do not select a separate direct provider.
+
+- **Kimi:** the SDK supplies a context ceiling. K3 and K3 Raptor use 1,048,576 tokens; K2.7 uses 262,144. Other models default to 128,000. Kimi Code also sends this value as the request's completion limit, so a provider can reject a ceiling above its own limit.
+
+Set `maxContextSize` when you know the model's limit:
 
 ```ts
-.withAgent({
+const evolve = new Evolve()
+  .withAgent({
     type: "kimi",
-    model: "gpt-6-sol",
-    maxContextSize: 128000,   // (optional) the model's real completion ceiling, used verbatim
-})
+    model: "kimi-k3",
+    maxContextSize: 1048576,
+  });
 ```
 
-`maxContextSize` is an SDK option, never an environment variable. Harnesses that do not send a ceiling ignore it.
-
-One harness quirk the SDK handles automatically, with nothing for you to set: the `claude` harness runs with `IS_SANDBOX=1` so Claude Code's `--dangerously-skip-permissions` is allowed under root.
+`maxContextSize` is an SDK option, not an environment variable. Harnesses that do not send a ceiling ignore it.
 
 #### Evolve-Provided Gateway Models
 
-These models require Gateway mode (`EVOLVE_API_KEY`) and are routed by Evolve for latency-sensitive runs. Direct provider keys do not apply.
+Use `EVOLVE_API_KEY` for these models:
 
-| Agent | Model | Use |
-|-------|-------|-----|
-| `"kimi"` | `"kimi-k3-raptor"` | Kimi K3 fast route for latency-sensitive agent runs |
+| Agent | Gateway-only model |
+| --- | --- |
+| `kimi` | `kimi-k3-raptor` |
+| `opencode`, `dsh` | `fireworks/deepseek-v4.1-flash` |
+| `zcode` | `fireworks/glm-5.3`, `fireworks/glm-5.3-flash` |
+
+OpenCode, dsh, and Z Code reject the listed Fireworks models during configuration in Direct Provider Key Mode. Kimi K3 Raptor requires Evolve model access.
 
 ### Agent Examples
 
@@ -370,118 +360,121 @@ E2B_API_KEY=e2b_...        # sandbox
 
 ```ts
 // claude (auto-picks ANTHROPIC_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "claude" });
+const defaultClaude = new Evolve()
+  .withAgent({ type: "claude" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "claude", model: "opus" });
+const opusClaude = new Evolve()
+  .withAgent({ type: "claude", model: "opus" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "claude", model: "fable" });
-
-const evolve = new Evolve()
-    .withAgent({ type: "claude", reasoningEffort: "max" });
+const fableClaude = new Evolve()
+  .withAgent({ type: "claude", model: "fable" });
 ```
 
 ```ts
 // codex (auto-picks OPENAI_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "codex" });
+const defaultCodex = new Evolve()
+  .withAgent({ type: "codex" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "codex", model: "gpt-5.3-codex" });
+const codex53 = new Evolve()
+  .withAgent({ type: "codex", model: "gpt-5.3-codex" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "codex", reasoningEffort: "high" });
+const highEffortCodex = new Evolve()
+  .withAgent({ type: "codex", model: "gpt-6-sol", reasoningEffort: "high" });
 ```
 
 ```ts
 // qwen (auto-picks OPENAI_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "qwen" });
+const defaultQwen = new Evolve()
+  .withAgent({ type: "qwen" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "qwen", model: "qwen3.8-max" });
-
-const evolve = new Evolve()
-    .withAgent({ type: "qwen", reasoningEffort: "no-thinking" });
+const qwenMax = new Evolve()
+  .withAgent({ type: "qwen", model: "qwen3.8-max" });
 ```
 
 ```ts
 // kimi (auto-picks KIMI_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "kimi" });
+const defaultKimi = new Evolve()
+  .withAgent({ type: "kimi" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "kimi", model: "kimi-k3" });
+const kimiK3 = new Evolve()
+  .withAgent({ type: "kimi", model: "kimi-k3" });
 
-const evolve = new Evolve()
-    .withAgent({
-        type: "kimi",
-        model: "kimi-k3-raptor",
-        reasoningEffort: "thinking",
-    });
+// Gateway mode: set EVOLVE_API_KEY for Kimi K3 Raptor.
+const kimiRaptor = new Evolve()
+  .withAgent({
+    type: "kimi",
+    model: "kimi-k3-raptor",
+  });
 ```
 
 ```ts
 // opencode — OpenRouter (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "opencode" });
+const defaultOpenCode = new Evolve()
+  .withAgent({ type: "opencode" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "opencode", model: "openrouter/openai/gpt-6-sol" });
+const openCodeSol = new Evolve()
+  .withAgent({ type: "opencode", model: "openrouter/openai/gpt-6-sol" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "opencode", model: "openrouter/anthropic/claude-fable-5.1" });
-
-const evolve = new Evolve()
-    .withAgent({ type: "opencode", reasoningEffort: "xhigh" });
+const openCodeFable = new Evolve()
+  .withAgent({ type: "opencode", model: "openrouter/anthropic/claude-fable-5.1" });
 ```
 
 ```ts
 // droid (auto-picks FACTORY_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "droid" });
+const defaultDroid = new Evolve()
+  .withAgent({ type: "droid" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "droid", model: "claude-opus-5-5" });
+const droidOpus = new Evolve()
+  .withAgent({ type: "droid", model: "claude-opus-5-5" });
 ```
 
 ```ts
-// pi (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "pi" });
+// Pi (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
+const defaultPi = new Evolve()
+  .withAgent({ type: "pi" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "pi", model: "openrouter/openai/gpt-6-sol", reasoningEffort: "xhigh" });
+const piSol = new Evolve()
+  .withAgent({ type: "pi", model: "openrouter/openai/gpt-6-sol" });
 
 // prime-agent (the same key and the same model ids)
-const evolve = new Evolve()
-    .withAgent({ type: "prime-agent", model: "openrouter/anthropic/claude-sonnet-5" });
+const primeAgent = new Evolve()
+  .withAgent({ type: "prime-agent", model: "openrouter/anthropic/claude-sonnet-5" });
 
 // dsh — DeepSeek Harness (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "dsh" });
+const defaultDsh = new Evolve()
+  .withAgent({ type: "dsh" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "dsh", model: "openrouter/deepseek/deepseek-v4-pro-0813" });
+const deepseekPro = new Evolve()
+  .withAgent({ type: "dsh", model: "openrouter/deepseek/deepseek-v4-pro-0813" });
 
 // zcode (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "zcode" });
+const defaultZcode = new Evolve()
+  .withAgent({ type: "zcode" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "zcode", model: "openrouter/z-ai/glm-5.3-flash" });
+const glmFlash = new Evolve()
+  .withAgent({ type: "zcode", model: "openrouter/z-ai/glm-5.3-flash" });
 
 // antigravity (auto-picks GEMINI_API_KEY + E2B_API_KEY)
-const evolve = new Evolve()
-    .withAgent({ type: "antigravity" });
+const defaultAntigravity = new Evolve()
+  .withAgent({ type: "antigravity" });
 
-const evolve = new Evolve()
-    .withAgent({ type: "antigravity", model: "gemini-3.5-flash-lite", reasoningEffort: "low" });
+const flashLiteAntigravity = new Evolve()
+  .withAgent({ type: "antigravity", model: "gemini-3.5-flash-lite" });
 ```
 
-`"pi"` and `"prime-agent"` share one wire format — Prime Agent is built on pi's core — and one routing rule. On every run Evolve writes a provider entry named `evolve` into the agent's `models.json` (the gateway URL, and the key read from `OPENROUTER_API_KEY` by name; with your own key, OpenRouter itself) and starts the CLI with `--provider evolve`. Evolve's agent instructions go to `AGENTS.md` in the working directory, which both CLIs read; skills install to `~/.pi/agent/skills` and `~/.prime/agent/skills`. pi's tools are `read`, `bash`, `edit` and `write` (its default set; `grep`, `find` and `ls` stay off); MCP servers reach it through the pi-mcp-adapter extension (2.37.0, in the image) as one `mcp` proxy tool, written to `~/.pi/agent/mcp.json`. Prime Agent has one tool, `ipython`: every action is a cell in a persistent Python kernel that ships in the image, and MCP servers are written to `~/.prime/agent/settings.json` — a stdio server's environment must be given as `envVars`, since Prime reads values by variable name and never literally. Both CLIs exit 0 even when every model call failed, so Evolve does not take their exit code as the verdict: when the last model call of a run failed, the run ends `run_failed` (the `lifecycle` event; `status()` then reports the agent as `error`) and the failures arrive as `error` updates on the stream (see Streaming). The `exitCode` on the response stays the CLI's own 0.
+#### Harness-specific Behavior
+
+| Agent | Tools and configuration |
+| --- | --- |
+| `pi` | Built-in tools are `read`, `bash`, `edit`, and `write`. MCP tools are available through the `mcp` proxy tool. `grep`, `find`, and `ls` appear when enabled. |
+| `prime-agent` | Actions run through `ipython` in a persistent Python kernel. For stdio MCP servers, use `envVars` to name sandbox variables; literal `env` values are rejected. |
+| `dsh` | Supports stdio and streamable HTTP MCP servers. SSE servers are rejected. |
+
+Pi, Prime Agent, and dsh read `AGENTS.md`. Pi installs skills in `~/.pi/agent/skills`; Prime Agent uses `~/.prime/agent/skills`. See [Agent Skills](./02-configuration.md#agent-skills) for skill installation and [Configuration](./02-configuration.md#evolve-instance) for MCP settings.
+
+Pi, Prime Agent, and Z Code can return process exit code `0` despite a failed outcome. Evolve also checks the last model call for Pi and Prime Agent, and the final turn status for Z Code.
+
+A failed final outcome produces `run_failed` and agent status `error`. Failure details appear as `error` updates; the response's `exitCode` still records the process exit code. See [Streaming](./04-streaming.md#harness-reported-failures-error).
 
 ---
 

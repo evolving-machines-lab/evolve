@@ -5,7 +5,7 @@ description: "Every known code, what it means, and what to do next."
 
 Use `code` to identify a failure. Read `param` for the input to fix and `details` for the full context. See [Errors](/sdk-reference/errors) for TypeScript and Python handlers.
 
-This catalog covers all 122 codes known to the SDK. A newer server can add codes; [Meta](/sdk-reference/meta) lists the deployment's vocabulary.
+This catalog covers the SDK's known error codes. A newer server can add codes; [Meta](/sdk-reference/meta) lists the deployment's vocabulary.
 
 **Info:**
 
@@ -229,4 +229,4 @@ These are capacity limits, separate from request rate limits. Each response prov
 | --- | --- |
 | `internal_error` | The server encountered an unexpected failure. Keep the request ID when reporting it. |
 
-`unknown_error` is an SDK fallback when a response provides no usable code. It is not one of the 122 codes above. Preserve the status, message, and request ID rather than guessing a cause.
+`unknown_error` is an SDK fallback when a response provides no usable code. It is not a server error code. Preserve the status, message, and request ID rather than guessing a cause.

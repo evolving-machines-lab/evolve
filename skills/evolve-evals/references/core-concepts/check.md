@@ -52,13 +52,31 @@ A check is a hosted model run and incurs cost. `evolve dataset check` is a separ
 | Execution | Valid reference solution; rejection of non-solutions; environment works; stable verification; sufficient limits. |
 | Feasibility | The task is solvable. |
 
-Inspect the default rubric's criteria and their complete guidance, and the current agent, model, effort, provider, and prompt:
+Read the complete rubric guidance and the current agent, model, effort, provider, and prompt:
 
-```bash
+```bash Default checker
 evolve check --show-defaults
 ```
 
-Use `-r rubric.toml` or `-p prompt.txt` to customize. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically. The checker runs on `claude` unless `-a` names another agent; pass a model from that agent's [models](/core-concepts/models#analysis-and-check-models) with `-m`, or omit `-m` for that agent's default model.
+```bash Choose a checker
+evolve check --show-defaults -a codex
+evolve check ./tasks -a codex --watch
+```
+
+The default checker is `claude`. Use `-a` to choose another built-in harness. Omit `-m` to use its default model for checks, or choose one of its [models](/core-concepts/models#analysis-and-check-models).
+
+### Use your own rubric or prompt
+
+Use `-r rubric.toml` or `-p prompt.txt` to customize the review. A rubric accepts TOML, YAML, or JSON with uniquely named criteria:
+
+```toml rubric.toml
+[[criteria]]
+name = "inputs_are_documented"
+description = "The instructions describe every required input."
+guidance = "Compare the input files with the instructions."
+```
+
+Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically. See the [check reference](/cli-reference/check#configure-the-checker) for all options.
 
 ## The result
 
@@ -76,11 +94,49 @@ check
     └── ...
 ```
 
-The result is this per-criterion JSON and nothing else: Evolve derives no verdict from it. The dashboard shows a summary chip it computes from the outcomes. Under a custom rubric the chip is `has_a_problem` when any criterion fails, `unclear` when none fails but at least one is unknown, and `no_problem_found` otherwise. Under a rubric with the default criterion names the same rule applies, with two exceptions: an unknown on one of the default rubric's execution criteria does not make the chip unclear but marks it not executed; and `attempt_isolation` counts only when it fails. Read the criteria and compute what you need from them.
+Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence. The API returns these findings without an overall verdict or a separate execution flag.
 
-**Note:**
+The dashboard computes a short summary label from the outcomes. **No problem found** does not prove that the task runs: read any unresolved execution findings.
 
-**Read the default rubric's execution criteria** (`reference_solution_is_valid`, `verifier_rejects_non_solutions`, `environment_builds_and_runs`, `verification_is_stable`, `limits_allow_the_task`) before treating a result with no failure as proof that the task runs. They are `unknown` when decisive execution evidence is unavailable, for example when the checker could not run the environment, and that leaves execution questions unresolved.
+### Default rubric: read the dashboard summary
+
+These rules apply when the result has exactly the default criterion names. Apply the first matching rule:
+
+| Rule | Summary label |
+| --- | --- |
+| Any criterion fails. | **Has a problem** |
+| A criterion is unknown, except an execution criterion or `attempt_isolation`. | **Unclear** |
+| Neither of the above. | **No problem found** |
+
+`attempt_isolation` changes the summary only when it fails.
+
+The execution group contains these five criteria:
+
+- `reference_solution_is_valid`
+
+- `verifier_rejects_non_solutions`
+
+- `environment_builds_and_runs`
+
+- `verification_is_stable`
+
+- `limits_allow_the_task`
+
+If any is `unknown`, the dashboard adds **Not executed**. Otherwise it adds **Executed**. This note summarizes the outcomes; it is not a separate execution audit.
+
+Read the evidence before relying on the note. An unknown means decisive execution evidence was unavailable, such as when the checker could not run the environment.
+
+### Other rubrics: read the dashboard summary
+
+Apply the first matching rule across all criteria:
+
+| Rule | Summary label |
+| --- | --- |
+| Any criterion fails. | **Has a problem** |
+| Any criterion is unknown. | **Unclear** |
+| Neither of the above. | **No problem found** |
+
+Other rubrics have no **Executed** or **Not executed** note.
 
 The parent lifecycle is `queued` → `running` → `completed`. A completed check can contain failed task checks; inspect each task's `status` and `failure`.
 

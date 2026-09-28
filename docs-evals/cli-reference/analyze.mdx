@@ -19,7 +19,7 @@ evolve analyze --show-defaults -a codex
 evolve analyze --show-defaults --json
 ```
 
-This returns the agent, model, reasoning effort, sandbox provider, prompt, and rubric an analysis runs under when you name none of them. With `-a`, it returns what that agent runs under: its default model and the effort that model takes. Defaults mode takes no job ID and no other analysis options.
+This returns the configured agent, model, effort, sandbox provider, prompt, and rubric. With `-a`, it returns that agent's defaults. See the [model reference](/core-concepts/models#model-and-effort-reference) for reasoning options. Defaults mode takes no job ID and no other analysis options.
 
 ## Select trials
 
@@ -63,7 +63,7 @@ evolve analyze "$JOB_ID" \
 | --- | --- |
 | `-a`, `--agent <name>` | Agent the analyzer runs on. Default `claude`. |
 | `-m`, `--model <name>` | Analyzer model, from that agent's models. Default: the agent's default model. |
-| `--effort <value>` | Reasoning effort. |
+| `--effort <value>` | Reasoning effort for the selected model. See the [model reference](/core-concepts/models#model-and-effort-reference). |
 | `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
 | `-p`, `--prompt <path>` | Text file replacing the default prompt. |
 | `-e`, `--env <provider>` | Sandbox provider for analysis. |
