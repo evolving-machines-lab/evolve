@@ -250,14 +250,16 @@ const evolve = new Evolve()
 
 ## Evolve Instance
 
+See the [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) for model names, SDK defaults, and verified effort choices with Evolve model access. Direct Provider Key Mode can differ.
+
 ```ts
 const evolve = new Evolve()
 
   // Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
   .withAgent({
     type: "codex",                        // "claude" | "codex" | "qwen" | "kimi" | "opencode" | "droid" | "pi" | "prime-agent" | "dsh" | "zcode" | "antigravity" - defaults to "claude"
-    model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "fable" for Claude Fable 5.1
-    reasoningEffort: "medium",            // (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve applies its default (see Getting Started → Reasoning Effort)
+    model: "gpt-5.3-codex",               // (optional) Uses the SDK's default model if omitted.
+    reasoningEffort: "medium",            // (optional) Check the model reference for supported values and defaults.
     // maxContextSize: 128000,            // (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
     apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
     // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct Provider Key Mode

@@ -21,7 +21,7 @@ One arm
 | `kimi` | Kimi Code |
 | `opencode` | OpenCode |
 | `droid` | Droid |
-| `pi` | pi |
+| `pi` | Pi |
 | `prime-agent` | Prime Agent |
 | `dsh` | DeepSeek Harness |
 | `zcode` | Z Code |
@@ -45,16 +45,16 @@ Use `-a name@version` to pin a harness release. Without a version, Evolve resolv
 
 | Option | Purpose |
 | --- | --- |
-| `--effort <value>` | Set the [harness's accepted effort](/core-concepts/models#model-and-effort-reference) on every arm |
+| `--effort <value>` | Set effort on every arm. See the [model reference](/core-concepts/models#model-and-effort-reference) |
 | `--preset no-internet` | Disable vendor server-side web tools |
 | `--preset pinned-context` | Set the supported context window to 200,000 tokens |
 | `--ak config=<path-or-JSON>` | Supply a native harness configuration |
 
 Presets and native config are supported on Claude Code and Codex. The platform applies routing settings over your config, and preset settings take precedence where they overlap. Routing, billing, credential, and environment overrides are rejected.
 
-Omit effort to use the harness default: `high`, except Kimi Code uses `max` and Qwen Code uses `thinking`. Every arm still needs an explicit model.
+The [model table](/core-concepts/models#model-and-effort-reference) shows defaults and reasoning options for each model. Every arm needs an explicit model.
 
-The live [capability document](/sdk-reference/meta) lists each harness's supported options. An effort outside the harness's accepted input list or an unsupported configuration is rejected when the job is created.
+The live [capability document](/sdk-reference/meta) lists accepted configuration options.
 
 <Note>
   `no-internet` disables the harness's server-side web tools. The task's [network policy](/core-concepts/task-config#network-access) controls network access from the sandbox.

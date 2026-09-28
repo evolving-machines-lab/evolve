@@ -1,6 +1,6 @@
 ---
 title: "Models"
-description: "Exact model names, reasoning inputs, and defaults for every harness."
+description: "Exact model names, per-model reasoning options, and Evolve defaults."
 ---
 
 Choose a harness, then copy a model name from its tab. Use the same model string in the CLI, TypeScript, and Python.
@@ -11,30 +11,40 @@ Choose a harness, then copy a model name from its tab. Use the same model string
 | Model | `-m` → `agents[].model_name` |
 | Reasoning effort | `--effort` → `agents[].reasoning_effort` |
 
-Every evaluation arm **requires a model**. Omit effort to use the harness default below.
+Every evaluation arm **requires a model**. The default model below is the Agent SDK’s choice when its model is omitted. Default effort is Evolve’s configured setting when effort is omitted.
 
 ## Model and effort reference
 
-These are the inputs managed evaluations accept. Effort behavior depends on the harness and model; accepted words do not always represent distinct reasoning levels.
+Reasoning options are checked against the exact model’s provider documentation and the harness’s native controls. Models with a thinking toggle or a token budget are labeled in the table.
+
+For custom models, options may require native harness configuration. `off` and `none` mean thinking disabled; `thinking` means enabled.
+
+**Note:**
+
+This draft records native support. Some Evolve effort mappings still need correction before all of these options work through the CLI and SDK.
 
 ### Claude Code
 
-**Harness:** `claude` · **Default effort:** `high`
+**Harness:** `claude`
 
-| Model | Model string |
-| --- | --- |
-| Claude Fable 5.1 | `fable` |
-| Claude Opus 5.5 | `opus` |
-| Claude Sonnet 5 | `sonnet` |
-| Claude Haiku 4.5 | `haiku` |
-| GLM 5.3 | `glm-5.3` |
-| GLM 5.3 Flash | `glm-5.3-flash` |
-| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
-| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
+**Default model:** `opus` or `claude-opus-5-5`
 
-**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+**Default effort:** `high`
 
-Evolve forwards the selected effort. The model determines which levels it supports.
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Claude Fable 5.1 | `fable` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Opus 5.5 | `opus` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Sonnet 5 | `sonnet` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Haiku 4.5 | `haiku` | Thinking budget; no effort levels |
+| GLM 5.3 | `glm-5.3` | `low`, `high`, `max` |
+| GLM 5.3 Flash | `glm-5.3-flash` | `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` | `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` | `low`, `high`, `max` |
+
+### Sources
+
+[Claude Code](https://code.claude.com/docs/en/model-config) · [Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort) · [GLM 5.3](https://docs.z.ai/guides/llm/glm-5.3) · [Fireworks model controls](https://github.com/fw-ai/fireconnect/blob/02e352a6184a404f0be3be0f1fd92ada9d37014b/packages/setup-cli/lib/fireworks/reasoning.mjs)
 
 ### Other accepted model spellings
 
@@ -47,56 +57,59 @@ Evolve forwards the selected effort. The model determines which levels it suppor
 
 ### Codex
 
-**Harness:** `codex` · **Default effort:** `high`
+**Harness:** `codex`
 
-| Model | Model string |
-| --- | --- |
-| GPT-6 Astra | `gpt-6-astra` |
-| GPT-6 Sol | `gpt-6-sol` |
-| GPT-5.6 Terra | `gpt-5.6-terra` |
-| GPT-6 Luna | `gpt-6-luna` |
-| GPT-5.3 Codex | `gpt-5.3-codex` |
+**Default model:** `gpt-6-sol`
 
-**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+**Default effort:** `high`
 
-Evolve forwards the selected effort. The model determines which levels it supports.
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| GPT-6 Astra | `gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Sol | `gpt-6-sol` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-5.6 Terra | `gpt-5.6-terra` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Luna | `gpt-6-luna` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-5.3 Codex | `gpt-5.3-codex` | `low`, `medium`, `high`, `xhigh` |
+
+### Sources
+
+[GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) · [GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) · [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) · [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) · [GPT-5.3 Codex](https://developers.openai.com/api/docs/models/gpt-5.3-codex)
 
 ### Qwen Code
 
-**Harness:** `qwen` · **Default effort:** `thinking`
+**Harness:** `qwen`
 
-| Model | Model string |
-| --- | --- |
-| Qwen 3.8 Max | `qwen3.8-max` |
-| Qwen 3.7 Plus | `qwen3.7-plus` |
-| Qwen 3.8 Flash | `qwen3.8-flash` |
+**Default model:** `qwen3.8-max`
 
-**Reasoning effort**
+**Default effort:** `thinking`
 
-| Effort input | Behavior |
-| --- | --- |
-| `thinking` or `medium` | Enable thinking |
-| `off` or `minimal` | Disable thinking |
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Qwen 3.8 Max | `qwen3.8-max` | `off`, `low`, `medium`, `xhigh` |
+| Qwen 3.7 Plus | `qwen3.7-plus` | `off`, `thinking` |
+| Qwen 3.8 Flash | `qwen3.8-flash` | `off`, `low`, `medium`, `xhigh` |
 
-Qwen has an on/off control. `low`, `high`, `xhigh`, and `max` are rejected.
+### Sources
+
+[Qwen Code settings](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/) · [Qwen model controls](https://docs.qwencloud.com/api-reference/chat/openai-chat)
 
 ### Kimi Code
 
-**Harness:** `kimi` · **Default effort:** `max`
+**Harness:** `kimi`
 
-| Model | Model string |
-| --- | --- |
-| Kimi K3 | `kimi-k3` |
-| Kimi K2.7 Code | `kimi-k2.7-code` |
-| Kimi K3 Raptor | `kimi-k3-raptor` |
+**Default model:** `kimi-k3` or `moonshot/kimi-k3`
 
-For **Kimi K3**, use `low`, `high`, or `max`. K3 keeps thinking enabled. Omit effort to use `max`.
+**Default effort:** `max`
 
-### All accepted effort inputs
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Kimi K3 | `kimi-k3` | `low`, `high`, `max` |
+| Kimi K2.7 Code | `kimi-k2.7-code` | Always thinking; no effort levels |
+| Kimi K3 Raptor | `kimi-k3-raptor` | `off`, `low`, `high`, `max` |
 
-Evolve accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `thinking` for the Kimi harness.
+### Sources
 
-`off` and `minimal` request thinking off. `thinking` requests thinking without an explicit level. Other values request the named level. Model support still applies; the broader input list does not add levels to K3.
+[Kimi model controls](https://www.kimi.ai/help/kimi-api/api-model-selection) · [Kimi reasoning](https://platform.kimi.ai/docs/guide/use-reasoning-effort) · [Fireworks reasoning](https://docs.fireworks.ai/api-reference/post-chatcompletions)
 
 ### Other accepted model spellings
 
@@ -107,60 +120,60 @@ Evolve accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `t
 
 ### OpenCode
 
-**Harness:** `opencode` · **Default effort:** `high`
+**Harness:** `opencode`
 
-| Model | Model string |
-| --- | --- |
-| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` |
-| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` |
-| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` |
-| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` |
-| GPT-6 Astra | `openrouter/openai/gpt-6-astra` |
-| GPT-6 Sol | `openrouter/openai/gpt-6-sol` |
-| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` |
-| GPT-6 Luna | `openrouter/openai/gpt-6-luna` |
-| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` |
-| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` |
-| Kimi K3 | `openrouter/moonshotai/kimi-k3` |
-| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
-| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
-| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
-| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
+**Default model:** `openrouter/anthropic/claude-opus-5.5`
 
-**Reasoning effort**
+**Default effort:** `high`
 
-| Effort input | Requested behavior |
-| --- | --- |
-| `minimal` or `low` | Minimal reasoning |
-| `medium` or `thinking` | Medium reasoning |
-| `high` | High reasoning |
-| `max` or `xhigh` | Maximum reasoning |
-| `off` | No explicit reasoning level |
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` | Thinking budget; no effort levels |
+| GPT-6 Astra | `openrouter/openai/gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Sol | `openrouter/openai/gpt-6-sol` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Luna | `openrouter/openai/gpt-6-luna` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` | `low`, `medium`, `high` |
+| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` | `minimal`, `low`, `medium`, `high`, `xhigh` |
+| Kimi K3 | `openrouter/moonshotai/kimi-k3` | `none`, `low`, `high`, `max` |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` | `low`, `high`, `max` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` | `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` | `none`, `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` | `none`, `low`, `high`, `max` |
 
-`off` leaves reasoning to the model; it does not guarantee that thinking is disabled.
+### Sources
+
+[OpenCode models](https://opencode.ai/docs/models/) · [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) · [Fireworks model controls](https://github.com/fw-ai/fireconnect/blob/02e352a6184a404f0be3be0f1fd92ada9d37014b/packages/setup-cli/lib/fireworks/reasoning.mjs)
 
 ### Droid
 
-**Harness:** `droid` · **Default effort:** `high`
+**Harness:** `droid`
 
-| Model | Model string |
-| --- | --- |
-| Claude Fable 5.1 | `claude-fable-5.1` |
-| Claude Opus 5.5 | `claude-opus-5-5` |
-| Claude Sonnet 5 | `claude-sonnet-5` |
-| Claude Haiku 4.5 | `claude-haiku-4-5` |
-| GPT-5.6 Terra | `gpt-5.6-terra` |
-| Gemini 3.8 Flash | `gemini-3.8-flash` |
-| Qwen 3.8 Max | `qwen3.8-max` |
-| Kimi K3 | `kimi-k3` |
-| GLM 5.3 | `glm-5.3` |
-| GLM 5.3 Flash | `glm-5.3-flash` |
-| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
-| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
+**Default model:** `claude-opus-5-5`
 
-**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+**Default effort:** `high`
 
-Evolve forwards the selected effort. The model determines which levels it supports. GPT-6 models are not available on this harness.
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Claude Fable 5.1 | `claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Opus 5.5 | `claude-opus-5-5` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Sonnet 5 | `claude-sonnet-5` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Haiku 4.5 | `claude-haiku-4-5` | `off`, `low`, `medium`, `high` (thinking budgets) |
+| GPT-5.6 Terra | `gpt-5.6-terra` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Gemini 3.8 Flash | `gemini-3.8-flash` | `low`, `medium`, `high` |
+| Qwen 3.8 Max | `qwen3.8-max` | `low`, `medium`, `xhigh` |
+| Kimi K3 | `kimi-k3` | `low`, `high`, `max` |
+| GLM 5.3 | `glm-5.3` | `low`, `high`, `max` |
+| GLM 5.3 Flash | `glm-5.3-flash` | `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
+
+### Sources
+
+[Factory models](https://docs.factory.ai/models) · [Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort) · [Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking) · [Fireworks model controls](https://github.com/fw-ai/fireconnect/blob/02e352a6184a404f0be3be0f1fd92ada9d37014b/packages/setup-cli/lib/fireworks/reasoning.mjs)
 
 ### Other accepted model spellings
 
@@ -169,113 +182,118 @@ Evolve forwards the selected effort. The model determines which levels it suppor
 | `claude-fable-5.1` | `claude-fable-5-1` |
 | `claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
 
-### pi
+### Pi
 
-**Harness:** `pi` · **Default effort:** `high`
+**Harness:** `pi`
 
-| Model | Model string |
-| --- | --- |
-| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` |
-| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` |
-| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` |
-| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` |
-| GPT-6 Astra | `openrouter/openai/gpt-6-astra` |
-| GPT-6 Sol | `openrouter/openai/gpt-6-sol` |
-| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` |
-| GPT-6 Luna | `openrouter/openai/gpt-6-luna` |
-| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` |
-| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` |
-| Kimi K3 | `openrouter/moonshotai/kimi-k3` |
-| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
-| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
-| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+**Default model:** `openrouter/anthropic/claude-opus-5.5`
 
-**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+**Default effort:** `high`
 
-`thinking` requests `medium`. Other values are forwarded as named; the model determines the available reasoning behavior.
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` | `off`, `minimal`, `low`, `medium`, `high` (thinking budgets) |
+| GPT-6 Astra | `openrouter/openai/gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Sol | `openrouter/openai/gpt-6-sol` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Luna | `openrouter/openai/gpt-6-luna` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` | `low`, `medium`, `high` |
+| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` | `minimal`, `low`, `medium`, `high`, `xhigh` |
+| Kimi K3 | `openrouter/moonshotai/kimi-k3` | `off`, `low`, `high`, `max` |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` | `low`, `high`, `max` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` | `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
+
+### Sources
+
+[Pi model configuration](https://github.com/earendil-works/pi/blob/v0.87.1/packages/coding-agent/docs/models.md) · [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
 
 ### Prime Agent
 
-**Harness:** `prime-agent` · **Default effort:** `high`
+**Harness:** `prime-agent`
 
-| Model | Model string |
-| --- | --- |
-| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` |
-| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` |
-| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` |
-| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` |
-| GPT-6 Astra | `openrouter/openai/gpt-6-astra` |
-| GPT-6 Sol | `openrouter/openai/gpt-6-sol` |
-| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` |
-| GPT-6 Luna | `openrouter/openai/gpt-6-luna` |
-| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` |
-| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` |
-| Kimi K3 | `openrouter/moonshotai/kimi-k3` |
-| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
-| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
-| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
+**Default model:** `openrouter/anthropic/claude-opus-5.5`
 
-**Effort inputs:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`.
+**Default effort:** `high`
 
-`thinking` requests `medium`. Other values are forwarded as named; the model determines the available reasoning behavior.
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Claude Fable 5.1 | `openrouter/anthropic/claude-fable-5.1` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Opus 5.5 | `openrouter/anthropic/claude-opus-5.5` | `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Sonnet 5 | `openrouter/anthropic/claude-sonnet-5` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Claude Haiku 4.5 | `openrouter/anthropic/claude-haiku-4.5` | `off`, `high` (thinking off/on; no effort levels) |
+| GPT-6 Astra | `openrouter/openai/gpt-6-astra` | `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Sol | `openrouter/openai/gpt-6-sol` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-5.6 Terra | `openrouter/openai/gpt-5.6-terra` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| GPT-6 Luna | `openrouter/openai/gpt-6-luna` | `off`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Gemini 3.8 Flash | `openrouter/google/gemini-3.8-flash` | `low`, `medium`, `high` |
+| Qwen 3.8 Max | `openrouter/qwen/qwen3.8-max-0902` | `minimal`, `low`, `medium`, `high`, `xhigh` |
+| Kimi K3 | `openrouter/moonshotai/kimi-k3` | `off`, `low`, `high`, `max` |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` | `low`, `high`, `max` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` | `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
+
+### Sources
+
+[Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent/tree/v0.9.6) · [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
 
 ### DeepSeek Harness
 
-**Harness:** `dsh` · **Default effort:** `high`
+**Harness:** `dsh`
 
-| Model | Model string |
-| --- | --- |
-| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` |
-| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` |
-| DeepSeek V4 Pro | `openrouter/deepseek/deepseek-v4-pro-0813` |
+**Default model:** `openrouter/deepseek/deepseek-v4.1-flash`
 
-**Effort inputs:** `low`, `medium`, `high`.
+**Default effort:** `high`
 
-Every other effort value is rejected. DeepSeek V4 Pro has no `fireworks/` model option.
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| DeepSeek V4.1 Flash | `openrouter/deepseek/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
+| DeepSeek V4.1 Flash | `fireworks/deepseek-v4.1-flash` | `off`, `low`, `high`, `max` |
+| DeepSeek V4 Pro | `openrouter/deepseek/deepseek-v4-pro-0813` | `off`, `low`, `high`, `max` |
+
+### Sources
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2) · [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) · [Fireworks reasoning](https://docs.fireworks.ai/api-reference/post-chatcompletions)
 
 ### Z Code
 
-**Harness:** `zcode` · **Default effort:** `high`
+**Harness:** `zcode`
 
-| Model | Model string |
-| --- | --- |
-| GLM 5.3 | `openrouter/z-ai/glm-5.3` |
-| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` |
-| GLM 5.3 | `fireworks/glm-5.3` |
-| GLM 5.3 Flash | `fireworks/glm-5.3-flash` |
+**Default model:** `openrouter/z-ai/glm-5.3`
 
-**Reasoning effort**
+**Default effort:** `high`
 
-| Effort input | Requested behavior |
-| --- | --- |
-| `low` | Low reasoning |
-| `medium` or `thinking` | Medium reasoning |
-| `high`, `xhigh`, or `max` | High reasoning |
-| `off` or `minimal` | No explicit reasoning level |
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| GLM 5.3 | `openrouter/z-ai/glm-5.3` | `low`, `high`, `max` |
+| GLM 5.3 Flash | `openrouter/z-ai/glm-5.3-flash` | `low`, `high`, `max` |
+| GLM 5.3 | `fireworks/glm-5.3` | `low`, `high`, `max` |
+| GLM 5.3 Flash | `fireworks/glm-5.3-flash` | `low`, `high`, `max` |
 
-`off` and `minimal` omit the reasoning setting. They do not guarantee that the model disables thinking.
+### Sources
+
+[Z Code](https://github.com/zai-org/ZCode) · [GLM 5.3](https://docs.z.ai/guides/llm/glm-5.3) · [GLM 5.3 Flash](https://docs.z.ai/guides/vlm/glm-5.3-flash) · [Fireworks model controls](https://github.com/fw-ai/fireconnect/blob/02e352a6184a404f0be3be0f1fd92ada9d37014b/packages/setup-cli/lib/fireworks/reasoning.mjs)
 
 ### Antigravity
 
-**Harness:** `antigravity` · **Default effort:** `high`
+**Harness:** `antigravity`
 
-| Model | Model string |
-| --- | --- |
-| Gemini 3.8 Flash | `gemini-3.8-flash` |
-| Gemini 3.5 Flash-Lite | `gemini-3.5-flash-lite` |
-| Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` |
+**Default model:** `gemini-3.8-flash` or `vertex_ai/gemini-3.8-flash`
 
-**Effort levels:** `low`, `medium`, `high`, `max`.
+**Default effort:** `high`
 
-Thinking cannot be disabled through this harness.
+| Model | Model string | Supported reasoning efforts |
+| --- | --- | --- |
+| Gemini 3.8 Flash | `gemini-3.8-flash` | `low`, `medium`, `high` |
+| Gemini 3.5 Flash-Lite | `gemini-3.5-flash-lite` | `low`, `medium`, `high` |
+| Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | `low`, `medium`, `high` |
 
-### Other accepted effort inputs
+### Sources
 
-| Input | Applied level |
-| --- | --- |
-| `off` or `minimal` | `low` |
-| `thinking` | `medium` |
-| `xhigh` | `max` |
+[Antigravity CLI](https://antigravity.google/docs/cli/overview/) · [Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
 
 ### Other accepted model spellings
 
@@ -356,20 +374,6 @@ Repeat `-m` to compare models on one harness. `--effort` applies to every arm. T
 
 The Agent SDK uses `model` and TypeScript `reasoningEffort` / Python `reasoning_effort` in its agent configuration. It can omit the model; managed evaluation arms cannot.
 
-The effort acceptance rules above apply to managed evaluations. The Agent SDK validates inputs differently; see its manual for direct configuration.
-
-| Harness | Agent SDK default model |
-| --- | --- |
-| `claude` | `opus` |
-| `codex` | `gpt-6-sol` |
-| `qwen` | `qwen3.8-max` |
-| `kimi` | `kimi-k3` |
-| `opencode`, `pi`, `prime-agent` | `openrouter/anthropic/claude-opus-5.5` |
-| `droid` | `claude-opus-5-5` |
-| `dsh` | `openrouter/deepseek/deepseek-v4.1-flash` |
-| `zcode` | `openrouter/z-ai/glm-5.3` |
-| `antigravity` | `gemini-3.8-flash` |
-
 The tables above describe Evolve model access. Direct provider credentials have their own available models. In particular, the `fireworks/` options on OpenCode, DeepSeek Harness, and Z Code require Evolve model access.
 
 See the [Agent SDK manual](https://github.com/evolving-machines-lab/evolve/blob/main/docs-agents/index.md).
@@ -380,7 +384,7 @@ See the [Agent SDK manual](https://github.com/evolving-machines-lab/evolve/blob/
 curl -sS https://dashboard.evolvingmachines.ai/api/meta
 ```
 
-No authentication is required. `agents[].models` lists accepted model aliases and IDs; `agents[].default_effort` gives the harness default. `analyze.agents[].reasoning_efforts` lists each built-in harness's accepted efforts, including DSH's smaller set.
+No authentication is required. `agents[].models` lists model aliases and IDs. Metadata reports the API’s accepted inputs and configured defaults.
 
 The same document is available through [`meta()` in both SDKs](/sdk-reference/meta).
 
@@ -414,7 +418,7 @@ evolve analyze --show-defaults -a codex
 evolve check --show-defaults -a codex
 ```
 
-Their effort default can differ from evaluation arms: the exact model string `glm-5.3-flash` defaults to `max` for analysis and checks. Read `analyze.agents[].models[].default_reasoning_effort` in [metadata](/sdk-reference/meta) for each model's default.
+Analysis and checks have their own model and effort defaults. Read them with `--show-defaults`.
 
 **[Configure a run](/cli-reference/run)**
 

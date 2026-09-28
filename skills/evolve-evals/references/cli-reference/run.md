@@ -102,7 +102,7 @@ These options apply to every agent combination.
 
 | Option | Meaning |
 | --- | --- |
-| `--effort <value>` | Reasoning effort supported by the selected harness and model. |
+| `--effort <value>` | Reasoning effort for the selected harness and model. See the [model reference](/core-concepts/models#model-and-effort-reference). |
 | `--preset <name>` | Supported settings preset: `no-internet` or `pinned-context`. |
 | `--ak <key=value>`, `--agent-kwarg <key=value>` | Agent setting. Repeatable. `config` accepts a local JSON/TOML file or inline JSON object. |
 | `--skill <ref>`, `--skills <ref>` | Skill reference or local directory. Repeatable. |
@@ -114,7 +114,7 @@ evolve run -c job.yaml --skill ./my-skill
 
 Skills accept `skills.sh/owner/repo[/skill]`, `org/repo[@ref]`, a Git URL, `upload:<id>`, or `name:<skill-name>`. Local directories upload before the job starts.
 
-Unsupported effort, presets, or settings are refused. See [Agents](/core-concepts/agents) and [Skills](/core-concepts/skills).
+Unsupported presets and native configuration settings are refused. See [Agents](/core-concepts/agents) and [Skills](/core-concepts/skills).
 
 ### Secrets and verifier environment
 

@@ -256,6 +256,8 @@ evolve = Evolve(
 
 ## Evolve Instance
 
+See the [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) for model names, SDK defaults, and verified effort choices with Evolve model access. Direct Provider Key Mode can differ.
+
 ```python
 import os
 from evolve import Evolve, AgentConfig, E2BProvider, StorageConfig, IntegrationsSetup, ManagedSecretRef
@@ -275,8 +277,8 @@ evolve = Evolve(
     # Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
     config=AgentConfig(
         type='codex',                        # 'claude' | 'codex' | 'qwen' | 'kimi' | 'opencode' | 'droid' | 'pi' | 'prime-agent' | 'dsh' | 'zcode' | 'antigravity' - defaults to 'claude'
-        model='gpt-5.3-codex',               # (optional) Uses default if omitted. Use 'fable' for Claude Fable 5.1
-        reasoning_effort='medium',           # (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve applies its default (see Getting Started → Reasoning Effort)
+        model='gpt-5.3-codex',               # (optional) Uses the SDK's default model if omitted.
+        reasoning_effort='medium',           # (optional) Check the model reference for supported values and defaults.
         # max_context_size=128000,           # (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
         api_key=os.getenv('EVOLVE_API_KEY'), # (optional) Gateway mode - auto-resolves from env
         # provider_api_key=os.getenv('ANTHROPIC_API_KEY'), # (optional) Direct Provider Key Mode

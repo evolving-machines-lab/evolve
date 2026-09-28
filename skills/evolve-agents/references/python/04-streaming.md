@@ -96,7 +96,7 @@ Every field except `update` is optional. Missing harness data stays absent.
 
 | Field | Source |
 | --- | --- |
-| `timestamp` | The harness's ISO 8601 clock. Claude, OpenCode, Droid, and Z Code stamp lines; pi and Prime Agent stamp messages. Codex, Qwen, Kimi, dsh, and Antigravity supply no timestamp. |
+| `timestamp` | The harness's ISO 8601 clock. Claude, OpenCode, Droid, and Z Code stamp lines; Pi and Prime Agent stamp messages. Codex, Qwen, Kimi, dsh, and Antigravity supply no timestamp. |
 | `model` | The model named on the line, Droid/Antigravity's initialization event, or Z Code's first request. |
 | `messageId` | Groups lines from one model message. Claude content blocks share `message.id`; Antigravity groups one `agent_response` step. |
 | `parentToolCallId` | On sub-agent events, identifies the parent `Task`, `agent`, or `Agent` tool call. Z Code also supplies `extra.childSessionId`. |
@@ -128,7 +128,7 @@ SessionUpdate = Union[
 |------|-----------------|-------------|
 | `AgentMessageChunk` | `"agent_message_chunk"` | Text/image streaming from agent |
 | `AgentThoughtChunk` | `"agent_thought_chunk"` | Reasoning (Codex) or thinking (Claude) |
-| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode, pi, Prime Agent, Z Code) |
+| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode, Pi, Prime Agent, Z Code) |
 
 ```python
 class AgentMessageChunk(TypedDict):
@@ -475,7 +475,7 @@ Usage events report the accounting available from the harness:
 | Claude, Qwen | Each model message and a whole-run total. |
 | Codex, Droid | A whole-run total. |
 | OpenCode | Each step's tokens and cost. |
-| pi, Prime Agent | Each model call's tokens. Cost is present only when the harness supplies it. |
+| Pi, Prime Agent | Each model call's tokens. Cost is present only when the harness supplies it. |
 | dsh | Each step's tokens. |
 | Z Code | Each model request and a whole-run total. Reasoning and cache counts are in `extra`; no cost is reported. |
 | Antigravity | Each model call and a conversation total. The total includes earlier turns when a run resumes. |

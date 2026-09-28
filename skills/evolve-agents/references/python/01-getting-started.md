@@ -1,6 +1,6 @@
 # Evolve Python SDK
 
-Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
+Run CLI agents ([Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-code), [OpenCode](https://github.com/anomalyco/opencode), [Droid](https://docs.factory.ai/cli/droid-exec/overview), [Pi](https://github.com/earendil-works/pi), [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Z Code](https://github.com/zai-org/ZCode), [Antigravity](https://antigravity.google/docs/cli/overview/)) in secure sandboxes with built-in observability.
 
 ---
 
@@ -249,23 +249,7 @@ evolve = Evolve(
 
 ### Agent Reference
 
-Choose an agent with `AgentConfig(type=...)` and a model with `model`. If you omit `model`, the SDK uses the default below.
-
-| Agent | Default model |
-| --- | --- |
-| `claude` | `opus` |
-| `codex` | `gpt-6-sol` |
-| `qwen` | `qwen3.8-max` |
-| `kimi` | `kimi-k3` |
-| `opencode` | `openrouter/anthropic/claude-opus-5.5` |
-| `droid` | `claude-opus-5-5` |
-| `pi` | `openrouter/anthropic/claude-opus-5.5` |
-| `prime-agent` | `openrouter/anthropic/claude-opus-5.5` |
-| `dsh` | `openrouter/deepseek/deepseek-v4.1-flash` |
-| `zcode` | `openrouter/z-ai/glm-5.3` |
-| `antigravity` | `gemini-3.8-flash` |
-
-Open the [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) for each agent's full model list, exact spellings, and reasoning levels. These names describe Evolve model access with `EVOLVE_API_KEY`. Your own provider key may support a different set.
+Choose an agent with `AgentConfig(type=...)` and a model with `model`. The [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) lists exact model names, SDK model defaults, and verified reasoning choices for Evolve model access with `EVOLVE_API_KEY`. Direct Provider Key Mode can have different model and reasoning support.
 
 The agent SDK can accept other nonempty model IDs for a configured provider or external gateway. Configuration acceptance does not establish that the provider supports that model. Managed evaluation jobs instead require an explicit model from the selected agent's published roster.
 
@@ -289,27 +273,15 @@ Use a model available from your provider account. An OpenRouter credential does 
 
 #### Reasoning Effort
 
-Set `reasoning_effort` to choose a reasoning level. Evolve explicitly applies its own defaults: `thinking` for Qwen, `max` for Kimi, and `high` for the other agents. These defaults can differ from the harness vendor's defaults.
+Set `reasoning_effort` for an exact harness and model. Check the [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) for supported values, defaults, and settings that are ignored or not yet verified. For Direct Provider Key Mode, check the provider and harness documentation too.
 
-Use the [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) for supported choices. Some SDK spellings have specific behavior:
-
-| Agent | SDK behavior |
-| --- | --- |
-| `qwen` | `off`, `minimal`, or `no-thinking` disables thinking; `medium` or `thinking` enables it. |
-| `kimi` | K3 keeps thinking enabled; use `low`, `high`, or `max`. The legacy `no-thinking` option applies to K2.7. |
-| `opencode` | `thinking` selects `medium`; `low` or `minimal` selects `minimal`; `xhigh` selects `max`. `off` or `no-thinking` disables thinking flags. |
-| `pi`, `prime-agent` | `thinking` selects `medium`; `no-thinking` selects `off`. The harness limits effort to what the model supports. |
-| `dsh` | Only `low`, `medium`, and `high` are accepted. Thinking cannot be disabled. |
-| `zcode` | `off`, `minimal`, or `no-thinking` uses the model's default reasoning. `thinking` selects `medium`; `xhigh` and `max` select `high`. |
-| `antigravity` | `xhigh` selects `max`; `thinking` selects `medium`. `off`, `minimal`, or `no-thinking` selects `low`; thinking cannot be disabled. |
-
-`no-thinking` is an agent SDK option, not a managed evaluation job value. Use the managed reference's accepted values for `jobs()` or `evolve run`. An accepted setting does not prove every model implements a distinct level.
+`no-thinking` is a legacy Agent SDK option. It does not reliably disable thinking across models and is not accepted by managed evaluation jobs.
 
 #### Native Configuration and Presets
 
 For `claude` and `codex`, `config` accepts a local file path or an inline dict. Use it for permissions, sandbox settings, and tool behavior. Codex configuration must be representable as TOML, so it cannot contain `None`.
 
-Evolve applies model, reasoning, gateway, and MCP settings over your configuration. Other agents reject `config`.
+Model, reasoning, gateway, and MCP settings take precedence over your configuration. Other agents reject `config`.
 
 ```python
 evolve = Evolve(config=AgentConfig(
@@ -389,10 +361,6 @@ evolve = Evolve(
 evolve = Evolve(
     config=AgentConfig(type='claude', model='fable'),
 )
-
-evolve = Evolve(
-    config=AgentConfig(type='claude', reasoning_effort='max'),
-)
 ```
 
 ```python
@@ -406,7 +374,7 @@ evolve = Evolve(
 )
 
 evolve = Evolve(
-    config=AgentConfig(type='codex', reasoning_effort='high'),
+    config=AgentConfig(type='codex', model='gpt-6-sol', reasoning_effort='high'),
 )
 ```
 
@@ -418,10 +386,6 @@ evolve = Evolve(
 
 evolve = Evolve(
     config=AgentConfig(type='qwen', model='qwen3.8-max'),
-)
-
-evolve = Evolve(
-    config=AgentConfig(type='qwen', reasoning_effort='no-thinking'),
 )
 ```
 
@@ -440,7 +404,6 @@ evolve = Evolve(
     config=AgentConfig(
         type='kimi',
         model='kimi-k3-raptor',
-        reasoning_effort='thinking',
     ),
 )
 ```
@@ -458,10 +421,6 @@ evolve = Evolve(
 evolve = Evolve(
     config=AgentConfig(type='opencode', model='openrouter/anthropic/claude-fable-5.1'),
 )
-
-evolve = Evolve(
-    config=AgentConfig(type='opencode', reasoning_effort='xhigh'),
-)
 ```
 
 ```python
@@ -476,13 +435,13 @@ evolve = Evolve(
 ```
 
 ```python
-# pi (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
+# Pi (auto-picks OPENROUTER_API_KEY + E2B_API_KEY)
 evolve = Evolve(
     config=AgentConfig(type='pi'),
 )
 
 evolve = Evolve(
-    config=AgentConfig(type='pi', model='openrouter/openai/gpt-6-sol', reasoning_effort='xhigh'),
+    config=AgentConfig(type='pi', model='openrouter/openai/gpt-6-sol'),
 )
 
 # prime-agent (the same key and the same model ids)
@@ -514,7 +473,7 @@ evolve = Evolve(
 )
 
 evolve = Evolve(
-    config=AgentConfig(type='antigravity', model='gemini-3.5-flash-lite', reasoning_effort='low'),
+    config=AgentConfig(type='antigravity', model='gemini-3.5-flash-lite'),
 )
 ```
 
@@ -526,9 +485,9 @@ evolve = Evolve(
 | `prime-agent` | Actions run through `ipython` in a persistent Python kernel. For stdio MCP servers, use `envVars` to name sandbox variables; literal `env` values are rejected. |
 | `dsh` | Supports stdio and streamable HTTP MCP servers. SSE servers are rejected. |
 
-pi, Prime Agent, and dsh read `AGENTS.md`. pi installs skills in `~/.pi/agent/skills`; Prime Agent uses `~/.prime/agent/skills`. See [Agent Skills](./02-configuration.md#agent-skills) for skill installation and [Configuration](./02-configuration.md#evolve-instance) for MCP settings.
+Pi, Prime Agent, and dsh read `AGENTS.md`. Pi installs skills in `~/.pi/agent/skills`; Prime Agent uses `~/.prime/agent/skills`. See [Agent Skills](./02-configuration.md#agent-skills) for skill installation and [Configuration](./02-configuration.md#evolve-instance) for MCP settings.
 
-pi, Prime Agent, and Z Code can return process exit code `0` despite a failed outcome. Evolve also checks the last model call for pi and Prime Agent, and the final turn status for Z Code.
+Pi, Prime Agent, and Z Code can return process exit code `0` despite a failed outcome. Evolve also checks the last model call for Pi and Prime Agent, and the final turn status for Z Code.
 
 A failed final outcome produces `run_failed` and agent status `error`. Failure details appear as `error` updates; the response's `exit_code` still records the process exit code. See [Streaming](./04-streaming.md#harness-reported-failures-error).
 

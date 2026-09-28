@@ -32,12 +32,12 @@ Also available as `hosted().meta()` in both languages.
 
 | Field | Use it to answer |
 | --- | --- |
-| `agents` | Which harnesses run? Which models, effort modes, versions, and presets do they support? |
+| `agents` | Which harnesses run? Which model names, effort inputs, versions, and presets does the API accept? |
 | `retired_agents` | Which harnesses are retired, and which harness replaces each? |
 | `sandbox_providers` | Which providers support the task's resources and features? |
 | `platform_constraints` | Which requirements cannot run on this deployment? |
 | `network_modes` | Which network modes can a task declare? |
-| `analyze` | Which agents can analyses and checks run on, with which models and reasoning efforts? |
+| `analyze` | Which agents, models, effort inputs, and configured defaults do analyses and checks accept? |
 | `limits` | What are the current defaults and bounds for jobs, pages, uploads, and comparisons? |
 | `statuses` | Which states exist, and which are terminal? |
 | `agent_registration` | Which names, environment keys, and upload sizes can a custom agent use? |
@@ -45,7 +45,7 @@ Also available as `hosted().meta()` in both languages.
 | `managed_providers` | Which providers are available to the separate managed-agent runtime? |
 
 <Tip>
-Read capabilities when building a picker or validating a saved configuration. A documented example is useful; a fixed copy of the platform's model catalog becomes stale.
+Read capabilities when building a picker or validating a saved configuration. For reasoning options by model, see the [model reference](/core-concepts/models#model-and-effort-reference).
 </Tip>
 
 ## Configuration
