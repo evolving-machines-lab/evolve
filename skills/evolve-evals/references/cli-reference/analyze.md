@@ -122,6 +122,6 @@ evolve analyze --trajectory - --show-defaults
 cat run.jsonl | evolve analyze -T - -m anthropic/claude-haiku-4-5 --json
 ```
 
-The job-only options `--env`, `--trial`, `--passing`, `--failing`, `--n-trials`, `--n-concurrent`, and `--watch` are refused with `--trajectory`. The call is billed to your account.
+The judge boots no agent, so `--agent` is refused with `--trajectory`, as are the job-only options `--env`, `--trial`, `--passing`, `--failing`, `--n-trials`, `--n-concurrent`, `--watch`, and `--quiet`. The call is billed to your account.
 
 To analyze automatically during a new evaluation, use [`run --analyze`](/cli-reference/run). [Global options](/cli-reference/index#global-options) apply.

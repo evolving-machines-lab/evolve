@@ -5934,7 +5934,7 @@ async function cmdAnalyze(inv: Invocation, io: CliIO): Promise<number> {
 }
 
 /** The flags of `analyze` that belong to the job form only: a trajectory has no trials to select, no box, no wave to watch. */
-const JOB_ONLY_ANALYZE_FLAGS = ["env", "trial", "n-concurrent", "passing", "failing", "n-trials", "watch", "quiet"];
+const JOB_ONLY_ANALYZE_FLAGS = ["agent", "env", "trial", "n-concurrent", "passing", "failing", "n-trials", "watch", "quiet"];
 
 /**
  * A trajectory file as the request carries it: JSON (an ATIF trajectory, a
@@ -6022,6 +6022,10 @@ export function trajectoryAnalysisLines(result: TrajectoryAnalysis): string[] {
 async function cmdAnalyzeTrajectory(inv: Invocation, io: CliIO): Promise<number> {
   const client = analyses(clientConfig(inv));
   if (inv.flags["show-defaults"] === true) {
+    // -a picks an agent's defaults on the job form; the judge boots no agent.
+    if (inv.flags.agent !== undefined) {
+      throw new CliUsageError("--show-defaults with --trajectory prints the judge's defaults and takes no -a/--agent");
+    }
     const defaults = await client.trajectoryDefaults();
     if (inv.flags.json === true) {
       io.out(JSON.stringify(defaults));

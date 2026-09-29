@@ -10312,6 +10312,7 @@ async function testAnalyzeTrajectory() {
     assertEqual(await runCli(["analyze", "--trajectory", "-", "--show-defaults", ...AUTH], defaults.io), 0, "--trajectory --show-defaults exits 0");
     assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).pathname, "/api/analyses/trajectory/defaults", "one GET on the judge's defaults door");
     assert(!defaults.out.some((l) => l.startsWith("provider")), "the judge boots no box: no provider row");
+    assert(!defaults.out.some((l) => l.startsWith("agent")), "the judge runs on no agent: no agent row");
     assert(defaults.out.some((l) => l === "You are a trace QA reviewer."), "the prompt body prints unrendered");
 
     const before = fetchCalls.length;
@@ -10319,6 +10320,8 @@ async function testAnalyzeTrajectory() {
     assertEqual(await runCli(["analyze", "--trajectory", trajPath, "--watch", ...AUTH], captureIO().io), 2, "a job-only flag with --trajectory is a usage error");
     assertEqual(await runCli(["analyze", "--trajectory", join(dir, "missing.json"), ...AUTH], captureIO().io), 2, "an unreadable trajectory file is a usage error");
     assertEqual(await runCli(["analyze", "eval-1", "--task", taskPath, ...AUTH], captureIO().io), 2, "--task without --trajectory is a usage error");
+    assertEqual(await runCli(["analyze", "--trajectory", trajPath, "-a", "codex", ...AUTH], captureIO().io), 2, "-a with --trajectory is a usage error: the judge boots no agent");
+    assertEqual(await runCli(["analyze", "--trajectory", "-", "--show-defaults", "-a", "codex", ...AUTH], captureIO().io), 2, "-a with --trajectory --show-defaults is a usage error");
     assertEqual(fetchCalls.length, before, "no refused form reached the server");
   } finally {
     restoreFetch();
