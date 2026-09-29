@@ -1,6 +1,6 @@
 ---
 title: "evolve analysis"
-description: "Read an analysis verdict, transcript, or stored files."
+description: "Read an analysis result, transcript, or stored files."
 ---
 
 Use [`evolve analyze`](/cli-reference/analyze) to start analyses. Use `evolve analysis` to read them.
@@ -26,7 +26,7 @@ evolve analysis list --status failed --scope org
 
 All shared [list options](/cli-reference/index#list-options) apply: `--limit`, `--cursor`, `--columns`, `--quiet`, `--no-trunc`, `--no-headers`.
 
-## Show the verdict
+## Show the result
 
 ```bash
 evolve analysis show "$ANALYSIS_ID" --json

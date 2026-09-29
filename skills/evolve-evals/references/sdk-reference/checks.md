@@ -18,7 +18,7 @@ const client = checks();
 const check = await client.create({ source: { directory: "./tasks" } });
 const finished = await client.watch(check.id);
 for (const task of finished.results) {
-  console.log(task.task_name, task.label, task.executed);
+  console.log(task.task_name, task.status, task.checks);
 }
 ```
 
@@ -29,7 +29,7 @@ client = checks()
 check = await client.create("./tasks")
 finished = await client.watch(check["id"])
 for task in finished["results"]:
-    print(task["task_name"], task["label"], task["executed"])
+    print(task["task_name"], task["status"], task["checks"])
 ```
 
 For a published dataset:
@@ -55,8 +55,9 @@ Choose one source. A local check does not first publish a dataset.
 | Option | Purpose |
 | --- | --- |
 | `name` | Check label; defaults to an acceptance timestamp |
-| `model_name` | Checker model |
-| `reasoning_effort` | Supported reasoning effort |
+| `agent` | Agent the checker runs on; default `claude` |
+| `model_name` | Checker model, one of that agent's models |
+| `reasoning_effort` | Effort that agent accepts |
 | `sandbox_provider` | Checker sandbox provider |
 | `rubric` | `{criteria: [{name, description, guidance}, ...]}` |
 | `prompt` | Replacement prompt template |
@@ -73,14 +74,22 @@ TypeScript places these alongside `source` in the input object. Python takes key
 ```ts TypeScript
 const defaults = await client.defaults();
 console.log(defaults.rubric, defaults.prompt);
+
+const codex = await client.defaults({ agent: "codex" });
+console.log(codex.model_name, codex.reasoning_effort);
 ```
 
 ```python Python
 defaults = await client.defaults()
 print(defaults["rubric"], defaults["prompt"])
+
+codex = await client.defaults(agent="codex")
+print(codex["model_name"], codex["reasoning_effort"])
 ```
 
-Defaults include model, rubric, prompt, effort, and provider. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
+Defaults include agent, model, rubric, prompt, effort, and provider. Omit `agent` for `claude` defaults. Pass it to read another harness's check model default and that model's default effort. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
+
+Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. They differ from analysis prompt tokens.
 
 ## Understand the result
 
@@ -95,7 +104,6 @@ Check
     │       ├── outcome
     │       ├── explanation
     │       └── evidence
-    ├── label, executed
     └── failure, cost_usd
 ```
 
@@ -104,13 +112,11 @@ Each task can be `queued`, `running`, `completed`, or `failed`. The check become
 | Field | Read it as |
 | --- | --- |
 | `checks` | Criterion outcomes: `pass`, `fail`, `not_applicable`, `unknown` |
-| `label` | `has_a_problem`, `unclear`, `no_problem_found`, or null |
-| `executed` | Whether execution-based criteria were resolved; inspect it beside the label |
 | `failure` | Why that task check could not produce a result |
 
 **Note:**
 
-`no_problem_found` alone does not prove the task environment ran. Read `executed` and the criterion evidence. Custom rubrics may have no derived label.
+The API returns no overall verdict or separate execution flag. Read `checks` for outcomes and evidence. An unknown execution criterion leaves that part of the task's runtime behavior unresolved; see [how to read a check result](/core-concepts/check#the-result).
 
 ## Read and follow checks
 
@@ -119,7 +125,7 @@ Each task can be `queued`, `running`, `completed`, or `failed`. The check become
 | `get(id)` | Full check and its task results |
 | `list(...)` | `scope`, `status` list, `dataset`, `limit`, `cursor`; paginated handle |
 | `watch(id, ...)` | Wait until completed; callback on changes |
-| `defaults()` | Current policy and editable prompt |
+| `defaults({ agent })` | Rubric, editable prompt, and settings for the selected harness |
 
 Watch options are `onProgress`, `pollIntervalMs`, `signal` in TypeScript; `on_progress`, `poll_interval_s`, `timeout_s` in Python. Polling starts at 2 seconds and slows to 30 seconds while unchanged.
 
@@ -129,7 +135,7 @@ Watch options are `onProgress`, `pollIntervalMs`, `signal` in TypeScript; `on_pr
 | --- | --- | --- |
 | Download whole check or one task check | `download(id, { to })` | `download(id, to=...)` |
 | Browse a task check's sandbox | `taskFilesystem(checkId, taskCheckId)` | `task_filesystem(check_id, task_check_id)` |
-| Read one task verdict | `task(taskCheckId)` | Read the entry in `check["results"]` |
+| Read one task check | `task(taskCheckId)` | Read the entry in `check["results"]` |
 | Read checker transcript | `transcript(taskCheckId, { since })` | Not exposed |
 | Read checker artifact | `artifact(taskCheckId, stream)` | Not exposed |
 

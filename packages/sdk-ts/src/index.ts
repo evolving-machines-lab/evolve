@@ -250,7 +250,7 @@ export type {
 // =============================================================================
 
 // Output event types
-export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, TokenUsage } from "./parsers";
+export type { OutputEvent, AgentParser, SessionUpdate, AgentError, AgentUsage, HarnessEvent, TokenUsage } from "./parsers";
 export { isAgentWorkUpdate } from "./parsers";
 
 // Parser functions
@@ -262,10 +262,15 @@ export {
 
 // Individual parser factory functions (for advanced use cases)
 export {
+  createAntigravityParser,
   createClaudeParser,
   createCodexParser,
   createDroidParser,
+  createDshParser,
   createGeminiParser,
+  createPiParser,
+  createPrimeAgentParser,
+  createZcodeParser,
   parseQwenOutput,
 } from "./parsers";
 
@@ -281,6 +286,7 @@ export {
   getAgentConfig,
   harnessEffortVocabulary,
   isValidAgentType,
+  liveAgentTypes,
   expandPath,
   getMcpSettingsPath,
   getMcpSettingsDir,
@@ -296,12 +302,22 @@ export {
 
 export {
   writeMcpConfig,
+  writeAntigravityMcpConfig,
+  writeAntigravitySettings,
   writeClaudeMcpConfig,
   writeCodexMcpConfig,
   writeDroidGatewaySettings,
   writeDroidMcpConfig,
+  writeDshMcpConfig,
+  writeDshRoutePatch,
   writeGeminiMcpConfig,
+  writeKimiMcpConfig,
+  writeOpenCodeMcpConfig,
+  writePiMcpConfig,
+  writePrimeAgentMcpConfig,
   writeQwenMcpConfig,
+  writeZcodeMcpConfig,
+  writeZcodeProviderConfig,
 } from "./mcp";
 
 // =============================================================================
@@ -338,6 +354,8 @@ export {
   // Front-door configuration validation
   EvolveConfigError,
 } from "./utils";
+// A refused hand-over of a per-run config file rejects run(); callers match it by class, like the sandbox errors.
+export { HomeFileError } from "./mcp/home-file";
 
 // =============================================================================
 // STORAGE
@@ -434,6 +452,7 @@ export {
   type HostedErrorCode,
   type CapabilityDocument,
   type AgentCapability,
+  type RetiredAgent,
   type AgentEffortSupport,
   type AgentModelOption,
   type ProviderCapability,
@@ -502,8 +521,6 @@ export {
   type AnalysisCheck,
   type AnalysisEvidence,
   type AnalysisFailure,
-  type AnalysisLabel,
-  type CheckLabel,
   type CheckDefaults,
   type AnalyzeDefaults,
   type TrajectoryAnalysis,
@@ -653,7 +670,7 @@ export {
   type HarnessTrialLayout,
   type TrialTreeParts,
   // Analysis runs off the traces feed (deliberately off-contract — see
-  // AnalysesClient): the verdict, the analyzer's transcript, its artifacts.
+  // AnalysesClient): the result, the analyzer's transcript, its artifacts.
   type AnalysisArtifactStream,
   type AnalysisTranscript,
   type AnalysisTranscriptOptions,

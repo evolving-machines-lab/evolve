@@ -5,7 +5,7 @@ description: "Read task-quality findings and open the evidence behind them."
 
 Find a check in **Jobs** under kind **Check**, or open a job's **Check** tab to see checks of its tasks.
 
-![A task quality report showing its verdict, criterion outcomes, and checker cost.](/images/dashboard-task-check.png)
+![A task quality report showing its summary label, criterion outcomes, and checker cost.](/images/dashboard-task-check.png)
 
 *Read the overall finding, then inspect the criterion evidence.*
 
@@ -13,7 +13,7 @@ Find a check in **Jobs** under kind **Check**, or open a job's **Check** tab to 
 Check report
 ├── Source tasks + model + effort + cost
 └── Task results
-    ├── Label and execution findings
+    ├── Summary label
     ├── Criterion outcomes and evidence
     └── Checker trace
 ```
@@ -45,9 +45,11 @@ The header identifies the check, source, model, effort, status, and cost. Each t
 | **Has a problem** | Read the failed criterion and its evidence. |
 | **Unclear** | Read what information was missing. |
 | **No problem found** | Check execution findings before treating it as a runtime validation. |
-| Failed task check | Read its failure; this is a failed review, not a task-quality verdict. |
+| Failed task check | Read its failure; this is a failed review, not a task-quality result. |
 
-The `executed` flag is derived from criterion outcomes. It does not independently attest that every relevant command ran. See [how check results are derived](/core-concepts/check#the-result).
+The dashboard computes this summary label from the criterion outcomes. Open the findings to read their explanations and evidence.
+
+With the default rubric, **Not executed** means at least one execution criterion is `unknown`; **Executed** means none is `unknown`. The note summarizes those findings, so read their evidence before treating the check as runtime validation. See [the exact result rules](/core-concepts/check#the-result).
 
 **[Check reference](/cli-reference/check)**
 

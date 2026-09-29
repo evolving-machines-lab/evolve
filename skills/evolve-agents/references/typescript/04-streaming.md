@@ -108,13 +108,15 @@ interface OutputEvent {
 }
 ```
 
-Everything beyond `update` is optional and comes straight from the wire line the update was parsed
-from — a field the harness did not print is absent, never guessed. `timestamp` is the harness's
-clock (claude, gemini, opencode and droid stamp every line; qwen and kimi stamp none); `model` is
-the model named on the line, or on the harness's init line for gemini and droid; `messageId` lets you
-tell which lines belong to one LLM message (claude prints one line per content block, all with the
-same `message.id`); `parentToolCallId` is set only on a subagent's lines and names the `toolCallId`
-of the `Task`/`agent` call that spawned it.
+Every field except `update` is optional. Missing harness data stays absent.
+
+| Field | Source |
+| --- | --- |
+| `timestamp` | The harness's ISO 8601 clock. Claude, OpenCode, Droid, and Z Code stamp lines; Pi and Prime Agent stamp messages. Codex, Qwen, Kimi, dsh, and Antigravity supply no timestamp. |
+| `model` | The model named on the line, Droid/Antigravity's initialization event, or Z Code's first request. |
+| `messageId` | Groups lines from one model message. Claude content blocks share `message.id`; Antigravity groups one `agent_response` step. |
+| `parentToolCallId` | On sub-agent events, identifies the parent `Task`, `agent`, or `Agent` tool call. Z Code also supplies `extra.childSessionId`. |
+| `extra` | Additional fields under the harness's original names. |
 
 ---
 
@@ -131,7 +133,8 @@ type SessionUpdate =
   | ToolCallUpdate
   | Plan
   | AgentError
-  | AgentUsage;
+  | AgentUsage
+  | HarnessEvent;
 ```
 
 ### Message Events
@@ -140,7 +143,7 @@ type SessionUpdate =
 |------|-----------------|-------------|
 | `AgentMessageChunk` | `"agent_message_chunk"` | Text/image streaming from agent |
 | `AgentThoughtChunk` | `"agent_thought_chunk"` | Reasoning (Codex) or thinking (Claude) |
-| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Gemini) |
+| `UserMessageChunk` | `"user_message_chunk"` | User message echo (Qwen, OpenCode, Pi, Prime Agent, Z Code) |
 
 ```typescript
 interface AgentMessageChunk {
@@ -191,14 +194,17 @@ interface ToolCallUpdate {
 }
 ```
 
-`toolName` is the harness-native tool name, verbatim — `Bash`, `Read`, or the joined `mcp__<server>__<tool>` an MCP call carries. Prefer it over parsing `title`, which is formatted per tool for people to read and is not round-trippable; `toolName` is the identifier the model actually called. It is a deliberate addition to the ACP shape, which names no tool and whose `kind` collapses every MCP tool to `other`, and it is optional — absent on traces recorded before the SDK carried it, and on the occasional call a harness cannot name, so fall back to `kind` there.
+Use `toolName` to identify a tool: it preserves names such as `Bash`, `Read`, and `mcp__<server>__<tool>`. `title` is display text. If `toolName` is absent in an older trace or an unnamed call, fall back to `kind`.
 
-`content` is the result text exactly as the harness sent it — a failed call's error text is not
-wrapped in a code fence or prefixed; frame it in your own UI. `rawOutput` is the harness's
-structured record of the same result when it prints one beyond the text: claude's
-`tool_use_result` (`stdout`, `stderr`, `exitCode`, `interrupted`, or the file it wrote), codex's
-completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool state (`output`,
-`metadata` with the exit code, `time`). Read an exit code from there rather than from prose.
+`content` preserves result text, including errors, without adding formatting. `rawOutput` preserves a structured result when the harness provides one:
+
+| Harness | Structured result |
+| --- | --- |
+| Claude | `tool_use_result`, including stdout, stderr, exit code, interruption, or file details. |
+| Codex | Completed item, including `aggregated_output`, `exit_code`, and `status`. |
+| OpenCode | Tool state, including output, metadata, exit code, and timing. |
+
+Read an exit code from `rawOutput` rather than parsing prose.
 
 ### Plan Event
 
@@ -207,6 +213,7 @@ completed item (`aggregated_output`, `exit_code`, `status`), opencode's tool sta
 | `Plan` | `"plan"` | TodoWrite updates (replaces entire list) |
 | `AgentError` | `"error"` | A failure the HARNESS reported. **Not agent work** — see below |
 | `AgentUsage` | `"usage"` | Token accounting the HARNESS reported. **Not agent work** — see below |
+| `HarnessEvent` | `"harness_event"` | A line about the harness's own run (a retry, a sub-agent step, an unknown type). **Not agent work** — see below |
 
 ```typescript
 interface Plan {
@@ -360,7 +367,7 @@ function handleEvent(event: OutputEvent): void {
       break;
 
     case "user_message_chunk":
-      // Gemini echo - typically ignored
+      // Prompt echo - typically ignored
       break;
 
     case "tool_call":
@@ -383,6 +390,15 @@ function handleEvent(event: OutputEvent): void {
     case "plan":
       ui.renderPlan(update.entries);
       break;
+
+    case "error":
+      console.error(update.message);
+      break;
+
+    case "usage":
+    case "harness_event":
+      console.debug(update);
+      break;
   }
 }
 
@@ -393,13 +409,20 @@ evolve.on("content", handleEvent);
 
 ## Key Patterns
 
-1. **Handle all 6 event types** — Don't silently drop unknown events
+1. **Handle every update type** — Keep errors, usage, and harness activity separate from agent work
+
 2. **Match tools by ID** — `tool_call` and `tool_call_update` share `toolCallId`
+
 3. **Handle out-of-order** — `tool_call_update` may arrive before `tool_call`
+
 4. **Concatenate chunks** — Message text arrives incrementally
+
 5. **Support images** — `ContentBlock` includes `ImageContent`
+
 6. **Use `kind` for icons** — Categorize tools visually (read, edit, execute, etc.)
+
 7. **Identify tools by `toolName`** — The harness-native name, not the human-readable `title`; fall back to `kind` when it is absent
+
 8. **Track `locations`** — Show affected file paths in UI
 
 ---
@@ -432,13 +455,42 @@ import { isAgentWorkUpdate } from "@evolvingmachines/evolve";
 const didWork = events.some((e) => isAgentWorkUpdate(e.update));
 ```
 
+## Harness-reported events (`harness_event`)
+
+`harness_event` carries run activity such as retries, sub-agent progress, and compaction that does not fit a message or tool update.
+
+The `pi`, `prime-agent`, `dsh`, `zcode`, and `antigravity` parsers preserve unknown JSON event types this way. The update includes the original type and the event's other fields; warnings appear once for each unknown type in a parser instance.
+
+Claude, Codex, Qwen, Kimi, OpenCode, and Droid do not provide that unknown-type guarantee in `content` events. Subscribe to `stdout` when you need the complete raw harness output.
+
+```typescript
+interface HarnessEvent {
+  sessionUpdate: "harness_event";
+  /** The harness's own type word for the line, verbatim. */
+  type: string;
+  /** Every other field of the line, verbatim. */
+  payload: Record<string, unknown>;
+}
+```
+
+Exclude these events when checking whether the agent produced work. `isAgentWorkUpdate` excludes `harness_event`, `error`, and `usage`.
+
 ## Harness-reported usage (`usage`)
 
-Every harness prints its own token accounting on the stream, and it arrives as its own update so
-you can meter a run without reading the raw JSON: claude and qwen print each LLM message's usage,
-opencode prints each step's tokens and cost, and codex, gemini, claude, qwen and droid print a
-whole-run total on their terminal line. Kimi's stream-json prints no usage at all, so a kimi run
-simply has no `usage` events.
+Usage events report the accounting available from the harness:
+
+| Harness | Reported usage |
+| --- | --- |
+| Claude, Qwen | Each model message and a whole-run total. |
+| Codex, Droid | A whole-run total. |
+| OpenCode | Each step's tokens and cost. |
+| Pi, Prime Agent | Each model call's tokens. Cost is present only when the harness supplies it. |
+| dsh | Each step's tokens. |
+| Z Code | Each model request and a whole-run total. Reasoning and cache counts are in `extra`; no cost is reported. |
+| Antigravity | Each model call and a conversation total. The total includes earlier turns when a run resumes. |
+| Kimi | No `usage` events; its stream does not report usage. |
+
+Prompt-token accounting follows the harness. For OpenCode, `promptTokens` includes input and cache reads; cache writes remain in `extra.cache_write_tokens`.
 
 ```typescript
 interface AgentUsage {
@@ -449,7 +501,7 @@ interface AgentUsage {
 }
 
 interface TokenUsage {
-  promptTokens?: number;      // input INCLUDING the cached and cache-written shares
+  promptTokens?: number;      // Input total normalized from harness accounting
   completionTokens?: number;
   cachedTokens?: number;      // the cache-read share of promptTokens
   costUsd?: number;           // only when the harness priced it (claude's total_cost_usd)

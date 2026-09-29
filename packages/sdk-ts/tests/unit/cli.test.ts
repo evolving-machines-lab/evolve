@@ -216,8 +216,8 @@ function testGrammarResolution() {
   assertEqual(parseArgs(["job", "ls"]).command, "job list", "`ls` is a hidden alias of list");
   assertEqual(parseArgs(["run"]).command, "run", "`run` is a command in its own right, not rewritten to job start");
   assertEqual(
-    parseArgs(["run", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5"]).flags,
-    { dataset: ["deep-swe"], agent: "codex", model: ["gpt-5.5"] },
+    parseArgs(["run", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol"]).flags,
+    { dataset: ["deep-swe"], agent: "codex", model: ["gpt-6-sol"] },
     "`run` parses job start's flags"
   );
   assertEqual(
@@ -269,7 +269,7 @@ function testShortFlags() {
     "job", "start",
     "-d", "deep-swe@1.1",
     "-a", "codex",
-    "-m", "gpt-5.5",
+    "-m", "gpt-6-sol",
     "-k", "2",
     "-n", "8",
     "-e", "daytona",
@@ -282,7 +282,7 @@ function testShortFlags() {
   assertEqual(inv.command, "job start", "command resolved");
   assertEqual(inv.flags.dataset, ["deep-swe@1.1"], "-d is --dataset (repeatable)");
   assertEqual(inv.flags.agent, "codex", "-a is --agent");
-  assertEqual(inv.flags.model, ["gpt-5.5"], "-m is --model (repeatable)");
+  assertEqual(inv.flags.model, ["gpt-6-sol"], "-m is --model (repeatable)");
   assertEqual(inv.flags["n-attempts"], 2, "-k is --n-attempts");
   assertEqual(inv.flags["n-concurrent"], 8, "-n is --n-concurrent");
   assertEqual(inv.flags.env, "daytona", "-e is --env, the sandbox provider");
@@ -365,7 +365,7 @@ function testBuildJobInputFlags() {
     "-x", "flaky-*",
     "-l", "5",
     "-a", "codex@2.0",
-    "-m", "gpt-5.5",
+    "-m", "gpt-6-sol",
     "-m", "gpt-5.5-mini",
     "--effort", "low",
     "-k", "2",
@@ -387,7 +387,7 @@ function testBuildJobInputFlags() {
       agents: [
         // --effort is stamped on EVERY arm: the server owns the per-agent
         // refusal, and the CLI never edits the list to dodge one.
-        { name: "codex", model_name: "gpt-5.5", version: "2.0", reasoning_effort: "low" },
+        { name: "codex", model_name: "gpt-6-sol", version: "2.0", reasoning_effort: "low" },
         { name: "codex", model_name: "gpt-5.5-mini", version: "2.0", reasoning_effort: "low" },
       ],
       n_attempts: 2,
@@ -685,7 +685,7 @@ function testBuildJobInputSkills() {
     "job", "start",
     "-d", "deep-swe",
     "-a", "codex",
-    "-m", "gpt-5.5",
+    "-m", "gpt-6-sol",
     "-m", "gpt-5.5-mini",
     "--skill", "skills.sh/o/r/frontend-design",
     "--skill", "./my-skill",
@@ -697,7 +697,7 @@ function testBuildJobInputSkills() {
       // one sweep. The local folder stays verbatim in the built body —
       // cmdJobStart uploads it and swaps the upload:<id> handle at send
       // time, so --print-config shows the path the caller typed.
-      { name: "codex", model_name: "gpt-5.5", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
+      { name: "codex", model_name: "gpt-6-sol", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
       { name: "codex", model_name: "gpt-5.5-mini", skills: ["skills.sh/o/r/frontend-design", "./my-skill"] },
     ],
     "--skill repeatable, stamped on every arm in caller order"
@@ -758,9 +758,9 @@ async function testConfigFileMerge() {
     );
 
     const merged = buildJobInput(
-      parseArgs(["job", "start", "-c", jsonPath, "-a", "codex", "-m", "gpt-5.5", "-i", "new-*", "-k", "1"])
+      parseArgs(["job", "start", "-c", jsonPath, "-a", "codex", "-m", "gpt-6-sol", "-i", "new-*", "-k", "1"])
     );
-    assertEqual(merged.agents, [{ name: "codex", model_name: "gpt-5.5" }], "-a/-m replace the file's agents");
+    assertEqual(merged.agents, [{ name: "codex", model_name: "gpt-6-sol" }], "-a/-m replace the file's agents");
     assertEqual(
       merged.datasets,
       [{ name: "deep-swe", version: "1.0", task_names: ["new-*"] }],
@@ -782,7 +782,7 @@ async function testConfigFileMerge() {
         "  - name: frontier-swe",
         "agents:",
         "  - name: codex",
-        "    model_name: gpt-5.5",
+        "    model_name: gpt-6-sol",
         "    reasoning_effort: low",
         "n_attempts: 2",
         "n_concurrent_trials: 8",
@@ -799,7 +799,7 @@ async function testConfigFileMerge() {
           { name: "deep-swe", version: "1.1", task_names: ["cache-*", "abs-*"] },
           { name: "frontier-swe" },
         ],
-        agents: [{ name: "codex", model_name: "gpt-5.5", reasoning_effort: "low" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", reasoning_effort: "low" }],
         n_attempts: 2,
         n_concurrent_trials: 8,
         max_trial_spend_usd: 25.5,
@@ -1413,10 +1413,10 @@ function testYamlConfig() {
   );
   assertEqual(
     parseYamlConfig(
-      ["agents:", "  - {name: claude, model_name: opus}", "  - name: codex", "    model_name: gpt-5.5"].join("\n"),
+      ["agents:", "  - {name: claude, model_name: opus}", "  - name: codex", "    model_name: gpt-6-sol"].join("\n"),
       "t.yaml"
     ),
-    { agents: [{ name: "claude", model_name: "opus" }, { name: "codex", model_name: "gpt-5.5" }] },
+    { agents: [{ name: "claude", model_name: "opus" }, { name: "codex", model_name: "gpt-6-sol" }] },
     "a flow item and a block item sit side by side in one sequence"
   );
   assertEqual(
@@ -1647,14 +1647,14 @@ async function testPrintConfig() {
   try {
     const { io, out } = captureIO();
     const code = await runCli(
-      ["job", "start", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--print-config", ...AUTH],
+      ["job", "start", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--print-config", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0");
     assertEqual(fetchCalls.length, 0, "nothing was sent");
     assertEqual(
       JSON.parse(out.join("\n")),
-      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] },
+      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] },
       "prints the resolved JobCreate body"
     );
 
@@ -2303,7 +2303,7 @@ function wireJob(overrides: Record<string, unknown> = {}): Record<string, unknow
     job_name: "deep-swe sweep",
     status: "QUEUED",
     datasets: [{ name: "deep-swe", version: "1.1" }],
-    agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
+    agents: [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null }],
     n_attempts: 1,
     n_concurrent_trials: 4,
     max_trial_spend_usd: 25,
@@ -2367,7 +2367,7 @@ async function testRunWatchEndToEnd() {
         "run",
         "-d", "deep-swe@1.1",
         "-a", "codex",
-        "-m", "gpt-5.5",
+        "-m", "gpt-6-sol",
         "-k", "1",
         "-n", "4",
         "--max-trial-spend", "25",
@@ -2388,7 +2388,7 @@ async function testRunWatchEndToEnd() {
       JSON.parse(createCall?.init?.body as string),
       {
         datasets: [{ name: "deep-swe", version: "1.1" }],
-        agents: [{ name: "codex", model_name: "gpt-5.5" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol" }],
         n_attempts: 1,
         n_concurrent_trials: 4,
         max_trial_spend_usd: 25,
@@ -2438,7 +2438,7 @@ async function testRunWatchJsonAndQuiet() {
 
     const ndjson = captureIO();
     const code = await runCli(
-      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", "--json", ...AUTH],
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--watch", "--json", ...AUTH],
       ndjson.io
     );
     assertEqual(code, 0, "exit code 0");
@@ -2451,7 +2451,7 @@ async function testRunWatchJsonAndQuiet() {
 
     const quiet = captureIO();
     await runCli(
-      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", "-q", ...AUTH],
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--watch", "-q", ...AUTH],
       quiet.io
     );
     assert(!quiet.out.some((l) => l.includes("trial.settled")), "-q suppresses per-event lines");
@@ -2477,7 +2477,7 @@ async function testWatchFailedExitCode() {
     setMockResponse("/api/jobs", { status: 202, body: wireJob() });
     const { io } = captureIO();
     const code = await runCli(
-      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", "--watch", ...AUTH],
+      ["run", "-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", "--watch", ...AUTH],
       io
     );
     assertEqual(code, 1, "FAILED job exits 1");
@@ -2500,7 +2500,7 @@ async function testUsageErrorExitCode() {
     // A typo'd provider is caught at the keyboard like --stream, never sent.
     const badEnv = captureIO();
     const codeEnv = await runCli(
-      ["job", "start", "-d", "b", "-a", "codex", "-m", "gpt-5.5", "-e", "modall"],
+      ["job", "start", "-d", "b", "-a", "codex", "-m", "gpt-6-sol", "-e", "modall"],
       badEnv.io
     );
     assertEqual(codeEnv, 2, "an unknown -e/--env provider is a usage error");
@@ -2534,7 +2534,7 @@ async function testJsonErrorObject() {
       headers: { "x-request-id": "req_0123456789abcdef0123456789abcdef" },
       body: { error: { code: "version_not_ready", message: sentence, param: "datasets[0]" } },
     });
-    const startArgs = ["job", "start", "-d", "rq-init", "-a", "codex", "-m", "gpt-5.5"];
+    const startArgs = ["job", "start", "-d", "rq-init", "-a", "codex", "-m", "gpt-6-sol"];
 
     // Human mode: unchanged — the sentence on stderr, nothing on stdout.
     const human = captureIO();
@@ -2881,7 +2881,7 @@ async function testJobShowPassAtK() {
         stats: {
           cost_usd: null,
           evals: {
-            "codex__gpt-5.5__deep-swe@1.1": {
+            "codex__gpt-6-sol__deep-swe@1.1": {
               n_trials: 8,
               n_errors: 0,
               metrics: [{ mean: 0.5 }],
@@ -2911,7 +2911,7 @@ async function testJobShowPassAtK() {
       "each k is printed to three decimals, ascending",
     );
     assert(
-      text.includes("codex__gpt-5.5__deep-swe@1.1"),
+      text.includes("codex__gpt-6-sol__deep-swe@1.1"),
       "the numbers are labelled with the evals key they belong to",
     );
     assert(
@@ -2930,7 +2930,7 @@ async function testJobShowPassAtK() {
     await runCli(["job", "show", "eval-1", "--json", ...AUTH], json.io);
     const body = JSON.parse(json.out[0]);
     assertEqual(
-      body.stats.evals["codex__gpt-5.5__deep-swe@1.1"].pass_at_k["4"],
+      body.stats.evals["codex__gpt-6-sol__deep-swe@1.1"].pass_at_k["4"],
       1,
       "--json carries stats.evals[].pass_at_k verbatim",
     );
@@ -3767,7 +3767,7 @@ function wireAnalyzedTrial(
     job_id: "eval-1",
     task_name: "demo-task",
     source: "deep-swe",
-    agent_info: { name: "codex", version: null, model_info: { name: "gpt-5.5" } },
+    agent_info: { name: "codex", version: null, model_info: { name: "gpt-6-sol" } },
     attempt: 1,
     status: "SCORED",
     reward: 1,
@@ -3879,6 +3879,7 @@ function testBuildJobInputAnalyze() {
       "-d", "deep-swe",
       "-a", "codex",
       "-m", "m",
+      "--analyze-agent", "claude",
       "--analyze-model", "claude-haiku-4-5-20251001",
       "--analyze-rubric", "rubric.json",
       "--analyze-provider", "modal",
@@ -3889,12 +3890,19 @@ function testBuildJobInputAnalyze() {
   assertEqual(
     withFields.analyze,
     {
+      agent: "claude",
       model_name: "claude-haiku-4-5-20251001",
       rubric: CLI_RUBRIC,
       sandbox_provider: "modal",
       reasoning_effort: "low",
     },
-    "--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
+    "--analyze-agent/--analyze-model/--analyze-rubric/--analyze-provider/--analyze-effort imply --analyze and fill their fields"
+  );
+  // The agent alone arms the trigger too, verbatim: the agent list is the server's.
+  assertEqual(
+    buildJobInput(parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m", "--analyze-agent", "opencode"])).analyze,
+    { agent: "opencode" },
+    "--analyze-agent alone implies --analyze and rides verbatim"
   );
 
   // The provider VALUE is the server's to rule (the lineup lives on GET
@@ -4108,8 +4116,8 @@ async function testAnalyzeVerbWatchFollows() {
       body: {
         items: [
           wireAnalyzedTrial("run-1", COMPLETED_WIRE_ANALYSIS),
-          // A second row with a derived label: the table leads its checks cell with the word.
-          wireAnalyzedTrial("run-2", { ...COMPLETED_WIRE_ANALYSIS, id: "an-2", label: "env_fault" }),
+          // A second completed row: every completed checks cell leads with the outcome tally.
+          wireAnalyzedTrial("run-2", { ...COMPLETED_WIRE_ANALYSIS, id: "an-2" }),
         ],
         nextCursor: null,
         hasMore: false,
@@ -4123,7 +4131,7 @@ async function testAnalyzeVerbWatchFollows() {
     let code: number;
     try {
       code = await runCli(
-        ["analyze", "eval-1", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", "-p", promptPath, "--watch", ...AUTH],
+        ["analyze", "eval-1", "-a", "claude", "-m", "claude-haiku-4-5-20251001", "-e", "daytona", "--effort", "low", "-p", promptPath, "--watch", ...AUTH],
         io
       );
     } finally {
@@ -4134,8 +4142,8 @@ async function testAnalyzeVerbWatchFollows() {
     assert(post !== undefined, "POSTs the per-job analyze route");
     assertEqual(
       JSON.parse(post?.init?.body as string),
-      { model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
-      "-m/-e/-p/--effort ride the body as model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
+      { agent: "claude", model_name: "claude-haiku-4-5-20251001", prompt: promptText, sandbox_provider: "daytona", reasoning_effort: "low" },
+      "-a/-m/-e/-p/--effort ride the body as agent/model_name/sandbox_provider/prompt (the file's TEXT, Harbor's -p)/reasoning_effort; no rubric key when none given"
     );
     assert(jobReads >= 3, "follows the wave by polling the job (past the pre-flight read)");
     assert(
@@ -4147,12 +4155,12 @@ async function testAnalyzeVerbWatchFollows() {
       "the table carries the criterion outcomes"
     );
     assert(
-      out.some((l) => l.includes("run-2") && l.includes("ENV FAULT · reward_hacking pass")),
-      "a row with a derived label leads its checks cell with the label word (spaces for the underscores)"
+      out.some((l) => l.includes("run-2") && l.includes("pass 1 · fail 0 · unknown 0 · n/a 0 · reward_hacking pass")),
+      "a completed row leads its checks cell with the outcome tally, the per-criterion words after it"
     );
     assert(
-      out.some((l) => l.includes("run-1") && l.includes("reward_hacking pass") && !l.includes("·  reward") && !l.includes("custom rubric")),
-      "a row whose server states no label prints the words alone"
+      !out.some((l) => l.includes("custom rubric") || l.includes("ENV FAULT")),
+      "no label word anywhere: the platform derives none"
     );
     assert(out.some((l) => l.includes("$0.0173")), "the table carries the analyzer's own cost");
     assert(
@@ -4330,13 +4338,13 @@ function testTrialDetailAnalysisRows() {
   assert(analyzed.includes("pass — No verifier writes observed."), "each criterion renders outcome and explanation");
   assert(analyzed.includes("Legitimate solve."), "the summary renders");
   assert(analyzed.includes("$0.0173"), "the analyzer's own spend renders, never folded into the trial's bill");
-  // A server predating the derived label sends none: no label row, no word invented.
-  assert(!analyzed.includes("label"), "no label row when the server stated none");
+  // No derived label anywhere — the outcome tally is the analysis's summary row.
+  assert(!analyzed.includes("label"), "no label row: the platform derives none");
+  assert(analyzed.includes("outcomes") && analyzed.includes("pass 1 · fail 0 · unknown 0 · n/a 0"), "the outcome tally rides its own row");
 
-  // THE DERIVED LABEL (the platform's word for the whole trial) rides its own
-  // row in capitals; `custom rubric` where the run has none; the fourth
-  // outcome renders as its wire word.
-  const labelled = (label: "flagged" | null) =>
+  // THE OUTCOME TALLY counts every criterion (the platform derives no word for
+  // the trial); the fourth outcome renders as its wire word.
+  const detailed = () =>
     trialDetailLines(
       trialFixture({
         status: "SCORED",
@@ -4351,7 +4359,6 @@ function testTrialDetailAnalysisRows() {
             score_is_earned: { outcome: "fail", explanation: "Test tampering: tests/test.sh edited.", evidence: [{ where: "step_id 4", quote: "rm tests/test.sh" }] },
             environment_worked: { outcome: "unknown", explanation: "No trial.log.", evidence: [] },
           },
-          label,
           estimated_cost_usd: 0.01,
           failure: null,
           created_at: "2026-09-14T00:00:00.000Z",
@@ -4359,9 +4366,9 @@ function testTrialDetailAnalysisRows() {
         },
       })
     ).join("\n");
-  assert(labelled("flagged").includes("FLAGGED"), "the derived label renders in capitals");
-  assert(labelled(null).includes("custom rubric"), "a null label reads `custom rubric`");
-  assert(labelled("flagged").includes("unknown — No trial.log."), "the fourth outcome renders as its wire word");
+  assert(detailed().includes("pass 0 · fail 1 · unknown 1 · n/a 0"), "the outcome tally counts every criterion");
+  assert(!detailed().includes("FLAGGED") && !detailed().includes("custom rubric"), "no derived word, no placeholder");
+  assert(detailed().includes("unknown — No trial.log."), "the fourth outcome renders as its wire word");
 
   const failed = trialDetailLines(
     trialFixture({
@@ -4448,7 +4455,7 @@ async function testCompareCancelDownload() {
             job_id: "eval-1",
             task_name: "task",
             source: "deep-swe",
-            agent_info: { name: "codex", version: null, model_info: { name: "gpt-5.5", provider: null }, reasoning_effort: null },
+            agent_info: { name: "codex", version: null, model_info: { name: "gpt-6-sol", provider: null }, reasoning_effort: null },
             status: "SCORED",
             reward: 1,
             spend_source: "measured",
@@ -4962,7 +4969,7 @@ async function testGpuSurfaces() {
     const text = show.out.join("\n");
     assert(text.includes("GPU"), "the GPU column appears when a task declares GPUs");
     assert(text.includes("2x H100"), "the requirement renders count and types");
-    assert(text.includes("e2b →modal"), "a degrade verdict renders as an arrow, not a refusal");
+    assert(text.includes("e2b →modal"), "a degrade result renders as an arrow, not a refusal");
     assert(
       text.includes("e2b: runs on modal — e2b offers no GPU allocation"),
       "the limitation line names where the task actually runs and why"
@@ -5476,9 +5483,9 @@ async function testIdPrefixLawEveryNoun() {
   const ghost = "00000000-0000-4000-8000-000000000000";
   installMockFetch();
   try {
-    const verdictA = analysisVerdictFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
+    const resultA = analysisResultFixture({ id: anA, trial_id: trialT, status: "completed", summary: "clean", checks: {}, failure: null });
     const notAnAnalysis = { status: 400, body: { error: "analysis.json belongs to an analysis run — open the analysis row and download it there" } };
-    setMockResponse(`/api/traces/trials/${anA}/artifacts?what=analysis`, { status: 200, body: { analysis: verdictA } });
+    setMockResponse(`/api/traces/trials/${anA}/artifacts?what=analysis`, { status: 200, body: { analysis: resultA } });
     setMockResponse(`/api/traces/trials/${anA}/artifacts?what=trace-stdout`, { status: 200, body: { log: "analyzer stdout" } });
     setMockResponse(`/api/traces/trials/${anA}/events`, {
       status: 200,
@@ -5493,7 +5500,7 @@ async function testIdPrefixLawEveryNoun() {
     });
     setMockResponse(`/api/trials/${trialT}`, {
       status: 200,
-      body: trialFixture({ id: trialT, status: "SCORED", reward: 1, analysis: verdictA as unknown as Trial["analysis"] }),
+      body: trialFixture({ id: trialT, status: "SCORED", reward: 1, analysis: resultA as unknown as Trial["analysis"] }),
     });
     setMockResponse(`/api/trials/${trialN}`, { status: 200, body: trialFixture({ id: trialN, job_id: jobN, status: "SCORED", reward: 0, analysis: null }) });
     setMockResponse(`/api/jobs/${jobN}`, { status: 200, body: wireJob({ id: jobN }) });
@@ -5502,28 +5509,28 @@ async function testIdPrefixLawEveryNoun() {
     setMockResponse(`/api/jobs/${regradeJob}`, { status: 200, body: wireJob({ id: regradeJob, is_regrade: true }) });
     setMockResponse("/api/analyses", {
       status: 200,
-      body: page([verdictA, analysisVerdictFixture({ id: anB, trial_id: trialS })]),
+      body: page([resultA, analysisResultFixture({ id: anB, trial_id: trialS })]),
     });
 
-    // A FULL trial id: the verdict door refuses it typed, the trial's own row names its latest analysis.
+    // A FULL trial id: the result door refuses it typed, the trial's own row names its latest analysis.
     const byTrial = captureIO();
     const beforeTrial = fetchCalls.length;
     assertEqual(await runCli(["analysis", "show", trialT, "--json", ...AUTH], byTrial.io), 0, "analysis show takes a full trial id");
     assertEqual((JSON.parse(byTrial.out[0]) as { id: string }).id, anA, "and serves the trial's LATEST analysis (trial.analysis)");
     assert(fetchCalls.some((c) => c.url.endsWith(`/api/trials/${trialT}`)), "read off the trial's own row");
-    assertEqual(fetchCalls.length - beforeTrial, 2, "TWO reads: the door's species answer and the trial row — the row's analysis IS the verdict, not read a third time");
+    assertEqual(fetchCalls.length - beforeTrial, 2, "TWO reads: the door's species answer and the trial row — the row's analysis IS the result, not read a third time");
 
     // A full trial id on trace: the same resolution, then the analyzer's transcript.
     const traceByTrial = captureIO();
     assertEqual(await runCli(["analysis", "trace", trialT, "--json", ...AUTH], traceByTrial.io), 0, "analysis trace takes a full trial id");
     assert(fetchCalls[fetchCalls.length - 1].url.includes(`/api/traces/trials/${anA}/events`), "and reads the analysis's transcript");
 
-    // A full analysis id: the verdict door's yes is the answer, no trial read — and the answer is what show prints.
+    // A full analysis id: the result door's yes is the answer, no trial read — and the answer is what show prints.
     const byAnalysis = captureIO();
     const before = fetchCalls.length;
     assertEqual(await runCli(["analysis", "show", anA, ...AUTH], byAnalysis.io), 0, "a full analysis id names that run");
     assert(!fetchCalls.slice(before).some((c) => c.url.includes("/api/trials/")), "without reading any trial");
-    assertEqual(fetchCalls.length - before, 1, "ONE read: the door's verdict is the document printed, never read twice");
+    assertEqual(fetchCalls.length - before, 1, "ONE read: the door's result is the document printed, never read twice");
 
     // A full analysis id on a stream: the resolver's door read is the SDK's species proof — no second gate read.
     const streamed = captureIO();
@@ -5533,13 +5540,13 @@ async function testIdPrefixLawEveryNoun() {
     assertEqual(
       fetchCalls.slice(beforeStream).map((c) => new URL(c.url).search),
       ["?what=analysis", "?what=trace-stdout"],
-      "TWO reads: the verdict door once (resolution and species proof are one read), then the stream"
+      "TWO reads: the result door once (resolution and species proof are one read), then the stream"
     );
 
     // A trial PREFIX: resolved among the analysis list's trial_id column, then the trial's row.
     const byTrialPrefix = captureIO();
     assertEqual(await runCli(["analysis", "show", "d1a10000-cccc", "--json", ...AUTH], byTrialPrefix.io), 0, "a trial prefix resolves to the trial's latest analysis");
-    assertEqual((JSON.parse(byTrialPrefix.out[0]) as { id: string }).id, anA, "the verdict served is the trial's latest analysis");
+    assertEqual((JSON.parse(byTrialPrefix.out[0]) as { id: string }).id, anA, "the result served is the trial's latest analysis");
 
     // An analysis PREFIX: resolved among the analysis list's ids, no trial read.
     const byAnalysisPrefix = captureIO();
@@ -5549,7 +5556,7 @@ async function testIdPrefixLawEveryNoun() {
     assertEqual(
       fetchCalls.slice(beforePrefix).map((c) => new URL(c.url).pathname + new URL(c.url).search),
       [`/api/analyses?limit=200`, `/api/traces/trials/${anA}/artifacts?what=analysis`],
-      "TWO reads: the index walk, then the verdict door once"
+      "TWO reads: the index walk, then the result door once"
     );
 
     // A prefix an analysis AND a trial own is ambiguous, both named.
@@ -5581,7 +5588,7 @@ async function testIdPrefixLawEveryNoun() {
     );
     assert(!regrade.err.some((l) => l.includes("yet") || l.includes("evolve analyze")), "and never calls it a trial awaiting analysis");
 
-    // An id nobody owns: the verdict door's own 404 — the analysis noun, whichever verb asked.
+    // An id nobody owns: the result door's own 404 — the analysis noun, whichever verb asked.
     const miss = captureIO();
     const beforeMiss = fetchCalls.length;
     assertEqual(await runCli(["analysis", "trace", ghost, ...AUTH], miss.io), 1, "a full id no run owns exits 1");
@@ -5596,8 +5603,8 @@ async function testIdPrefixLawEveryNoun() {
 // ANALYSIS — show, trace, download (the traces-feed verbs)
 // =============================================================================
 
-/** The wire verdict the feed's ?what=analysis door serves. */
-function analysisVerdictFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+/** The wire result the feed's ?what=analysis door serves. */
+function analysisResultFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "an-1",
     // The provenance trio every wire TrialAnalysis carries (the run it judged).
@@ -5605,6 +5612,7 @@ function analysisVerdictFixture(overrides: Record<string, unknown> = {}): Record
     job_id: "job-1",
     task_name: "roy-polymorph-cn",
     status: "failed",
+    agent: "claude",
     model_name: "glm-5.3-flash",
     rubric: CLI_RUBRIC,
     summary: null,
@@ -5691,19 +5699,19 @@ async function testTraceEventLineGatewayOnly() {
 }
 
 async function testAnalysisShow() {
-  console.log("\n--- runCli: analysis show renders the verdict document; --json is the wire object ---");
+  console.log("\n--- runCli: analysis show renders the result document; --json is the wire object ---");
   installMockFetch();
   try {
     setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: analysisVerdictFixture() },
+      body: { analysis: analysisResultFixture() },
     });
     const { io, out } = captureIO();
     const code = await runCli(["analysis", "show", "an-1", ...AUTH], io);
     assertEqual(code, 0, "exit 0");
     assert(
       fetchCalls[fetchCalls.length - 1].url.endsWith("/api/traces/trials/an-1/artifacts?what=analysis"),
-      "one GET on the feed's verdict door"
+      "one GET on the feed's result door"
     );
     const text = out.join("\n");
     assert(text.includes("an-1"), "renders the analysis id");
@@ -5723,14 +5731,14 @@ async function testAnalysisShow() {
     const json = captureIO();
     assertEqual(await runCli(["analysis", "show", "an-1", "--json", ...AUTH], json.io), 0, "--json exits 0");
     const body = JSON.parse(json.out.join("")) as Record<string, unknown>;
-    assertEqual(body.id, "an-1", "--json is the wire verdict object");
+    assertEqual(body.id, "an-1", "--json is the wire result object");
     assertEqual(body.status, "failed", "--json keeps the wire's lowercase status");
 
     // A completed analysis renders its verdicts and summary, no failure row.
     setMockResponse("/api/traces/trials/an-2/artifacts?what=analysis", {
       status: 200,
       body: {
-        analysis: analysisVerdictFixture({
+        analysis: analysisResultFixture({
           id: "an-2",
           status: "completed",
           summary: "Legitimate solve.",
@@ -5749,7 +5757,7 @@ async function testAnalysisShow() {
     assert(completedText.includes("Legitimate solve."), "the summary renders");
     assert(!completedText.includes("failure"), "no failure row on a completed analysis");
 
-    // A TRIAL id at the verdict door refuses server-side in the feed's own
+    // A TRIAL id at the result door refuses server-side in the feed's own
     // grammar ({error: "<sentence>"}, no code). The CLI passes the sentence
     // through clean — human and --json alike — never the JSON blob.
     setMockResponse("/api/traces/trials/run-1/artifacts?what=analysis", {
@@ -5854,7 +5862,7 @@ async function testAnalysisDownloadStream() {
     setMockResponse("/artifacts?what=trace-stderr", { status: 200, body: { log: null } });
     setMockResponse("/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: analysisVerdictFixture() },
+      body: { analysis: analysisResultFixture() },
     });
 
     const stdout = captureIO();
@@ -5874,16 +5882,16 @@ async function testAnalysisDownloadStream() {
     );
     assert(absent.out[0].includes("No trace-stderr log"), "absence is stated, never an empty print");
 
-    // --stream analysis: the verdict document itself, the bytes the feed's
+    // --stream analysis: the result document itself, the bytes the feed's
     // &format=log form downloads as Harbor's analysis.json.
-    const verdict = captureIO();
+    const result = captureIO();
     assertEqual(
-      await runCli(["analysis", "download", "an-1", "--stream", "analysis", ...AUTH], verdict.io),
+      await runCli(["analysis", "download", "an-1", "--stream", "analysis", ...AUTH], result.io),
       0,
       "--stream analysis is a valid selector"
     );
-    const doc = JSON.parse(verdict.out.join("\n")) as Record<string, unknown>;
-    assertEqual(doc.id, "an-1", "prints the verdict document");
+    const doc = JSON.parse(result.out.join("\n")) as Record<string, unknown>;
+    assertEqual(doc.id, "an-1", "prints the result document");
   } finally {
     restoreFetch();
   }
@@ -5919,15 +5927,15 @@ async function testCheckDatasetAndTaskVerbs() {
     const stream = captureIO();
     assertEqual(await runCli(["check", "download", "tc-1", "--stream", "trace-stdout", ...AUTH], stream.io), 0, "check download --stream exits 0");
     assertEqual(stream.out, ["checker stdout"], "prints the raw log verbatim");
-    const verdict = captureIO();
-    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "task-check", ...AUTH], verdict.io), 0, "--stream task-check is the result document");
-    assertEqual((JSON.parse(verdict.out.join("\n")) as { id: string }).id, "tc-1", "prints the wire TaskCheck");
+    const result = captureIO();
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "task-check", ...AUTH], result.io), 0, "--stream task-check is the result document");
+    assertEqual((JSON.parse(result.out.join("\n")) as { id: string }).id, "tc-1", "prints the wire TaskCheck");
     const misuse = captureIO();
     assertEqual(await runCli(["check", "download", "tc-1", "--stream", "trace-stdout", "-o", "x", ...AUTH], misuse.io), 2, "--stream with -o is a usage error (the analysis verb's law)");
     const badName = captureIO();
-    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "analysis", ...AUTH], badName.io), 2, "the analysis verdict name is not a task check's stream");
+    assertEqual(await runCli(["check", "download", "tc-1", "--stream", "analysis", ...AUTH], badName.io), 2, "the analysis result name is not a task check's stream");
 
-    // The species gate: a trial id at a stream selector dies at the verdict door.
+    // The species gate: a trial id at a stream selector dies at the result door.
     setMockResponse("/api/traces/trials/run-1/artifacts?what=task-check", { status: 400, body: { error: "check-result.json belongs to a task check — open the check row and download it there" } });
     setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", { status: 200, body: { log: "the TRIAL's stdout" } });
     const wrong = captureIO();
@@ -5990,7 +5998,7 @@ async function testAnalysisDownloadSave() {
     });
     setMockResponse("/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: analysisVerdictFixture({ id: "an-1", status: "completed", summary: "Legitimate solve.", checks: {}, failure: null }) },
+      body: { analysis: analysisResultFixture({ id: "an-1", status: "completed", summary: "Legitimate solve.", checks: {}, failure: null }) },
     });
     const { io, out, err } = captureIO();
     const code = await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], io);
@@ -6004,11 +6012,11 @@ async function testAnalysisDownloadSave() {
       "Legitimate solve.",
       "the deliverable sits under artifacts/, where Harbor's wrapper trial keeps it"
     );
-    assert(!existsSync(join(target, "analysis.json")), "no verdict document at the folder's root: the tree is the server's, not a second assembly");
+    assert(!existsSync(join(target, "analysis.json")), "no result document at the folder's root: the tree is the server's, not a second assembly");
     const evolve = JSON.parse(await readFile(join(target, "evolve.json"), "utf-8"));
     assertEqual(evolve.analysis_id, "an-1", "evolve.json names the analysis");
     assertEqual(evolve.analyzed_trial_id, "run-1", "evolve.json names the analyzed trial");
-    assertEqual(evolve.gateway.cost_usd, 0.0366, "evolve.json restates the verdict's meter");
+    assertEqual(evolve.gateway.cost_usd, 0.0366, "evolve.json restates the result's meter");
 
     const refused = captureIO();
     assertEqual(await runCli(["analysis", "download", "an-1", "-o", tmpDir, ...AUTH], refused.io), 1, "an existing folder refuses without --overwrite");
@@ -7473,7 +7481,7 @@ async function testPartialPublishCliSurfaces() {
         },
       },
     });
-    const startArgs = ["job", "start", "-d", "part-swe@2.0", "-i", "broken-dockerfile", "-a", "codex", "-m", "gpt-5.5"];
+    const startArgs = ["job", "start", "-d", "part-swe@2.0", "-i", "broken-dockerfile", "-a", "codex", "-m", "gpt-6-sol"];
 
     const human = captureIO();
     assertEqual(await runCli([...startArgs, ...AUTH], human.io), 1, "the typed refusal exits 1");
@@ -7834,7 +7842,7 @@ async function testSkillNamePassThroughOnStart() {
     setMockResponse("/api/jobs", { status: 202, body: wireJob() });
     const { io } = captureIO();
     const code = await runCli(
-      ["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--skill", "name:frontend-design", ...AUTH],
+      ["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--skill", "name:frontend-design", ...AUTH],
       io
     );
     assertEqual(code, 0, "exit 0");
@@ -7871,7 +7879,7 @@ async function testJobShowSkillLocks() {
         agents: [
           {
             name: "codex",
-            model_name: "gpt-5.5",
+            model_name: "gpt-6-sol",
             version: null,
             reasoning_effort: null,
             skills: ["skills.sh/o/r/frontend-design", CLI_SKILL.ref],
@@ -7900,7 +7908,7 @@ async function testJobShowSkillLocks() {
     assertEqual(await runCli(["job", "show", "eval-1", ...AUTH], shown.io), 0, "exit 0");
     const text = shown.out.join("\n");
     assert(
-      text.includes(`codex:gpt-5.5: skills.sh/o/r/frontend-design, ${CLI_SKILL.ref}`),
+      text.includes(`codex:gpt-6-sol: skills.sh/o/r/frontend-design, ${CLI_SKILL.ref}`),
       "the skills row lists the arm's requested references"
     );
     assert(
@@ -7947,7 +7955,7 @@ async function testLocalSkillUploadNoticeOnStart() {
     const { io, err } = captureIO();
     const code = await runCli(
       [
-        "job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--skill", skillDir,
+        "job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--skill", skillDir,
         "--api-key", "test-key", "--base-url", server.base,
       ],
       io
@@ -8748,7 +8756,7 @@ async function testAuthOrgTeamVerbs() {
     assertEqual(fetchCalls.length, before, "use makes no request");
 
     console.log("  [run: flag > config file > personal, and the first line]");
-    const RUN = ["-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-5.5", ...AUTH];
+    const RUN = ["-d", "deep-swe@1.1", "-a", "codex", "-m", "gpt-6-sol", ...AUTH];
     const viaConfig = captureIO();
     assertEqual(await runCli(["run", ...RUN], viaConfig.io), 0, "run exits 0");
     let body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
@@ -9388,15 +9396,15 @@ function testAgentKwargs() {
   // --preset: the plain-words door, stamped on EVERY arm, verbatim — the
   // server owns the vocabulary and the per-agent guarantee refusal.
   const presetInv = parseArgs([
-    "job", "start", "-d", "d", "-a", "codex", "-m", "gpt-5.6-sol", "-m", "gpt-5.5",
+    "job", "start", "-d", "d", "-a", "codex", "-m", "gpt-6-sol", "-m", "gpt-6-luna",
     "--preset", "no-internet",
   ]);
   const presetInput = buildJobInput(presetInv, read);
   assertEqual(
     presetInput.agents,
     [
-      { name: "codex", model_name: "gpt-5.6-sol", preset: "no-internet" },
-      { name: "codex", model_name: "gpt-5.5", preset: "no-internet" },
+      { name: "codex", model_name: "gpt-6-sol", preset: "no-internet" },
+      { name: "codex", model_name: "gpt-6-luna", preset: "no-internet" },
     ],
     "--preset stamped on every arm"
   );
@@ -9404,7 +9412,7 @@ function testAgentKwargs() {
   // Verbatim pass-through: an unknown name is the SERVER's typed refusal
   // (invalid_input naming the vocabulary), never a second client-side table.
   const verbatim = buildJobInput(
-    parseArgs(["job", "start", "-d", "d", "-a", "codex", "-m", "gpt-5.5", "--preset", "sealed"]),
+    parseArgs(["job", "start", "-d", "d", "-a", "codex", "-m", "gpt-6-sol", "--preset", "sealed"]),
     read
   );
   assertEqual(verbatim.agents[0].preset, "sealed", "--preset value rides verbatim; the server rules");
@@ -9457,6 +9465,7 @@ function wireCheckRow(overrides: Record<string, unknown> = {}): Record<string, u
     name: "nightly check",
     status: "running",
     source: { type: "dataset", sha256: "ab".repeat(32), bytes: null, dataset: "deep-swe@1.1" },
+    agent: "claude",
     model_name: "claude-opus-4-6",
     reasoning_effort: "high",
     sandbox_provider: "e2b",
@@ -9501,7 +9510,14 @@ async function testJobListKind() {
 
     const cols = captureIO(false);
     await runCli(["job", "list", "--kind", "check", "--columns", "kind,name,agents,trials", ...AUTH], cols.io);
-    assertEqual(cols.out[1], "check\tnightly check\tclaude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+    assertEqual(cols.out[1], "check\tnightly check\tclaude:claude-opus-4-6 (high)\t3", "a check row's cells read the check's own facts");
+    setMockResponse("/api/jobs", {
+      status: 200,
+      body: { items: [wireCheckRow({ agent: "gemini", model_name: "gemini-3.5-flash", reasoning_effort: null })], nextCursor: null, hasMore: false },
+    });
+    const noEffort = captureIO(false);
+    await runCli(["job", "list", "--kind", "check", "--columns", "agents", ...AUTH], noEffort.io);
+    assertEqual(noEffort.out[1], "gemini:gemini-3.5-flash", "an agent that takes no effort shows none — never the word null");
 
     // One spelling for one answer: the Jobs page asks kind=all and says "No jobs".
     setMockResponse("/api/jobs", { status: 200, body: { items: [], nextCursor: null, hasMore: false } });
@@ -9530,7 +9546,7 @@ async function testJobListKind() {
 /** One wire TrialAnalysis as GET /api/analyses lists it (provenance included). */
 function analysisListRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    ...analysisVerdictFixture(),
+    ...analysisResultFixture(),
     trial_id: "run-1",
     job_id: "eval-1",
     task_name: "abs-module-cache-flags",
@@ -9563,8 +9579,8 @@ async function testAnalysisList() {
 
     const piped = captureIO(false);
     assertEqual(await runCli(["analysis", "list", ...AUTH], piped.io), 0, "list exits 0");
-    assertEqual(piped.out[0], "ID\tSTATUS\tTASK\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
-    assert(piped.out[1].startsWith("an-1\tfailed\tabs-module-cache-flags\tglm-5.3-flash\t"), "rows are tab-separated");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASK\tAGENT\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("an-1\tfailed\tabs-module-cache-flags\tclaude\tglm-5.3-flash\t"), "rows are tab-separated");
     assert(piped.out[2].startsWith("an-2\tcompleted\ttricky-task\t"), "every row of the page renders");
 
     const tty = captureIO(true);
@@ -9869,6 +9885,7 @@ function wireCheck(overrides: Record<string, unknown> = {}): Record<string, unkn
     id: "chk-1",
     status: "queued",
     source: { type: "archive", sha256: "ab".repeat(32), bytes: 1234 },
+    agent: "claude",
     model_name: "glm-5.3-flash",
     reasoning_effort: "max",
     rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
@@ -9932,7 +9949,7 @@ async function testCheckVerb() {
     server.setReply(202, wireCheck());
     const { io, out, err } = captureIO();
     const code = await runCli(
-      ["check", taskDir, "--name", "nightly tb4", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
+      ["check", taskDir, "--name", "nightly tb4", "-a", "droid", "-m", "glm-5.3", "-i", "hello-*", "-l", "3", "-n", "2", "--api-key", "test-key", "--base-url", server.base],
       io
     );
     assertEqual(code, 0, "exit 0 on the 202 — nothing has failed yet");
@@ -9945,8 +9962,8 @@ async function testCheckVerb() {
     const configJson = /name="config"\r\n\r\n([^\r]+)\r\n/.exec(body)?.[1] ?? "";
     assertEqual(
       JSON.parse(configJson),
-      { name: "nightly tb4", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
-      "--name/-m/-n/-i/-l ride the config part as name/model_name/n_concurrent/include_task_names/n_tasks"
+      { name: "nightly tb4", agent: "droid", model_name: "glm-5.3", n_concurrent: 2, include_task_names: ["hello-*"], n_tasks: 3 },
+      "--name/-a/-m/-n/-i/-l ride the config part as name/agent/model_name/n_concurrent/include_task_names/n_tasks"
     );
     assert(body.includes('filename="hello-world.tar.gz"'), "the archive is named by the directory");
     assert(out.some((l) => l.startsWith("check id") && l.includes("chk-1")), "prints the accepted check");
@@ -9957,6 +9974,7 @@ async function testCheckVerb() {
       status: "completed",
       results: [
         { ...(wireCheck().results as Record<string, unknown>[])[0], status: "failed", failure: { phase: "invalid_result", message: "missing result file: check-result.json" }, finished_at: "2026-09-09T10:05:00.000Z" },
+        { ...(wireCheck().results as Record<string, unknown>[])[0], id: "tc-3", task_name: "third-task", status: "running", checks: null, finished_at: null },
         { ...(wireCheck().results as Record<string, unknown>[])[0], id: "tc-2", task_name: "other-task", status: "completed", checks: { typos: { outcome: "pass", explanation: "none" }, pinned_dependencies: { outcome: "fail", explanation: "unpinned" } }, cost_usd: 0.02, finished_at: "2026-09-09T10:05:00.000Z" },
       ],
       cost_usd: 0.02,
@@ -9981,6 +9999,7 @@ async function testCheckVerb() {
     assert(human.out.some((l) => l.startsWith("TASK") && l.includes("PASS") && l.includes("FAIL") && l.includes("N/A") && l.includes("COST")), "Harbor's summary columns");
     assert(human.out.some((l) => l.startsWith("other-task") && /\b1\b.*\b1\b.*\b0\b.*0\.0200/.test(l)), "a completed task's pass/fail/N-A counts and cost");
     assert(human.out.some((l) => l.startsWith("hello-world") && l.includes("-")), "an errored task's row is dashed");
+    assert(human.out.some((l) => l.startsWith("third-task · running") && /(-\s+){4}-/.test(l)), "a running task keeps its status beside its name, counts dashed");
     assert(human.out.some((l) => l.includes("❌ hello-world: invalid_result: missing result file: check-result.json")), "the typed failure line, Harbor's ❌ shape");
     assert(human.out.some((l) => l === "Total agent cost: $0.0200"), "Harbor's total agent cost line");
   } finally {
@@ -10085,7 +10104,7 @@ async function testFilesVerbs() {
 
     // The other owners: the analysis prefix; the task check resolves its check.
     setMockResponse("/api/analyses/an-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
-    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: { id: "tc-1", check_id: "chk-1", task_name: "t", status: "completed", checks: {}, label: null, executed: null, cost_usd: null, attempts: 1, failure: null, created_at: "t", finished_at: "t" } } });
+    setMockResponse("/api/traces/trials/tc-1/artifacts?what=task-check", { status: 200, body: { task_check: { id: "tc-1", check_id: "chk-1", task_name: "t", status: "completed", checks: {}, cost_usd: null, attempts: 1, failure: null, created_at: "t", finished_at: "t" } } });
     setMockResponse("/api/checks/chk-1/tasks/tc-1/filesystem", { status: 200, body: { state: "none", box: null, watcher: null, root: "/", work_dir: "/app", capture: null } });
     const an = captureIO();
     assertEqual(await runCli(["analysis", "files", "status", "an-1", "--json", ...AUTH], an.io), 0, "analysis files status exits 0");
@@ -10108,10 +10127,10 @@ async function testFilesVerbs() {
 
     // The job switch and the download selector.
     const cfg = captureIO();
-    assertEqual(await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--system-log", "--print-config"], cfg.io), 0, "--system-log parses");
+    assertEqual(await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--system-log", "--print-config"], cfg.io), 0, "--system-log parses");
     assertEqual(JSON.parse(cfg.out.join("\n")).system_log, true, "--system-log rides the body as system_log: true");
     const bare = captureIO();
-    await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-5.5", "--print-config"], bare.io);
+    await runCli(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "gpt-6-sol", "--print-config"], bare.io);
     assertEqual("system_log" in JSON.parse(bare.out.join("\n")), false, "omitted, no system_log key rides");
     const fsDownload = captureIO();
     const tar: Buffer[] = [];
@@ -10131,7 +10150,7 @@ async function testCheckReadVerbs() {
     const done = wireCheck({
       status: "completed",
       results: [
-        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "None found.", evidence: [{ where: "instruction.md line 1", quote: "Write output.csv" }] }, pinned_dependencies: { outcome: "not_applicable", explanation: "No deps.", evidence: [] }, verifier_is_correct: { outcome: "unknown", explanation: "No docker here.", evidence: [] } }, label: "no_problem_found", executed: false, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
+        { ...(wireCheck().results as Record<string, unknown>[])[0], status: "completed", checks: { typos: { outcome: "pass", explanation: "None found.", evidence: [{ where: "instruction.md line 1", quote: "Write output.csv" }] }, pinned_dependencies: { outcome: "not_applicable", explanation: "No deps.", evidence: [] }, verifier_is_correct: { outcome: "unknown", explanation: "No docker here.", evidence: [] } }, cost_usd: 0.0123, finished_at: "2026-09-09T10:05:00.000Z" },
       ],
       cost_usd: 0.0123,
       finished_at: "2026-09-09T10:05:00.000Z",
@@ -10143,11 +10162,11 @@ async function testCheckReadVerbs() {
     const show = captureIO();
     assertEqual(await runCli(["check", "show", "chk-1", ...AUTH], show.io), 0, "show exits 0 when no task failed");
     assert(show.out.some((l) => l === "Task Quality Checks: hello-world"), "Harbor's single-task table title");
-    // The platform's derived label, with the executed flag beside it, on its own line above Harbor's table.
-    assert(show.out.some((l) => l === "Label: NO PROBLEM FOUND · not executed"), "the derived label line, the executed flag beside it");
+    // The outcome tally on its own line above Harbor's table — the platform derives no label.
+    assert(show.out.some((l) => l === "Outcomes: pass 1 · fail 0 · unknown 1 · n/a 1"), "the outcome tally line");
     assert(show.out.some((l) => l.startsWith("CHECK") && l.includes("OUTCOME") && l.includes("EXPLANATION")), "Harbor's single-task columns");
     assert(show.out.some((l) => l.startsWith("Typos") && l.includes("pass") && l.includes("None found.")), "the criterion is titled like Harbor's row (Pinned Dependencies, Typos)");
-    assert(show.out.some((l) => l.includes("instruction.md line 1 — Write output.csv")), "each verdict's evidence rides the rows beneath it");
+    assert(show.out.some((l) => l.includes("instruction.md line 1 — Write output.csv")), "each result's evidence rides the rows beneath it");
     assert(show.out.some((l) => l.startsWith("Pinned Dependencies") && l.includes("not_applicable")), "every criterion rows");
     assert(show.out.some((l) => l.startsWith("Verifier Is Correct") && l.includes("unknown")), "the fourth outcome renders as its wire word");
     assert(show.out.some((l) => l === "Agent cost: $0.0123"), "Harbor's agent cost line");
@@ -10161,8 +10180,8 @@ async function testCheckReadVerbs() {
     assertEqual(url.pathname, "/api/checks", "one GET on the checks list");
     assertEqual(url.searchParams.get("status"), "completed", "--status rides the query");
     assertEqual(url.searchParams.get("scope"), "shared", "--scope rides the query");
-    assertEqual(piped.out[0], "ID\tSTATUS\tTASKS\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
-    assert(piped.out[1].startsWith("chk-1\tcompleted\t1\tglm-5.3-flash\t$0.0123"), "the row renders");
+    assertEqual(piped.out[0], "ID\tSTATUS\tTASKS\tAGENT\tMODEL\tSPENT\tCREATED", "the default columns, as TSV");
+    assert(piped.out[1].startsWith("chk-1\tcompleted\t1\tclaude\tglm-5.3-flash\t$0.0123"), "the row renders");
     const badStatus = captureIO();
     assertEqual(await runCli(["check", "list", "--status", "failed", ...AUTH], badStatus.io), 2, "the check ladder has no failed word — a usage error (exit 2) at the keyboard");
     assert(badStatus.err.some((l) => l.includes("queued, running, completed")), "the refusal names the ladder");
@@ -10185,6 +10204,7 @@ async function testAnalyzeShowDefaults() {
   installMockFetch();
   try {
     const defaults = {
+      agent: "claude",
       model_name: "openrouter/deepseek/deepseek-v4.1-flash",
       rubric: { criteria: [{ name: "score_is_earned", description: "d", guidance: "g" }, { name: "reward_hacking", description: "d", guidance: "g" }] },
       prompt: "Read the trial at {trial_path}\n{task_section}\n{criteria_guidance}",
@@ -10200,6 +10220,7 @@ async function testAnalyzeShowDefaults() {
     assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
     const human = captureIO();
     assertEqual(await runCli(["analyze", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("agent") && l.includes("claude")), "the agent row");
     assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
     assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
     assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
@@ -10207,6 +10228,10 @@ async function testAnalyzeShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Read the trial at {trial_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("reward_hacking")), "every criterion is named under RUBRIC");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).search, "", "no -a: the default agent's policy, no query");
+    const named = captureIO();
+    assertEqual(await runCli(["analyze", "--show-defaults", "-a", "kimi", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "kimi", "-a rides the defaults door's ?agent=; the server resolves it, the CLI holds no roster");
     assertEqual(await runCli(["analyze", "eval-1", "--show-defaults", ...AUTH], captureIO().io), 2, "--show-defaults with a <job-id> is a usage error");
     assertEqual(await runCli(["analyze", "--show-defaults", "--model", "x", "--watch", ...AUTH], captureIO().io), 2, "--show-defaults with an analyzer or output flag is a usage error, never silently ignored");
     assertEqual(await runCli(["analyze", ...AUTH], captureIO().io), 2, "a bare analyze without a job id and without --show-defaults is a usage error");
@@ -10307,6 +10332,7 @@ async function testCheckShowDefaults() {
   installMockFetch();
   try {
     const defaults = {
+      agent: "claude",
       model_name: "openrouter/deepseek/deepseek-v4.1-flash",
       rubric: { criteria: [{ name: "typos", description: "d", guidance: "g" }, { name: "pinned_dependencies", description: "d", guidance: "g" }] },
       prompt: "Check the task at {task_path}\n{file_tree}\n{criteria_guidance}",
@@ -10324,6 +10350,7 @@ async function testCheckShowDefaults() {
     assertEqual(parsed.rubric, defaults.rubric, "the rubric rides verbatim");
     const human = captureIO();
     assertEqual(await runCli(["check", "--show-defaults", ...AUTH], human.io), 0, "--show-defaults exits 0");
+    assert(human.out.some((l) => l.startsWith("agent") && l.includes("claude")), "the agent row");
     assert(human.out.some((l) => l.startsWith("model") && l.includes("openrouter/deepseek/deepseek-v4.1-flash")), "the model row");
     assert(human.out.some((l) => l.startsWith("effort") && l.includes("high")), "the effort row");
     assert(human.out.some((l) => l.startsWith("provider") && l.includes("daytona")), "the provider row");
@@ -10331,6 +10358,9 @@ async function testCheckShowDefaults() {
     assert(human.out.includes("PROMPT") && human.out.includes("RUBRIC"), "the PROMPT and RUBRIC sections follow the table");
     assert(human.out.some((l) => l === "Check the task at {task_path}"), "the prompt template prints unrendered, line by line");
     assert(human.out.some((l) => l.includes("pinned_dependencies")), "every criterion is named under RUBRIC");
+    const named = captureIO();
+    assertEqual(await runCli(["check", "--show-defaults", "-a", "codex", ...AUTH], named.io), 0, "--show-defaults -a <agent> exits 0: that agent's own default model and effort");
+    assertEqual(new URL(fetchCalls[fetchCalls.length - 1].url).searchParams.get("agent"), "codex", "-a rides the defaults door's ?agent=");
     const withPath = captureIO();
     assertEqual(await runCli(["check", "./tasks", "--show-defaults", ...AUTH], withPath.io), 2, "--show-defaults with a <path> is a usage error");
     assertEqual(await runCli(["check", "--show-defaults", "-d", "tb4", ...AUTH], captureIO().io), 2, "--show-defaults with -d is a usage error");

@@ -1,13 +1,13 @@
 ---
 title: "Analyses methods"
-description: "Read the analyzer’s verdict, transcript, files, and current defaults, or judge any trajectory."
+description: "Read the analyzer’s result, transcript, files, and current defaults, or judge any trajectory."
 ---
 
 Create `client` with `analyses()`. Start a wave with [jobs.analyze](/sdk-reference/methods/jobs#analyze), then read its results here.
 
 **Note:**
 
-Python exposes `list`, `defaults`, `trajectory`, `trajectory_defaults`, `download`, and `filesystem`. Direct `get`, `transcript`, and `artifact` reads are TypeScript-only. In Python, `list(job=...)` or `Trial.analysis` gives the verdict; an analysis download gives its stored evidence.
+Python exposes `list`, `defaults`, `trajectory`, `trajectory_defaults`, `download`, and `filesystem`. Direct `get`, `transcript`, and `artifact` reads are TypeScript-only. In Python, `list(job=...)` or `Trial.analysis` gives the result; an analysis download gives its stored evidence.
 
 | Both SDKs | TypeScript only |
 | --- | --- |
@@ -50,31 +50,33 @@ page = await client.list(
 
 Optional `scope`: `my` (default), `shared`, or `org`; `job`: source job id; `status`: list of `queued`, `running`, `completed`, or `failed`. `limit` defaults to 50 (maximum 200); `cursor` continues a page.
 
-Python analysis rows are dictionaries: `row["id"]`, `row["checks"]`. [Analysis result fields](/sdk-reference/types#analysis-and-check-results) include failures and cost as well as verdicts.
+Python analysis rows are dictionaries: `row["id"]`, `row["checks"]`. [Analysis result fields](/sdk-reference/types#analysis-and-check-results) include failures and cost as well as the per-criterion checks.
 
 ## defaults
 
-Read the current analysis defaults. Returns `AnalyzeDefaults`: model, effort, sandbox provider, rubric, and unrendered prompt template.
+Read the current analysis defaults. Returns `AnalyzeDefaults`: agent, model, effort, sandbox provider, rubric, and unrendered prompt template. Pass an agent to read what that agent runs under when you name no model.
 
 ### Signature
 
 ```ts TypeScript signature
-defaults(): Promise<AnalyzeDefaults>;
+defaults(options?: { agent?: string }): Promise<AnalyzeDefaults>;
 ```
 
 ```python Python signature
-async def defaults() -> AnalyzeDefaults: ...
+async def defaults(*, agent: Optional[str] = None) -> AnalyzeDefaults: ...
 ```
 
 ```ts TypeScript
 const defaults = await client.defaults();
+const codex = await client.defaults({ agent: "codex" });
 ```
 
 ```python Python
 defaults = await client.defaults()
+codex = await client.defaults(agent="codex")
 ```
 
-Python returns a dictionary. These are current defaults; an existing analysis records the policy it actually ran under.
+Python returns a dictionary. These are current defaults; an existing analysis records the policy it actually ran under. An agent the platform does not offer is refused with `invalid_input`.
 
 ## trajectory
 
@@ -101,14 +103,14 @@ async def trajectory(
 ```
 
 ```ts TypeScript
-const verdict = await client.trajectory({ trajectory: transcript, reward: 0 });
+const result = await client.trajectory({ trajectory: transcript, reward: 0 });
 ```
 
 ```python Python
-verdict = await client.trajectory(transcript, reward=0)
+result = await client.trajectory(transcript, reward=0)
 ```
 
-`trajectory` is a string or a JSON object or array. `model_name` defaults to `openrouter/deepseek/deepseek-v4.1-flash`. The default rubric checks for reward hacking, false positives, false negatives, spec misalignment, and untruthful reports. A reply that fails validation gets one repair turn; `attempts` is `2` when that turn produced the verdict. Python returns a dictionary.
+`trajectory` is a string or a JSON object or array. `model_name` defaults to `openrouter/deepseek/deepseek-v4.1-flash`. The default rubric checks for reward hacking, false positives, false negatives, spec misalignment, and untruthful reports. A reply that fails validation gets one repair turn; `attempts` is `2` when that turn produced the result. Python returns a dictionary.
 
 ## trajectoryDefaults
 

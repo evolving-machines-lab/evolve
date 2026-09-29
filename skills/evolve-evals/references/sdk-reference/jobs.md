@@ -28,7 +28,7 @@ const job = await client.start({
     version: "1.0",
     task_names: ["hello-world"],
   }],
-  agents: [{ name: "codex", model_name: "gpt-5.6-luna" }],
+  agents: [{ name: "codex", model_name: "gpt-6-luna" }],
   max_trial_spend_usd: 0.50,
   retry: { max_retries: 0 },
 });
@@ -44,7 +44,7 @@ job = await client.start(
         "version": "1.0",
         "task_names": ["hello-world"],
     }],
-    agents=[{"name": "codex", "model_name": "gpt-5.6-luna"}],
+    agents=[{"name": "codex", "model_name": "gpt-6-luna"}],
     max_trial_spend_usd=0.50,
     retry={"max_retries": 0},
 )
@@ -57,7 +57,7 @@ job = await client.start(
 | Input | Fields |
 | --- | --- |
 | `datasets` | One or more selectors. Required: `name`. Optional: `version`, `task_names`, `exclude_task_names`, `n_tasks`. Omitted version selects the active version. Filters accept glob patterns; the cap applies after filters. |
-| `agents` | One or more arms. Required: `name`, `model_name`. Optional: `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`. Use [capabilities](/sdk-reference/meta) for supported values. |
+| `agents` | One or more arms. Required: `name`, `model_name`. Optional: `version`, `reasoning_effort`, `kwargs`, `preset`, `skills`. Use [capabilities](/sdk-reference/meta) for accepted inputs. |
 
 Python also accepts `DatasetSelector` and `AgentArm` dataclass instances in these lists.
 

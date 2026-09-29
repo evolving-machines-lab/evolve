@@ -9,7 +9,7 @@ Start a hosted job. `evolve job start` accepts exactly the same options.
 evolve run \
   -d harbor-examples@1.0 \
   -i hello-world \
-  -a codex -m gpt-5.6-luna \
+  -a codex -m gpt-6-luna \
   --max-trial-spend 0.30 \
   --max-retries 0 \
   --watch
@@ -51,7 +51,7 @@ datasets:
     task_names: [hello-world]
 agents:
   - name: codex
-    model_name: gpt-5.6-luna
+    model_name: gpt-6-luna
 n_attempts: 1
 n_concurrent_trials: 4
 max_trial_spend_usd: 0.30
@@ -102,7 +102,7 @@ These options apply to every agent combination.
 
 | Option | Meaning |
 | --- | --- |
-| `--effort <value>` | Reasoning effort supported by the selected harness and model. |
+| `--effort <value>` | Reasoning effort for the selected harness and model. See the [model reference](/core-concepts/models#model-and-effort-reference). |
 | `--preset <name>` | Supported settings preset: `no-internet` or `pinned-context`. |
 | `--ak <key=value>`, `--agent-kwarg <key=value>` | Agent setting. Repeatable. `config` accepts a local JSON/TOML file or inline JSON object. |
 | `--skill <ref>`, `--skills <ref>` | Skill reference or local directory. Repeatable. |
@@ -114,7 +114,7 @@ evolve run -c job.yaml --skill ./my-skill
 
 Skills accept `skills.sh/owner/repo[/skill]`, `org/repo[@ref]`, a Git URL, `upload:<id>`, or `name:<skill-name>`. Local directories upload before the job starts.
 
-Unsupported effort, presets, or settings are refused. See [Agents](/core-concepts/agents) and [Skills](/core-concepts/skills).
+Unsupported effort, presets, or native configuration settings are refused. See [Agents](/core-concepts/agents) and [Skills](/core-concepts/skills).
 
 ### Secrets and verifier environment
 
@@ -148,7 +148,8 @@ See [Jobs](/core-concepts/jobs) for the retry and spend rules.
 | Option | Meaning |
 | --- | --- |
 | `--analyze` | Enable analysis with the platform defaults. |
-| `--analyze-model <name>` | Analyzer model. |
+| `--analyze-agent <name>` | Agent the analyzer runs on. Default `claude`. |
+| `--analyze-model <name>` | Analyzer model, from that agent's models. |
 | `--analyze-rubric <path>` | TOML, YAML, or JSON rubric. |
 | `--analyze-prompt <path>` | Replacement prompt file. |
 | `--analyze-provider <provider>` | Analyzer sandbox provider. |

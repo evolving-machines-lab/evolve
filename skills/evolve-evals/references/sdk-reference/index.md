@@ -45,7 +45,7 @@ Read live sandbox files and saved captures.
 
 **[Analyses](/sdk-reference/analyses)**
 
-Read the analyzer's verdicts and saved runs.
+Read the analyzer's results and saved runs.
 
 **[Checks](/sdk-reference/checks)**
 

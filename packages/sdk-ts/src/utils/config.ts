@@ -11,6 +11,7 @@ import {
   AGENT_REGISTRY,
   getAgentConfig,
   isValidAgentType,
+  liveAgentTypes,
   registryOwnsModel,
   type AgentRegistryEntry,
 } from "../registry";
@@ -61,17 +62,35 @@ export function validateAgentConfig(config?: AgentConfig | ResolvedAgentConfig):
     throw new EvolveConfigError(
       "type",
       `Evolve agent config: unknown agent type ${describe(config.type)}. ` +
-      `Valid types: ${Object.keys(AGENT_REGISTRY).join(", ")}.`,
+      `Valid types: ${liveAgentTypes().join(", ")}.`,
     );
   }
 
   const type = (config.type ?? DEFAULT_AGENT_TYPE) as AgentType;
+  const retired = AGENT_REGISTRY[type].retired;
+  if (retired) {
+    throw new EvolveConfigError(
+      "type",
+      `Evolve agent config: agent type "${type}" is retired; use "${retired.replacedBy}" instead. ` +
+      `Records of past ${type} runs stay readable.`,
+    );
+  }
+
   if (config.model !== undefined && !isFilled(config.model)) {
     throw new EvolveConfigError(
       "model",
       `Evolve agent config: "model" is empty (${describe(config.model)}). ` +
       `Pass a model id such as "${getAgentConfig(type).defaultModel}", ` +
       `or omit model entirely to use ${type}'s default.`,
+    );
+  }
+
+  const efforts = getAgentConfig(type).efforts;
+  if (config.reasoningEffort !== undefined && efforts && !(efforts as readonly string[]).includes(config.reasoningEffort)) {
+    throw new EvolveConfigError(
+      "reasoningEffort",
+      `Evolve agent config: agent "${type}" honors reasoning effort ${efforts.map((e) => `"${e}"`).join(", ")} only; ` +
+      `${describe(config.reasoningEffort)} is not one of them and would be recorded but never applied.`,
     );
   }
 
@@ -137,11 +156,9 @@ export function agentPresets(type: AgentType): AgentPreset[] {
   return presets ? (Object.keys(presets) as AgentPreset[]) : [];
 }
 
-/** The agent types that can guarantee one preset, registry order. */
+/** The live agent types that can guarantee one preset, registry order. */
 export function agentPresetTypes(preset: AgentPreset): AgentType[] {
-  return (Object.keys(AGENT_REGISTRY) as AgentType[]).filter((type) =>
-    agentPresets(type).includes(preset),
-  );
+  return liveAgentTypes().filter((type) => agentPresets(type).includes(preset));
 }
 
 /**
@@ -184,9 +201,9 @@ export function agentSupportsNativeConfig(type: AgentType): boolean {
   return AGENT_REGISTRY[type]?.nativeConfig !== undefined;
 }
 
-/** The agent types that accept a native config document, registry order. */
+/** The live agent types that accept a native config document, registry order. */
 export function nativeConfigAgentTypes(): AgentType[] {
-  return (Object.keys(AGENT_REGISTRY) as AgentType[]).filter(agentSupportsNativeConfig);
+  return liveAgentTypes().filter(agentSupportsNativeConfig);
 }
 
 /**

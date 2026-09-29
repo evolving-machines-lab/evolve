@@ -506,7 +506,7 @@ export interface RetryConfig {
 export interface RubricCriterion {
   /**
    * Criterion identifier, snake_case (it keys the result's `checks` object).
-   * The platform's default rubrics name seven criteria for analyze and eleven for check.
+   * The platform's default rubrics are served by `analyses().defaults()` and `checks().defaults()`.
    */
   name: string;
   /** What the criterion evaluates, one sentence. */
@@ -537,11 +537,10 @@ export interface Rubric {
  * as the body of `POST /api/jobs/{jobId}/analyze` it configures that manual
  * wave. `{}` is legal and means "all defaults":
  * openrouter/deepseek/deepseek-v4.1-flash at its per-model effort (high)
- * over the platform's default analyze rubric (seven criteria, score_is_earned
- * first) and its default prompt body.
+ * over the platform's default analyze rubric and its default prompt body.
  *
- * The analyzer always runs the claude-code harness (Harbor's default analyze
- * agent) in its own sealed sandbox — on the provider `sandbox_provider`
+ * The analyzer runs on the `agent` harness (default claude, Harbor's claude-code)
+ * in its own sealed sandbox — on the provider `sandbox_provider`
  * names, or the platform's analysis default when it names none; its spend is
  * capped per analysis and metered as its own line, never blended into the
  * trial's own bill.
@@ -550,31 +549,36 @@ export interface Rubric {
  * exact names — `n_concurrent` (`-n/--n-concurrent`), `passing` / `failing`,
  * `n_trials` (`-l/--n-trials`; their cli/analyze.py:278-290). All omitted
  * is every analyzable trial, as wide as the organization's
- * `max_concurrent_analyses` allows. Harbor's `-a/--agent`, `--job-name`,
+ * `max_concurrent_analyses` allows. Harbor's `--job-name`,
  * `-o/--jobs-dir`, `-k/--n-attempts` and the local-runner kwargs are not
  * on this surface; the contract (`AnalyzeConfigInput` in spec/openapi.yaml)
  * records each with its reason.
  */
 export interface AnalyzeConfigInput {
+  /** Harbor's `-a/--agent`, spelled as the arms spell it (claude, not claude-code) so one set of names covers arms and reviewers; omitted: claude. The agents: `GET /api/meta` `analyze.agents`; a retired one (`retired_agents`) is refused `agent_retired`. */
+  agent?: string;
   /**
-   * Model the analyzer agent runs — Harbor's `--model`. The default is
-   * openrouter/deepseek/deepseek-v4.1-flash on this platform's claude
-   * roster (DeepSeek V4.1 Flash served through OpenRouter, at its default
-   * effort high — the owner's ruling 2026-09-10: far more parallel capacity
+   * Model the analyzer agent runs — Harbor's `--model`. Omitted, the agent's
+   * default: the platform's pick, openrouter/deepseek/deepseek-v4.1-flash
+   * (`GET /api/meta` `analyze.default_model`), on every agent whose roster
+   * carries it, else that agent's own default (`analyze.agents[].default_model`,
+   * the model the SDK runs that agent on when none is named). The platform's
+   * pick is DeepSeek V4.1 Flash served through OpenRouter, at its default
+   * effort high (the owner's ruling 2026-09-10: far more parallel capacity
    * through OpenRouter's provider pool than one pinned Fireworks host) — a
    * recorded deviation from Harbor's default analyze model (their
    * cli/analyze.py `claude-haiku-4-5`): analysis is input-dominated, and
    * this is the roster's intelligence-per-input-dollar pick; `glm-5.3-flash`
    * (at max, the effort its published scores use) and `haiku` stay on the
-   * roster as alternatives, `glm-5.3` to escalate, and the same model on
-   * its Fireworks route, `fireworks/deepseek-v4.1-flash`, is a further
-   * option (the OpenRouter id stays the default). The value speaks
-   * the same vocabulary as `agents[].model_name`: either advertised
-   * spelling is accepted and stored AS GIVEN (the default is the roster
-   * alias), the wire id is resolved only when the analyzer runs, and every
-   * stored analysis serves the spelling it was created under. Must be on
-   * the claude roster (`GET /api/meta`, `agents[].models`); anything else
-   * is refused at accept (`invalid_input`, roster in the message).
+   * claude roster as alternatives, `glm-5.3` to escalate, and the same model
+   * on its Fireworks route, `fireworks/deepseek-v4.1-flash`, is a further
+   * option (the OpenRouter id stays the pick). The value speaks the same
+   * vocabulary as `agents[].model_name`: either advertised spelling is
+   * accepted and stored AS GIVEN (the default is the roster alias), the wire
+   * id is resolved only when the analyzer runs, and every stored analysis
+   * serves the spelling it was created under. A named model must be on the
+   * agent's roster (`GET /api/meta`, `analyze.agents[].models`); anything
+   * else is refused at accept (`invalid_input`, roster in the message).
    */
   model_name?: string;
   rubric?: Rubric;
@@ -601,15 +605,14 @@ export interface AnalyzeConfigInput {
   prompt?: string;
   /**
    * Reasoning effort the analyzer runs at — the platform's `agents[].
-   * reasoning_effort` vocabulary applied to the analyzer, which IS the
-   * claude harness: the accepted values are `GET /api/meta`'s
-   * `analyze.reasoning_efforts`, an unknown value is refused
+   * reasoning_effort` vocabulary applied to the analyzer's agent: the accepted
+   * values are `GET /api/meta`'s `analyze.agents[].reasoning_efforts`, an unknown value is refused
    * `invalid_input` exactly as an arm's is. Omitted, the PER-MODEL default
-   * applies (`analyze.models[].default_reasoning_effort`: high on
+   * applies (`analyze.agents[].models[].default_reasoning_effort`: high on
    * openrouter/deepseek/deepseek-v4.1-flash, the default model — DeepSeek's
    * own documented default, the owner's ruling 2026-09-10; max on
    * glm-5.3-flash — the platform's ruling 2026-09-08, the effort its
-   * published scores use; the claude harness default elsewhere). The
+   * published scores use; the agent's own default elsewhere, none where it takes none). The
    * effort is always passed to the analyzer explicitly and
    * recorded on the analysis (`TrialAnalysis.reasoning_effort`). A hosted
    * extension: Harbor's analyze has no effort option; this is the run
@@ -687,10 +690,12 @@ export interface AnalyzeConfigInput {
  * the day, resolved at accept and stored, so the record always states the
  * policy it executes (same law as RetryConfig). Echoed on the job body when
  * the job was created with `analyze`; each analysis additionally carries the
- * exact policy IT ran under (`Trial.analysis.model_name` / `.rubric` /
- * `.prompt`), which a later manual re-analysis may have changed.
+ * exact policy IT ran under (`Trial.analysis.agent` / `.model_name` /
+ * `.rubric` / `.prompt`), which a later manual re-analysis may have changed.
  */
 export interface AnalyzeConfig {
+  /** The agent this policy's analyses run on — as named, or the default (claude). */
+  agent: string;
   model_name: string;
   rubric: Rubric;
   /** The caller's prompt template as stored; null = the platform's default analyze body. */
@@ -698,10 +703,10 @@ export interface AnalyzeConfig {
   /**
    * The effort this policy's analyses run at. Named at create it is served
    * as stored; when the create named none, this echoes the per-model
-   * default of the day for `model_name` — the value the next enqueue under
-   * this policy stamps (the same nuance as `sandbox_provider` below).
+   * default of the day for `model_name` on `agent` — the value the next enqueue under
+   * this policy stamps (the same nuance as `sandbox_provider` below). Null when the agent takes no effort.
    */
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   /**
    * The provider this policy's analyses run on. Named at create it is served
    * as stored, forever. When the create named none, this echoes the
@@ -1649,26 +1654,6 @@ export interface AnalysisCheck {
 }
 
 /**
- * The derived label of an analysis — computed by the platform from the
- * outcomes when the result is stored, never asked from the model. Null until
- * completed, and null on a completed analysis whose rubric is not the
- * default one (a custom rubric carries its per-criterion outcomes and no
- * label). Precedence: `flagged` on a fail of score_is_earned,
- * score_is_correct, task_was_fair or report_is_truthful; else `env_fault` on
- * a fail of environment_worked; else `unclear` on an unknown of any of those
- * five, or a not_applicable of score_is_earned or score_is_correct; else
- * `clean`.
- */
-export type AnalysisLabel = "flagged" | "env_fault" | "unclear" | "clean";
-
-/**
- * The derived label of a task check — computed the same way. `has_a_problem`
- * on a fail of any criterion; else `unclear` on an unknown of any of the six
- * file-based criteria; else `no_problem_found`. Null under a custom rubric.
- */
-export type CheckLabel = "has_a_problem" | "unclear" | "no_problem_found";
-
-/**
  * Why an analysis FAILED — a stored typed failure, never a silent absence and
  * never a fake pass. NOT under the key `error` for the same reason JobFailure
  * is not.
@@ -1682,9 +1667,12 @@ export interface AnalysisFailure {
    * `timeout` (the analyzer's run budget ran out with no valid analysis.json
    * — the file missing, or a partial one that failed validation, its reasons
    * in the message — never re-run: a timeout is deterministic; the message
-   * names the budget, the seconds used and the exit code), or an
-   * infrastructure stage of the analyzer run (`mint_key`, `boot`,
-   * `harness_install`, `agent`, `artifact_read`, `lease_expired`, ...).
+   * names the budget, the seconds used and the exit code), `agent_retired`
+   * (the job's stored analysis agent was retired after the job was created:
+   * recorded when the trial settles, nothing run or charged, never re-run; the
+   * message names the replacement), or an infrastructure stage of the analyzer
+   * run (`mint_key`, `boot`, `harness_install`, `agent`, `artifact_read`,
+   * `lease_expired`, ...).
    */
   phase: string;
   message: string;
@@ -1710,7 +1698,7 @@ export interface TrialAnalysis {
    * Provenance: the analyzed trial, its job, and its task. Redundant on
    * `Trial.analysis` (the trial is the enclosing object) and the whole point
    * of a `analyses().list()` row, where nothing else says which run the
-   * verdict judged. Harbor's `trial_name` names the same thing by directory.
+   * result judged. Harbor's `trial_name` names the same thing by directory.
    */
   trial_id: string;
   job_id: string;
@@ -1721,11 +1709,13 @@ export interface TrialAnalysis {
    * `failed`, never left `running` forever.
    */
   status: AnalysisStatus;
+  /** The agent THIS analysis ran on; every analysis from before the choice existed ran on claude. */
+  agent: string;
   model_name: string;
   /**
    * The reasoning effort THIS analysis ran at — passed to the analyzer
-   * explicitly, so it is what the model was asked for. Null only on
-   * analyses recorded before the effort was stamped.
+   * explicitly, so it is what the model was asked for. Null when its agent
+   * takes no effort, or on analyses recorded before the effort was stamped.
    */
   reasoning_effort: string | null;
   rubric: Rubric;
@@ -1744,8 +1734,6 @@ export interface TrialAnalysis {
    * (the frozen-criteria law). Null until completed.
    */
   checks: Record<string, AnalysisCheck> | null;
-  /** The derived label (AnalysisLabel states the rule); null until completed, and null under a custom rubric. */
-  label: AnalysisLabel | null;
   estimated_cost_usd: number | null;
   /**
    * The analyzer's one-home usage reading — the SAME object, same keys, the
@@ -2515,10 +2503,11 @@ export interface CheckRow {
   name: string;
   status: CheckStatus;
   source: CheckSource;
+  agent: string;
   /** The checker's model. */
   model_name: string;
-  /** The effort every task's checker ran at. */
-  reasoning_effort: string;
+  /** The effort every task's checker ran at; null when its agent takes none. */
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
   /** The owning organization's slug (every check has one). */
   org: string;
@@ -4886,7 +4875,7 @@ export interface AnalysisTranscript {
 }
 
 /**
- * Client for analysis runs — the analyzer's own transcript, verdict document,
+ * Client for analysis runs — the analyzer's own transcript, result document,
  * and stored artifacts, all globally addressable by analysis id.
  *
  * DELIBERATELY OFF-CONTRACT: these three reads ride the dashboard's traces
@@ -4901,7 +4890,7 @@ export interface AnalysisTranscript {
  * GatewayUsageEvent prose, not as an operation. RECORDED TENSION: whether
  * that feed and this one join the contract as operations (spec + both SDK
  * shadows) is an open ruling, not something settled here. The contract-side
- * verdict stays where it always was — `Trial.analysis` on the trial body;
+ * result stays where it always was — `Trial.analysis` on the trial body;
  * this client adds the reads the contract does not carry today.
  */
 export interface AnalysesClient {
@@ -4919,8 +4908,8 @@ export interface AnalysesClient {
    * feed's species-blind events door, which answers `trial_not_found`.
    */
   list(options?: ListAnalysesOptions): AnalysisList;
-  /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): model, effort, provider, rubric and the unrendered prompt template. */
-  defaults(): Promise<AnalyzeDefaults>;
+  /** The defaults an analysis runs under when its config names nothing (GET /api/analyses/defaults): agent, model, effort, provider, rubric and the unrendered prompt template. `{ agent }` reads what that agent runs under — its default model and the effort it takes; an unknown name is refused `invalid_input`. */
+  defaults(options?: { agent?: string }): Promise<AnalyzeDefaults>;
   /**
    * LLM-as-a-judge over ANY agent trajectory (POST /api/analyses/trajectory):
    * one model call through the platform's gateway rules every rubric
@@ -4933,7 +4922,7 @@ export interface AnalysesClient {
   /** The defaults a trajectory analysis runs under (GET /api/analyses/trajectory/defaults): model, effort, the five-detector rubric and the unrendered prompt body. */
   trajectoryDefaults(): Promise<TrajectoryAnalysisDefaults>;
   /**
-   * The verdict document — the wire's TrialAnalysis, statuses and typed
+   * The result document — the wire's TrialAnalysis, statuses and typed
    * failure included, for EVERY analysis (not only completed ones). The same
    * object the analyzed trial serves as `Trial.analysis` when this analysis
    * is its latest; this door answers for earlier analyses too.
@@ -4968,10 +4957,10 @@ export interface AnalysesClient {
    * one directory named as Harbor names the wrapper trial
    * (`analyze-<analyzed trial dir>__<7 chars>/`): config.json, lock.json,
    * result.json, trial.log, exception.txt (an infrastructure failure only),
-   * agent/claude-code.txt (Harbor's tee name for claude-code),
+   * agent/<Harbor's tee name for its agent> (claude-code.txt, codex.txt, …),
    * agent/stderr.log, agent/trace-parsed.jsonl, the captured home at its
-   * real names with agent/agent-home.json beside it and Harbor's copy at
-   * agent/sessions/, verifier/{test-stdout.txt,reward.txt,reward.json}
+   * real names with agent/agent-home.json beside it and Harbor's copy at its
+   * per-agent slot (agent/sessions/ for claude and codex), verifier/{test-stdout.txt,reward.txt,reward.json}
    * when the validator ruled (reward 1 = a valid analysis.json, 0 = it was
    * refused), and artifacts/manifest.json with artifacts/analysis.json (the
    * validated {summary, checks}) on a completed run — absent artifacts are
@@ -4998,13 +4987,13 @@ export interface AnalysesClient {
 /**
  * Task-check configuration — Harbor's `harbor check` vocabulary (their
  * cli/analyze.py:84-148 check_command), the spec's `CheckConfigInput`. The
- * rubric-agent trio is the analyze door's, under the same rules
- * (`AnalyzeConfigInput` states them; refusals name `check.*`): `model_name`
+ * rubric-agent knobs are the analyze door's, under the same rules
+ * (`AnalyzeConfigInput` states them; refusals name `check.*`): `agent` (`-a/--agent`), `model_name`
  * (Harbor's check default is `claude-sonnet-4-6`; this platform's is the
  * analyzer's `openrouter/deepseek/deepseek-v4.1-flash` — one roster, one
  * default for both rubric
  * agents, a recorded deviation), `rubric` (the default is the platform's
- * check rubric, eleven criteria), and
+ * check rubric), and
  * `prompt` (the TEXT of Harbor's `-p/--prompt` file, replacing the platform's
  * default check body and rendered with `{task_path}`, `{file_tree}`,
  * `{criteria_guidance}`; the output contract is appended after it exactly
@@ -5017,16 +5006,17 @@ export interface AnalysesClient {
  * (`-x/--exclude-task-name`), `n_tasks` (`-l/--n-tasks`) — applied in
  * checker.py's order (:132-138: include, exclude, then the cap) over the
  * sorted task directory names, Python fnmatch globs against the NAME.
- * Harbor's `-a/--agent`, `--job-name`, `-o/--jobs-dir`, `-k/--n-attempts`
- * and the local-runner kwargs are not on this surface; the contract records
- * each with its reason.
+ * Harbor's `-o/--jobs-dir`, `-k/--n-attempts` and the local-runner kwargs
+ * are not on this surface; the contract records each with its reason.
  */
 export interface CheckConfigInput {
   /** A name for the check (Harbor's `--job-name`); omitted, the accept timestamp `YYYY-MM-DD__HH-MM-SS`. 1-120 characters. */
   name?: string;
-  /** Model the checker agent runs (Harbor's `-m/--model`); must be on the claude roster (`GET /api/meta`). */
+  /** The agent the checker runs on (Harbor's `-a/--agent`) — the analyze door's `agent`, same rule: a retired one is refused `agent_retired`. Omitted: claude. */
+  agent?: string;
+  /** Model the checker agent runs (Harbor's `-m/--model`) — the analyze door's `model_name`, same rule: omitted, the agent's default (`GET /api/meta` `analyze.agents[].default_model`); named, on the agent's roster. */
   model_name?: string;
-  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (eleven criteria). */
+  /** The rubric (Harbor's `-r/--rubric` file as its `{criteria}` object); default: the platform's check rubric (`checks().defaults()`). */
   rubric?: Rubric;
   /** The prompt template — the TEXT of Harbor's `-p/--prompt` file. */
   prompt?: string;
@@ -5086,9 +5076,8 @@ export interface CheckSource {
 /**
  * One task's quality check — Harbor's QualityCheckResult shape (their
  * cli/quality_checker/models.py:31-35: `task_name`, `checks` keyed by
- * criterion, `cost_usd`), its checks extended by the result schema and the
- * derived `label` and `executed` beside them, plus the hosted provenance: its own id, the check
- * it belongs to, its lifecycle (the analysis ladder's four lowercase words),
+ * criterion, `cost_usd`), its checks extended by the result schema, plus the
+ * hosted provenance: its own id, the check it belongs to, its lifecycle (the analysis ladder's four lowercase words),
  * the bounded attempt count, and a typed `failure` in place of Harbor's
  * `error` string (the TrialAnalysis rule).
  *
@@ -5107,17 +5096,6 @@ export interface TaskCheck {
   status: AnalysisStatus;
   /** One entry per rubric criterion, keys exactly the frozen criteria. Null until completed. */
   checks: Record<string, AnalysisCheck> | null;
-  /** The derived label (CheckLabel states the rule); null until completed, and null under a custom rubric. */
-  label: CheckLabel | null;
-  /**
-   * Whether the box ran the task's environment: true when none of the five
-   * run-based criteria (reference_solution_is_valid,
-   * verifier_rejects_non_solutions, environment_builds_and_runs,
-   * verification_is_stable, limits_allow_the_task) is unknown, so a
-   * reading-only `no_problem_found` is never mistaken for a run. Null
-   * exactly when `label` is null.
-   */
-  executed: boolean | null;
   cost_usd: number | null;
   /** 1, or 2 when the one automatic re-run fired (a run that produced no valid check-result.json, the missing file included, is re-run once — the analyze verb's hosted rule; a run cut by its budget is not that class: it settles `failed` with phase `timeout` at once and is never re-run). */
   attempts: number;
@@ -5141,9 +5119,11 @@ export interface Check {
   name: string;
   status: CheckStatus;
   source: CheckSource;
+  /** The agent every task's checker ran on — named at create, or the default (claude). */
+  agent: string;
   model_name: string;
-  /** The effort every task's checker ran at — named at create, or the model's default, resolved at accept. */
-  reasoning_effort: string;
+  /** The effort every task's checker ran at — named at create, or the model's default on the agent, resolved at accept; null when the agent takes none. */
+  reasoning_effort: string | null;
   rubric: Rubric;
   /** The prompt template as stored; null = the platform's default check body. */
   prompt: string | null;
@@ -5172,18 +5152,21 @@ export interface Check {
 }
 
 /**
- * The policy an empty analyze config resolves to (GET /api/analyses/defaults):
- * each key the value `AnalyzeConfig` echoes for a job created with
- * `analyze: {}`, except `prompt`, which `AnalyzeConfig` serves as null and
- * this serves as the template text.
+ * The policy an empty analyze config resolves to (GET /api/analyses/defaults),
+ * or one naming only `agent` when `defaults({ agent })` names it: each key the
+ * value `AnalyzeConfig` echoes for a job created with that config, except
+ * `prompt`, which `AnalyzeConfig` serves as null and this serves as the
+ * template text.
  */
 export interface AnalyzeDefaults {
+  agent: string;
+  /** The model an omitted `model_name` takes on `agent` (`GET /api/meta` `analyze.agents[].default_model`). */
   model_name: string;
   rubric: Rubric;
   /** The built-in analyze prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
   prompt: string;
-  /** The effort the default model runs at when the config names none. */
-  reasoning_effort: string;
+  /** The effort `model_name` runs at on `agent` when the config names none; null if that agent takes none. */
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
 
@@ -5235,18 +5218,20 @@ export interface TrajectoryAnalysisDefaults {
 }
 
 /**
- * The policy an empty check config resolves to (GET /api/checks/defaults):
- * each key the value `Check` echoes for a check created with no config,
- * except `prompt`, which `Check` serves as null and this serves as the
- * template text.
+ * The policy an empty check config resolves to (GET /api/checks/defaults), or
+ * one naming only `agent` when `defaults({ agent })` names it: each key the
+ * value `Check` echoes for a check created with that config, except `prompt`,
+ * which `Check` serves as null and this serves as the template text.
  */
 export interface CheckDefaults {
+  agent: string;
+  /** The model an omitted `model_name` takes on `agent` (`GET /api/meta` `analyze.agents[].default_model`). */
   model_name: string;
   rubric: Rubric;
   /** The built-in check prompt template, unrendered — pass it as `prompt` to run the default body explicitly, or edit it from here. */
   prompt: string;
-  /** The effort the default model runs at when the config names none. */
-  reasoning_effort: string;
+  /** The effort `model_name` runs at on `agent` when the config names none; null if that agent takes none. */
+  reasoning_effort: string | null;
   sandbox_provider: EvalSandboxProvider;
 }
 
@@ -5320,8 +5305,8 @@ export interface ChecksClient {
   get(checkId: string): Promise<Check>;
   /** Every check you may read, newest first (cursor-paged); `{ scope, status, dataset }` narrow it. */
   list(options?: ListChecksOptions): CheckList;
-  /** The defaults a check runs under when its config names nothing (GET /api/checks/defaults): model, effort, provider, rubric and the unrendered prompt template. */
-  defaults(): Promise<CheckDefaults>;
+  /** The defaults a check runs under when its config names nothing (GET /api/checks/defaults): agent, model, effort, provider, rubric and the unrendered prompt template. `{ agent }` reads what that agent runs under — its default model and the effort it takes; an unknown name is refused `invalid_input`. */
+  defaults(options?: { agent?: string }): Promise<CheckDefaults>;
   /** Poll a check until every task settled; resolves with the final Check. */
   watch(checkId: string, options?: WatchCheckOptions): Promise<Check>;
   /**
@@ -5354,9 +5339,9 @@ export interface ChecksClient {
    * the TASK CHECK id (`Check.results[].id`). Each folder is Harbor's
    * TrialPaths for the checker's run: config.json, lock.json, result.json,
    * trial.log, exception.txt (an infrastructure failure only),
-   * agent/claude-code.txt, agent/stderr.log, agent/trace-parsed.jsonl, the
-   * captured home at its real names with agent/agent-home.json and Harbor's
-   * copy at agent/sessions/, verifier/{test-stdout.txt,reward.txt,
+   * agent/<its agent's tee name>, agent/stderr.log, agent/trace-parsed.jsonl, the
+   * captured home at its real names with agent/agent-home.json and Harbor's copy at its
+   * per-agent slot (agent/sessions/ for claude and codex), verifier/{test-stdout.txt,reward.txt,
    * reward.json} when the validator ruled (reward 1 = a valid
    * check-result.json, 0 = it was refused), artifacts/manifest.json and
    * artifacts/check-result.json (the validated flat checks) on a completed
@@ -5662,6 +5647,7 @@ export const HOSTED_ERROR_CODES = [
   "agent_config_unsupported",
   "agent_config_key_refused",
   "agent_preset_unsupported",
+  "agent_retired",
   "provider_unsupported",
   "job_not_found",
   "job_not_terminal",
@@ -5827,6 +5813,12 @@ export interface AgentModelOption {
   description: string | null;
 }
 
+/** One retired built-in agent and the agent to use instead — the row `agent_retired` details carry too. */
+export interface RetiredAgent {
+  agent: string;
+  replaced_by: string;
+}
+
 /** One built-in agent's declared capabilities. */
 export interface AgentCapability {
   name: string;
@@ -5938,8 +5930,15 @@ export interface ManagedProviderCapability {
  */
 export interface CapabilityDocument {
   schema_version: number;
-  /** Built-in agents and their declared capabilities. */
+  /** Built-in agents a new job may name, and their declared capabilities. */
   agents: AgentCapability[];
+  /**
+   * Retired built-in agents, left out of `agents`: a new job, resume, retry,
+   * analysis or check naming one is refused `agent_retired`, while its records
+   * stay readable.
+   * Absent on servers predating the field.
+   */
+  retired_agents?: RetiredAgent[];
   /** Rules a bring-your-own agent registration must satisfy. */
   agent_registration: {
     name_pattern: string;
@@ -5974,16 +5973,21 @@ export interface CapabilityDocument {
     dataset_version: StatusVocabulary;
   };
   /**
-   * The trace analyzer's roster and defaults: the model an omitted
-   * `analyze.model_name` takes, the efforts `analyze.reasoning_effort`
-   * accepts (the claude harness's — the analyzer IS that harness), and
-   * every roster model with the effort an omitted `reasoning_effort` takes
-   * for it. Absent on servers predating the field.
+   * The rubric agents' roster and defaults, the analyzer's and the checker's alike, so a client
+   * knows what "omitted" meant. Absent on servers predating the field.
    */
   analyze?: {
+    default_agent: string;
+    /** The platform's pick — what an omitted `model_name` takes on every agent whose roster carries it. */
     default_model: string;
-    reasoning_efforts: string[];
-    models: { alias: string; model_id: string; default_reasoning_effort: string }[];
+    agents: {
+      name: string;
+      /** What an omitted `model_name` takes on this agent; one of its `models[].alias`. */
+      default_model: string;
+      /** Empty for an agent that takes no effort. */
+      reasoning_efforts: string[];
+      models: { alias: string; model_id: string; default_reasoning_effort: string | null }[];
+    }[];
   };
   limits: {
     /**

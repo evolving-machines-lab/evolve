@@ -37,7 +37,7 @@ Move through the prompt, messages, thoughts, tool calls, and tool results. Selec
 
 ### 3. Check the outcome
 
-Inspect the reward or failure. Open the verifier log or review verdict from Downloads when you need the scoring evidence.
+Inspect the reward or failure. Open the verifier log or review result from Downloads when you need the scoring evidence.
 
 ## Move through the trace
 
@@ -58,7 +58,7 @@ Parsed trace, ATIF trajectory, stdout, stderr, agent home, verifier log, or the 
 
 ### Analysis or task check
 
-Verdict document, reviewer stdout and stderr, agent home, or the combined download.
+Result document, reviewer stdout and stderr, agent home, or the combined download.
 
 A download can only contain what the run recorded. See [Trial outputs](/core-concepts/trial-outputs) for the saved layout and binary-file differences.
 

@@ -1,0 +1,6 @@
+gepa==0.1.4
+litellm>=1.60
+datasets>=3.0        # TRACE from the Hugging Face Hub
+pandas>=2.0          # local .parquet files
+cloudpickle>=3.0     # GEPA run-state snapshots
+pytest>=8.0

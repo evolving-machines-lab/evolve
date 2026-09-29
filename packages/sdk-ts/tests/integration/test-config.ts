@@ -12,8 +12,7 @@
  *   CODEX_MODEL - Model for codex agent (default: gpt-5.1-codex)
  *   CODEX_REASONING_EFFORT - Reasoning effort for codex (default: medium)
  *   ANTHROPIC_MODEL - Model for claude agent (default: opus)
- *   GEMINI_MODEL - Model for gemini agent (default: gemini-3.1-pro-preview)
- *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.7-max)
+ *   QWEN_OPENAI_MODEL - Model for qwen agent (default: qwen3.8-max)
  */
 
 import type { AgentType, SandboxProvider } from "../../dist/index.js";
@@ -37,7 +36,6 @@ export interface TestEnv {
   // Direct mode keys
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
-  GEMINI_API_KEY?: string;
   FACTORY_API_KEY?: string;
 }
 
@@ -53,18 +51,17 @@ export function getTestEnv(): TestEnv {
   const MODAL_TOKEN_SECRET = process.env.MODAL_TOKEN_SECRET;
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   const FACTORY_API_KEY = process.env.FACTORY_API_KEY;
 
   // Need either gateway key or at least one provider key
-  if (!EVOLVE_API_KEY && !ANTHROPIC_API_KEY && !OPENAI_API_KEY && !GEMINI_API_KEY && !FACTORY_API_KEY) {
-    throw new Error("Either EVOLVE_API_KEY or provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, FACTORY_API_KEY) must be set");
+  if (!EVOLVE_API_KEY && !ANTHROPIC_API_KEY && !OPENAI_API_KEY && !FACTORY_API_KEY) {
+    throw new Error("Either EVOLVE_API_KEY or provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, FACTORY_API_KEY) must be set");
   }
   if (!E2B_API_KEY && !DAYTONA_API_KEY && !(MODAL_TOKEN_ID && MODAL_TOKEN_SECRET)) {
     throw new Error("Either E2B_API_KEY, DAYTONA_API_KEY, or MODAL_TOKEN_ID+MODAL_TOKEN_SECRET must be set in .env");
   }
 
-  return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, FACTORY_API_KEY };
+  return { EVOLVE_API_KEY, E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, ANTHROPIC_API_KEY, OPENAI_API_KEY, FACTORY_API_KEY };
 }
 
 export type ProviderName = "e2b" | "modal" | "daytona";
@@ -128,8 +125,8 @@ export function getSandboxProvider(): SandboxProvider {
 export function getDefaultAgentType(): AgentType | undefined {
   const type = process.env.TEST_AGENT_TYPE;
   if (!type) return undefined;
-  if (!["claude", "codex", "gemini", "qwen", "kimi", "opencode", "droid"].includes(type)) {
-    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, gemini, qwen, kimi, opencode, droid`);
+  if (!["claude", "codex", "qwen", "kimi", "opencode", "droid", "pi", "prime-agent", "dsh", "zcode", "antigravity"].includes(type)) {
+    throw new Error(`Invalid TEST_AGENT_TYPE: ${type}. Valid types: claude, codex, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity`);
   }
   return type as AgentType;
 }
@@ -153,22 +150,15 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "codex",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.CODEX_MODEL || "gpt-5.5",
+        model: process.env.CODEX_MODEL || "gpt-6-sol",
         reasoningEffort: (process.env.CODEX_REASONING_EFFORT as "low" | "medium" | "high") || "medium",
-      };
-
-    case "gemini":
-      return {
-        type: "gemini",
-        apiKey: env.EVOLVE_API_KEY || env.GEMINI_API_KEY || "",
-        model: process.env.GEMINI_MODEL || "gemini-3.1-pro-preview",
       };
 
     case "qwen":
       return {
         type: "qwen",
         apiKey: env.EVOLVE_API_KEY || env.OPENAI_API_KEY || "",
-        model: process.env.QWEN_OPENAI_MODEL || "qwen3.7-max",
+        model: process.env.QWEN_OPENAI_MODEL || "qwen3.8-max",
       };
 
     case "kimi":
@@ -189,7 +179,42 @@ export function getAgentConfig(type: AgentType): AgentConfig {
       return {
         type: "droid",
         apiKey: env.EVOLVE_API_KEY || env.FACTORY_API_KEY || "",
-        model: process.env.DROID_MODEL || "gpt-5.5",
+        model: process.env.DROID_MODEL || "claude-opus-5-5",
+      };
+
+    case "pi":
+      return {
+        type: "pi",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.PI_MODEL || "openrouter/anthropic/claude-sonnet-5",
+      };
+
+    case "prime-agent":
+      return {
+        type: "prime-agent",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.PRIME_AGENT_MODEL || "openrouter/anthropic/claude-sonnet-5",
+      };
+
+    case "dsh":
+      return {
+        type: "dsh",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.DSH_MODEL || "openrouter/deepseek/deepseek-v4.1-flash",
+      };
+
+    case "zcode":
+      return {
+        type: "zcode",
+        apiKey: env.EVOLVE_API_KEY || process.env.OPENROUTER_API_KEY || "",
+        model: process.env.ZCODE_MODEL || "openrouter/z-ai/glm-5.3-flash",
+      };
+
+    case "antigravity":
+      return {
+        type: "antigravity",
+        apiKey: env.EVOLVE_API_KEY || env.GEMINI_API_KEY || "",
+        model: process.env.ANTIGRAVITY_MODEL || "gemini-3.8-flash",
       };
 
     default:
@@ -201,7 +226,7 @@ export function getAgentConfig(type: AgentType): AgentConfig {
  * Get all agent configurations (for parallel testing)
  */
 export function getAllAgentConfigs(): Record<AgentType, AgentConfig> {
-  const types: AgentType[] = ["claude", "codex", "gemini", "qwen"];
+  const types: AgentType[] = ["claude", "codex", "qwen"];
   const configs: Record<string, AgentConfig> = {};
 
   for (const type of types) {

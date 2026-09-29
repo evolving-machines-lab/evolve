@@ -263,7 +263,6 @@ export type {
   AnalysisCheck,
   AnalysisEvidence,
   AnalysisFailure,
-  AnalysisLabel,
   AnalysisList,
   AnalysisPage,
   AnalysisStatus,
@@ -272,7 +271,6 @@ export type {
   Check,
   CheckConfigInput,
   CheckDefaults,
-  CheckLabel,
   CheckList,
   CheckPage,
   CheckSource,
@@ -399,6 +397,7 @@ export type {
   PublishDatasetOptions,
   RegradeRequest,
   ResumeRequest,
+  RetiredAgent,
   RetryConfig,
   RetryConfigInput,
   RetryRequest,
@@ -796,6 +795,11 @@ function resolveConfig(factory: string, config?: HostedClientConfig): ResolvedCo
   }
   const baseUrl = (config?.baseUrl || process.env.EVOLVE_DASHBOARD_URL || DEFAULT_DASHBOARD_URL).replace(/\/$/, "");
   return { apiKey, baseUrl, ...(config?.org ? { org: config.org } : {}) };
+}
+
+/** Both defaults doors' `?agent=` — the server resolves the named agent's policy; the client names it, nothing more. */
+function defaultsQuery(options?: { agent?: string }): string {
+  return options?.agent === undefined ? "" : `?${new URLSearchParams({ agent: options.agent })}`;
 }
 
 async function request(
@@ -3039,7 +3043,7 @@ export function datasets(config?: HostedClientConfig): DatasetsClient {
  *
  * await jobs().start({
  *   datasets: [{ name: "deep-swe" }],
- *   agents: [{ name: "acme-cli", model_name: "gpt-5.5" }],
+ *   agents: [{ name: "acme-cli", model_name: "gpt-6-sol" }],
  *   max_trial_spend_usd: 25,
  * });
  * ```
@@ -3248,7 +3252,7 @@ export function skills(config?: HostedClientConfig): SkillsClient {
  * // datasets: bare name = active version; { name, version } pins one
  * const job = await client.start({
  *   datasets: [{ name: "deep-swe" }],
- *   agents: [{ name: "codex", model_name: "gpt-5.5" }],
+ *   agents: [{ name: "codex", model_name: "gpt-6-sol" }],
  *   n_attempts: 1,
  *   n_concurrent_trials: 4,
  *   max_trial_spend_usd: 25,
@@ -4048,7 +4052,7 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
   // species never changes, so one proof per id is enough — the whole-tree
   // download reads three streams and must not re-spend the gate on each,
   // and a get() that already answered 200 is the same proof (the CLI's
-  // analysis verbs read the verdict first, then stream).
+  // analysis verbs read the result first, then stream).
   const provenAnalyses = new Set<string>();
 
   /**
@@ -4083,7 +4087,7 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
       }
       throw error;
     }
-    // Drain the small verdict body so the connection is reusable; the gate
+    // Drain the small result body so the connection is reusable; the gate
     // needs only the door's yes.
     await res.text().catch(() => {});
     provenAnalyses.add(analysisId);
@@ -4123,11 +4127,11 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
     // served as "never analyzed" the way the OPTIONAL Trial.analysis slot
     // is — here the row IS the answer, so it fails closed like get().
     return mapPage((await res.json()) as Record<string, unknown>, (raw) => {
-      const verdict = mapTrialAnalysis(raw);
-      if (verdict === null) {
+      const analysis = mapTrialAnalysis(raw);
+      if (analysis === null) {
         throw new Error("The analyses list served an unreadable analysis object");
       }
-      return verdict;
+      return analysis;
     });
   }
 
@@ -4143,7 +4147,7 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
     },
 
     async get(analysisId: string): Promise<TrialAnalysis> {
-      // The feed's own verdict door: ?what=analysis answers { analysis } —
+      // The feed's own analysis door: ?what=analysis answers { analysis } —
       // the wire's TrialAnalysis for EVERY analysis, not only completed ones
       // (the same document its &format=log form downloads as Harbor's
       // analysis.json). A trial id refuses typed server-side ("analysis.json
@@ -4153,17 +4157,17 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
         `/api/traces/trials/${encodeURIComponent(analysisId)}/artifacts?what=analysis`
       );
       const body = (await res.json()) as Record<string, unknown>;
-      const verdict = mapTrialAnalysis(body.analysis);
-      if (verdict === null) {
+      const analysis = mapTrialAnalysis(body.analysis);
+      if (analysis === null) {
         // mapTrialAnalysis reads malformed as "never analyzed" for the
-        // OPTIONAL Trial.analysis slot; here the verdict IS the answer, so
+        // OPTIONAL Trial.analysis slot; here the analysis IS the answer, so
         // absence fails closed instead of fabricating an empty object.
-        throw new Error(`The analysis feed served no readable verdict object for "${analysisId}"`);
+        throw new Error(`The analysis feed served no readable analysis object for "${analysisId}"`);
       }
       // The door's 200 is the species gate's own proof: a stream read after
       // this get() does not re-spend it.
       provenAnalyses.add(analysisId);
-      return verdict;
+      return analysis;
     },
 
     async transcript(
@@ -4238,8 +4242,8 @@ export function analyses(config?: HostedClientConfig): AnalysesClient {
         `analysis-${analysisId}.tar.gz`
       )) as AnalysesClient["download"],
 
-    async defaults(): Promise<AnalyzeDefaults> {
-      const res = await request(cfg, "/api/analyses/defaults");
+    async defaults(options?: { agent?: string }): Promise<AnalyzeDefaults> {
+      const res = await request(cfg, `/api/analyses/defaults${defaultsQuery(options)}`);
       return (await res.json()) as AnalyzeDefaults;
     },
 
@@ -4325,7 +4329,7 @@ export function checks(config?: HostedClientConfig): ChecksClient {
 
   /**
    * THE SPECIES GATE for the stored streams — the analyses client's, with
-   * the task check's own verdict door: ?what=task-check is the one selector
+   * the task check's own result door: ?what=task-check is the one selector
    * the server refuses typed for a trial, a regrade or an analysis (400), so
    * every stream read resolves it FIRST and a wrong-species id dies before
    * any artifact byte is fetched.
@@ -4419,8 +4423,8 @@ export function checks(config?: HostedClientConfig): ChecksClient {
 
     get: getCheck,
 
-    async defaults(): Promise<CheckDefaults> {
-      const res = await request(cfg, "/api/checks/defaults");
+    async defaults(options?: { agent?: string }): Promise<CheckDefaults> {
+      const res = await request(cfg, `/api/checks/defaults${defaultsQuery(options)}`);
       return (await res.json()) as CheckDefaults;
     },
 
@@ -4771,7 +4775,7 @@ export interface HostedEvolve {
   readonly skills: SkillsClient;
   /** Globally addressable trials: get, trace, artifact, regrade, stop. */
   readonly trials: TrialsClient;
-  /** Analysis runs: verdict, the analyzer's own transcript, stored artifacts. */
+  /** Analysis runs: the result, the analyzer's own transcript, stored artifacts. */
   readonly analyses: AnalysesClient;
   /** Task quality checks (Harbor's `harbor check`): create, get, list, watch. */
   readonly checks: ChecksClient;

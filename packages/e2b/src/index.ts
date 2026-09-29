@@ -381,6 +381,8 @@ export interface SandboxCreateOptions {
   user?: string;
   /** Home directory used by the SDK for agent config paths; not consumed by the provider. */
   homeDir?: string;
+  /** Account the SDK hands its agent config files to; not consumed by the provider. */
+  homeOwner?: string;
 }
 
 /** Options for listing sandboxes */
@@ -551,6 +553,9 @@ export interface SandboxProvider {
 // CONFIGURATION
 // ============================================================
 
+/** Wraps the one request that creates a box, for the SDK to retry a door's 429/503 before any box exists. */
+export type CreateRequestRetry = <T>(send: () => Promise<T>) => Promise<T>;
+
 export interface E2BConfig {
   /** E2B API key. Default: reads from E2B_API_KEY env var */
   apiKey?: string;
@@ -559,6 +564,8 @@ export interface E2BConfig {
   defaultTimeoutMs?: number;
   /** E2B template ID (default: 'evolve-all'). Create custom templates at https://e2b.dev/docs/sandbox-template */
   templateId?: string;
+  /** @internal Resolved by the Evolve SDK for the managed door; unset means the create request is sent once. */
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 /** Internal resolved config with required apiKey */
@@ -567,6 +574,7 @@ interface ResolvedE2BConfig {
   apiUrl?: string;
   defaultTimeoutMs?: number;
   templateId?: string;
+  retryCreateRequest?: CreateRequestRetry;
 }
 
 // ============================================================
@@ -1124,6 +1132,7 @@ export class E2BProvider implements SandboxProvider {
   private readonly apiUrl?: string;
   private readonly defaultTimeoutMs: number;
   private readonly templateId?: string;
+  private readonly retryCreateRequest?: CreateRequestRetry;
   /**
    * Sandbox user configured at create time, reapplied on connect() (e.g., resume).
    * In-memory only: a connect() from a fresh process runs as the template default
@@ -1137,6 +1146,7 @@ export class E2BProvider implements SandboxProvider {
     this.apiUrl = config.apiUrl;
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 3600000;
     this.templateId = config.templateId;
+    this.retryCreateRequest = config.retryCreateRequest;
   }
 
   async create(options: SandboxCreateOptions): Promise<SandboxInstance> {
@@ -1196,14 +1206,17 @@ export class E2BProvider implements SandboxProvider {
     const networkParams = mapNetworkPolicy(options.network);
 
     // Map generic 'image' to E2B's 'templateId'
-    const sandbox = await E2BSandbox.create(templateId, {
-      apiKey: this.apiKey,
-      apiUrl: this.apiUrl,
-      envs: options.envs,
-      metadata: options.metadata,
-      timeoutMs,
-      ...networkParams,
-    });
+    const send = () =>
+      E2BSandbox.create(templateId, {
+        apiKey: this.apiKey,
+        apiUrl: this.apiUrl,
+        envs: options.envs,
+        metadata: options.metadata,
+        timeoutMs,
+        ...networkParams,
+      });
+    // The one request the door may refuse before a box exists; the makeDir below acts on the box.
+    const sandbox = await (this.retryCreateRequest ? this.retryCreateRequest(send) : send());
 
     if (options.workingDirectory) {
       // Use E2B files.makeDir() to avoid shell injection risk

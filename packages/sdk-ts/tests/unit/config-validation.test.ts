@@ -24,7 +24,7 @@
 
 import { Agent, Evolve, EvolveConfigError } from "../../dist/index.js";
 import type { AgentConfig, ResolvedAgentConfig, RunOptions } from "../../src/types.js";
-import { AGENT_REGISTRY } from "../../src/registry.js";
+import { AGENT_REGISTRY, isValidAgentType, liveAgentTypes } from "../../src/registry.js";
 import { loadNativeAgentConfig, nativeConfigAgentTypes } from "../../src/utils/config.js";
 
 // =============================================================================
@@ -93,7 +93,7 @@ function testMissingModelIsNamed(): void {
   assertEqual(
     (error as Error).message,
     'Evolve agent config: "model" is empty (""). ' +
-      'Pass a model id such as "claude-opus-5", ' +
+      'Pass a model id such as "claude-opus-5-5", ' +
       "or omit model entirely to use droid's default.",
     "the message states the field, the value, and a usable model id",
   );
@@ -138,9 +138,68 @@ function testUnknownAgentType(): void {
   assert(error instanceof EvolveConfigError, "an unknown type throws EvolveConfigError");
   assertEqual((error as EvolveConfigError).field, "type", "the error names the type field");
   assert(
-    (error as Error).message.includes("claude, codex, gemini, qwen, kimi, opencode, droid"),
-    "the message lists every valid agent type",
+    (error as Error).message.includes("claude, codex, qwen, kimi, opencode, droid, pi, prime-agent, dsh, zcode, antigravity"),
+    "the message lists every live agent type, and no retired one",
   );
+}
+
+/** An effort outside a harness's declared roster is refused by name at the door. */
+function testEffortOutsideRoster(): void {
+  console.log("\n[3b] A reasoning effort the harness cannot honor is rejected by name");
+
+  const error = thrownBy(() =>
+    new Evolve().withAgent({ type: "dsh", apiKey: "key", reasoningEffort: "off" }),
+  );
+  assert(error instanceof EvolveConfigError, "an unlisted effort throws EvolveConfigError");
+  assertEqual((error as EvolveConfigError).field, "reasoningEffort", "the error names the reasoningEffort field");
+  assert(
+    (error as Error).message.includes('agent "dsh" honors reasoning effort "low", "medium", "high" only') &&
+      (error as Error).message.includes('"off"'),
+    "the message names the harness, its roster and the refused value",
+  );
+  for (const spelling of ["none", "no-thinking"] as const) {
+    assert(
+      thrownBy(() => new Evolve().withAgent({ type: "dsh", apiKey: "key", reasoningEffort: spelling })) instanceof EvolveConfigError,
+      `the off spelling "${spelling}" is refused the same way`,
+    );
+  }
+  assertEqual(
+    thrownBy(() => new Evolve().withAgent({ type: "dsh", apiKey: "key", reasoningEffort: "high" })),
+    undefined,
+    "a roster value constructs",
+  );
+  assertEqual(
+    thrownBy(() => new Evolve().withAgent({ type: "codex", apiKey: "key", reasoningEffort: "off" })),
+    undefined,
+    "a harness with no narrowed roster keeps the whole vocabulary",
+  );
+}
+
+/** A retired harness is still a known type, refused by name with its replacement. */
+function testRetiredAgentType(): void {
+  console.log("\n[3c] A retired agent type is refused at both doors, naming its replacement");
+
+  const viaEvolve = thrownBy(() => new Evolve().withAgent({ type: "gemini", providerApiKey: "key" }));
+  assert(viaEvolve instanceof EvolveConfigError, "withAgent({ type: gemini }) throws EvolveConfigError");
+  assertEqual((viaEvolve as EvolveConfigError).field, "type", "the error names the type field");
+  assertEqual(
+    (viaEvolve as Error).message,
+    'Evolve agent config: agent type "gemini" is retired; use "antigravity" instead. ' +
+      "Records of past gemini runs stay readable.",
+    "the message names the retired type and its replacement",
+  );
+
+  const viaAgent = thrownBy(() => new Agent({ type: "gemini", apiKey: "key", isDirectMode: true }));
+  assertEqual((viaAgent as EvolveConfigError)?.field, "type", "a hand-built Agent is refused at construction too");
+
+  assertEqual(AGENT_REGISTRY.gemini.retired?.replacedBy, "antigravity", "gemini names antigravity as its replacement");
+  assert(!liveAgentTypes().includes("gemini"), "liveAgentTypes() leaves the retired type out");
+  assertEqual(
+    liveAgentTypes().length,
+    Object.keys(AGENT_REGISTRY).length - 1,
+    "liveAgentTypes() keeps every other registry type",
+  );
+  assert(isValidAgentType("gemini"), "the retired type stays a valid AgentType for past records");
 }
 
 /** run() without a prompt: the case that produced the raw TypeError. */
@@ -178,6 +237,16 @@ function testAgentConstructorGuards(): void {
 
   assert(error instanceof EvolveConfigError, "an empty model rejects at construction too");
   assertEqual((error as EvolveConfigError).field, "model", "the error names the model field");
+
+  const config: ResolvedAgentConfig = { type: "opencode", apiKey: "key", isDirectMode: true };
+  const owner = thrownBy(() => new Agent(config, { sandboxCreateOptions: { homeOwner: "agent; id" } }));
+  assert(owner instanceof EvolveConfigError, "a homeOwner the shell could read rejects at construction");
+  assertEqual((owner as EvolveConfigError).field, "homeOwner", "the error names the homeOwner field");
+  assertEqual(
+    thrownBy(() => new Agent(config, { sandboxCreateOptions: { homeOwner: "1001:1001" } })),
+    undefined,
+    "a uid:gid homeOwner constructs",
+  );
 }
 
 /**
@@ -190,9 +259,9 @@ function testNativeAgentConfig(): void {
   console.log("\n[6] Native agent config: claude/codex only, validated at the door");
 
   const unsupported = thrownBy(() =>
-    new Evolve().withAgent({ type: "gemini", providerApiKey: "key", config: { a: 1 } }),
+    new Evolve().withAgent({ type: "qwen", providerApiKey: "key", config: { a: 1 } }),
   );
-  assert(unsupported instanceof EvolveConfigError, "config on gemini throws EvolveConfigError");
+  assert(unsupported instanceof EvolveConfigError, "config on qwen throws EvolveConfigError");
   assertEqual((unsupported as EvolveConfigError).field, "config", "the error names the config field");
   assert(
     (unsupported as Error).message.includes("claude, codex"),
@@ -282,6 +351,8 @@ async function main(): Promise<void> {
   testMissingModelIsNamed();
   testOmittedModelIsFine();
   testUnknownAgentType();
+  testEffortOutsideRoster();
+  testRetiredAgentType();
   await testMissingPrompt();
   testAgentConstructorGuards();
   testNativeAgentConfig();

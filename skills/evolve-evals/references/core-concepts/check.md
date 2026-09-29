@@ -47,18 +47,36 @@ A check is a hosted model run and incurs cost. `evolve dataset check` is a separ
 
 | Review area | Default criteria |
 | --- | --- |
-| Instructions and tests | Sufficient instructions; tests match instructions; verifier correctness. |
-| Evaluation integrity | No answer leakage; grading is out of the agent's reach. |
+| Instructions and tests | Sufficient instructions; tests match instructions; verifier correctness; data and labels support the work and its grading. |
+| Evaluation integrity | No answer leakage; grading is out of the agent's reach; each attempt starts clean and stays isolated from the others. |
 | Execution | Valid reference solution; rejection of non-solutions; environment works; stable verification; sufficient limits. |
 | Feasibility | The task is solvable. |
 
-The default rubric has eleven criteria. Inspect their complete guidance and the current model, effort, provider, and prompt:
+Read the complete rubric guidance and the current agent, model, effort, provider, and prompt:
 
-```bash
+```bash Default checker
 evolve check --show-defaults
 ```
 
-Use `-r rubric.toml` or `-p prompt.txt` to customize. Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically.
+```bash Choose a checker
+evolve check --show-defaults -a codex
+evolve check ./tasks -a codex --watch
+```
+
+The default checker is `claude`. Use `-a` to choose another built-in harness. Omit `-m` to use its default model for checks, or choose one of its [models](/core-concepts/models#analysis-and-check-models).
+
+### Use your own rubric or prompt
+
+Use `-r rubric.toml` or `-p prompt.txt` to customize the review. A rubric accepts TOML, YAML, or JSON with uniquely named criteria:
+
+```toml rubric.toml
+[[criteria]]
+name = "inputs_are_documented"
+description = "The instructions describe every required input."
+guidance = "Compare the input files with the instructions."
+```
+
+Check prompt tokens are `{task_path}`, `{file_tree}`, and `{criteria_guidance}`. The required result format is appended automatically. See the [check reference](/cli-reference/check#configure-the-checker) for all options.
 
 ## The result
 
@@ -71,23 +89,54 @@ check
 │   │   ├── outcomes
 │   │   ├── explanations
 │   │   └── evidence
-│   ├── label + executed
 │   └── checker trace + files
 └── task check: another-task
     └── ...
 ```
 
-| Label | Rule, in order |
+Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence. The API returns these findings without an overall verdict or a separate execution flag.
+
+The dashboard computes a short summary label from the outcomes. **No problem found** does not prove that the task runs: read any unresolved execution findings.
+
+### Default rubric: read the dashboard summary
+
+These rules apply when the result has exactly the default criterion names. Apply the first matching rule:
+
+| Rule | Summary label |
 | --- | --- |
-| `has_a_problem` | Any criterion fails. |
-| `unclear` | Otherwise, a file-based criterion is unknown. |
-| `no_problem_found` | Neither condition above applies. |
+| Any criterion fails. | **Has a problem** |
+| A criterion is unknown, except an execution criterion or `attempt_isolation`. | **Unclear** |
+| Neither of the above. | **No problem found** |
 
-**Note:**
+`attempt_isolation` changes the summary only when it fails.
 
-**Read `executed` beside the label.** It is derived from the checker findings: true when none of the five execution criteria is `unknown`. It is not a separate execution audit. A `no_problem_found` result with `executed: false` leaves execution questions unresolved.
+The execution group contains these five criteria:
 
-A rubric with different criterion names has null `label` and `executed`. The explanations and evidence remain available.
+- `reference_solution_is_valid`
+
+- `verifier_rejects_non_solutions`
+
+- `environment_builds_and_runs`
+
+- `verification_is_stable`
+
+- `limits_allow_the_task`
+
+If any is `unknown`, the dashboard adds **Not executed**. Otherwise it adds **Executed**. This note summarizes the outcomes; it is not a separate execution audit.
+
+Read the evidence before relying on the note. An unknown means decisive execution evidence was unavailable, such as when the checker could not run the environment.
+
+### Other rubrics: read the dashboard summary
+
+Apply the first matching rule across all criteria:
+
+| Rule | Summary label |
+| --- | --- |
+| Any criterion fails. | **Has a problem** |
+| Any criterion is unknown. | **Unclear** |
+| Neither of the above. | **No problem found** |
+
+Other rubrics have no **Executed** or **Not executed** note.
 
 The parent lifecycle is `queued` → `running` → `completed`. A completed check can contain failed task checks; inspect each task's `status` and `failure`.
 
@@ -100,7 +149,7 @@ evolve check trace "$TASK_CHECK_ID"
 evolve check download "$CHECK_ID" -o checks/
 ```
 
-Use the parent check ID for the whole report. Use a task-check ID for one checker's transcript, filesystem, or individual verdict:
+Use the parent check ID for the whole report. Use a task-check ID for one checker's transcript, filesystem, or individual result:
 
 ```bash
 evolve check download "$TASK_CHECK_ID" --stream task-check

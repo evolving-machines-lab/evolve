@@ -40,7 +40,7 @@ import { Evolve } from "@evolvingmachines/evolve";
 
 // No .withSandbox() needed — SDK picks the right provider from env
 const evolve = new Evolve()
-    .withAgent({ type: "claude" });
+  .withAgent({ type: "claude" });
 
 await evolve.run({ prompt: "Hello" });
 ```
@@ -69,8 +69,8 @@ managed **E2B** sandbox. To run on a different provider, say which one:
 import { Evolve, managedSandbox } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
-    .withAgent({ type: "claude" })
-    .withSandbox(await managedSandbox("daytona"));
+  .withAgent({ type: "claude" })
+  .withSandbox(await managedSandbox("daytona"));
 
 await evolve.run({ prompt: "Hello" });
 ```
@@ -87,9 +87,9 @@ refuses it loudly, never silently ignores it:
 
 ```ts
 const provider = await managedSandbox("daytona", {
-    apiKey: "sk-...",              // (optional) Default: EVOLVE_API_KEY
-    timeoutMs: 7_200_000,          // (optional) Lifetime cap for every create
-    resources: { cpu: 2 },         // (optional) Sizing; refused where not enforceable
+  apiKey: "sk-...",              // (optional) Default: EVOLVE_API_KEY
+  timeoutMs: 7_200_000,          // (optional) Lifetime cap for every create
+  resources: { cpu: 2 },         // (optional) Sizing; refused where not enforceable
 });
 ```
 
@@ -120,7 +120,7 @@ EVOLVE_API_KEY=sk-...
 E2B_API_KEY=e2b_...              # Optional with EVOLVE_API_KEY (auto-resolves)
 
 # .env - Direct Provider Key Mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY (antigravity), CLAUDE_CODE_OAUTH_TOKEN
 E2B_API_KEY=e2b_...              # Required in Direct Provider Key Mode
 ```
 
@@ -128,9 +128,9 @@ E2B_API_KEY=e2b_...              # Required in Direct Provider Key Mode
 import { Evolve, createE2BProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createE2BProvider({
-    apiKey: process.env.E2B_API_KEY,    // (optional) Auto-resolves from env
-    defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
-    templateId: "my-custom-template",    // (optional) E2B template ID. Default: "evolve-all"
+  apiKey: process.env.E2B_API_KEY,    // (optional) Auto-resolves from env
+  defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
+  templateId: "my-custom-template",    // (optional) E2B template ID. Default: "evolve-all"
 });
 ```
 
@@ -142,7 +142,7 @@ MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 
 # .env - Direct Provider Key Mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY (antigravity), CLAUDE_CODE_OAUTH_TOKEN
 MODAL_TOKEN_ID=ak-...
 MODAL_TOKEN_SECRET=as-...
 ```
@@ -151,12 +151,12 @@ MODAL_TOKEN_SECRET=as-...
 import { Evolve, createModalProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createModalProvider({
-    tokenId: process.env.MODAL_TOKEN_ID,       // (optional) Auto-resolves from env
-    tokenSecret: process.env.MODAL_TOKEN_SECRET, // (optional) Auto-resolves from env
-    appName: "my-app",                   // (optional) Default: "evolve-sandbox"
-    defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
-    endpoint: "https://api.modal.com:443", // (optional) Default: https://api.modal.com:443
-    imageName: "evolve-all",             // (optional) Default: "evolve-all"
+  tokenId: process.env.MODAL_TOKEN_ID,       // (optional) Auto-resolves from env
+  tokenSecret: process.env.MODAL_TOKEN_SECRET, // (optional) Auto-resolves from env
+  appName: "my-app",                   // (optional) Default: "evolve-sandbox"
+  defaultTimeoutMs: 3600000,           // (optional) Default: 3600000 (1 hour)
+  endpoint: "https://api.modal.com:443", // (optional) Default: https://api.modal.com:443
+  imageName: "evolve-all",             // (optional) Default: "evolve-all"
 });
 ```
 
@@ -167,7 +167,7 @@ EVOLVE_API_KEY=sk-...
 DAYTONA_API_KEY=...
 
 # .env - Direct Provider Key Mode
-ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY, CLAUDE_CODE_OAUTH_TOKEN
+ANTHROPIC_API_KEY=sk-ant-...     # Or OPENAI_API_KEY, GEMINI_API_KEY (antigravity), CLAUDE_CODE_OAUTH_TOKEN
 DAYTONA_API_KEY=...
 ```
 
@@ -175,11 +175,11 @@ DAYTONA_API_KEY=...
 import { Evolve, createDaytonaProvider } from "@evolvingmachines/evolve";
 
 const sandbox = createDaytonaProvider({
-    apiKey: process.env.DAYTONA_API_KEY,  // (optional) Auto-resolves from env
-    apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
-    target: "us",                          // (optional) Target region. Default: "us"
-    defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
-    snapshotName: "my-snapshot",           // (optional) Default: the current release snapshot ("evolve-all-c-<12hex>", tag derived from the image build inputs); explicit names pass through untouched. Custom snapshots via build.sh daytona
+  apiKey: process.env.DAYTONA_API_KEY,  // (optional) Auto-resolves from env
+  apiUrl: "https://app.daytona.io/api", // (optional) Default: https://app.daytona.io/api
+  target: "us",                          // (optional) Target region. Default: "us"
+  defaultTimeoutMs: 3600000,             // (optional) Default: 3600000 (1 hour) - converted to minutes for auto-stop
+  snapshotName: "my-snapshot",           // (optional) Default: the current release snapshot ("evolve-all-c-<12hex>", tag derived from the image build inputs); explicit names pass through untouched. Custom snapshots via build.sh daytona
 });
 ```
 
@@ -194,24 +194,34 @@ If a snapshot is found in a terminally failed state, the SDK deletes it and rebu
 
 ```ts
 const evolve = new Evolve()
-    .withSandboxCreateOptions({
-        image: "my-eval-template",          // (optional) Sandbox image/template ID (provider default if omitted)
-        envs: { TASK_ID: "swe-042" },       // (optional) Extra env vars (Evolve-owned runtime vars win on conflict)
-        metadata: { suite: "nightly" },     // (optional) Provider metadata
-        timeoutMs: 3_600_000,               // (optional) Sandbox timeout
-        workingDirectory: "/repo",          // (optional) Working directory for agent commands
-        network: {                          // (optional) Outbound network policy applied at boot
-            outbound: "blocked",            // "open" | "blocked"
-            allowedDestinations: ["registry.npmjs.org", "10.0.0.0/8"],
-        },
-        user: "root",                       // (optional) Run all commands and file ops as this user
-        homeDir: "/root",                   // (optional) Home dir for agent config paths
-    });
+  .withSandboxCreateOptions({
+    image: "my-eval-template",          // (optional) Sandbox image/template ID (provider default if omitted)
+    envs: { TASK_ID: "swe-042" },       // (optional) Extra env vars (Evolve-owned runtime vars win on conflict)
+    metadata: { suite: "nightly" },     // (optional) Provider metadata
+    timeoutMs: 3_600_000,               // (optional) Sandbox timeout
+    workingDirectory: "/repo",          // (optional) Working directory for agent commands
+    network: {                          // (optional) Outbound network policy applied at boot
+      outbound: "blocked",            // "open" | "blocked"
+      allowedDestinations: ["registry.npmjs.org", "10.0.0.0/8"],
+    },
+    user: "root",                       // (optional) Run all commands and file ops as this user
+    homeDir: "/root",                   // (optional) Home dir for agent config paths
+    homeOwner: "root",                  // (optional) Owner for supported SDK config writes
+  });
 ```
 
 **Network policy.** `outbound: "blocked"` denies all outbound traffic except `allowedDestinations` (hostnames, IPs, or CIDR ranges). Providers that cannot enforce a requested policy reject it with an error — a policy is never silently ignored.
 
-**User and home directory.** `user` runs every command and file operation as that user; providers that cannot enforce it reject it (E2B supports run-as-root). `homeDir` controls where agent config files (settings, session state, skills) are written. Defaults: `/root` when `user` is `"root"`, `/home/<user>` for other users, `/home/user` when no user is given. The default working directory follows as `<homeDir>/workspace`.
+**User and home directory.** `user` selects the account for commands and file operations. Providers that cannot enforce it reject the option; E2B supports running as root.
+
+| Option | Effect |
+| --- | --- |
+| `homeDir` | Location for agent settings, session state, and skills. |
+| `homeOwner` | Owner for supported SDK config and authentication writes: a user name, uid, or `uid:gid`. It does not change ownership of the entire home. |
+
+Some MCP configuration files do not use `homeOwner` and retain the sandbox write account's ownership. With a custom home and MCP, ensure the agent account can read those files.
+
+The default home is `/root` for `user: "root"`, `/home/<user>` for other users, or `/home/user` when no user is given. The default working directory is `<homeDir>/workspace`.
 
 Constraints:
 
@@ -232,122 +242,124 @@ Constraints:
 
 ```ts
 const evolve = new Evolve()
-    .withWorkspaceMode("swe")
-    .withSandboxCreateOptions({ image: "my-ci-template" });
+  .withWorkspaceMode("swe")
+  .withSandboxCreateOptions({ image: "my-ci-template" });
 ```
 
 ---
 
 ## Evolve Instance
 
+See the [model and effort reference](https://docs.evolvingmachines.ai/core-concepts/models#model-and-effort-reference) for model names, SDK defaults, and verified effort choices with Evolve model access. Direct Provider Key Mode can differ.
+
 ```ts
 const evolve = new Evolve()
 
-    // Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
-    .withAgent({
-        type: "codex",                        // "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid" - defaults to "claude"
-        model: "gpt-5.3-codex",               // (optional) Uses default if omitted. Use "fable" for Claude Fable 5.1 or "sonnet[1m]" / "opus[1m]" for 1M context (Claude only)
-        reasoningEffort: "medium",            // (optional) Native reasoning/thinking control; valid values vary by agent/model. Omitted = Evolve stamps its pinned per-harness default (see Getting Started → Agent Reference)
-        // maxContextSize: 128000,            // (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
-        apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
-        // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct Provider Key Mode
-        // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
-    })
+  // Agent configuration (optional if EVOLVE_API_KEY set, defaults to claude)
+  .withAgent({
+    type: "codex",                        // "claude" | "codex" | "qwen" | "kimi" | "opencode" | "droid" | "pi" | "prime-agent" | "dsh" | "zcode" | "antigravity" - defaults to "claude"
+    model: "gpt-5.3-codex",               // (optional) Uses the SDK's default model if omitted.
+    reasoningEffort: "medium",            // (optional) Check the model reference for supported values and defaults.
+    // maxContextSize: 128000,            // (optional) Context/completion ceiling for CLIs that must be told one (see Getting Started → Harness and Model Pairing)
+    apiKey: process.env.EVOLVE_API_KEY!, // (optional) Gateway mode - auto-resolves from env
+    // providerApiKey: process.env.ANTHROPIC_API_KEY!, // (optional) Direct Provider Key Mode
+    // oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!, // (optional) Claude Max subscription
+  })
 
-    // Sandbox provider (see 2.1 above, or auto-resolves from env)
-    .withSandbox(sandbox)
+  // Sandbox provider (see 2.1 above, or auto-resolves from env)
+  .withSandbox(sandbox)
 
-    // (optional) Workspace mode: "knowledge" (default) | "swe" (see Workspace Modes above)
-    .withWorkspaceMode("knowledge")
+  // (optional) Workspace mode: "knowledge" (default) | "swe" (see Workspace Modes above)
+  .withWorkspaceMode("knowledge")
 
-    // (optional) Uploads to /home/user/workspace/context/ on first run
-    .withContext({
-        "docs/readme.txt": "User provided context...",
-        "data.json": JSON.stringify({ key: "value" }),
-    })
+  // (optional) Uploads to /home/user/workspace/context/ on first run
+  .withContext({
+    "docs/readme.txt": "User provided context...",
+    "data.json": JSON.stringify({ key: "value" }),
+  })
 
-    // (optional) System prompt appended to default instructions
-    .withSystemPrompt("You are a careful pair programmer.")
+  // (optional) System prompt appended to default instructions
+  .withSystemPrompt("You are a careful pair programmer.")
 
-    // (optional) Schema for structured output (agent writes result.json, validated on getOutputFiles())
-    // Accepts Zod schemas or JSON Schema objects
-    .withSchema(z.object({
-        summary: z.string(),
-        score: z.number(),
-    }))
+  // (optional) Schema for structured output (agent writes result.json, validated on getOutputFiles())
+  // Accepts Zod schemas or JSON Schema objects
+  .withSchema(z.object({
+    summary: z.string(),
+    score: z.number(),
+  }))
 
-    // Or with JSON Schema:
-    // .withSchema({
-    //     type: "object",
-    //     properties: {
-    //         summary: { type: "string" },
-    //         score: { type: "number" },
-    //     },
-    //     required: ["summary", "score"],
-    // })
+  // Or with JSON Schema:
+  // .withSchema({
+  //     type: "object",
+  //     properties: {
+  //         summary: { type: "string" },
+  //         score: { type: "number" },
+  //     },
+  //     required: ["summary", "score"],
+  // })
 
-    // (optional) Gateway browser automation (.withBrowser() defaults to remote managed agent-browser)
-    .withBrowser()
+  // (optional) Gateway browser automation (.withBrowser() defaults to remote managed agent-browser)
+  .withBrowser()
 
-    // (optional) Install plugins/extensions for the selected agent before first run
-    .withPlugins({
-        marketplace: "https://github.com/org/codex-plugins.git",
-        sparse: [".agents/plugins"],
-    })
+  // (optional) Install plugins/extensions for the selected agent before first run
+  .withPlugins({
+    marketplace: "https://github.com/org/codex-plugins.git",
+    sparse: [".agents/plugins"],
+  })
 
-    // (optional) Skills for the agent — skills.sh / git / local references
-    .withSkills(["anthropics/skills", "./my-skill"])
+  // (optional) Skills for the agent — skills.sh / git / local references
+  .withSkills(["anthropics/skills", "./my-skill"])
 
-    // (optional) Managed integrations (gateway mode only)
-    .withIntegrations({
-        userId: "root",
-        apps: ["github", "gmail"],
-    })
+  // (optional) Managed integrations (gateway mode only)
+  .withIntegrations({
+    userId: "root",
+    apps: ["github", "gmail"],
+  })
 
-    // (optional) Dashboard-stored managed secrets (gateway mode only)
-    .withManagedSecrets([
-        { name: "GITHUB_TOKEN" },
-        { name: "SLACK_BOT_TOKEN", as: "SLACK_TOKEN" },
-    ])
+  // (optional) Dashboard-stored managed secrets (gateway mode only)
+  .withManagedSecrets([
+    { name: "GITHUB_TOKEN" },
+    { name: "SLACK_BOT_TOKEN", as: "SLACK_TOKEN" },
+  ])
 
-    // (optional) Prefix for observability logs
-    .withSessionTagPrefix("my-agent")
+  // (optional) Prefix for observability logs
+  .withSessionTagPrefix("my-agent")
 
-    // (optional) Storage for checkpoint persistence (gateway feature — requires EVOLVE_API_KEY)
-    .withStorage()
+  // (optional) Storage for checkpoint persistence (gateway feature — requires EVOLVE_API_KEY)
+  .withStorage()
 
-    // ─── Advanced ───────────────────────────────────────────────────────────────
+  // ─── Advanced ───────────────────────────────────────────────────────────────
 
-    // (optional) Provider-neutral options for fresh sandbox creation (see Sandbox Create Options above)
-    .withSandboxCreateOptions({
-        image: "my-task-image",
-        network: { outbound: "blocked", allowedDestinations: ["pypi.org"] },
-        user: "root",
-    })
+  // (optional) Provider-neutral options for fresh sandbox creation (see Sandbox Create Options above)
+  .withSandboxCreateOptions({
+    image: "my-task-image",
+    network: { outbound: "blocked", allowedDestinations: ["pypi.org"] },
+    user: "root",
+  })
 
-    // (optional) MCP servers for agent tools
-    .withMcpServers({
-        exa: {
-            command: "npx",
-            args: ["-y", "exa-mcp-server"],
-            env: { EXA_API_KEY: "..." },
-        },
-        api: {
-            type: "http",
-            url: "https://example.com/mcp",
-            headers: { "x-api-key": "..." },
-        },
-    })
+  // (optional) MCP servers for agent tools
+  .withMcpServers({
+    exa: {
+      command: "npx",
+      args: ["-y", "exa-mcp-server"],
+      env: { EXA_API_KEY: "..." },
+    },
+    api: {
+      type: "http",
+      url: "https://example.com/mcp",
+      headers: { "x-api-key": "..." },
+    },
+  })
 
-    // (optional) Environment variables injected into sandbox
-    .withSecrets({
-        GITHUB_TOKEN: process.env.GITHUB_TOKEN!
-    })
+  // (optional) Environment variables injected into sandbox
+  .withSecrets({
+    GITHUB_TOKEN: process.env.GITHUB_TOKEN!
+  })
 
-    // (optional) Uploads to /home/user/workspace/ on first run
-    .withFiles({
-        "scripts/setup.sh": "#!/bin/bash\necho hello",
-    });
+  // (optional) Uploads to /home/user/workspace/ on first run
+  .withFiles({
+    "scripts/setup.sh": "#!/bin/bash\necho hello",
+  });
 ```
 
 **Note:**
@@ -367,10 +379,11 @@ const evolve = new Evolve()
 
 ```ts
 interface McpServerConfig {
-    type?: "stdio" | "http" | "sse";
-    command?: string;  args?: string[];  cwd?: string;   // STDIO
-    url?: string;  headers?: Record<string, string>;     // HTTP/SSE
-    env?: Record<string, string>;                        // Common
+  type?: "stdio" | "http" | "sse";
+  command?: string;  args?: string[];  cwd?: string;   // STDIO
+  url?: string;  headers?: Record<string, string>;     // HTTP/SSE
+  env?: Record<string, string>;                        // Common
+  envVars?: string[];                                  // Names of sandbox env vars the server reads by name (codex, prime-agent)
 }
 ```
 
@@ -403,8 +416,8 @@ new Evolve().withBrowser();
 // recommended: managed remote browser
 
 new Evolve().withBrowser({
-    provider: "agent-browser",
-    remote: false,
+  provider: "agent-browser",
+  remote: false,
 });
 // local agent-browser, no managed live/replay
 ```
@@ -413,9 +426,9 @@ Use a browser profile to reuse logged-in browser state across managed browser se
 
 ```ts
 const evolve = new Evolve()
-    .withBrowser({
-        profile: "ramp-qa",
-    });
+  .withBrowser({
+    profile: "ramp-qa",
+  });
 ```
 
 Profiles are gateway-only and work only with managed remote browser sessions. Evolve stores and resolves profile state server-side; the SDK never receives raw browser state.
@@ -436,19 +449,19 @@ Recommended profile creation flow:
 
 ```ts
 const evolve = new Evolve()
-    .withBrowser({
-        profile: "ramp-qa",
-    })
-    .withBrowserCredentials({
-        allow: [{ website: "github.com", accountLabel: "qa-admin" }],
-    });
+  .withBrowser({
+    profile: "ramp-qa",
+  })
+  .withBrowserCredentials({
+    allow: [{ website: "github.com", accountLabel: "qa-admin" }],
+  });
 
 try {
-    await evolve.run({
-        prompt: "Open GitHub, sign in with the saved qa-admin login, and confirm the account is authenticated.",
-    });
+  await evolve.run({
+    prompt: "Open GitHub, sign in with the saved qa-admin login, and confirm the account is authenticated.",
+  });
 } finally {
-    await evolve.kill();
+  await evolve.kill();
 }
 ```
 
@@ -460,7 +473,7 @@ List or delete profiles from the SDK:
 const profiles = await Evolve.browserProfiles().list();
 
 await Evolve.browserProfiles().delete({
-    profile: "ramp-qa",
+  profile: "ramp-qa",
 });
 ```
 
@@ -472,44 +485,44 @@ Full browser run with live view and replay:
 import { Evolve, sessions } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
-    .withBrowser()
-    .withSessionTagPrefix("checkout-qa");
+  .withBrowser()
+  .withSessionTagPrefix("checkout-qa");
 
 let sessionId: string | undefined;
 
 evolve.on("lifecycle", (event) => {
-    if (event.reason === "browser_ready" && event.browser) {
-        showLiveBrowser(event.browser.liveUrl);
-        sessionId = event.browser.sessionId;
-    }
+  if (event.reason === "browser_ready" && event.browser) {
+    showLiveBrowser(event.browser.liveUrl);
+    sessionId = event.browser.sessionId;
+  }
 });
 
 try {
-    const result = await evolve.run({
-        prompt: "Open the app, test the checkout flow, and report issues.",
-    });
+  const result = await evolve.run({
+    prompt: "Open the app, test the checkout flow, and report issues.",
+  });
 
-    sessionId = result.sessionId ?? sessionId;
-    if (result.browser?.liveUrl) {
-        showLiveBrowser(result.browser.liveUrl);
-    }
+  sessionId = result.sessionId ?? sessionId;
+  if (result.browser?.liveUrl) {
+    showLiveBrowser(result.browser.liveUrl);
+  }
 } finally {
-    await evolve.kill();
+  await evolve.kill();
 }
 
 if (!sessionId) throw new Error("Missing dashboard session id");
 
 const replay = await sessions().browserReplay(sessionId, {
-    timeoutMs: 600_000,
-    intervalMs: 5_000,
+  timeoutMs: 600_000,
+  intervalMs: 5_000,
 });
 
 showReplay(replay.replayUrl);
 saveDownloadLink(replay.downloadUrl);
 setReplayStartTime(replay.suggestedStartSeconds ?? 0);
 showReplayMetadata({
-    sizeBytes: replay.sizeBytes,
-    readyAt: replay.readyAt,
+  sizeBytes: replay.sizeBytes,
+  readyAt: replay.readyAt,
 });
 ```
 
@@ -543,13 +556,13 @@ Expose saved logins to a run:
 import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
-    .withBrowser()
-    .withBrowserCredentials({
-        allow: [{ website: "github.com", accountLabel: "qa-admin" }],
-    });
+  .withBrowser()
+  .withBrowserCredentials({
+    allow: [{ website: "github.com", accountLabel: "qa-admin" }],
+  });
 
 await evolve.run({
-    prompt: "Open GitHub, sign in with the saved qa-admin login, and verify the repository settings page.",
+  prompt: "Open GitHub, sign in with the saved qa-admin login, and verify the repository settings page.",
 });
 
 await evolve.kill();
@@ -559,8 +572,8 @@ If `allow` is omitted, all enabled browser logins for the Evolve account are ava
 
 ```ts
 const evolve = new Evolve()
-    .withBrowser()
-    .withBrowserCredentials();
+  .withBrowser()
+  .withBrowserCredentials();
 ```
 
 The agent receives a run-scoped `browser-login` MCP server with these tools:
@@ -577,17 +590,17 @@ import { Evolve } from "@evolvingmachines/evolve";
 const credentials = Evolve.browserCredentials();
 
 await credentials.create({
-    website: "github.com",
-    accountLabel: "qa-admin",
-    email: "qualityassurance@example.com",
-    password: process.env.QA_GITHUB_PASSWORD!,
+  website: "github.com",
+  accountLabel: "qa-admin",
+  email: "qualityassurance@example.com",
+  password: process.env.QA_GITHUB_PASSWORD!,
 });
 
 const page = await credentials.list({ website: "github.com" });
 
 await credentials.delete({
-    website: "github.com",
-    accountLabel: "qa-admin",
+  website: "github.com",
+  accountLabel: "qa-admin",
 });
 ```
 
@@ -596,29 +609,26 @@ await credentials.delete({
 `.withPlugins()` installs plugins/extensions into the sandbox user profile before the first agent command. The currently selected agent determines the accepted shape:
 
 ```ts
-// droid
-.withPlugins({
+const droidPlugins = new Evolve()
+  .withAgent({ type: "droid" })
+  .withPlugins({
     marketplace: "https://github.com/Factory-AI/factory-plugins",
     plugin: "droid-control@factory-plugins",
-})
+  });
 
-// claude
-.withPlugins({
+const claudePlugins = new Evolve()
+  .withAgent({ type: "claude" })
+  .withPlugins({
     marketplace: "anthropics/claude-code",
     plugin: "commit-commands@anthropics-claude-code",
-})
+  });
 
-// gemini
-.withPlugins({
-    source: "https://github.com/org/gemini-extension",
-    ref: "main",
-})
-
-// codex marketplace registration
-.withPlugins({
+const codexPlugins = new Evolve()
+  .withAgent({ type: "codex" })
+  .withPlugins({
     marketplace: "https://github.com/org/codex-plugins.git",
     sparse: [".agents/plugins"],
-})
+  });
 ```
 
 If `.withAgent()` is omitted, plugins target the default agent (`claude`).
@@ -631,13 +641,13 @@ Skills are folders of instructions and helper files — a `SKILL.md` manifest pl
 import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
-    .withSkills([
-        "skills.sh/vercel-labs/agent-skills/frontend-design",     // one named skill from a skills.sh-listed repo
-        "anthropics/skills",                                      // every skill a GitHub repo publishes
-        "anthropics/skills@main",                                 // pinned to a branch, tag, or commit
-        "https://github.com/org/repo/tree/main/skills/my-skill",  // any https git URL, down to a subfolder
-        "./my-skill",                                             // a local folder containing SKILL.md
-    ]);
+  .withSkills([
+    "skills.sh/vercel-labs/agent-skills/frontend-design",     // one named skill from a skills.sh-listed repo
+    "anthropics/skills",                                      // every skill a GitHub repo publishes
+    "anthropics/skills@main",                                 // pinned to a branch, tag, or commit
+    "https://github.com/org/repo/tree/main/skills/my-skill",  // any https git URL, down to a subfolder
+    "./my-skill",                                             // a local folder containing SKILL.md
+  ]);
 
 await evolve.run({ prompt: "Create a slide deck summarizing the uploaded notes." });
 ```
@@ -668,11 +678,11 @@ import { Evolve } from "@evolvingmachines/evolve";
 const secrets = await Evolve.managedSecrets().list(); // includes label + delivery
 
 const evolve = new Evolve()
-    .withManagedSecrets([
-        { name: "GITHUB_TOKEN" },                           // 'default'-labeled row
-        { name: "API_KEY", label: "prod" },                 // a specific labeled row
-        { name: "SLACK_BOT_TOKEN", as: "SLACK_TOKEN" },     // renamed in the sandbox
-    ]);
+  .withManagedSecrets([
+    { name: "GITHUB_TOKEN" },                           // 'default'-labeled row
+    { name: "API_KEY", label: "prod" },                 // a specific labeled row
+    { name: "SLACK_BOT_TOKEN", as: "SLACK_TOKEN" },     // renamed in the sandbox
+  ]);
 ```
 
 An omitted `label` resolves by the server's one shared law (the same law hosted-evals job secrets use): the `default`-labeled row when one exists, the single row when exactly one exists, and a typed refusal naming every label when several match and none is `default` — never a guess.
@@ -693,19 +703,19 @@ import { Evolve } from "@evolvingmachines/evolve";
 const secrets = Evolve.managedSecrets();
 
 await secrets.set({
-    name: "GITHUB_TOKEN",
-    value: process.env.GITHUB_TOKEN!,
-    delivery: "brokered",
-    allowedHosts: ["api.github.com"],
-    allowedPathPrefixes: ["/"],
-    allowedMethods: ["GET"],
+  name: "GITHUB_TOKEN",
+  value: process.env.GITHUB_TOKEN!,
+  delivery: "brokered",
+  allowedHosts: ["api.github.com"],
+  allowedPathPrefixes: ["/"],
+  allowedMethods: ["GET"],
 });
 
 await secrets.set({
-    name: "STRIPE_KEY",
-    label: "staging",
-    value: process.env.STRIPE_TEST_KEY!,
-    delivery: "direct",             // direct secrets carry no scoping
+  name: "STRIPE_KEY",
+  label: "staging",
+  value: process.env.STRIPE_TEST_KEY!,
+  delivery: "direct",             // direct secrets carry no scoping
 });
 
 await secrets.delete({ name: "STRIPE_KEY", label: "staging" });
@@ -757,10 +767,10 @@ EVOLVE_API_KEY=sk-...
 import { Evolve } from "@evolvingmachines/evolve";
 
 const evolve = new Evolve()
-    .withIntegrations({
-        userId: "customer_123",
-        apps: ["github", "gmail"],
-    });
+  .withIntegrations({
+    userId: "customer_123",
+    apps: ["github", "gmail"],
+  });
 
 await evolve.run({ prompt: "Create a GitHub issue for the login bug" });
 ```
@@ -773,40 +783,40 @@ For an application with end users, pass your stable SDK user ID. Evolve namespac
 
 ```ts
 const link = await Evolve.integrations.auth({
-    userId: "customer_123",
-    app: "gmail",
-    accountLabel: "work",
+  userId: "customer_123",
+  app: "gmail",
+  accountLabel: "work",
 });
 
 // Show link.url to the user.
 const evolve = new Evolve()
-    .withIntegrations({
-        userId: "customer_123",
-        apps: ["gmail"],
-    });
+  .withIntegrations({
+    userId: "customer_123",
+    apps: ["gmail"],
+  });
 ```
 
 ### Account Helpers
 
 ```ts
 const accounts = await Evolve.integrations.accounts.list({
-    userIds: ["customer_123"],
-    app: "gmail",
-    statuses: ["ACTIVE"],
+  userIds: ["customer_123"],
+  app: "gmail",
+  statuses: ["ACTIVE"],
 });
 
 await Evolve.integrations.accounts.update({
-    accountId: "account_id_from_list",
-    accountLabel: "work",
+  accountId: "account_id_from_list",
+  accountLabel: "work",
 });
 
 // If the user connected multiple Gmail accounts, choose an account label or account ID returned by accounts.list().
 const evolve = new Evolve()
-    .withIntegrations({
-        userId: "customer_123",
-        apps: ["gmail"],
-        accounts: { gmail: ["work"] },
-    });
+  .withIntegrations({
+    userId: "customer_123",
+    apps: ["gmail"],
+    accounts: { gmail: ["work"] },
+  });
 
 // Disconnect by account ID.
 await Evolve.integrations.accounts.delete({ accountId: "account_id_from_list" });
@@ -818,23 +828,23 @@ Use `authConfigs` to select a custom auth config for an app. For apps with an AP
 
 ```ts
 const evolve = new Evolve()
-    .withIntegrations({
-        userId: "customer_123",
-        apps: ["github"],
-        authConfigs: { github: "ac_custom_github" },
-        keys: { github: process.env.GITHUB_TOKEN! },
-    });
+  .withIntegrations({
+    userId: "customer_123",
+    apps: ["github"],
+    authConfigs: { github: "ac_custom_github" },
+    keys: { github: process.env.GITHUB_TOKEN! },
+  });
 ```
 
 ### Type Reference
 
 ```ts
 interface IntegrationsSetup {
-    userId: string;            // "root" or your stable SDK user ID
-    apps: string[];
-    accounts?: Record<string, string[]>; // app -> account labels or account IDs
-    authConfigs?: Record<string, string>; // app -> custom auth config ID
-    keys?: Record<string, string>;        // app -> API key, requires authConfigs[app]
+  userId: string;            // "root" or your stable SDK user ID
+  apps: string[];
+  accounts?: Record<string, string[]>; // app -> account labels or account IDs
+  authConfigs?: Record<string, string>; // app -> custom auth config ID
+  keys?: Record<string, string>;        // app -> API key, requires authConfigs[app]
 }
 ```
 

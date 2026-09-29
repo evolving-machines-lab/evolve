@@ -1,6 +1,6 @@
 ---
 title: "Analyses"
-description: "Analyze trial traces, then inspect the verdict and the analyzer's own run."
+description: "Analyze trial traces, then inspect the result and the analyzer's own run."
 ---
 
 <Note>For every method’s inputs, return values, and language differences, see the [analyses method reference](/sdk-reference/methods/analyses).</Note>
@@ -49,8 +49,9 @@ The field names are the same in both languages. TypeScript passes an object; Pyt
 
 | Field | Purpose |
 | --- | --- |
-| `model_name` | Analyzer model |
-| `reasoning_effort` | Effort supported by the analyzer |
+| `agent` | Agent the analyzer runs on; default `claude` |
+| `model_name` | Analyzer model, one of that agent's models |
+| `reasoning_effort` | Effort that agent accepts |
 | `sandbox_provider` | Analyzer's sandbox provider |
 | `rubric` | `{criteria: [{name, description, guidance}, ...]}` |
 | `prompt` | Replacement prompt template text |
@@ -78,15 +79,23 @@ Polling slows to at most 30 seconds while the tally stays unchanged. Call the wa
 ```ts TypeScript
 const defaults = await analyses().defaults();
 console.log(defaults.model_name, defaults.rubric, defaults.prompt);
+
+const codex = await analyses().defaults({ agent: "codex" });
+console.log(codex.model_name, codex.reasoning_effort);
 ```
 
 ```python Python
 defaults = await analyses().defaults()
 print(defaults["model_name"], defaults["rubric"], defaults["prompt"])
+
+codex = await analyses().defaults(agent="codex")
+print(codex["model_name"], codex["reasoning_effort"])
 ```
 </CodeGroup>
 
-The response includes `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
+The response includes `agent`, `model_name`, `rubric`, `prompt`, `reasoning_effort`, and `sandbox_provider`. The prompt is the editable template text.
+
+Omit `agent` for `claude` defaults. Pass it to read another harness's analysis model default and that model's default effort. See [supported models and efforts](/core-concepts/models#analysis-and-check-models).
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
@@ -96,21 +105,21 @@ A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria
 
 <CodeGroup>
 ```ts TypeScript
-const verdict = await analyses().trajectory({
+const result = await analyses().trajectory({
   trajectory: JSON.parse(readFileSync("trajectory.json", "utf8")),
   task: "Fix the failing parser test.",
   reward: 1,
 });
-console.log(verdict.summary, verdict.checks.no_reward_hacking.outcome);
+console.log(result.summary, result.checks.no_reward_hacking.outcome);
 ```
 
 ```python Python
-verdict = await analyses().trajectory(
+result = await analyses().trajectory(
     json.loads(Path("trajectory.json").read_text()),
     task="Fix the failing parser test.",
     reward=1,
 )
-print(verdict["summary"], verdict["checks"]["no_reward_hacking"]["outcome"])
+print(result["summary"], result["checks"]["no_reward_hacking"]["outcome"])
 ```
 </CodeGroup>
 
@@ -118,36 +127,38 @@ Optional fields: `task`, `grader`, `reward`, `rubric`, `prompt`, `model_name`, `
 
 The result has `summary`, `checks`, `model_name`, `reasoning_effort`, `rubric`, `usage`, `estimated_cost_usd`, and `attempts`. The call is billed to your account. A trajectory larger than the model's context window returns `413 invalid_input`.
 
-## Read verdicts
+## Read results
 
 <CodeGroup>
 ```ts TypeScript
 for await (const result of analyses().list({ job: jobId })) {
-  console.log(result.id, result.status, result.label, result.checks);
+  console.log(result.id, result.status, result.checks);
 }
 ```
 
 ```python Python
 async for result in analyses().list(job=job_id):
-    print(result["id"], result["status"], result["label"], result["checks"])
+    print(result["id"], result["status"], result["checks"])
 ```
 </CodeGroup>
 
 List options: `scope`, `job`, `status` list, `limit`, `cursor`. Status values are `queued`, `running`, `completed`, `failed`.
 
-The latest verdict also appears on `trial.analysis`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence. Default-rubric labels are `flagged`, `env_fault`, `unclear`, or `clean`; a custom rubric may have no label.
+The latest analysis also appears on `trial.analysis`. Each criterion reports `pass`, `fail`, `not_applicable`, or `unknown`, with an explanation and evidence.
+
+The API returns no overall verdict. Use `checks` for your own result handling; the dashboard's [summary label](/core-concepts/analyze#the-result) is computed from those outcomes.
 
 ## Inspect the analyzer run
 
 | Method | TypeScript | Python |
 | --- | --- | --- |
 | List runs | `list(options)` | `list(...)` |
-| Read defaults | `defaults()` | `defaults()` |
+| Read defaults | `defaults({ agent })` | `defaults(agent=...)` |
 | Judge any trajectory | `trajectory(req)` | `trajectory(trajectory, ...)` |
 | Read judge defaults | `trajectoryDefaults()` | `trajectory_defaults()` |
 | Download run | `download(analysisId, { to })` | `download(analysis_id, to=...)` |
 | Browse sandbox files | `filesystem(analysisId)` | `filesystem(analysis_id)` |
-| Read one verdict directly | `get(analysisId)` | Use list results or `trial.analysis` |
+| Read one analysis directly | `get(analysisId)` | Use list results or `trial.analysis` |
 | Read analyzer transcript | `transcript(analysisId, { since })` | Not exposed |
 | Read raw stored artifact | `artifact(analysisId, stream)` | Not exposed |
 

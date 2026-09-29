@@ -1,0 +1,7 @@
+data/
+runs/
+out/
+reports/
+exported/
+exported.tasks/
+*.tasks/

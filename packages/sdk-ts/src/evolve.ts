@@ -268,7 +268,6 @@ export class Evolve extends EventEmitter {
    *
    * The selected agent determines the installer:
    * - droid/claude: { marketplace, plugin }
-   * - gemini: { source, ref? }
    * - codex: { marketplace, ref?, sparse? }
    */
   withPlugins(plugins: AgentPluginConfig | AgentPluginConfig[]): this {

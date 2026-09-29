@@ -221,7 +221,7 @@ assert(!("preset" in resolvedNone), "no preset declared = no preset key on the r
 
 const command = AGENT_REGISTRY.codex.buildCommand({
   prompt: "hello",
-  model: "gpt-5.6-sol",
+  model: "gpt-6-sol",
   isResume: false,
   reasoningEffort: "high",
   presetFlags: codexPresets["no-internet"]!.commandFlags,
@@ -232,7 +232,7 @@ assert(
 );
 const noPresetCommand = AGENT_REGISTRY.codex.buildCommand({
   prompt: "hello",
-  model: "gpt-5.6-sol",
+  model: "gpt-6-sol",
   isResume: false,
   reasoningEffort: "high",
 });

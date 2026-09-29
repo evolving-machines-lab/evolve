@@ -46,7 +46,7 @@ const swarm = new Swarm({
 | Option | Default | Notes |
 |--------|---------|-------|
 | `agent.type` | `'claude'` | Auto-resolved from env |
-| `agent.model` | per type | `'opus'` (claude), `'gpt-5.6-sol'` (codex), etc. |
+| `agent.model` | per type | `'opus'` (claude), `'gpt-6-sol'` (codex), etc. |
 | `sandbox` | auto-resolved | Provider for every worker; falls back to env (`E2B_API_KEY`, `DAYTONA_API_KEY`, `MODAL_TOKEN_*`, `EVOLVE_API_KEY`) |
 | `skills` | `undefined` | Set here or per-operation |
 | `integrations` | `undefined` | Set here or per-operation |
@@ -267,13 +267,13 @@ Use different agents per candidate:
 ```ts
 const claudeAgent = { type: "claude", model: "opus" };
 const codexAgent = { type: "codex", model: "gpt-5.3-codex" };
-const geminiAgent = { type: "gemini", model: "gemini-3.5-flash" };
+const kimiAgent = { type: "kimi", model: "kimi-k3" };
 
 const result = await swarm.bestOf({
     item: input,
     prompt: "Solve this",
     config: {
-        taskAgents: [claudeAgent, codexAgent, geminiAgent],
+        taskAgents: [claudeAgent, codexAgent, kimiAgent],
         judgeCriteria: "Best solution quality",
         judgeAgent: claudeAgent,
         mcpServers: {...},        // (optional) MCP servers for candidates
@@ -721,7 +721,7 @@ Override the default agent for any operation (apiKey inherited from Swarm config
 
 ```ts
 interface AgentOverride {
-    type: "claude" | "codex" | "gemini" | "qwen" | "kimi" | "opencode" | "droid";
+    type: "claude" | "codex" | "qwen" | "kimi" | "opencode" | "droid" | "pi" | "prime-agent" | "dsh" | "zcode" | "antigravity";
     model?: string;
     reasoningEffort?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "thinking" | "no-thinking";
 }

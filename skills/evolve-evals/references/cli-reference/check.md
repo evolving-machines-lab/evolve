@@ -44,16 +44,17 @@ evolve check --show-defaults
 | Option | Meaning |
 | --- | --- |
 | `--name <name>` | Check label. Defaults to the acceptance timestamp. |
-| `-m`, `--model <name>` | Checker model. |
-| `--effort <value>` | Reasoning effort. |
+| `-a`, `--agent <name>` | Agent the checker runs on. Default `claude`. |
+| `-m`, `--model <name>` | Checker model, from that agent's models. Default: the agent's default model. |
+| `--effort <value>` | Reasoning effort for the selected model. See the [model reference](/core-concepts/models#model-and-effort-reference). |
 | `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
 | `-p`, `--prompt <path>` | Replacement prompt text file. |
 | `-e`, `--env <provider>` | Checker sandbox provider. |
-| `--show-defaults` | Print the prompt, rubric, model, effort, and provider, then exit. |
+| `--show-defaults` | Print the agent, model, effort, provider, prompt, and rubric, then exit. `-a` picks the agent. |
 | `--watch` | Wait until every task check settles. |
 | `-q`, `--quiet` | With watch, suppress intermediate progress. |
 
-`--show-defaults` accepts only [global options](/cli-reference/index#global-options). It cannot be combined with a path, dataset, or checker options.
+`--show-defaults` accepts only `-a` and the [global options](/cli-reference/index#global-options). It cannot be combined with a path, dataset, or other checker options.
 
 For rubric format and interpretation, see [Check](/core-concepts/check).
 
@@ -77,7 +78,7 @@ Each task check
 └── Trace
 ```
 
-A task check's `executed` value says whether it ran the task. A clean inspection without execution is not proof that the solution and verifier work.
+The default rubric's execution criteria say whether a task check ran the task; `unknown` on them is not proof that the solution or verifier ran. A clean inspection without execution is not proof that the solution and verifier work.
 
 ### List options
 

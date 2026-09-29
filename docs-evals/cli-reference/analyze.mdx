@@ -15,10 +15,11 @@ Each selected trial gets its own analysis run. Read those runs with [`evolve ana
 
 ```bash
 evolve analyze --show-defaults
+evolve analyze --show-defaults -a codex
 evolve analyze --show-defaults --json
 ```
 
-This returns the current model, reasoning effort, sandbox provider, prompt, and rubric. Defaults mode takes no job ID or other analysis options.
+This returns the configured agent, model, effort, sandbox provider, prompt, and rubric. With `-a`, it returns that agent's defaults. See the [model reference](/core-concepts/models#model-and-effort-reference) for reasoning options. Defaults mode takes no job ID and no other analysis options.
 
 ## Select trials
 
@@ -52,6 +53,7 @@ Cancelled trials are excluded. `--passing` and `--failing` cannot be combined. T
 
 ```bash
 evolve analyze "$JOB_ID" \
+  --agent codex --model gpt-6-sol \
   --rubric rubric.toml \
   --prompt prompt.txt \
   --watch
@@ -59,12 +61,13 @@ evolve analyze "$JOB_ID" \
 
 | Option | Meaning |
 | --- | --- |
-| `-m`, `--model <name>` | Analyzer model. |
-| `--effort <value>` | Reasoning effort. |
+| `-a`, `--agent <name>` | Agent the analyzer runs on. Default `claude`. |
+| `-m`, `--model <name>` | Analyzer model, from that agent's models. Default: the agent's default model. |
+| `--effort <value>` | Reasoning effort for the selected model. See the [model reference](/core-concepts/models#model-and-effort-reference). |
 | `-r`, `--rubric <path>` | TOML, YAML, or JSON rubric. |
 | `-p`, `--prompt <path>` | Text file replacing the default prompt. |
 | `-e`, `--env <provider>` | Sandbox provider for analysis. |
-| `--show-defaults` | Print the default policy and exit. |
+| `--show-defaults` | Print the default policy and exit. `-a` picks the agent. |
 
 A rubric contains a `criteria` list. Every criterion needs `name`, `description`, and `guidance`.
 
@@ -75,7 +78,7 @@ description = "The final answer is supported by observed results."
 guidance = "Check whether the trace supports the claims in the final answer."
 ```
 
-For prompt placeholders, rubric rules, and verdicts, see [Analyze](/core-concepts/analyze).
+For prompt placeholders, rubric rules, and results, see [Analyze](/core-concepts/analyze).
 
 ## Wait and read results
 
@@ -95,7 +98,7 @@ A failed analysis execution produces exit code `1`. A rubric criterion marked `f
 
 ## Judge any trajectory
 
-`--trajectory` judges one agent trajectory file with a single LLM-as-a-judge call instead of a job's trials. The file can come from anywhere: an ATIF `trajectory.json`, a harness's stream-json log, a chat messages array, or a plain transcript. Use `-` to read stdin. Nothing is stored; the verdict prints when the call returns.
+`--trajectory` judges one agent trajectory file with a single LLM-as-a-judge call instead of a job's trials. The file can come from anywhere: an ATIF `trajectory.json`, a harness's stream-json log, a chat messages array, or a plain transcript. Use `-` to read stdin. Nothing is stored; the result prints when the call returns.
 
 ```bash
 evolve analyze --trajectory trajectory.json \

@@ -595,7 +595,7 @@ async function testJobBuildExclusionsMapping() {
         max_trial_spend_usd: 2.5,
         worst_case_spend_usd: 25,
         sandbox_provider: "e2b",
-        agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null }],
         counts: { agents: 1, tasks: 10 },
         build_exclusions: [
           // Capped run: n_tasks_selected is the pre-cap matched-READY count,
@@ -1340,7 +1340,7 @@ async function testDatasetsPreflight() {
   try {
     // The server reads the manifest beside the task dirs when both places
     // hold one (dashboard dataset-manifest.ts findDatasetManifestPath: "the
-    // tasks-dir copy wins"), so the dry run must post THAT copy — a verdict
+    // tasks-dir copy wins"), so the dry run must post THAT copy — a result
     // for the root copy would judge a file the import never reads.
     await mkdir(join(both, "tasks", "a"), { recursive: true });
     await writeFile(join(both, "tasks", "a", "task.toml"), "[environment]\n");
@@ -2628,7 +2628,7 @@ const JOB_SUMMARY = {
   job_name: "deep-swe sweep",
   status: "QUEUED",
   datasets: [{ name: "deep-swe", version: "1.1" }],
-  agents: [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null }],
+  agents: [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null }],
   n_attempts: 1,
   n_concurrent_trials: 4,
   max_trial_spend_usd: 25,
@@ -2659,7 +2659,7 @@ async function testStartPostsInputContract() {
         { name: "deep-swe", version: "1.1", task_names: ["abs-module-cache-flags"] },
       ],
       agents: [
-        { name: "codex", model_name: "gpt-5.5" },
+        { name: "codex", model_name: "gpt-6-sol" },
         { name: "claude", model_name: "sonnet", version: "2.1.0" },
       ],
       n_attempts: 1,
@@ -2725,7 +2725,7 @@ async function testStartPostsInputContract() {
     // version and the response echoes the resolved ref.
     const bare = await e.start({
       datasets: [{ name: "deep-swe" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       max_trial_spend_usd: 25,
     });
     assertEqual(
@@ -2753,7 +2753,7 @@ async function testStartOmitsAbsentSpendCap() {
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.start({
       datasets: [{ name: "deep-swe", version: "1.1" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
     });
 
     const body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
@@ -2762,7 +2762,7 @@ async function testStartOmitsAbsentSpendCap() {
     assert(!("max_trial_spend_usd" in body), "no cap key on the wire when omitted");
     assertEqual(
       body,
-      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] },
+      { datasets: [{ name: "deep-swe", version: "1.1" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] },
       "body carries only what was given"
     );
     assertEqual(job.max_trial_spend_usd, 200, "response echoes the RESOLVED per-trial cap");
@@ -2775,7 +2775,7 @@ async function testStartOmitsAbsentSpendCap() {
     // A stated cap is still forwarded unchanged.
     await e.start({
       datasets: [{ name: "deep-swe", version: "1.1" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       max_trial_spend_usd: 25,
     });
     assertEqual(
@@ -2798,7 +2798,7 @@ async function testStartIdempotentReplay() {
     });
     const e = jobs({ apiKey: "test-key", baseUrl: BASE });
     const job = await e.start(
-      { datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }], max_trial_spend_usd: 25 },
+      { datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }], max_trial_spend_usd: 25 },
       { idempotencyKey: "idem-abc" }
     );
     assertEqual(job.idempotent_replay, true, "idempotent_replay passed through");
@@ -2825,7 +2825,7 @@ async function testStartUnknownAgentVersionIsTypedError() {
     try {
       await e.start({
         datasets: [{ name: "deep-swe" }],
-        agents: [{ name: "codex", model_name: "gpt-5.5", version: "9.9.9" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", version: "9.9.9" }],
         max_trial_spend_usd: 25,
       });
     } catch (err: any) {
@@ -2858,7 +2858,7 @@ async function testStartInsufficientCreditsIsTypedError() {
     try {
       await e.start({
         datasets: [{ name: "deep-swe" }],
-        agents: [{ name: "codex", model_name: "gpt-5.5" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       });
     } catch (err: any) {
       threw = true;
@@ -2891,7 +2891,7 @@ async function testStartNonExactVersionIsTypedError() {
       await e.start({
         datasets: [{ name: "deep-swe" }],
         // A range cannot hold a comparison still, so it is refused, not resolved.
-        agents: [{ name: "codex", model_name: "gpt-5.5", version: "^0.29.0" }],
+        agents: [{ name: "codex", model_name: "gpt-6-sol", version: "^0.29.0" }],
         max_trial_spend_usd: 25,
       });
     } catch (err: any) {
@@ -2924,7 +2924,7 @@ async function testGetJobDetail() {
         worst_case_spend_usd: 25,
         sandbox_provider: "modal",
         agents: [
-          { name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null },
+          { name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null },
         ],
         counts: { agents: 1, tasks: 10 },
         n_total_trials: 10,
@@ -2937,7 +2937,7 @@ async function testGetJobDetail() {
           n_cancelled_trials: 0,
           n_retries: 0,
           evals: {
-            "codex__gpt-5.5__deep-swe": { n_trials: 10, n_errors: 0, metrics: [{ name: "mean", value: 0.75 }] },
+            "codex__gpt-6-sol__deep-swe": { n_trials: 10, n_errors: 0, metrics: [{ name: "mean", value: 0.75 }] },
           },
           n_input_tokens: 120000,
           n_cache_tokens: 40000,
@@ -2969,7 +2969,7 @@ async function testGetJobDetail() {
     assertEqual(job.stats.cost_usd, 3.5, "maps stats.cost_usd — measured spend, never a gate");
     assertEqual(job.stats.n_input_tokens, 120000, "maps token totals");
     assertEqual(
-      job.stats.evals?.["codex__gpt-5.5__deep-swe"]?.n_trials,
+      job.stats.evals?.["codex__gpt-6-sol__deep-swe"]?.n_trials,
       10,
       "maps per-arm evals keyed agent__model__dataset"
     );
@@ -2985,7 +2985,7 @@ async function testGetJobDetail() {
     );
     assertEqual(
       job.agents,
-      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
+      [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
       "agents is the public arm shape (wire sends nothing internal)"
     );
     const system = job.agents?.[0] as Record<string, unknown>;
@@ -3120,7 +3120,7 @@ function wireTrial(overrides: Record<string, unknown> = {}): Record<string, unkn
     agent_info: {
       name: "codex",
       version: "codex-cli 0.145.0",
-      model_info: { name: "gpt-5.5", provider: "openai" },
+      model_info: { name: "gpt-6-sol", provider: "openai" },
       reasoning_effort: null,
     },
     attempt: 1,
@@ -5629,7 +5629,7 @@ async function testTrialGet() {
       {
         name: "codex",
         version: "codex-cli 0.145.0",
-        model_info: { name: "gpt-5.5", provider: "openai" },
+        model_info: { name: "gpt-6-sol", provider: "openai" },
         reasoning_effort: null,
       },
       "agent_info reduced to the public shape"
@@ -5972,7 +5972,7 @@ async function testSystemLogSwitch() {
     setMockResponse("/api/jobs", { status: 202, body: { ...JOB_SUMMARY, system_log: true } });
     const job = await jobs({ apiKey: "test-key", baseUrl: BASE }).start({
       datasets: [{ name: "deep-swe" }],
-      agents: [{ name: "codex", model_name: "gpt-5.5" }],
+      agents: [{ name: "codex", model_name: "gpt-6-sol" }],
       system_log: true,
     });
     assertEqual(JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string).system_log, true, "system_log rides the create body");
@@ -6140,8 +6140,8 @@ async function testTrialArtifact() {
 // ANALYSES TESTS (the traces-feed doors — deliberately off-contract)
 // =============================================================================
 
-/** The verdict object as the feed's ?what=analysis door serves it. */
-function fixtureAnalysisVerdict(): Record<string, unknown> {
+/** The result object as the feed's ?what=analysis door serves it. */
+function fixtureAnalysisResult(): Record<string, unknown> {
   return {
     id: "an-1",
     status: "failed",
@@ -6166,21 +6166,21 @@ function fixtureAnalysisVerdict(): Record<string, unknown> {
 }
 
 async function testAnalysisGet() {
-  console.log("\n--- analyses().get() reads the verdict off the feed's ?what=analysis door ---");
+  console.log("\n--- analyses().get() reads the result off the feed's ?what=analysis door ---");
   installMockFetch();
   try {
     setMockResponse("/api/traces/trials/an-1/artifacts?what=analysis", {
       status: 200,
-      body: { analysis: fixtureAnalysisVerdict() },
+      body: { analysis: fixtureAnalysisResult() },
     });
     const a = analyses({ apiKey: "test-key", baseUrl: BASE });
-    const verdict = await a.get("an-1");
-    assertEqual(verdict.id, "an-1", "maps the analysis id");
-    assertEqual(verdict.status, "failed", "wire status rides verbatim (lowercase vocabulary)");
-    assertEqual(verdict.model_name, "glm-5.3-flash", "model rides verbatim");
-    assertEqual(verdict.estimated_cost_usd, 0.0366, "the analyzer's own metered figure rides verbatim");
+    const result = await a.get("an-1");
+    assertEqual(result.id, "an-1", "maps the analysis id");
+    assertEqual(result.status, "failed", "wire status rides verbatim (lowercase vocabulary)");
+    assertEqual(result.model_name, "glm-5.3-flash", "model rides verbatim");
+    assertEqual(result.estimated_cost_usd, 0.0366, "the analyzer's own metered figure rides verbatim");
     assertEqual(
-      verdict.usage,
+      result.usage,
       {
         provisional: true,
         spent_usd: 0.0366,
@@ -6193,7 +6193,7 @@ async function testAnalysisGet() {
       "usage goes through the one-home reading rule"
     );
     assertEqual(
-      verdict.failure,
+      result.failure,
       { phase: "artifact_read", message: "MISSING /app/analysis.json" },
       "a failed analysis carries its typed failure"
     );
@@ -6207,7 +6207,7 @@ async function testAnalysisGet() {
 }
 
 async function testAnalysisGetMalformedFailsClosed() {
-  console.log("\n--- analyses().get() fails closed on a body with no readable verdict ---");
+  console.log("\n--- analyses().get() fails closed on a body with no readable result ---");
   installMockFetch();
   try {
     setMockResponse("/api/traces/trials/an-x/artifacts?what=analysis", {
@@ -6222,10 +6222,10 @@ async function testAnalysisGetMalformedFailsClosed() {
       threw = true;
       assert(
         e instanceof Error && e.message.includes("an-x"),
-        "the refusal names the id — never a fabricated empty verdict"
+        "the refusal names the id — never a fabricated empty result"
       );
     }
-    assert(threw, "malformed verdict throws instead of inventing an object");
+    assert(threw, "malformed result throws instead of inventing an object");
   } finally {
     restoreFetch();
   }
@@ -6596,7 +6596,7 @@ async function testCompare() {
             coverage: { scored: 4, total: 5 },
             cost_usd: 12.5,
             agents: [
-              { name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null },
+              { name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null },
             ],
             started_at: "2026-07-22T00:00:00.000Z",
           },
@@ -6648,7 +6648,7 @@ async function testCompare() {
     assertEqual(comparison.jobs[1].mean_reward, 0, "zero mean_reward preserved (never nulled)");
     assertEqual(
       comparison.jobs[0].agents,
-      [{ name: "codex", model_name: "gpt-5.5", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
+      [{ name: "codex", model_name: "gpt-6-sol", version: null, reasoning_effort: null, kwargs: null, preset: null, skills: [], skill_locks: null }],
       "agents is the public arm shape (wire sends nothing internal)"
     );
     const system = comparison.jobs[0].agents[0] as Record<string, unknown>;
@@ -7331,7 +7331,7 @@ async function testListAnalyses() {
   console.log("\n--- analyses().list() maps the page and rides scope/job/status on every fetch ---");
   installMockFetch();
   try {
-    const row = { ...fixtureAnalysisVerdict(), trial_id: "run-1", job_id: "eval-1", task_name: "abs-module-cache-flags" };
+    const row = { ...fixtureAnalysisResult(), trial_id: "run-1", job_id: "eval-1", task_name: "abs-module-cache-flags" };
     setMockResponse("/api/analyses", {
       status: 200,
       body: { items: [row, { ...row, id: "an-2", usage: null }], nextCursor: "cur-a", hasMore: true },
@@ -7434,17 +7434,17 @@ async function testOrgsTeamVerbs() {
     assertEqual(members.map((m) => [m.email, m.role]), [["vaibhav@example.com", "owner"], ["tanay@example.com", "member"]], "members map email + role");
 
     // The client-level org default on start: fills an absent org, never overrides a named one.
-    const job = await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    const job = await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     let body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assertEqual(body.org, "acme", "start: the config org rides the body when the call names none");
     assertEqual(job.org, "acme", "Job.org maps the owning org's slug");
-    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: "other", datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: "other", datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assertEqual(body.org, "other", "start: the call's own org wins over the config default");
-    await jobs({ apiKey: "k", baseUrl: BASE }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    await jobs({ apiKey: "k", baseUrl: BASE }).start({ datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assert(!("org" in body), "start: no org anywhere = no org key (the server's personal default)");
-    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: undefined, datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-5.5" }] });
+    await jobs({ apiKey: "k", baseUrl: BASE, org: "acme" }).start({ org: undefined, datasets: [{ name: "deep-swe" }], agents: [{ name: "codex", model_name: "gpt-6-sol" }] });
     body = JSON.parse(fetchCalls[fetchCalls.length - 1].init?.body as string);
     assertEqual(body.org, "acme", "start: an explicit `org: undefined` on the call is absent, so the config default still rides");
     const plain = await jobs({ apiKey: "k", baseUrl: BASE }).get("job-1").catch(() => null);
@@ -7830,7 +7830,7 @@ async function testChecksTaskReads() {
         storedAt: ["2026-09-10T09:00:01.000Z", "2026-09-10T09:00:02.000Z"],
       },
     });
-    // A trial id at the stored selectors: the verdict door refuses it typed
+    // A trial id at the stored selectors: the result door refuses it typed
     // and the SDK inherits the refusal before any byte is read.
     setMockResponse("/api/traces/trials/run-1/artifacts?what=task-check", { status: 400, body: { error: "check-result.json belongs to a task check — open the check row and download it there" } });
     setMockResponse("/api/traces/trials/run-1/artifacts?what=trace-stdout", { status: 200, body: { log: "the TRIAL's stdout" } });
@@ -7989,8 +7989,13 @@ async function testAnalysesDefaults() {
     const got = await analyses({ apiKey: "test-key", baseUrl: BASE }).defaults();
     const url = new URL(fetchCalls[fetchCalls.length - 1].url);
     assertEqual(url.pathname, "/api/analyses/defaults", "one GET on the defaults door");
+    assertEqual(url.search, "", "no agent named: the default agent's policy, no query");
     assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
     assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
+    await analyses({ apiKey: "test-key", baseUrl: BASE }).defaults({ agent: "kimi" });
+    const named = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(named.pathname, "/api/analyses/defaults", "the same door");
+    assertEqual(named.searchParams.get("agent"), "kimi", "a named agent rides ?agent= — the server answers that agent's own default model and effort");
   } finally {
     restoreFetch();
   }
@@ -8013,8 +8018,13 @@ async function testChecksDefaults() {
     const got = await checks({ apiKey: "test-key", baseUrl: BASE }).defaults();
     const url = new URL(fetchCalls[fetchCalls.length - 1].url);
     assertEqual(url.pathname, "/api/checks/defaults", "one GET on the defaults door");
+    assertEqual(url.search, "", "no agent named: the default agent's policy, no query");
     assertEqual(fetchCalls[fetchCalls.length - 1].init?.method ?? "GET", "GET", "a GET");
     assertEqual(got, defaults, "the five keys ride verbatim, the prompt template unrendered");
+    await checks({ apiKey: "test-key", baseUrl: BASE }).defaults({ agent: "codex" });
+    const named = new URL(fetchCalls[fetchCalls.length - 1].url);
+    assertEqual(named.pathname, "/api/checks/defaults", "the same door");
+    assertEqual(named.searchParams.get("agent"), "codex", "a named agent rides ?agent= — that agent's own default model and effort");
   } finally {
     restoreFetch();
   }

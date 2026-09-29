@@ -39,14 +39,12 @@ from .hosted import (
     Agent,
     AnalysesClient,
     AnalysisPage,
-    AnalysisLabel,
     AnalysisStatus,
     Check,
     CheckConfigInput,
     CheckDefaults,
     CheckPage,
     CheckSource,
-    CheckLabel,
     CheckStatus,
     ChecksClient,
     TaskCheck,
@@ -173,6 +171,7 @@ from .hosted import (
     ProviderCapability,
     ReportedAgentResult,
     ReportedTotals,
+    RetiredAgent,
     SkillLock,
     SkillUpload,
     SkillUploadPage,
@@ -552,7 +551,7 @@ async def list_checkpoints(
         await store.close()
 
 
-__version__ = '0.0.65'
+__version__ = '0.0.68'
 
 __all__ = [
     # Main classes
@@ -777,9 +776,7 @@ __all__ = [
     'CheckTaskTally',
     'JobViewer',
     'AnalysisStatus',
-    'AnalysisLabel',
     'CheckStatus',
-    'CheckLabel',
     'JobTaskRollupPage',
     'DatasetPage',
     'AgentPage',
@@ -824,6 +821,7 @@ __all__ = [
     'CapabilityDocument',
     'AgentCapability',
     'AgentModelOption',
+    'RetiredAgent',
     'EFFORT_SUPPORT_VALUES',
     'ManagedProviderCapability',
     'ProviderCapability',

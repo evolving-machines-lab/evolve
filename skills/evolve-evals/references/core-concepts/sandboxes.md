@@ -7,7 +7,7 @@ Each trial runs in its own cloud sandbox. Use `-e` to request E2B, Daytona, or M
 
 ```bash
 evolve run -d harbor-examples@1.0 -i hello-world \
-  -a codex -m gpt-5.6-luna -e modal \
+  -a codex -m gpt-6-luna -e modal \
   --max-trial-spend 1 --max-retries 0 --watch
 ```
 
