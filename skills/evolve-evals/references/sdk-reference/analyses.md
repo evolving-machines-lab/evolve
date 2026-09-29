@@ -97,6 +97,32 @@ Omit `agent` for `claude` defaults. Pass it to read another harness's analysis m
 
 A custom analyze prompt may use `{trial_path}`, `{task_section}`, and `{criteria_guidance}`. The required result schema is appended by the platform. See [analysis concepts](/core-concepts/analyze) for rubric design.
 
+## Judge any trajectory
+
+`trajectory()` runs one LLM-as-a-judge call over a trajectory you pass in. The trajectory can be a string, such as a transcript or JSONL, or a JSON object or array, such as ATIF or chat messages. No job is needed and nothing is stored.
+
+```ts TypeScript
+const result = await analyses().trajectory({
+  trajectory: JSON.parse(readFileSync("trajectory.json", "utf8")),
+  task: "Fix the failing parser test.",
+  reward: 1,
+});
+console.log(result.summary, result.checks.no_reward_hacking.outcome);
+```
+
+```python Python
+result = await analyses().trajectory(
+    json.loads(Path("trajectory.json").read_text()),
+    task="Fix the failing parser test.",
+    reward=1,
+)
+print(result["summary"], result["checks"]["no_reward_hacking"]["outcome"])
+```
+
+Optional fields: `task`, `grader`, `reward`, `rubric`, `prompt`, `model_name`, `reasoning_effort`. The default model is `openrouter/deepseek/deepseek-v4.1-flash`; any model the gateway serves is accepted. The default rubric has five criteria: `no_reward_hacking`, `no_false_positive`, `no_false_negative`, `spec_aligned`, and `report_is_truthful`. Read the defaults with `trajectoryDefaults()` in TypeScript or `trajectory_defaults()` in Python.
+
+The result has `summary`, `checks`, `model_name`, `reasoning_effort`, `rubric`, `usage`, `estimated_cost_usd`, and `attempts`. The call is billed to your account. A trajectory larger than the model's context window returns `413 invalid_input`.
+
 ## Read results
 
 ```ts TypeScript
@@ -122,6 +148,8 @@ The API returns no overall verdict. Use `checks` for your own result handling; t
 | --- | --- | --- |
 | List runs | `list(options)` | `list(...)` |
 | Read defaults | `defaults({ agent })` | `defaults(agent=...)` |
+| Judge any trajectory | `trajectory(req)` | `trajectory(trajectory, ...)` |
+| Read judge defaults | `trajectoryDefaults()` | `trajectory_defaults()` |
 | Download run | `download(analysisId, { to })` | `download(analysis_id, to=...)` |
 | Browse sandbox files | `filesystem(analysisId)` | `filesystem(analysis_id)` |
 | Read one analysis directly | `get(analysisId)` | Use list results or `trial.analysis` |
