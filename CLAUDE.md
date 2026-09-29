@@ -109,3 +109,24 @@ EVOLVE_OPENAPI_SPEC_PATH=/path/to/swarm_dashboard/spec/openapi.yaml npm run test
 
 - **`docs-evals/` and `docs-agents/` are the only places documentation is edited.** `skills/evolve-evals/` and `skills/evolve-agents/` are generated from them (`npm run generate:skills`, `scripts/generate-skills.ts`: the evals index from `docs-evals/docs.json` with every page rendered as readable Markdown under `references/`; the agents skill from `docs-agents/SKILL.source.md` with the chapters), as is the `.claude/skills/evolve/` mirror of the pointer; `.github/workflows/sync-docs-to-skill.yml` checks them on pull requests, regenerates them on push, and validates every folder under `skills/` against the Agent Skills specification. Hand-editing a generated copy gets overwritten and loses the change. The pointer (`skills/evolve/SKILL.md`, under 500 words, only `name`, `description`, `allowed-tools`) and the four hand-written skills are edited in place under `skills/`. Every skill but the pointer carries `metadata.internal: true`, so `npx skills add evolving-machines-lab/evolve` installs only the pointer; the CLI serves `skills/` minus `evolve-agents` (the SDK skill installs with `--skill evolve-agents`).
 - **`docs-agents/typescript/` and `docs-agents/python/` are exact mirrors of each other.** Same sections, same order, same facts, same caveats — only the code differs. A change to one chapter is not finished until the other says the same thing.
+
+## Reviewing PRs
+
+Review for risk, not line by line. Before approving a PR, or when asking an agent to review one, answer two questions concretely:
+
+- **What are the risks of merging this into `project-sable` today?**
+- **What is the worst thing that happens if we merge it right now?**
+
+Here the worst cases are usually: a public surface changing shape for every installed user at the next publish (CLI flags and output, exported types, bridge messages, hosted-client requests); the TS and Python SDKs drifting apart; a parser that silently drops or mislabels a harness's output; a secret or provider key reaching logs, traces or a sandbox; a hand edit to a generated skill that the sync workflow overwrites. Interface changes need the design discussion in [CONTRIBUTING.md](CONTRIBUTING.md) before review, not during it.
+
+**Say what was not verified.** A review, and the PR description, ends with a short **Not verified** list naming the exact command that was not run, or the credential, provider or hardware that was missing. Human review starts there. CI builds, type-checks, runs the unit tests and (when `SPEC_READ_TOKEN` is available) the spec gate. It does not cover:
+
+- `npm run test:ts:integration` / `test:py:integration`, or anything that starts a real sandbox (E2B, Daytona, Modal), builds a template under `assets/`, or runs a real agent CLI
+- the hosted-evals server in `swarm_dashboard`: jobs, trials, auth, and how the dashboard renders what the SDK uploads
+- contract tests without a local `spec/openapi.yaml`: they print SKIP, which is not a pass
+- a publish (`publish.yml` is manual) and a clean install from npm or PyPI
+- upstream agent CLIs at versions other than the one the change was tried against
+
+**Show terminal output.** The CLI's output is its UI. A change to output, progress lines, errors or `--help` carries before and after output in the PR, and a request to change it quotes the exact lines.
+
+**State negative constraints.** When asking an agent for a change, say what to avoid, or it falls back on generic defaults: for example no new flag when an existing one covers it, no per-agent branches outside the registry, no new dependency, no edits to generated skills or `version` fields.
