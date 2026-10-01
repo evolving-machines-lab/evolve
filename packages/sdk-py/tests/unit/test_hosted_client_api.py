@@ -2602,6 +2602,7 @@ class TestJobs:
             'n_total_trials',
             'org',
             'retry',
+            'sandbox_account',
             'sandbox_provider',
             'source_jobs',
             'started_at',
@@ -4370,6 +4371,37 @@ class TestJobs:
         body = json.loads(fake.requests[0].data.decode('utf-8'))
         assert body['sandbox_provider'] == 'daytona'
         assert job.sandbox_provider == 'daytona'
+
+    @pytest.mark.asyncio
+    async def test_start_posts_sandbox_credentials_and_reads_the_account(self):
+        """Bring your own infra: the credentials ride the wire as given, the
+        job reads back as running on the owner's account, and an older server
+        that names no account reads as the platform's."""
+        fake = FakeUrlopen([
+            ('/api/jobs/job-1', {**JOB_SUMMARY, 'sandbox_provider': 'e2b'}),
+            ('/api/jobs', {**JOB_SUMMARY, 'sandbox_provider': 'modal', 'sandbox_account': 'own'}),
+        ])
+        with patch('evolve._http.urlopen', fake):
+            client = jobs_factory(CONFIG)
+            job = await client.start(
+                datasets=[{'name': 'deep-swe', 'version': '1.1'}],
+                agents=[AgentArm(name='codex', model_name='gpt-6-sol')],
+                sandbox_provider='modal',
+                sandbox_credentials=[
+                    {'name': 'MODAL_TOKEN_ID'},
+                    {'name': 'MODAL_TOKEN_SECRET', 'value': 'as-1', 'label': 'work'},
+                ],
+            )
+            older = await client.get('job-1')
+
+        start_request = next(r for r in fake.requests if r.get_method() == 'POST')
+        body = json.loads(start_request.data.decode('utf-8'))
+        assert body['sandbox_credentials'] == [
+            {'name': 'MODAL_TOKEN_ID'},
+            {'name': 'MODAL_TOKEN_SECRET', 'value': 'as-1', 'label': 'work'},
+        ]
+        assert job.sandbox_account == 'own'
+        assert older.sandbox_account == 'platform'
 
     @pytest.mark.asyncio
     async def test_start_posts_job_name(self):

@@ -161,8 +161,10 @@ import {
   parseAgentKwargs,
   parseArgs,
   parseEnvPairs,
+  ownInfraCredentials,
   parseInlineSecrets,
   parseSecretRefs,
+  printableJobInput,
   parseYamlConfig,
   runCli,
   traceEventLine,
@@ -490,6 +492,107 @@ function testSecretRefs() {
     parseArgs(["job", "start", "-d", "deep-swe", "-a", "codex", "-m", "m"])
   );
   assert(!("secrets" in withoutFlag), "no secrets key when no --secret given");
+}
+
+function testOwnInfra() {
+  console.log("\n--- --own-infra -> JobCreate.sandbox_credentials (bring your own infra) ---");
+  const noFile = (path: string): string => {
+    throw new Error(`no file ${path}`);
+  };
+  assertEqual(
+    ownInfraCredentials("e2b", { E2B_API_KEY: " e2b_shell " }, noFile),
+    [{ name: "E2B_API_KEY", value: "e2b_shell" }],
+    "e2b: the shell's key rides inline, trimmed"
+  );
+  assertEqual(
+    ownInfraCredentials("e2b", {}, noFile),
+    [{ name: "E2B_API_KEY" }],
+    "a key the shell lacks is a reference to the stored secret of that name"
+  );
+  assertEqual(
+    ownInfraCredentials("daytona", { DAYTONA_API_KEY: "dtn", DAYTONA_TARGET: "eu" }, noFile),
+    [{ name: "DAYTONA_API_KEY", value: "dtn" }, { name: "DAYTONA_TARGET", value: "eu" }],
+    "daytona: optional url/target ride only when set"
+  );
+  const modalToml = [
+    "[default]",
+    'token_id = "ak-default"',
+    'token_secret = "as-default"',
+    "",
+    "[work]",
+    'token_id = "ak-work"',
+    'token_secret = "as-work"',
+    "active = true",
+  ].join("\n");
+  const tomlAt = (path: string): string => {
+    if (path === "/cfg/modal.toml") return modalToml;
+    throw new Error(`no file ${path}`);
+  };
+  assertEqual(
+    ownInfraCredentials("modal", { MODAL_CONFIG_PATH: "/cfg/modal.toml" }, tomlAt),
+    [
+      { name: "MODAL_TOKEN_ID", value: "ak-work" },
+      { name: "MODAL_TOKEN_SECRET", value: "as-work" },
+    ],
+    "modal: the ACTIVE profile of the modal config fills tokens the env lacks"
+  );
+  assertEqual(
+    ownInfraCredentials("modal", { MODAL_CONFIG_PATH: "/cfg/modal.toml", MODAL_PROFILE: "default" }, tomlAt),
+    [
+      { name: "MODAL_TOKEN_ID", value: "ak-default" },
+      { name: "MODAL_TOKEN_SECRET", value: "as-default" },
+    ],
+    "modal: MODAL_PROFILE picks the profile, like the modal client"
+  );
+  assertEqual(
+    ownInfraCredentials(
+      "modal",
+      { MODAL_CONFIG_PATH: "/cfg/modal.toml", MODAL_TOKEN_ID: "ak-env", MODAL_TOKEN_SECRET: "as-env" },
+      tomlAt,
+    ),
+    [
+      { name: "MODAL_TOKEN_ID", value: "ak-env" },
+      { name: "MODAL_TOKEN_SECRET", value: "as-env" },
+    ],
+    "modal: the environment wins over the config file"
+  );
+  assertEqual(
+    ownInfraCredentials("modal", { MODAL_CONFIG_PATH: "/nowhere" }, tomlAt),
+    [{ name: "MODAL_TOKEN_ID" }, { name: "MODAL_TOKEN_SECRET" }],
+    "modal: no env and no config file means stored-secret references"
+  );
+
+  const built = buildJobInput(
+    parseArgs(["run", "-d", "tb@4.0", "-a", "codex", "-m", "m", "-e", "e2b", "--own-infra"]),
+    noFile,
+    { E2B_API_KEY: "e2b_shell" },
+  );
+  assertEqual(built.sandbox_provider, "e2b", "-e names the provider");
+  assertEqual(
+    built.sandbox_credentials,
+    [{ name: "E2B_API_KEY", value: "e2b_shell" }],
+    "--own-infra fills JobCreate.sandbox_credentials from the shell"
+  );
+  const defaulted = buildJobInput(
+    parseArgs(["run", "-d", "tb@4.0", "-a", "codex", "-m", "m", "--own-infra"]),
+    noFile,
+    {},
+  );
+  assertEqual(
+    defaulted.sandbox_credentials,
+    [{ name: "DAYTONA_API_KEY" }],
+    "with no -e, --own-infra uses the server's default provider's names (daytona)"
+  );
+  const without = buildJobInput(parseArgs(["run", "-d", "tb@4.0", "-a", "codex", "-m", "m"]), noFile, {
+    E2B_API_KEY: "e2b_shell",
+  });
+  assert(!("sandbox_credentials" in without), "no --own-infra: no sandbox_credentials, whatever the shell holds");
+  assertEqual(
+    printableJobInput(built).sandbox_credentials,
+    [{ name: "E2B_API_KEY", value: "<redacted>" }],
+    "--print-config masks a provider key read from the shell"
+  );
+  assertEqual(built.sandbox_credentials?.[0], { name: "E2B_API_KEY", value: "e2b_shell" }, "...without touching the body that is sent");
 }
 
 function testInlineSecrets() {
@@ -10294,6 +10397,7 @@ async function main() {
   testBuildJobInputRetry();
   testSecretRefs();
   testInlineSecrets();
+  testOwnInfra();
   testBuildJobInputTimeoutMultipliers();
   testBuildJobInputSkills();
   testBuildJobInputYesIsInert();

@@ -564,6 +564,20 @@ TrialStatus = Literal[
 ]
 EvalSandboxProvider = Literal['e2b', 'daytona', 'modal']
 
+#: Whose provider account a job's boxes run in (``Job.sandbox_account``).
+SandboxAccount = Literal['platform', 'own']
+
+#: BRING YOUR OWN INFRA: the credential variables each provider's own SDK
+#: reads — the names ``jobs().start(sandbox_credentials=[...])`` accepts for a
+#: job on that provider, the same names Harbor's environments and the
+#: providers' own CLIs read from a shell. Mirrors the TS SDK's
+#: ``SANDBOX_CREDENTIAL_NAMES``.
+SANDBOX_CREDENTIAL_NAMES: Dict[str, Dict[str, Tuple[str, ...]]] = {
+    'e2b': {'required': ('E2B_API_KEY',), 'optional': ()},
+    'daytona': {'required': ('DAYTONA_API_KEY',), 'optional': ('DAYTONA_API_URL', 'DAYTONA_TARGET')},
+    'modal': {'required': ('MODAL_TOKEN_ID', 'MODAL_TOKEN_SECRET'), 'optional': ()},
+}
+
 #: The list scopes — Harbor's ``--scope`` on ``harbor hub job list`` (their
 #: cli/hub.py list_jobs_cmd: my | shared | all). ``my`` is what you created;
 #: ``shared`` is what your organizations' other members created — every row
@@ -1617,6 +1631,29 @@ JobSecretInline = TypedDict(
 )
 
 
+class SandboxCredentialRef(TypedDict, total=False):
+    """One of your own sandbox-provider credentials, by REFERENCE to a
+    stored env secret (the spec's SandboxCredentialRef) — the label law of
+    :data:`JobSecretRef`. Values never ride this shape."""
+    #: The credential variable, from the job provider's own vocabulary
+    #: (:data:`SANDBOX_CREDENTIAL_NAMES`).
+    name: str
+    #: Which labeled row to use; omitted = 'default' when present, else the single row.
+    label: str
+
+
+class SandboxCredentialInline(TypedDict, total=False):
+    """One of your own sandbox-provider credentials, INLINE (the spec's
+    SandboxCredentialInline): saved into your vault as a 'direct' env secret
+    first, then pinned like a reference — the :data:`JobSecretInline`
+    vault-first and collision law. Never stored on the job, never sent into a box."""
+    name: str
+    #: The value to vault (at most 190 bytes).
+    value: str
+    #: The labeled row to claim in the vault (default 'default').
+    label: str
+
+
 class RubricCriterion(TypedDict):
     """One analysis criterion — Harbor's RubricCriterion verbatim (their
     cli/quality_checker/models.py ``{name, description, guidance}``). The
@@ -2287,6 +2324,11 @@ class Job:
     #: platform sandbox, and naming a provider would be an execution claim.
     #: Never None on a job this platform ran.
     sandbox_provider: Optional[EvalSandboxProvider]
+    #: Whose provider account the trial boxes ran in: ``'own'`` when the job
+    #: was started with ``sandbox_credentials`` (you can reach those boxes,
+    #: hidden tests and reward file included, so the scores are yours to vouch
+    #: for), else ``'platform'``. None exactly where ``sandbox_provider`` is.
+    sandbox_account: Optional[SandboxAccount]
     #: Whether the run records the box's own SYSTEM log stream (``system_log``
     #: on :meth:`JobsClient.start`); always False on a regrade job.
     system_log: bool
@@ -4514,6 +4556,13 @@ def _map_job(data: Dict[str, Any]) -> Job:
             data['sandbox_provider']
             if isinstance(data.get('sandbox_provider'), str)
             else None
+        ),
+        # An older server that sends none ran every job on its own account:
+        # 'platform' wherever it names a provider, None where it names none.
+        sandbox_account=(
+            data['sandbox_account']
+            if data.get('sandbox_account') in ('platform', 'own')
+            else ('platform' if isinstance(data.get('sandbox_provider'), str) else None)
         ),
         # An older server that sends nothing reads as off, which is how it behaves.
         system_log=data.get('system_log') is True,
@@ -7642,6 +7691,9 @@ class JobsClient:
         n_concurrent_trials: Optional[int] = None,
         max_trial_spend_usd: Optional[float] = None,
         sandbox_provider: Optional[str] = None,
+        sandbox_credentials: Optional[
+            List[Union[SandboxCredentialRef, SandboxCredentialInline, Dict[str, Any]]]
+        ] = None,
         retry: Optional[JobRetryConfigInput] = None,
         analyze: Optional[AnalyzeConfigInput] = None,
         system_log: Optional[bool] = None,
@@ -7748,7 +7800,20 @@ class JobsClient:
         value enters the trial env and is scrubbed at the credential seal,
         before hidden tests enter. Attaching a brokered secret is the
         typed ``secret_brokered_unsupported`` refusal at create — never a
-        silent downgrade. Supports Idempotency-Key.
+        silent downgrade. ``sandbox_credentials`` is BRING YOUR OWN INFRA:
+        every box of the job runs in YOUR account on ``sandbox_provider``
+        instead of the platform's. Each entry names one of the provider's own
+        credential variables (:data:`SANDBOX_CREDENTIAL_NAMES` — e2b
+        ``E2B_API_KEY``; daytona ``DAYTONA_API_KEY`` plus optional
+        ``DAYTONA_API_URL`` / ``DAYTONA_TARGET``; modal ``MODAL_TOKEN_ID`` and
+        ``MODAL_TOKEN_SECRET``), as a reference to a stored env secret
+        (``{'name': ..., 'label': ...}``) or inline (``{'name': ...,
+        'value': ...}``, vaulted first like an inline secret). The values
+        never enter a box and never land on the job; the response reads
+        ``sandbox_account == 'own'``. An own-account job boots public images
+        only, runs no docker-compose task, never reroutes a task to another
+        provider and runs no Daytona GPU task — each refused per task at
+        create as ``provider_unsupported``. Supports Idempotency-Key.
         """
         body: Dict[str, Any] = {}
         if job_name is not None:
@@ -7774,6 +7839,8 @@ class JobsClient:
             body['max_trial_spend_usd'] = max_trial_spend_usd
         if sandbox_provider is not None:
             body['sandbox_provider'] = sandbox_provider
+        if sandbox_credentials is not None:
+            body['sandbox_credentials'] = [dict(entry) for entry in sandbox_credentials]
         if retry is not None:
             body['retry'] = retry
         if analyze is not None:
