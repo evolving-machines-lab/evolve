@@ -57,7 +57,7 @@ Add `--own-infra` to run every sandbox of a job in your own E2B, Daytona, or Mod
 | Provider | Variables |
 | --- | --- |
 | E2B | `E2B_API_KEY` |
-| Daytona | `DAYTONA_API_KEY`, plus optional `DAYTONA_API_URL` and `DAYTONA_TARGET` |
+| Daytona | `DAYTONA_API_KEY`, plus optional `DAYTONA_API_URL` (a `daytona.io` host) and `DAYTONA_TARGET` (default `us`) |
 | Modal | `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, or the active profile in `~/.modal.toml` |
 
 ```bash
