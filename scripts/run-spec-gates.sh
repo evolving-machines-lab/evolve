@@ -47,8 +47,25 @@ npx tsx tests/unit/cli.test.ts
 npx tsx tests/unit/cli-bin.test.ts
 
 cd "${REPO_ROOT}/packages/sdk-py"
+# All three Python gates skip at MODULE level when no spec is present, so
+# pytest collects nothing and exits 5 ("no tests collected") — which turns the
+# documented public-checkout path (see the header: every test prints SKIP and
+# passes) into a red gate on a clean tree, and a gate that is red on a clean
+# tree teaches people to ignore it. CI never sees this: every workflow that
+# runs this script runs it with EVOLVE_OPENAPI_SPEC_PATH set, so the gates
+# always collect there. Tolerate 5 on the no-spec path and nowhere else —
+# with a spec present, 5 means the gates stopped gating and still fails, and
+# a renamed or deleted file is pytest's exit 4 either way, so no gate can go
+# missing unnoticed.
+py_status=0
 python -m pytest \
     tests/unit/test_hosted_spec_gate.py \
     tests/unit/test_hosted_stats_typing.py \
     tests/unit/test_hosted_retry_typing.py \
-    -v
+    -v || py_status=$?
+
+if [ "${py_status}" -eq 5 ] && [ -z "${EVOLVE_OPENAPI_SPEC_PATH:-}" ]; then
+    echo "[spec-gates] python: no contract present, so every gate skipped and pytest collected nothing — passing"
+elif [ "${py_status}" -ne 0 ]; then
+    exit "${py_status}"
+fi

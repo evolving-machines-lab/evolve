@@ -157,14 +157,40 @@ function setMockResponse(urlPattern: string, response: MockResponse) {
 
 function buildMockResponse(resp: MockResponse): Response {
   let body: ReadableStream | null = null;
-  const streamSource = resp.streamChunks != null
-    ? resp.streamChunks.map((chunk) => Buffer.from(chunk, "utf-8"))
-    : resp.streamBody != null
-      ? Buffer.from(resp.streamBody, "utf-8")
-      : resp.bodyBytes;
-  if (streamSource != null) {
-    const nodeStream = Readable.from(streamSource);
-    body = Readable.toWeb(nodeStream) as ReadableStream;
+  const chunks: Buffer[] | null =
+    resp.streamChunks != null
+      ? resp.streamChunks.map((chunk) => Buffer.from(chunk, "utf-8"))
+      : resp.streamBody != null
+        ? [Buffer.from(resp.streamBody, "utf-8")]
+        : resp.bodyBytes != null
+          ? [resp.bodyBytes]
+          : null;
+  if (chunks != null) {
+    // A NATIVE web stream, deliberately not Readable.toWeb(): a real fetch()
+    // body is an undici ReadableStream, and only that shape survives the
+    // cancel() every consumer here performs. Readable.toWeb wraps the Node
+    // stream in an adapter that calls controller.close() again when the
+    // wrapped Readable emits 'close' after an explicit reader.cancel() —
+    // watch() cancels in its finally the instant a terminal event arrives,
+    // mid-stream, which is exactly that case. The second close throws
+    // ERR_INVALID_STATE from an emitCloseNT tick, so it is uncaught: the
+    // process dies with zero failed assertions, one or two tests PAST the one
+    // that built the stream, and the suite exits 1 with nothing to point at.
+    // Node fixed the adapter in 20.20.x; on 20.15.1 and 18.x it still bites,
+    // which is why CI (setup-node '20' -> latest 20.x) never saw this.
+    let next = 0;
+    body = new ReadableStream<Uint8Array>({
+      // One chunk per read(), so streamChunks keeps testing what it was
+      // written to test: a CRLF pair split across two chunks must reach the
+      // SSE parser as two separate pushes, not one merged buffer.
+      pull(controller) {
+        if (next < chunks.length) {
+          controller.enqueue(new Uint8Array(chunks[next++]));
+        } else {
+          controller.close();
+        }
+      },
+    }) as ReadableStream;
   }
   return {
     ok: resp.status >= 200 && resp.status < 300,
@@ -216,7 +242,6 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
