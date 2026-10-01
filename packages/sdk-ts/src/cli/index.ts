@@ -37,6 +37,7 @@ import {
   ANALYSIS_STATUSES,
   CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
+  SANDBOX_CREDENTIAL_NAMES,
   EvolveApiError,
   ImportSettleError,
   JOB_LIST_KINDS,
@@ -119,6 +120,8 @@ import type {
   JobListScope,
   JobSecretRef,
   JobSecretInline,
+  SandboxCredentialInline,
+  SandboxCredentialRef,
   JobTaskRollup,
   PublishDatasetInput,
   RetryConfigInput,
@@ -486,6 +489,18 @@ const JOB_START_FLAGS: Record<string, FlagSpec> = {
     default: "daytona",
     group: "Environment",
   },
+  // Harbor's `-e <provider>` runs on whatever account the shell holds keys
+  // for; this is that, for a hosted job: the boxes run in YOUR account, with
+  // the provider's own variables read from your environment (or, for modal,
+  // your ~/.modal.toml), and a variable you do not have set is taken from
+  // your stored secrets instead.
+  "own-infra": {
+    kind: "boolean",
+    help:
+      "Run the boxes in your own account on the -e provider, keys read from your shell like Harbor " +
+      "(E2B_API_KEY; DAYTONA_API_KEY; MODAL_TOKEN_ID + MODAL_TOKEN_SECRET or ~/.modal.toml), else your stored secrets",
+    group: "Environment",
+  },
   watch: { kind: "boolean", help: "Stream the job's events until it finishes", group: "Output" },
   quiet: { kind: "boolean", short: "q", help: "With --watch, print only the final block", group: "Output" },
 };
@@ -495,7 +510,7 @@ function jobStartExamples(command: string): string[] {
   return [
     `${command} -d terminal-bench-4@4.0 -a codex -m gpt-6-astra -l 5 --watch`,
     `${command} \\\n-d deep-swe@1.1 \\\n-a claude -m fable \\\n--skills skills.sh/acme/skills/pdf \\\n--secret GITHUB_TOKEN \\\n-k 2 -n 8 \\\n--analyze --watch`,
-    `${command} -c job.yaml --print-config`,
+    `${command} -c job.yaml -e modal --own-infra --print-config`,
   ];
 }
 
@@ -3381,7 +3396,9 @@ export function parseEnvPairs(pairs: string[], flag: string): Record<string, str
  */
 export function buildJobInput(
   inv: Invocation,
-  read: (path: string) => string = (path) => readFileSync(path, "utf-8")
+  read: (path: string) => string = (path) => readFileSync(path, "utf-8"),
+  /** Where --own-infra reads the provider's variables from (the process env outside tests). */
+  env: Record<string, string | undefined> = process.env,
 ): JobCreate {
   const f = inv.flags;
   const base: Partial<JobCreate> =
@@ -3498,6 +3515,14 @@ export function buildJobInput(
   }
   const provider =
     f.env !== undefined ? (f.env as EvalSandboxProvider) : base.sandbox_provider;
+  // --own-infra replaces the file's list outright, like --secret does; without
+  // it the file's `sandbox_credentials` rides verbatim (the server owns the
+  // refusals). The names are the provider's own, so the provider must be known
+  // here: the flag's, the file's, else the server's documented default.
+  const sandboxCredentials =
+    f["own-infra"] === true
+      ? ownInfraCredentials(provider ?? "daytona", env, read)
+      : base.sandbox_credentials;
 
   // Retry policy: the config file's `retry` object is the base and each flag
   // overrides ITS field — Harbor's own CLI merge rule (their jobs.py applies
@@ -3567,6 +3592,7 @@ export function buildJobInput(
     ...(nConcurrent !== undefined ? { n_concurrent_trials: nConcurrent } : {}),
     ...(maxSpend !== undefined ? { max_trial_spend_usd: maxSpend } : {}),
     ...(provider !== undefined ? { sandbox_provider: provider } : {}),
+    ...(sandboxCredentials !== undefined ? { sandbox_credentials: sandboxCredentials } : {}),
     ...(Object.keys(retry).length > 0 ? { retry } : {}),
     ...(analyzeArmed ? { analyze } : {}),
     ...(f["system-log"] === true || base.system_log === true ? { system_log: true } : {}),
@@ -3574,6 +3600,95 @@ export function buildJobInput(
     ...(agentEnv !== undefined ? { agent_env: agentEnv } : {}),
     ...(verifierEnv !== undefined ? { verifier_env: verifierEnv } : {}),
     ...(secrets !== undefined ? { secrets } : {}),
+  };
+}
+
+/**
+ * --own-infra: the provider's credential variables (SANDBOX_CREDENTIAL_NAMES),
+ * each taken from the caller's environment when set — sent INLINE, so the
+ * platform vaults it as an ordinary env secret on first use — and otherwise
+ * named by REFERENCE, so a key already stored with `evolve secrets set` (or on
+ * the Secrets page) is used. Modal's own CLI keeps its token in
+ * ~/.modal.toml rather than the environment, so for modal that file's active
+ * profile (MODAL_PROFILE, else the one marked active, else the only one) fills
+ * a token the environment lacks — the same precedence the modal client uses.
+ * An optional variable (DAYTONA_API_URL, DAYTONA_TARGET) rides only when set.
+ * A required one found nowhere still rides as a reference: the server answers
+ * `secret_not_found` naming it, which is the actionable error.
+ */
+export function ownInfraCredentials(
+  provider: EvalSandboxProvider,
+  env: Record<string, string | undefined>,
+  read: (path: string) => string,
+): Array<SandboxCredentialRef | SandboxCredentialInline> {
+  const names = SANDBOX_CREDENTIAL_NAMES[provider];
+  const values: Record<string, string> = {};
+  for (const name of [...names.required, ...names.optional]) {
+    const value = env[name]?.trim();
+    if (value) values[name] = value;
+  }
+  if (provider === "modal" && (!values.MODAL_TOKEN_ID || !values.MODAL_TOKEN_SECRET)) {
+    const profile = modalTomlProfile(env, read);
+    if (profile) {
+      values.MODAL_TOKEN_ID ??= profile.tokenId;
+      values.MODAL_TOKEN_SECRET ??= profile.tokenSecret;
+    }
+  }
+  const out: Array<SandboxCredentialRef | SandboxCredentialInline> = [];
+  for (const name of names.required) {
+    out.push(values[name] ? { name, value: values[name] } : { name });
+  }
+  for (const name of names.optional) {
+    if (values[name]) out.push({ name, value: values[name] });
+  }
+  return out;
+}
+
+/**
+ * The token pair of the modal client's active profile in its config file
+ * (MODAL_CONFIG_PATH, else ~/.modal.toml), or null. Unreadable or malformed
+ * means none, never an error: the caller falls back to stored secrets.
+ */
+function modalTomlProfile(
+  env: Record<string, string | undefined>,
+  read: (path: string) => string,
+): { tokenId: string; tokenSecret: string } | null {
+  const path = env.MODAL_CONFIG_PATH?.trim() || join(homedir(), ".modal.toml");
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parseToml(read(path)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const profiles = Object.entries(parsed).filter(
+    (entry): entry is [string, Record<string, unknown>] =>
+      typeof entry[1] === "object" && entry[1] !== null && !Array.isArray(entry[1]),
+  );
+  const named = env.MODAL_PROFILE?.trim();
+  const chosen =
+    (named ? profiles.find(([name]) => name === named) : undefined) ??
+    profiles.find(([, body]) => body.active === true) ??
+    (profiles.length === 1 ? profiles[0] : undefined);
+  if (!chosen) return null;
+  const [, body] = chosen;
+  return typeof body.token_id === "string" && typeof body.token_secret === "string"
+    ? { tokenId: body.token_id, tokenSecret: body.token_secret }
+    : null;
+}
+
+/**
+ * The body --print-config shows: the job body with every inline sandbox
+ * credential's value masked. The dry-run is for reading and sharing, and a
+ * provider key read out of the shell has no business in a terminal scrollback
+ * or a pasted config.
+ */
+export function printableJobInput(input: JobCreate): JobCreate {
+  if (!input.sandbox_credentials) return input;
+  return {
+    ...input,
+    sandbox_credentials: input.sandbox_credentials.map((entry) =>
+      "value" in entry ? { ...entry, value: "<redacted>" } : entry,
+    ),
   };
 }
 
@@ -4046,7 +4161,12 @@ function jobLines(e: Job, opts: { taskLinksRow?: boolean } = {}): string[] {
   // word `ported`, RENDERED from the upload provenance, never a stored
   // value: the wire's sandbox_provider is null there because nothing
   // executed, and the closed provider vocabulary gains no fake member.
-  rows.push(["provider", e.upload ? "ported" : (e.sandbox_provider ?? "-")]);
+  rows.push([
+    "provider",
+    e.upload
+      ? "ported"
+      : `${e.sandbox_provider ?? "-"}${e.sandbox_account === "own" ? " (your own account)" : ""}`,
+  ]);
   // PRIVATE or LINK (an unlisted link reaches the run); `job shares` prints the link and the addresses.
   rows.push(["visibility", e.visibility]);
   // A JOB TOTAL IS A FLOOR whenever a trial nobody measured folded its zero in
@@ -5252,7 +5372,8 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
   const input = withDefaultOrg(buildJobInput(inv), inv);
   if (inv.flags["print-config"] === true) {
     // The resolved body, nothing sent: the dry-run a paid remote run deserves.
-    io.out(JSON.stringify(input, null, 2));
+    // Provider keys --own-infra read from the shell are masked.
+    io.out(JSON.stringify(printableJobInput(input), null, 2));
     return 0;
   }
   const json = inv.flags.json === true;
@@ -5260,7 +5381,22 @@ async function cmdJobStart(inv: Invocation, io: CliIO): Promise<number> {
   const quiet = inv.flags.quiet === true;
   const client = jobs(clientConfig(inv));
 
-  const created = await client.start(await resolveLocalSkillUploads(input, inv, io));
+  let created: Job;
+  try {
+    created = await client.start(await resolveLocalSkillUploads(input, inv, io));
+  } catch (e) {
+    // --own-infra sends your shell's provider key inline; a key you stored
+    // earlier under the same name holds a different value. Name both ways out
+    // in the CLI's terms before the server's refusal is printed.
+    if (e instanceof EvolveApiError && e.code === "secret_exists" && e.param?.startsWith("sandbox_credentials")) {
+      const name = input.sandbox_credentials?.[Number(/\[(\d+)\]/.exec(e.param)?.[1])]?.name ?? "the key";
+      io.err(
+        `Your shell's ${name} differs from the one stored in your secrets. Replace the stored one with ` +
+          `\`evolve secrets delete ${name}\` and run again, or unset ${name} to run with the stored key.`,
+      );
+    }
+    throw e;
+  }
   // The first human line names where the job landed (--json carries it as the job's `org`).
   if (!json) io.out(`org  ${input.org ?? "personal"}`);
   if (!watch) {

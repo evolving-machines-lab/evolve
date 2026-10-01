@@ -146,6 +146,7 @@ interface Job {
   agent_setup_timeout_multiplier: number | null;
   environment_build_timeout_multiplier: number | null;
   sandbox_provider: EvalSandboxProvider | null;
+  sandbox_account: "platform" | "own" | null;
   org: string | null;
   visibility: JobVisibility;
   system_log: boolean;

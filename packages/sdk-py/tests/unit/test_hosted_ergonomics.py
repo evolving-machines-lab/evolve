@@ -641,6 +641,7 @@ class TestPassAtK:
             max_trial_spend_usd=1.0,
             worst_case_spend_usd=1.0,
             sandbox_provider='e2b',
+            sandbox_account='platform',
             counts=JobCounts(agents=1, tasks=1),
             build_exclusions=[],
             n_total_trials=0,

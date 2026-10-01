@@ -50,6 +50,34 @@ Network allowlist kinds and resource ceilings also differ. The live [`meta()` do
 
 A temporary capacity shortage can put a trial back in the queue even with `--max-retries 0`. Capacity waits are bounded and separate from ordinary retry attempts.
 
+## Your own provider account
+
+Add `--own-infra` to run every sandbox of a job in your own E2B, Daytona, or Modal account instead of Evolve's. The provider's own variables are read from your shell, the same ones Harbor's `-e <provider>` uses:
+
+| Provider | Variables |
+| --- | --- |
+| E2B | `E2B_API_KEY` |
+| Daytona | `DAYTONA_API_KEY`, plus optional `DAYTONA_API_URL` (a `daytona.io` host) and `DAYTONA_TARGET` (default `us`) |
+| Modal | `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, or the active profile in `~/.modal.toml` |
+
+```bash
+export MODAL_TOKEN_ID=ak-... MODAL_TOKEN_SECRET=as-...
+evolve run -d harbor-examples@1.0 -a codex -m gpt-6-luna -e modal --own-infra --watch
+```
+
+The keys are saved as ordinary [secrets](/core-concepts/secrets) on first use. A variable that is not set in your shell is taken from your stored secret of the same name, so `evolve secrets set E2B_API_KEY --delivery direct` once is enough. `evolve secrets delete` removes a key; a job whose key is gone fails its next trial instead of running on Evolve's account. The keys never enter a sandbox. If your shell holds a different value than the stored one, the run is refused: delete the stored key, or unset the variable to use it.
+
+The job reads back with `sandbox_account: own`. Because you can reach those sandboxes through your provider, including the hidden tests and the reward file, scores from your own account are yours to vouch for.
+
+An own-account job:
+
+- boots public images only. Every public dataset qualifies; private datasets' images live on Evolve's private registry.
+- runs no Docker Compose task and no Daytona GPU task.
+- never moves a task to another provider. A task the requested provider cannot serve is rejected at creation with `provider_unsupported`.
+- does not count against Evolve's per-provider sandbox ceilings or GPU cap. The job's `-n` concurrency still applies, and your provider's own limits apply as capacity waits.
+
+Analysis, checks, and regrades of its trials still run on Evolve's account. In the SDK, pass `sandbox_credentials` to `jobs().start()`.
+
 ## Images and startup
 
 Dataset publication prepares task images. A provider may also need to prepare its own cached image or snapshot before the first trial. That first start can take longer than later trials using the cache.

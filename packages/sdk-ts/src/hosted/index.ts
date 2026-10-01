@@ -222,6 +222,7 @@ export {
   ANALYSIS_STATUSES,
   CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
+  SANDBOX_CREDENTIAL_NAMES,
   HOSTED_ERROR_CODES,
   JOB_LIST_KINDS,
   JOB_LIST_SCOPES,
@@ -356,6 +357,10 @@ export type {
   JobStats,
   JobSecretRef,
   JobSecretInline,
+  SandboxAccount,
+  SandboxCredentialInline,
+  SandboxCredentialName,
+  SandboxCredentialRef,
   JobStatus,
   JobViewer,
   JobTaskRollup,
@@ -1259,6 +1264,14 @@ function mapJob(raw: Record<string, unknown>): Job {
     // Null exactly on an uploaded job — the record executed on no platform
     // sandbox, so naming a provider would be an execution claim.
     sandbox_provider: (raw.sandbox_provider as EvalSandboxProvider | null) ?? null,
+    // Whose account the boxes ran in; an older server that sends none ran every
+    // job on its own account — 'platform' wherever it names a provider.
+    sandbox_account:
+      raw.sandbox_account === "own" || raw.sandbox_account === "platform"
+        ? raw.sandbox_account
+        : raw.sandbox_provider == null
+          ? null
+          : "platform",
     // The owning org's slug; an older server that sends none reads as null.
     org: typeof raw.org === "string" ? raw.org : null,
     // The share link's switch; an older server that sends none reads as

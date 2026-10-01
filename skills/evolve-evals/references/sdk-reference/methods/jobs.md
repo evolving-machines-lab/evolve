@@ -40,6 +40,7 @@ async def start(
     n_concurrent_trials: Optional[int] = None,
     max_trial_spend_usd: Optional[float] = None,
     sandbox_provider: Optional[str] = None,
+    sandbox_credentials: Optional[List[Union[SandboxCredentialRef, SandboxCredentialInline, Dict[str, Any]]]] = None,
     retry: Optional[JobRetryConfigInput] = None,
     analyze: Optional[AnalyzeConfigInput] = None,
     system_log: Optional[bool] = None,
@@ -103,7 +104,7 @@ Required: nonempty `datasets` and `agents`; each selector needs `name`, and each
 
 TypeScript takes one input object, then optional `{ idempotencyKey }`. Python takes keyword arguments, including `idempotency_key`.
 
-[Run settings](/sdk-reference/jobs#run-settings) explains defaults, timeout multipliers, retry policy, secrets, and accepted environment overrides. An omitted SDK option leaves the decision to the server; the returned job records the resolved settings. `agent_env` is a pass-through input that the managed platform currently refuses. `verifier_env` accepts only `REWARDKIT_JUDGE` and `REWARDKIT_MODEL`.
+[Run settings](/sdk-reference/jobs#run-settings) explains defaults, timeout multipliers, retry policy, secrets, and accepted environment overrides. An omitted SDK option leaves the decision to the server; the returned job records the resolved settings. `agent_env` is a pass-through input that the managed platform currently refuses. `verifier_env` accepts only `REWARDKIT_JUDGE` and `REWARDKIT_MODEL`. `sandbox_credentials` runs the job's sandboxes in your own provider account: each entry is `{ name }` (a stored secret) or `{ name, value }` (saved first), named from `SANDBOX_CREDENTIAL_NAMES` for the provider; see [your own provider account](/core-concepts/sandboxes#your-own-provider-account).
 
 ### Input fields
 
@@ -117,6 +118,7 @@ interface JobCreate {
   n_concurrent_trials?: number;
   max_trial_spend_usd?: number;
   sandbox_provider?: EvalSandboxProvider;
+  sandbox_credentials?: Array<SandboxCredentialRef | SandboxCredentialInline>;
   retry?: RetryConfigInput;
   analyze?: AnalyzeConfigInput;
   system_log?: boolean;

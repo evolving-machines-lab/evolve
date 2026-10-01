@@ -78,6 +78,7 @@ evolve run -c job.yaml --watch
   | `--ak` | Matching keys inside each agent's `kwargs`. |
   | `--skill` | Every agent's skills list. |
   | `--secret` / `--secret-inline` | The complete secret attachment list. |
+  | `--own-infra` | The file's `sandbox_credentials`. |
   | Retry or analysis options | Only the named field inside `retry` or `analyze`. |
 
   Other flags override their matching field. Use `--org` or `auth org use` for organization selection; the current CLI does not retain `org` from the job file.
@@ -94,6 +95,7 @@ evolve run -c job.yaml --watch
     | `--job-name <name>` | Job label. Generated when omitted. |
     | `--org <name>` | Organization to use. Otherwise use the saved CLI default, then your personal organization. `--org personal` overrides a saved team default. |
     | `-e`, `--env <provider>` | Requested sandbox provider: `daytona` (default), `e2b`, or `modal`. |
+    | `--own-infra` | Run the sandboxes in your own account on that provider. Keys come from your shell (`E2B_API_KEY`; `DAYTONA_API_KEY`; `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` or `~/.modal.toml`), else from your stored secrets. `--print-config` masks them. See [your own provider account](/core-concepts/sandboxes#your-own-provider-account). |
     | `--system-log` | Record the sandbox's system log. Off by default. |
 
     Evolve checks each task's requirements. A task may run on another compatible provider; inspect its trial for the provider actually used. See [Sandboxes](/core-concepts/sandboxes).

@@ -129,6 +129,27 @@ export const EVAL_SANDBOX_PROVIDERS = ["e2b", "daytona", "modal"] as const;
 export type EvalSandboxProvider = (typeof EVAL_SANDBOX_PROVIDERS)[number];
 
 /**
+ * BRING YOUR OWN INFRA: the credential variables each provider's own SDK
+ * reads — the names `JobCreate.sandbox_credentials` accepts for a job on that
+ * provider, the same names Harbor's environments and the providers' own CLIs
+ * read from a shell. A runtime value because the CLI's `--own-infra` reads
+ * exactly these from the caller's environment.
+ */
+export const SANDBOX_CREDENTIAL_NAMES = {
+  e2b: { required: ["E2B_API_KEY"], optional: [] },
+  daytona: { required: ["DAYTONA_API_KEY"], optional: ["DAYTONA_API_URL", "DAYTONA_TARGET"] },
+  modal: { required: ["MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"], optional: [] },
+} as const satisfies Record<EvalSandboxProvider, { required: readonly string[]; optional: readonly string[] }>;
+
+/** One sandbox-provider credential variable — see SANDBOX_CREDENTIAL_NAMES. */
+export type SandboxCredentialName =
+  | (typeof SANDBOX_CREDENTIAL_NAMES)[EvalSandboxProvider]["required"][number]
+  | (typeof SANDBOX_CREDENTIAL_NAMES)[EvalSandboxProvider]["optional"][number];
+
+/** Whose provider account a job's boxes run in (`Job.sandbox_account`). */
+export type SandboxAccount = "platform" | "own";
+
+/**
  * The list scopes — Harbor's `--scope` on `harbor hub job list` (their
  * cli/hub.py list_jobs_cmd: my | shared | all). `my` is what you created;
  * `shared` is what your organizations' other members created — every row the
@@ -761,6 +782,20 @@ export interface JobCreate {
   max_trial_spend_usd?: number;
   /** Sandbox provider to run on (optional; server default: `daytona`). */
   sandbox_provider?: EvalSandboxProvider;
+  /**
+   * BRING YOUR OWN INFRA — run every box of the job in YOUR account on
+   * `sandbox_provider` instead of the platform's. Each entry names one of the
+   * provider's credential variables (SANDBOX_CREDENTIAL_NAMES: e2b
+   * E2B_API_KEY; daytona DAYTONA_API_KEY + optional DAYTONA_API_URL /
+   * DAYTONA_TARGET; modal MODAL_TOKEN_ID + MODAL_TOKEN_SECRET), as a reference
+   * to your stored env secret or inline (saved into your vault first, the
+   * `secrets` inline law). Values never enter a box and never land on the job.
+   * An own-account job boots public images only, runs no docker-compose task,
+   * never reroutes a task to another provider and runs no Daytona GPU task —
+   * each refused per task at create (`provider_unsupported`). Omitted = the
+   * platform's account.
+   */
+  sandbox_credentials?: Array<SandboxCredentialRef | SandboxCredentialInline>;
   /** Auto-retry policy (Harbor RetryConfig grammar); omitted = the fleet defaults. */
   retry?: RetryConfigInput;
   /**
@@ -882,6 +917,24 @@ export interface JobSecretInline {
   label?: string;
   /** Same in-sandbox rename law as JobSecretRef.as. */
   as?: string;
+}
+
+/** One of your own sandbox-provider credentials, by reference to a stored env secret. */
+export interface SandboxCredentialRef {
+  /** The credential variable, from the job provider's own vocabulary. */
+  name: SandboxCredentialName;
+  /** Which labeled row to use; omitted = 'default' when present, else the single row. */
+  label?: string;
+}
+
+/** One of your own sandbox-provider credentials, inline: vaulted first, then pinned like a reference. */
+export interface SandboxCredentialInline {
+  /** The credential variable, from the job provider's own vocabulary. */
+  name: SandboxCredentialName;
+  /** The value to vault (at most 190 bytes). Never stored on the job, never sent into a box. */
+  value: string;
+  /** The labeled row to claim in the vault (default 'default'). */
+  label?: string;
 }
 
 /** Body of POST /api/jobs/{jobId}/resume. */
@@ -1495,6 +1548,13 @@ export interface Job {
    * on a job this platform ran.
    */
   sandbox_provider: EvalSandboxProvider | null;
+  /**
+   * Whose provider account the trial boxes ran in: `own` when the job was
+   * created with `sandbox_credentials` (you can reach those boxes, hidden
+   * tests and reward file included, so the scores are yours to vouch for),
+   * else `platform`. Null exactly where `sandbox_provider` is.
+   */
+  sandbox_account: SandboxAccount | null;
   /**
    * The owning organization's slug — the `org` named at create, else the
    * creator's personal org. Null only on a regrade job whose source job has

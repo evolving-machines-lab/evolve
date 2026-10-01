@@ -431,6 +431,7 @@ export {
   ANALYSIS_STATUSES,
   CHECK_STATUSES,
   EVAL_SANDBOX_PROVIDERS,
+  SANDBOX_CREDENTIAL_NAMES,
   HOSTED_ERROR_CODES,
   JOB_LIST_KINDS,
   JOB_LIST_SCOPES,
@@ -530,6 +531,10 @@ export {
   type JobStatus,
   type JobViewer,
   type EvalSandboxProvider,
+  type SandboxAccount,
+  type SandboxCredentialInline,
+  type SandboxCredentialName,
+  type SandboxCredentialRef,
   type Trial,
   // Trial.gpu_cost's own type — nameable now that the mapper actually hands
   // the object over.
